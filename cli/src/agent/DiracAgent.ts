@@ -133,12 +133,6 @@ export class DiracAgent implements acp.Agent {
 	/** Client capabilities received during initialization */
 	private clientCapabilities?: acp.ClientCapabilities
 
-	/** Track last sent content for partial messages to compute deltas */
-	private partialMessageLastContent: Map<number, string> = new Map()
-
-	/** Map message timestamps to toolCallIds to avoid creating duplicate tool calls during streaming */
-	private messageToToolCallId: Map<number, string> = new Map()
-
 	/** Current active session ID for use by DiffViewProvider */
 	private currentActiveSessionId: string | undefined
 
@@ -314,6 +308,8 @@ export class DiracAgent implements acp.Agent {
 			sessionId,
 			status: AcpSessionStatus.Idle,
 			pendingToolCalls: new Map(),
+			partialMessageLastContent: new Map(),
+			messageToToolCallId: new Map(),
 		}
 
 		this.sessionStates.set(sessionId, sessionState)
@@ -481,10 +477,6 @@ export class DiracAgent implements acp.Agent {
 		sessionState.status = AcpSessionStatus.Processing
 		session.lastActivityAt = Date.now()
 		this.currentActiveSessionId = params.sessionId
-
-		// Clear delta tracking state for new prompt cycle
-		this.partialMessageLastContent.clear()
-		this.messageToToolCallId.clear()
 
 		// Track cleanup functions for subscriptions
 		const cleanupFunctions: (() => void)[] = []
@@ -795,7 +787,7 @@ export class DiracAgent implements acp.Agent {
 		message: DiracMessageType,
 	): Promise<void> {
 		const messageKey = message.ts
-		const lastText = this.partialMessageLastContent.get(messageKey) || ""
+		const lastText = sessionState.partialMessageLastContent.get(messageKey) || ""
 
 		// Determine if this is a text-streaming message type that needs delta handling
 		// Note: act_mode_respond is NOT included here because its text content was already
@@ -853,11 +845,11 @@ export class DiracAgent implements acp.Agent {
 			}
 
 			// Track what we've sent (use extracted text, not raw JSON)
-			this.partialMessageLastContent.set(messageKey, textContent)
+			sessionState.partialMessageLastContent.set(messageKey, textContent)
 		} else {
 			// For non-streaming messages, use the full translator
 			// Check if we already have a toolCallId for this message (from a previous partial update)
-			const existingToolCallId = this.messageToToolCallId.get(messageKey)
+			const existingToolCallId = sessionState.messageToToolCallId.get(messageKey)
 
 			const result = translateMessage(message, sessionState, {
 				existingToolCallId,
@@ -870,7 +862,7 @@ export class DiracAgent implements acp.Agent {
 
 			// Track the toolCallId for this message so subsequent updates reuse it
 			if (result.toolCallId) {
-				this.messageToToolCallId.set(messageKey, result.toolCallId)
+				sessionState.messageToToolCallId.set(messageKey, result.toolCallId)
 			}
 
 			// Handle permission requests for ask messages
@@ -883,12 +875,12 @@ export class DiracAgent implements acp.Agent {
 
 			// Track text content for this message (in case of future updates)
 			if (message.text) {
-				this.partialMessageLastContent.set(messageKey, message.text)
+				sessionState.partialMessageLastContent.set(messageKey, message.text)
 			}
 
 			// Clean up the mapping when the message is complete (not partial)
 			if (!message.partial && result.toolCallId) {
-				this.messageToToolCallId.delete(messageKey)
+				sessionState.messageToToolCallId.delete(messageKey)
 			}
 		}
 	}

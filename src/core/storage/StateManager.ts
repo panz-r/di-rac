@@ -632,7 +632,7 @@ export class StateManager {
 			await this.persistPendingState()
 		}
 		// Clear all cached data and pending state
-		this.dispose()
+		await this.dispose()
 
 		// Reinitialize from the same storage context
 		await StateManager.initialize(this.storage)
@@ -646,8 +646,22 @@ export class StateManager {
 	/**
 	 * Dispose of the state manager
 	 */
-	private dispose(): void {
+	private async dispose(): Promise<void> {
 		this.sessionOverrideCache = {}
+
+		if (this.taskHistoryWatcher) {
+			try {
+				await this.taskHistoryWatcher.close()
+			} catch (error) {
+				Logger.error("[StateManager] Failed to close taskHistoryWatcher:", error)
+			}
+			this.taskHistoryWatcher = null
+		}
+
+		if (this.persistenceTimeout) {
+			clearTimeout(this.persistenceTimeout)
+			this.persistenceTimeout = null
+		}
 
 		this.isInitialized = false
 	}

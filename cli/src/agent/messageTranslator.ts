@@ -896,5 +896,7 @@ export function createSessionState(sessionId: string): AcpSessionState {
 		sessionId,
 		status: AcpSessionStatus.Idle,
 		pendingToolCalls: new Map(),
+		partialMessageLastContent: new Map(),
+		messageToToolCallId: new Map(),
 	}
 }
