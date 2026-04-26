@@ -26,6 +26,9 @@ import { getBlobStoreSettingsFromEnv } from "./shared/services/worker/worker";
 import { getLatestAnnouncementId } from "./utils/announcements";
 import { arePathsEqual } from "./utils/path";
 
+let initializationTimer: NodeJS.Timeout | null = null
+const logSubscribers: ((msg: string) => void)[] = []
+
 /**
  * Performs intialization for Dirac that is common to all platforms.
  *
@@ -35,8 +38,12 @@ import { arePathsEqual } from "./utils/path";
  */
 export async function initialize(storageContext: StorageContext): Promise<DiracWebviewProvider> {
 	// Configure the shared Logging class to use HostProvider's output channels and debug logger
-	Logger.subscribe((msg: string) => HostProvider.get().logToChannel(msg)) // File system logging
-	Logger.subscribe((msg: string) => HostProvider.env.debugLog({ value: msg })) // Host debug logging
+	const channelSubscriber = (msg: string) => HostProvider.get().logToChannel(msg)
+	const debugSubscriber = (msg: string) => HostProvider.env.debugLog({ value: msg })
+
+	Logger.subscribe(channelSubscriber)
+	Logger.subscribe(debugSubscriber)
+	logSubscribers.push(channelSubscriber, debugSubscriber)
 
 	// Initialize DiracEndpoint configuration (reads bundled and ~/.dirac/endpoints.json if present)
 	// This must be done before any other code that calls DiracEnv.config()
@@ -81,7 +88,8 @@ export async function initialize(storageContext: StorageContext): Promise<DiracW
 	// =============== Symbol Index Service ===============
 	// Initialize symbol index for the project in background with a delay to avoid blocking startup
 	const INITIALIZATION_DELAY_MS = 5000
-	setTimeout(() => {
+	initializationTimer = setTimeout(() => {
+		initializationTimer = null
 		HostProvider.workspace.getWorkspacePaths({}).then((response) => {
 			const paths = response.paths
 			if (paths && paths.length > 0) {
@@ -174,6 +182,16 @@ async function checkWorktreeAutoOpen(stateManager: StateManager): Promise<void> 
  * Performs cleanup when Dirac is deactivated that is common to all platforms.
  */
 export async function tearDown(): Promise<void> {
+	if (initializationTimer) {
+		clearTimeout(initializationTimer)
+		initializationTimer = null
+	}
+
+	for (const subscriber of logSubscribers) {
+		Logger.unsubscribe(subscriber)
+	}
+	logSubscribers.length = 0
+
 	AgentConfigLoader.getInstance()?.dispose()
 	// Legacy telemetry removed
 	telemetryService.dispose()

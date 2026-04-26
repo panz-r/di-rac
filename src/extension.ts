@@ -54,6 +54,8 @@ import { SharedUriHandler, TASK_URI_PATH } from "./services/uri/SharedUriHandler
 import { ShowMessageType } from "./shared/proto/host/window"
 import { fileExistsAtPath } from "./utils/fs"
 
+const debounceMap = new Map<string, NodeJS.Timeout>()
+
 // This method is called when the VS Code extension is activated.
 // NOTE: This is VS Code specific - services that should be registered
 // for all-platform should be registered in common.ts.
@@ -545,7 +547,6 @@ ${ctx.cellJson || "{}"}
 	]
 	const fileWatcher = vscode.workspace.createFileSystemWatcher(`**/*.{${supportedExts.join(",")}}`)
 
-	const debounceMap = new Map<string, NodeJS.Timeout>()
 	const DEBOUNCE_MS = 1000
 
 	const debouncedUpdate = (uri: vscode.Uri) => {
@@ -731,8 +732,14 @@ async function getBinaryLocation(name: string): Promise<string> {
 
 // This method is called when your extension is deactivated
 export async function deactivate() {
+	// Clear any pending debounced symbol updates
+	for (const timeout of debounceMap.values()) {
+		clearTimeout(timeout)
+	}
+	debounceMap.clear()
+
 	// Dispose Non-VSCode-specific services
-	tearDown()
+	await tearDown()
 
 	// VSCode-specific services
 	disposeVscodeCommentReviewController()

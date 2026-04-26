@@ -23,6 +23,20 @@ export class Logger {
 		Logger.subscribers.add(outputFn)
 	}
 
+	/**
+	 * Unregister a previously registered log output callback.
+	 */
+	static unsubscribe(outputFn: (msg: string) => void) {
+		Logger.subscribers.delete(outputFn)
+	}
+
+	/**
+	 * Clear all log output subscribers.
+	 */
+	static reset() {
+		Logger.subscribers.clear()
+	}
+
 	static error(message: string, ...args: any[]) {
 		Logger.#output("ERROR", message, undefined, args)
 	}
