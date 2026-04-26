@@ -11,24 +11,14 @@ export type DeepSeekReasonerMessage = OpenAI.Chat.ChatCompletionMessageParam & {
 
 /**
  * Adds reasoning_content to OpenAI messages for DeepSeek Reasoner.
- * Per DeepSeek API: reasoning_content should be passed back during tool calling in the same turn,
- * and omitted when starting a new turn.
+ * DeepSeek API requires reasoning_content to be passed back for ALL assistant messages
+ * that have it. Failure to do so results in a 400 error:
+ * "The reasoning_content in the thinking mode must be passed back to the API."
  */
 export function addReasoningContent(
 	openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[],
 	originalMessages: DiracStorageMessage[],
 ): DeepSeekReasonerMessage[] {
-	// Find last user message index (start of current turn)
-	// If no user message exists (lastUserIndex = -1), all messages are in the "current turn",
-	// so reasoning_content will be added to all assistant messages. This is intentional.
-	let lastUserIndex = -1
-	for (let i = openAiMessages.length - 1; i >= 0; i--) {
-		if (openAiMessages[i].role === "user") {
-			lastUserIndex = i
-			break
-		}
-	}
-
 	// Extract thinking content from original messages, keyed by assistant index
 	const thinkingByIndex = new Map<number, string>()
 	let assistantIdx = 0
@@ -46,20 +36,13 @@ export function addReasoningContent(
 			assistantIdx++
 		}
 	}
-
-	// Add reasoning_content only to assistant messages in current turn
+	// Add reasoning_content to ALL assistant messages that have thinking content
 	let aiIdx = 0
 	return openAiMessages.map((msg, i): DeepSeekReasonerMessage => {
 		if (msg.role === "assistant") {
 			const thinking = thinkingByIndex.get(aiIdx++)
 			if (thinking) {
-				const isContentEmpty = !msg.content || (typeof msg.content === "string" && msg.content.trim() === "")
-				const hasToolCalls = !!(msg as any).tool_calls?.length
-				// Add reasoning_content if it's the current turn OR if the message would otherwise be empty
-				// (to avoid 400 errors from providers like Moonshot/DeepSeek)
-				if (i >= lastUserIndex || hasToolCalls || isContentEmpty) {
-					return { ...msg, reasoning_content: thinking }
-				}
+				return { ...msg, reasoning_content: thinking }
 			}
 		}
 		return msg

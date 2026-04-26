@@ -96,10 +96,36 @@ export class DeepSeekHandler implements ApiHandler {
 			? [{ role: "system", content: systemPrompt }, ...addReasoningContent(convertedMessages, messages)]
 			: [{ role: "system", content: systemPrompt }, ...convertedMessages]
 
+		// DeepSeek.com API requires reasoning_content to be passed back for ALL assistant messages
+		// and content to be at least an empty string (not null).
+		const deepSeekMessages = openAiMessages.map((msg) => {
+			if (msg.role === "assistant") {
+				return {
+					...msg,
+					content: msg.content ?? "",
+					reasoning_content: (msg as any).reasoning_content ?? "",
+				}
+			}
+			return msg
+		})
+
+		const deepSeekTools = tools?.map((tool) => {
+			if (tool.type === "function") {
+				return {
+					...tool,
+					function: {
+						...tool.function,
+						strict: true,
+					},
+				}
+			}
+			return tool
+		})
+
 		const stream = await client.chat.completions.create({
 			model: model.id,
 			max_completion_tokens: model.info.maxTokens,
-			messages: openAiMessages,
+			messages: deepSeekMessages,
 			stream: true,
 			stream_options: { include_usage: true },
 			...(supportsReasoning && !isR1
@@ -110,7 +136,7 @@ export class DeepSeekHandler implements ApiHandler {
 					}
 				: {}),
 			...(useReasoningFormat ? {} : { temperature: 0 }),
-			...getOpenAIToolParams(tools),
+			...getOpenAIToolParams(deepSeekTools),
 		})
 
 		const toolCallProcessor = new ToolCallProcessor()
