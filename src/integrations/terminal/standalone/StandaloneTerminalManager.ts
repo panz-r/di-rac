@@ -108,10 +108,12 @@ export class StandaloneTerminalManager implements ITerminalManager {
 
 		process.once("completed", () => {
 			terminalInfo.busy = false
+			this.processes.delete(terminalInfo.id)
 		})
 
 		process.once("error", (_error: Error) => {
 			terminalInfo.busy = false
+			this.processes.delete(terminalInfo.id)
 		})
 
 		// Create promise for the process

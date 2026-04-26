@@ -113,7 +113,7 @@ export async function orchestrateCommandExecution(
 	})
 
 	let userFeedback: { text?: string; images?: string[]; files?: string[] } | undefined
-	let didContinue = false
+	let didContinue = suppressUserInteraction
 	let didCancelViaUi = false
 	let backgroundTrackingResult: OrchestrationResult | null = null // Set when background tracking returns early
 

@@ -57,6 +57,16 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	private ulid: string
 	private taskState: TaskState
 
+	// Debounce history updates to avoid excessive folder size calculations and disk I/O
+	private historyUpdateTimer: NodeJS.Timeout | null = null
+	private lastHistoryUpdateTs = 0
+	private readonly HISTORY_UPDATE_DEBOUNCE_MS = 2000
+
+	// Debounce disk saves to reduce I/O overhead during rapid updates
+	private diskSaveTimer: NodeJS.Timeout | null = null
+	private lastDiskSaveTs = 0
+	private readonly DISK_SAVE_DEBOUNCE_MS = 1000
+
 	// Mutex to prevent concurrent state modifications (RC-4)
 	// Protects against data loss from race conditions when multiple
 	// operations try to modify message state simultaneously
@@ -131,6 +141,26 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		}
 	}
 
+	private debouncedSaveDiracMessages(): void {
+		const now = Date.now()
+
+		if (this.diskSaveTimer) {
+			return
+		}
+
+		if (now - this.lastDiskSaveTs > this.DISK_SAVE_DEBOUNCE_MS) {
+			this.lastDiskSaveTs = now
+			this.saveDiracMessagesInternal().catch((err) => Logger.error("Failed to save messages:", err))
+			return
+		}
+
+		this.diskSaveTimer = setTimeout(() => {
+			this.diskSaveTimer = null
+			this.lastDiskSaveTs = Date.now()
+			this.saveDiracMessagesInternal().catch((err) => Logger.error("Failed to save messages:", err))
+		}, this.DISK_SAVE_DEBOUNCE_MS)
+	}
+
 	/**
 	 * Update task history with current state.
 	 * This can be slow due to folder size calculation, so it should be called
@@ -198,9 +228,32 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 */
 	async saveDiracMessagesAndUpdateHistory(): Promise<void> {
 		await this.withStateLock(async () => {
-			await this.saveDiracMessagesInternal()
+			this.debouncedSaveDiracMessages()
 		})
-		await this.updateTaskHistoryInternal()
+		this.debouncedUpdateTaskHistory()
+	}
+
+	private debouncedUpdateTaskHistory(): void {
+		const now = Date.now()
+
+		// If we already have a timer, just let it run
+		if (this.historyUpdateTimer) {
+			return
+		}
+
+		// If we haven't updated in a while, do it now
+		if (now - this.lastHistoryUpdateTs > this.HISTORY_UPDATE_DEBOUNCE_MS) {
+			this.lastHistoryUpdateTs = now
+			this.updateTaskHistoryInternal().catch((err) => Logger.error("Failed to update history:", err))
+			return
+		}
+
+		// Otherwise, schedule it
+		this.historyUpdateTimer = setTimeout(() => {
+			this.historyUpdateTimer = null
+			this.lastHistoryUpdateTs = Date.now()
+			this.updateTaskHistoryInternal().catch((err) => Logger.error("Failed to update history:", err))
+		}, this.HISTORY_UPDATE_DEBOUNCE_MS)
 	}
 
 	async addToApiConversationHistory(message: DiracStorageMessage) {
@@ -239,9 +292,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 				index,
 				message,
 			})
-			await this.saveDiracMessagesInternal()
+			this.debouncedSaveDiracMessages()
 		})
-		await this.updateTaskHistoryInternal()
+		this.debouncedUpdateTaskHistory()
 	}
 
 	/**
@@ -257,9 +310,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 				messages: this.diracMessages,
 				previousMessages,
 			})
-			await this.saveDiracMessagesInternal()
+			this.debouncedSaveDiracMessages()
 		})
-		await this.updateTaskHistoryInternal()
+		this.debouncedUpdateTaskHistory()
 	}
 
 	/**
@@ -287,12 +340,12 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			})
 
 			// Save changes
-			await this.saveDiracMessagesInternal()
+			this.debouncedSaveDiracMessages()
 		})
 		// History update can happen outside the lock and doesn't need to be awaited
 		// if we want maximum performance, but for now we await it to be safe.
 		// The key is that getFolderSize is now outside the stateMutex lock.
-		await this.updateTaskHistoryInternal()
+		this.debouncedUpdateTaskHistory()
 	}
 
 	/**
@@ -319,8 +372,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			})
 
 			// Save changes
-			await this.saveDiracMessagesInternal()
+			this.debouncedSaveDiracMessages()
 		})
-		await this.updateTaskHistoryInternal()
+		this.debouncedUpdateTaskHistory()
 	}
 }
