@@ -201,6 +201,7 @@ export class SyncWorker {
 			// Run cleanup to prevent unbounded queue growth
 			// This runs even if blob storage isn't ready, which is the main protection
 			// against misconfigured storage causing the queue to grow forever
+			this.queue.cleanupOldSynced(this.options.maxFailedAgeMs)
 			this.queue.cleanupFailedItems(this.options.maxRetries, this.options.maxFailedAgeMs)
 			this.queue.enforceMaxSize(this.options.maxQueueSize)
 

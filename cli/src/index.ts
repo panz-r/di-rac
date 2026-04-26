@@ -65,6 +65,7 @@ async function disposeCliContext(ctx: CliContext): Promise<void> {
 	const { HookProcessRegistry } = await import("@/core/hooks/HookProcessRegistry")
 	const { HookDiscoveryCache } = await import("@/core/hooks/HookDiscoveryCache")
 	const { DiracTempManager } = await import("@/services/temp")
+	const { AgentConfigLoader } = await import("@/core/task/tools/subagent/AgentConfigLoader")
 
 	await ctx.controller.stateManager.flushPendingState()
 	await ctx.controller.dispose()
@@ -74,6 +75,7 @@ async function disposeCliContext(ctx: CliContext): Promise<void> {
 	await HookProcessRegistry.terminateAll()
 	HookDiscoveryCache.getInstance().dispose()
 	DiracTempManager.stopPeriodicCleanup()
+	await AgentConfigLoader.getInstance().dispose()
 	await disposeTelemetryServices()
 }
 

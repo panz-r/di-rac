@@ -9,6 +9,7 @@ import { openExternal } from "@utils/env"
 import { getCommitInfo, getWorkingState } from "@utils/git"
 import fs from "fs/promises"
 import { isBinaryFile } from "isbinaryfile"
+import pLimit from "p-limit"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { getLatestTerminalOutput } from "@/hosts/vscode/terminal/get-latest-output"
@@ -349,6 +350,7 @@ async function getFileOrFolderContent(mentionPath: string, cwd: string): Promise
 		if (stats.isDirectory()) {
 			const entries = await fs.readdir(absPath, { withFileTypes: true })
 			let folderContent = ""
+			const limit = pLimit(5) // Process up to 5 files concurrently
 			const fileContentPromises: Promise<string | undefined>[] = []
 			entries.forEach((entry, index) => {
 				const isLast = index === entries.length - 1
@@ -359,7 +361,7 @@ async function getFileOrFolderContent(mentionPath: string, cwd: string): Promise
 					const absoluteFilePath = path.resolve(absPath, entry.name)
 					// const relativeFilePath = path.relative(cwd, absoluteFilePath);
 					fileContentPromises.push(
-						(async () => {
+						limit(async () => {
 							try {
 								const isBinary = await isBinaryFile(absoluteFilePath).catch(() => false)
 								if (isBinary) {
@@ -370,7 +372,7 @@ async function getFileOrFolderContent(mentionPath: string, cwd: string): Promise
 							} catch (_error) {
 								return undefined
 							}
-						})(),
+						}),
 					)
 				} else if (entry.isDirectory()) {
 					folderContent += `${linePrefix}${entry.name}/\n`

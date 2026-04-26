@@ -232,6 +232,8 @@ export class ContextLoader {
                 }
             >()
 
+            const fileLinesCache = new Map<string, string[]>()
+
             for (const symbol of symbols) {
                 symbolResults.set(symbol, {
                     allLocations: [],
@@ -247,8 +249,13 @@ export class ContextLoader {
 
                 try {
                     const absLocPath = path.isAbsolute(loc.path) ? loc.path : path.join(projectRoot, loc.path)
-                    const fileContent = await fs.readFile(absLocPath, "utf8")
-                    const lines = fileContent.split(/\r?\n/)
+                    let lines = fileLinesCache.get(absLocPath)
+
+                    if (!lines) {
+                        const fileContent = await fs.readFile(absLocPath, "utf8")
+                        lines = fileContent.split(/\r?\n/)
+                        fileLinesCache.set(absLocPath, lines)
+                    }
 
                     const lineIndex = loc.startLine
                     if (lineIndex >= 0 && lineIndex < lines.length) {

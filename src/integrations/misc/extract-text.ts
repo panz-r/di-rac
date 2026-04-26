@@ -4,6 +4,7 @@ import * as iconv from "iconv-lite"
 import { isBinaryFile } from "isbinaryfile"
 import * as chardet from "jschardet"
 import mammoth from "mammoth"
+import pLimit from "p-limit"
 import * as path from "path"
 // @ts-expect-error-next-line
 import pdf from "pdf-parse/lib/pdf-parse"
@@ -60,16 +61,40 @@ export async function callTextExtractionFunctions(filePath: string): Promise<str
 		case ".xlsx":
 			content = await extractTextFromExcel(filePath)
 			break
-		default:
+		default: {
 			// Check file size with stat() first - faster than reading entire file for size check
 			const fileStat = await fs.stat(filePath)
-			if (fileStat.size > 20 * 1000 * 1024) {
-				// 20MB limit (20 * 1000 * 1024 bytes, decimal MB)
-				throw new Error(`File is too large to read into context.`)
+			const MAX_READ_SIZE = 20 * 1024 * 1024 // 20MB hard limit
+
+			if (fileStat.size > MAX_READ_SIZE) {
+				throw new Error(`File is too large to read into context (${(fileStat.size / (1024 * 1024)).toFixed(1)} MB).`)
 			}
-			const fileBuffer = await fs.readFile(filePath)
+
+			// Optimization: If file is larger than 400KB, only read the first ~410KB
+			// since it will be truncated to 400KB anyway by truncateContent().
+			// We read slightly more to avoid cutting off a multi-byte character at exactly 400KB.
+			const TRUNCATE_THRESHOLD = 400 * 1024
+			const BUFFER_OVERREAD = 10 * 1024 // 10KB buffer
+			const readSize = Math.min(fileStat.size, TRUNCATE_THRESHOLD + BUFFER_OVERREAD)
+
+			let fileBuffer: Buffer
+			if (fileStat.size > readSize) {
+				// Partial read for efficiency
+				const handle = await fs.open(filePath, "r")
+				try {
+					fileBuffer = Buffer.alloc(readSize)
+					await handle.read(fileBuffer, 0, readSize, 0)
+				} finally {
+					await handle.close()
+				}
+			} else {
+				// Read entire file if it's small
+				fileBuffer = await fs.readFile(filePath)
+			}
+
 			const encoding = await detectEncoding(fileBuffer, fileExtension)
 			content = iconv.decode(fileBuffer, encoding)
+		}
 	}
 
 	// Truncate content if it exceeds 400KB to prevent context overflow
@@ -196,19 +221,17 @@ async function extractTextFromExcel(filePath: string): Promise<string> {
  * Helper function used to load file(s) and format them into a string
  */
 export async function processFilesIntoText(files: string[]): Promise<string> {
+	const limit = pLimit(5) // Process up to 5 files concurrently
 	const fileContentsPromises = files.map(async (filePath) => {
-		try {
-			// Check if file exists and is binary
-			//const isBinary = await isBinaryFile(filePath).catch(() => false)
-			//if (isBinary) {
-			//	return `<file_content path="${filePath.toPosix()}">\n(Binary file, unable to display content)\n</file_content>`
-			//}
-			const content = await extractTextFromFile(filePath)
-			return `<file_content path="${filePath.toPosix()}">\n${content}\n</file_content>`
-		} catch (error) {
-			Logger.error(`Error processing file ${filePath}:`, error)
-			return `<file_content path="${filePath.toPosix()}">\nError fetching content: ${error.message}\n</file_content>`
-		}
+		return limit(async () => {
+			try {
+				const content = await extractTextFromFile(filePath)
+				return `<file_content path="${filePath.toPosix()}">\n${content}\n</file_content>`
+			} catch (error) {
+				Logger.error(`Error processing file ${filePath}:`, error)
+				return `<file_content path="${filePath.toPosix()}">\nError fetching content: ${error.message}\n</file_content>`
+			}
+		})
 	})
 
 	const fileContents = await Promise.all(fileContentsPromises)
