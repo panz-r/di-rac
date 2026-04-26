@@ -181,3 +181,43 @@ export async function asRelativePath(filePath: string): Promise<string> {
 	}
 	return filePath
 }
+
+const BUDDY_EXTENSIONS: Record<string, string[]> = {
+	c: ["h", "h.in"],
+	cpp: ["hpp", "hpp.in", "h", "h.in"],
+	cc: ["hh", "hh.in", "h", "h.in"],
+	cxx: ["hxx", "hxx.in", "h", "h.in"],
+	h: ["c", "cpp", "cc", "cxx"],
+	"h.in": ["c", "cpp", "cc", "cxx"],
+	hpp: ["cpp", "cc", "cxx"],
+	"hpp.in": ["cpp", "cc", "cxx"],
+	hh: ["cc", "cpp"],
+	hxx: ["cxx", "cpp"],
+}
+
+/**
+ * Returns potential buddy paths (e.g., .h for a .c file) for a given path.
+ * This is primarily used for C/C++ projects to pair headers and sources.
+ */
+export function getBuddyPaths(relPath: string): string[] {
+	let ext = path.extname(relPath).toLowerCase().slice(1)
+	// Handle compound extensions like .h.in
+	if (relPath.toLowerCase().endsWith(".h.in")) {
+		ext = "h.in"
+	} else if (relPath.toLowerCase().endsWith(".hpp.in")) {
+		ext = "hpp.in"
+	}
+
+	const buddies = BUDDY_EXTENSIONS[ext]
+	if (!buddies) {
+		return []
+	}
+
+	const dirname = path.dirname(relPath)
+	const basename = path.basename(relPath, `.${ext}`)
+
+	return buddies.map((bExt) => {
+		const buddyRelPath = path.join(dirname, `${basename}.${bExt}`)
+		return buddyRelPath.toPosix()
+	})
+}

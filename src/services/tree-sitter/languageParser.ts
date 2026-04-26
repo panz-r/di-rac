@@ -117,12 +117,14 @@ export async function loadRequiredLanguageParsers(filesToParse: string[]): Promi
 				langName = "rust"
 				queryText = rustQuery
 				break
-			case "go":
-				langName = "go"
-				queryText = goQuery
+			case "h":
+			case "h.in":
+				langName = "c"
+				queryText = cQuery
 				break
 			case "cpp":
 			case "hpp":
+			case "hpp.in":
 			case "cc":
 			case "cxx":
 			case "hh":

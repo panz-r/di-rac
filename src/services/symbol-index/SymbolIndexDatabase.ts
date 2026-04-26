@@ -72,6 +72,7 @@ export class SymbolIndexDatabase {
 			);
 
 			CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+			CREATE INDEX IF NOT EXISTS idx_symbols_name_type ON symbols(name, type);
 			CREATE INDEX IF NOT EXISTS idx_symbols_file_path ON symbols(file_path);
 		`)
 		Logger.info("[SymbolIndexDatabase] Schema initialization complete")
@@ -118,7 +119,7 @@ export class SymbolIndexDatabase {
 		size: number,
 		symbols: Array<{
 			n: string
-			t: "d" | "r"
+			t: "d" | "r" | "a"
 			k?: string
 			r: [number, number, number, number]
 		}>,
@@ -138,7 +139,7 @@ export class SymbolIndexDatabase {
 				insertSymbol.run([
 					relPath,
 					sym.n,
-					sym.t === "d" ? "definition" : "reference",
+					sym.t, // "d", "r", or "a"
 					sym.k || null,
 					sym.r[0],
 					sym.r[1],
@@ -161,7 +162,7 @@ export class SymbolIndexDatabase {
 			size: number
 			symbols: Array<{
 				n: string
-				t: "d" | "r"
+				t: "d" | "r" | "a"
 				k?: string
 				r: [number, number, number, number]
 			}>
@@ -187,7 +188,7 @@ export class SymbolIndexDatabase {
 					insertSymbol.run([
 						update.relPath,
 						sym.n,
-						sym.t === "d" ? "definition" : "reference",
+						sym.t, // "d", "r", or "a"
 						sym.k || null,
 						sym.r[0],
 						sym.r[1],
@@ -209,14 +210,24 @@ export class SymbolIndexDatabase {
 		this.db.run("DELETE FROM files WHERE path = ?", [relPath])
 	}
 
-		public getSymbolsByName(name: string, type?: "definition" | "reference", limit?: number): SymbolLocation[] {
+	public getSymbolsByName(
+		name: string,
+		type?: "definition" | "reference" | "declaration",
+		limit?: number,
+	): SymbolLocation[] {
 		let query =
 			"SELECT file_path, name, type, kind, start_line, start_column, end_line, end_column FROM symbols WHERE name = ?"
 		const params: any[] = [name]
 
 		if (type) {
 			query += " AND type = ?"
-			params.push(type)
+			// Map public type names to internal compact format
+			const typeMap = {
+				definition: "d",
+				reference: "r",
+				declaration: "a",
+			}
+			params.push(typeMap[type])
 		}
 
 		if (limit !== undefined) {
@@ -227,6 +238,12 @@ export class SymbolIndexDatabase {
 		const stmt = this.db.prepare(query)
 		stmt.bind(params)
 		const results: SymbolLocation[] = []
+		const reverseTypeMap: Record<string, "definition" | "reference" | "declaration"> = {
+			d: "definition",
+			r: "reference",
+			a: "declaration",
+		}
+
 		while (stmt.step()) {
 			const row = stmt.getAsObject() as any
 			results.push({
@@ -235,7 +252,7 @@ export class SymbolIndexDatabase {
 				startColumn: row.start_column,
 				endLine: row.end_line,
 				endColumn: row.end_column,
-				type: row.type as "definition" | "reference",
+				type: reverseTypeMap[row.type] || "reference",
 				kind: row.kind || undefined,
 			})
 		}

@@ -125,15 +125,15 @@ export default `
         (qualified_identifier) @name.definition.method
       ]
     )
-  ) @definition.symbol
+  ) @declaration.symbol
   (#strip! @doc "^[/\\\\*!\\\\s]+|[\\\\*!\\\\s]+$")
-  (#select-adjacent! @doc @definition.symbol)
+  (#select-adjacent! @doc @declaration.symbol)
 )
 
 ;; Map prototypes to specific kinds
-((declaration (function_declarator declarator: (identifier))) @definition.function)
-((declaration (function_declarator declarator: (field_identifier))) @definition.method)
-((declaration (function_declarator declarator: (qualified_identifier))) @definition.method)
+((declaration (function_declarator declarator: (identifier))) @declaration.function)
+((declaration (function_declarator declarator: (field_identifier))) @declaration.method)
+((declaration (function_declarator declarator: (qualified_identifier))) @declaration.method)
 
 ;; Lambdas in field initializers (dispatch tables)
 (initializer_pair

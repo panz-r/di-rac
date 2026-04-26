@@ -14,6 +14,7 @@ import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import { USER_CONTENT_TAGS } from "@shared/messages/constants"
 import { DiracContent, DiracTextContentBlock } from "@shared/messages/content"
 import { ASTAnchorBridge } from "@utils/ASTAnchorBridge"
+import { getBuddyPaths } from "@utils/path"
 import * as fs from "fs/promises"
 import * as path from "path"
 import { SymbolIndexService, SymbolLocation } from "../../services/symbol-index/SymbolIndexService"
@@ -129,6 +130,30 @@ export class ContextLoader {
                 if (stats.isFile()) {
                     filePaths.push(pc.relPath)
                     pathRegions.push({ start: pc.start, end: pc.end })
+
+                    // Buddy heuristic: proactively find related header/source files (e.g. .h for .c)
+                    // These are highly relevant context in C/C++ projects
+                    const buddies = getBuddyPaths(pc.relPath)
+                    for (const buddy of buddies) {
+                        try {
+                            const buddyResult = resolveWorkspacePath(
+                                {
+                                    cwd: cwd,
+                                    workspaceManager: this.dependencies.workspaceManager,
+                                    isMultiRootEnabled: isMultiRootEnabled(this.dependencies.stateManager),
+                                },
+                                buddy,
+                                "Task.loadContext.context",
+                            )
+                            const buddyAbsPath = typeof buddyResult === "string" ? buddyResult : buddyResult.absolutePath
+                            const buddyStats = await fs.stat(buddyAbsPath)
+                            if (buddyStats.isFile()) {
+                                filePaths.push(buddy)
+                            }
+                        } catch {
+                            // Buddy file not found, skip
+                        }
+                    }
                 }
             } catch (e: any) {
                 // Ignore errors for individual paths
@@ -325,7 +350,23 @@ export class ContextLoader {
                 }
             }
 
-            // Pass 2: References
+            // Pass 2: Declarations (Prototypes)
+            for (const symbol of symbols) {
+                if (totalLinesAdded >= MAX_AUTO_SYMBOL_TOTAL_LINES) break
+                const remainingLimit = MAX_AUTO_SYMBOL_TOTAL_LINES - totalLinesAdded
+                const declarations = indexService.getSymbols(symbol, "declaration", remainingLimit)
+                const data = symbolResults.get(symbol)!
+                data.allLocations.push(...declarations)
+
+                for (const loc of declarations) {
+                    if (totalLinesAdded >= MAX_AUTO_SYMBOL_TOTAL_LINES) break
+                    if (await processLocation(symbol, loc)) {
+                        totalLinesAdded++
+                    }
+                }
+            }
+
+            // Pass 3: References
             for (const symbol of symbols) {
                 if (totalLinesAdded >= MAX_AUTO_SYMBOL_TOTAL_LINES) break
                 const remainingLimit = MAX_AUTO_SYMBOL_TOTAL_LINES - totalLinesAdded

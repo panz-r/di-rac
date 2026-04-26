@@ -66,9 +66,9 @@ export default `
         declarator: (function_declarator
           declarator: (identifier) @name.definition.function))
     ]
-  ) @definition.function
+  ) @declaration.function
   (#strip! @doc "^[/\\\\*!\\\\s]+|[\\\\*!\\\\s]+$")
-  (#select-adjacent! @doc @definition.function)
+  (#select-adjacent! @doc @declaration.function)
 )
 
 ;; Typedefs

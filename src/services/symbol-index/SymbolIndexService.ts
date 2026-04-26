@@ -12,7 +12,7 @@ export interface SymbolLocation {
 	startColumn: number
 	endLine: number
 	endColumn: number
-	type: "definition" | "reference"
+	type: "definition" | "reference" | "declaration"
 	kind?: string // e.g., "function", "class", "method"
 }
 
@@ -22,7 +22,7 @@ export interface FileIndexEntry {
 	hash: string
 	symbols: Array<{
 		n: string // name
-		t: "d" | "r" // type: definition or reference
+		t: "d" | "r" | "a" // type: definition, reference, or declaration
 		k?: string // kind
 		r: [number, number, number, number] // range: [startLine, startColumn, endLine, endColumn]
 	}>
@@ -108,6 +108,8 @@ export class SymbolIndexService {
 		"hh",
 		"hxx",
 		"mm",
+		"h.in",
+		"hpp.in",
 		"cs",
 		"rb",
 		"java",
@@ -380,11 +382,18 @@ export class SymbolIndexService {
 							Logger.info(`[SymbolIndexService] Capture for ${text}: ${name}`)
 						}
 					}
-					if (name === "name.reference" || name.includes("name.definition")) {
+					if (name === "name.reference" || name.includes("name.definition") || name.includes("name.declaration")) {
 						const text = fileContent.slice(node.startIndex, node.endIndex)
+						let type: "d" | "r" | "a" = "r"
+						if (name.includes("name.definition")) {
+							type = "d"
+						} else if (name.includes("name.declaration")) {
+							type = "a"
+						}
+
 						symbols.push({
 							n: text,
-							t: name.includes("name.definition") ? "d" : "r",
+							t: type,
 							k: name.split(".").pop(),
 							r: [node.startPosition.row, node.startPosition.column, node.endPosition.row, node.endPosition.column],
 						})
@@ -408,7 +417,11 @@ export class SymbolIndexService {
 		}
 	}
 
-		public getSymbols(symbol: string, type?: "definition" | "reference", limit?: number): SymbolLocation[] {
+		public getSymbols(
+		symbol: string,
+		type?: "definition" | "reference" | "declaration",
+		limit?: number,
+	): SymbolLocation[] {
 		return this.db?.getSymbolsByName(symbol, type, limit) || []
 	}
 
