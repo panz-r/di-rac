@@ -256,6 +256,17 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		}, this.HISTORY_UPDATE_DEBOUNCE_MS)
 	}
 
+	dispose(): void {
+		if (this.historyUpdateTimer) {
+			clearTimeout(this.historyUpdateTimer)
+			this.historyUpdateTimer = null
+		}
+		if (this.diskSaveTimer) {
+			clearTimeout(this.diskSaveTimer)
+			this.diskSaveTimer = null
+		}
+	}
+
 	async addToApiConversationHistory(message: DiracStorageMessage) {
 		// Protect with mutex to prevent concurrent modifications from corrupting data (RC-4)
 		return await this.withStateLock(async () => {

@@ -499,6 +499,7 @@ export class LifecycleManager {
 			await this.dependencies.browserSession.dispose()
 			this.dependencies.diracIgnoreController.dispose()
 			this.dependencies.fileContextTracker.dispose()
+			this.dependencies.messageStateHandler.dispose()
 			await this.dependencies.diffViewProvider.revertChanges()
 			AnchorStateManager.reset(this.dependencies.taskId)
 		} finally {

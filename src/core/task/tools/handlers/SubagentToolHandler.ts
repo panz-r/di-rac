@@ -252,50 +252,54 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			void Promise.allSettled(runners.map((runner) => runner.abort()))
 		}, 100)
 
-		const execution = prompts.map((prompt, index) =>
-			runners[index].run(
-				prompt,
-				async (update) => {
-					const current = entries[index]
-					if (update.status === "running") {
-						current.status = "running"
-					}
-					if (update.status === "completed") {
-						current.status = "completed"
-					}
-					if (update.status === "failed") {
-						current.status = "failed"
-					}
-					if (update.result !== undefined) {
-						current.result = update.result
-					}
-					if (update.error !== undefined) {
-						current.error = update.error
-					}
-					if (update.latestToolCall !== undefined) {
-						current.latestToolCall = update.latestToolCall
-					}
-					if (update.stats) {
-						current.toolCalls = update.stats.toolCalls || 0
-						current.inputTokens = update.stats.inputTokens || 0
-						current.outputTokens = update.stats.outputTokens || 0
-						current.cacheWrites = update.stats.cacheWriteTokens || 0
-						current.cacheReads = update.stats.cacheReadTokens || 0
-						current.totalCost = update.stats.totalCost || 0
-						current.contextTokens = update.stats.contextTokens || 0
-						current.contextWindow = update.stats.contextWindow || 0
-						current.contextUsagePercentage = update.stats.contextUsagePercentage || 0
-					}
-					await queueStatusUpdate("running", true)
-				},
-				timeout,
-				maxTurns,
-				includeHistory,
-			),
-		)
+		let settled: PromiseSettledResult<any>[]
+		try {
+			const execution = prompts.map((prompt, index) =>
+				runners[index].run(
+					prompt,
+					async (update) => {
+						const current = entries[index]
+						if (update.status === "running") {
+							current.status = "running"
+						}
+						if (update.status === "completed") {
+							current.status = "completed"
+						}
+						if (update.status === "failed") {
+							current.status = "failed"
+						}
+						if (update.result !== undefined) {
+							current.result = update.result
+						}
+						if (update.error !== undefined) {
+							current.error = update.error
+						}
+						if (update.latestToolCall !== undefined) {
+							current.latestToolCall = update.latestToolCall
+						}
+						if (update.stats) {
+							current.toolCalls = update.stats.toolCalls || 0
+							current.inputTokens = update.stats.inputTokens || 0
+							current.outputTokens = update.stats.outputTokens || 0
+							current.cacheWrites = update.stats.cacheWriteTokens || 0
+							current.cacheReads = update.stats.cacheReadTokens || 0
+							current.totalCost = update.stats.totalCost || 0
+							current.contextTokens = update.stats.contextTokens || 0
+							current.contextWindow = update.stats.contextWindow || 0
+							current.contextUsagePercentage = update.stats.contextUsagePercentage || 0
+						}
+						await queueStatusUpdate("running", true)
+					},
+					timeout,
+					maxTurns,
+					includeHistory,
+				),
+			)
 
-		const settled = await Promise.allSettled(execution)
-		clearInterval(abortPollInterval)
+			settled = await Promise.allSettled(execution)
+		} finally {
+			clearInterval(abortPollInterval)
+		}
 		let usageTokensIn = 0
 		let usageTokensOut = 0
 		let usageCacheWrites = 0
