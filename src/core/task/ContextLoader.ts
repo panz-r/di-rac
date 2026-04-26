@@ -275,7 +275,7 @@ export class ContextLoader {
         return { skeletons, directoryLists }
     }
 
-    private async getSymbolContext(symbols: string[], cwd: string): Promise<string[]> {
+    private async getSymbolContext(symbols: string[], cwd: string, filePaths: string[]): Promise<string[]> {
         const symbolDefinitions: string[] = []
         if (symbols.length > 0 && symbols.length <= MAX_AUTO_SYMBOL_MATCHES) {
             const indexService = SymbolIndexService.getInstance()
@@ -301,7 +301,7 @@ export class ContextLoader {
                 })
             }
 
-            const processLocation = async (symbol: string, loc: SymbolLocation) => {
+            const processLocation = async (symbol: string, loc: SymbolLocation, filePaths: string[]) => {
                 const data = symbolResults.get(symbol)!
                 const locKey = `${loc.path}:${loc.startLine}`
                 if (data.seenLocations.has(locKey)) return false
@@ -327,6 +327,17 @@ export class ContextLoader {
                         const pointer = `    - ${relLocPath}:${lineIndex + 1} [${loc.type}] \`${lineContent}\``
                         data.addedLines.push(pointer)
                         data.seenLocations.add(locKey)
+
+                        // Dependency heuristic: find files that include this file or that this file includes
+                        // and proactively provide their skeletons if relevant.
+                        // (Limited to C/C++ for now via the dependencies table)
+                        const deps = indexService.getDependencies(loc.path)
+                        for (const dep of deps) {
+                            if (filePaths.indexOf(dep) === -1) {
+                                filePaths.push(dep)
+                            }
+                        }
+
                         return true
                     }
                 } catch (error: any) {
@@ -344,7 +355,7 @@ export class ContextLoader {
 
                 for (const loc of definitions) {
                     if (totalLinesAdded >= MAX_AUTO_SYMBOL_TOTAL_LINES) break
-                    if (await processLocation(symbol, loc)) {
+                    if (await processLocation(symbol, loc, filePaths)) {
                         totalLinesAdded++
                     }
                 }
@@ -360,7 +371,7 @@ export class ContextLoader {
 
                 for (const loc of declarations) {
                     if (totalLinesAdded >= MAX_AUTO_SYMBOL_TOTAL_LINES) break
-                    if (await processLocation(symbol, loc)) {
+                    if (await processLocation(symbol, loc, filePaths)) {
                         totalLinesAdded++
                     }
                 }
@@ -376,7 +387,7 @@ export class ContextLoader {
 
                 for (const loc of references) {
                     if (totalLinesAdded >= MAX_AUTO_SYMBOL_TOTAL_LINES) break
-                    if (await processLocation(symbol, loc)) {
+                    if (await processLocation(symbol, loc, filePaths)) {
                         totalLinesAdded++
                     }
                 }
@@ -444,7 +455,7 @@ export class ContextLoader {
 
         const { filePaths, directoryPaths, symbols } = await this.extractContext(text, cwd)
         const { skeletons, directoryLists } = await this.getPathContext(filePaths, directoryPaths, cwd)
-        const symbolDefinitions = await this.getSymbolContext(symbols, cwd)
+        const symbolDefinitions = await this.getSymbolContext(symbols, cwd, filePaths)
 
         const additionalContext: string[] = []
         if (skeletons.length > 0) additionalContext.push(...skeletons)

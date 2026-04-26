@@ -5,6 +5,7 @@ import * as path from "path"
 import Parser from "web-tree-sitter"
 import { Logger } from "../../shared/services/Logger"
 import { SymbolIndexDatabase } from "./SymbolIndexDatabase"
+import { CompilationDatabaseLoader } from "@/utils/compilation-db"
 
 export interface SymbolLocation {
 	path: string
@@ -22,7 +23,7 @@ export interface FileIndexEntry {
 	hash: string
 	symbols: Array<{
 		n: string // name
-		t: "d" | "r" | "a" // type: definition, reference, or declaration
+		t: "d" | "r" | "a" | "i" // type: definition, reference, declaration, or import/include
 		k?: string // kind
 		r: [number, number, number, number] // range: [startLine, startColumn, endLine, endColumn]
 	}>
@@ -180,6 +181,9 @@ export class SymbolIndexService {
 				const dbPath = path.join(this.projectRoot, SymbolIndexService.INDEX_DIR, SymbolIndexService.INDEX_FILE)
 				Logger.info(`[SymbolIndexService] Creating database instance at ${dbPath}`)
 				this.db = await SymbolIndexDatabase.create(dbPath)
+
+				// Initialize build system awareness
+				await CompilationDatabaseLoader.getInstance().initialize(this.projectRoot)
 			}
 
 			Logger.info("[SymbolIndexService] Starting full scan")
@@ -289,7 +293,8 @@ export class SymbolIndexService {
 							this.scanQueue.push({ absolutePath: entryAbsPath, relPath: entryRelPath })
 						}
 					} else if (stats.isFile()) {
-						if (this.shouldIndexFile(relPath)) {
+						const ext = path.extname(relPath).toLowerCase().slice(1)
+						if (SymbolIndexService.SUPPORTED_EXTENSIONS.includes(ext)) {
 							filesChecked++
 							const existing = this.db?.getFileMetadata(relPath)
 							const mtimeSecs = existing ? Math.floor(existing.mtime / 1000) : 0
@@ -316,7 +321,7 @@ export class SymbolIndexService {
 							limit(async () => {
 								if (this.pendingUpdates.has(file.absolutePath)) return null
 								try {
-									const entry = await this.indexFile(file.absolutePath, languageParsers)
+									const entry = await this.indexFile(file.absolutePath, file.relPath, languageParsers)
 									return entry ? { file, entry } : null
 								} catch (error) {
 									Logger.error(`Error indexing file ${file.absolutePath}:`, error)
@@ -350,15 +355,15 @@ export class SymbolIndexService {
 
 		Logger.info(`Symbol index scan complete. Checked ${filesChecked} files, re-indexed ${filesIndexed} files.`)
 	}
+
 	private async indexFile(
 		absolutePath: string,
+		relPath: string,
 		languageParsers: Record<string, { parser: Parser; query: Parser.Query }>,
 	): Promise<FileIndexEntry | null> {
 		try {
 			const stats = await fs.stat(absolutePath)
-			if (stats.size > SymbolIndexService.MAX_FILE_SIZE) {
-				return null
-			}
+			if (stats.size > SymbolIndexService.MAX_FILE_SIZE) return null
 
 			const fileContent = await fs.readFile(absolutePath, "utf8")
 			const ext = path.extname(absolutePath).toLowerCase().slice(1)
@@ -376,19 +381,15 @@ export class SymbolIndexService {
 
 				for (const capture of captures) {
 					const { node, name } = capture
-					if (absolutePath.endsWith("src/core/task/index.ts")) {
+					if (name === "name.reference" || name.includes("name.definition") || name.includes("name.declaration") || name === "definition.import") {
 						const text = fileContent.slice(node.startIndex, node.endIndex)
-						if (text === "getEnvironmentDetails" || text === "loadContext") {
-							Logger.info(`[SymbolIndexService] Capture for ${text}: ${name}`)
-						}
-					}
-					if (name === "name.reference" || name.includes("name.definition") || name.includes("name.declaration")) {
-						const text = fileContent.slice(node.startIndex, node.endIndex)
-						let type: "d" | "r" | "a" = "r"
+						let type: "d" | "r" | "a" | "i" = "r"
 						if (name.includes("name.definition")) {
 							type = "d"
 						} else if (name.includes("name.declaration")) {
 							type = "a"
+						} else if (name === "definition.import") {
+							type = "i"
 						}
 
 						symbols.push({
@@ -400,15 +401,34 @@ export class SymbolIndexService {
 					}
 				}
 
+				// Clean up tree memory
+				tree.delete()
+
+				// Post-process symbols to resolve dependencies (C/C++ specific)
+				const imports = symbols.filter((s) => s.t === "i")
+				if (imports.length > 0) {
+					const sourceDir = path.dirname(absolutePath)
+					const compDb = CompilationDatabaseLoader.getInstance()
+					for (const imp of imports) {
+						// String literals in tree-sitter include quotes
+						const includeName = imp.n.replace(/^["']|["']$/g, "")
+						const buddyPath = await compDb.resolveInclude(includeName, sourceDir)
+						if (buddyPath) {
+							const relBuddy = path.relative(this.projectRoot, buddyPath)
+							this.db?.addDependency(relPath, relBuddy)
+						}
+					}
+				}
+
 				return {
-					mtime: stats.mtimeMs,
+					mtime: Math.floor(stats.mtimeMs),
 					size: stats.size,
 					hash: "",
 					symbols,
 				}
 			} finally {
 				if (tree) {
-					tree.delete()
+					try { tree.delete() } catch {}
 				}
 			}
 		} catch (error) {
@@ -417,7 +437,7 @@ export class SymbolIndexService {
 		}
 	}
 
-		public getSymbols(
+	public getSymbols(
 		symbol: string,
 		type?: "definition" | "reference" | "declaration",
 		limit?: number,
@@ -433,6 +453,10 @@ export class SymbolIndexService {
 		return this.getSymbols(symbol, "definition", limit)
 	}
 
+	public getDependencies(relPath: string): string[] {
+		return this.db?.getDependencies(relPath) || []
+	}
+
 	async updateFile(absolutePath: string): Promise<void> {
 		const relPath = path.relative(this.projectRoot, absolutePath)
 		if (!this.shouldIndexFile(relPath)) return
@@ -442,7 +466,7 @@ export class SymbolIndexService {
 
 		try {
 			const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-			const entry = await this.indexFile(absolutePath, languageParsers)
+			const entry = await this.indexFile(absolutePath, relPath, languageParsers)
 			if (entry && this.db) {
 				this.db.updateFileSymbols(relPath, entry.mtime, entry.size, entry.symbols)
 				this.scheduleSave()
@@ -468,7 +492,7 @@ export class SymbolIndexService {
 		this.saveTimeout = setTimeout(() => {
 			this.saveTimeout = null
 			if (this.db) {
-				this.db.save()
+				void this.db.save()
 			}
 		}, SymbolIndexService.SAVE_DEBOUNCE_MS)
 	}

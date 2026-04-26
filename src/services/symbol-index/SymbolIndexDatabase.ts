@@ -4,6 +4,7 @@ import type { Database } from "sql.js"
 import initSqlJs from "sql.js"
 import { Logger } from "../../shared/services/Logger"
 import { SymbolLocation } from "./SymbolIndexService"
+import { fileExistsAtPath } from "@utils/fs"
 
 export interface FileMetadata {
 	mtime: number
@@ -23,9 +24,9 @@ export class SymbolIndexDatabase {
 	public static async create(dbPath: string): Promise<SymbolIndexDatabase> {
 		Logger.info(`[SymbolIndexDatabase] Initializing database at ${dbPath}`)
 		const dbDir = path.dirname(dbPath)
-		if (!fs.existsSync(dbDir)) {
+		if (!(await fileExistsAtPath(dbDir))) {
 			Logger.info(`[SymbolIndexDatabase] Creating database directory: ${dbDir}`)
-			fs.mkdirSync(dbDir, { recursive: true })
+			await fs.promises.mkdir(dbDir, { recursive: true })
 		}
 
 		const SQL = await initSqlJs({
@@ -34,7 +35,7 @@ export class SymbolIndexDatabase {
 		let db: Database
 
 		try {
-			if (fs.existsSync(dbPath)) {
+			if (await fileExistsAtPath(dbPath)) {
 				Logger.info(`[SymbolIndexDatabase] Loading existing database from ${dbPath}`)
 				const fileBuffer = await fs.promises.readFile(dbPath)
 				db = new SQL.Database(fileBuffer)
@@ -48,17 +49,17 @@ export class SymbolIndexDatabase {
 		}
 
 		const instance = new SymbolIndexDatabase(db, dbPath)
-		instance.initialize()
+		await instance.initialize()
 		return instance
 	}
 
-	private initialize(): void {
+	private async initialize(): Promise<void> {
 		Logger.info("[SymbolIndexDatabase] Running schema initialization")
 		this.db.run("PRAGMA foreign_keys = ON")
 		this.db.run("PRAGMA page_size = 4096")
 		this.db.run("PRAGMA cache_size = -2000") // 2MB cache
 
-		// Create files table with ID
+		// Create files table
 		this.db.run(`
 			CREATE TABLE IF NOT EXISTS files (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +69,7 @@ export class SymbolIndexDatabase {
 			);
 		`)
 
-		// Create names table for normalization (deduplication)
+		// Create names table
 		this.db.run(`
 			CREATE TABLE IF NOT EXISTS names (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +77,7 @@ export class SymbolIndexDatabase {
 			);
 		`)
 
-		// Create kinds table for normalization
+		// Create kinds table
 		this.db.run(`
 			CREATE TABLE IF NOT EXISTS kinds (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,7 +85,7 @@ export class SymbolIndexDatabase {
 			);
 		`)
 
-		// Create symbols table referencing file_id, name_id, and kind_id
+		// Create symbols table
 		this.db.run(`
 			CREATE TABLE IF NOT EXISTS symbols (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,30 +103,35 @@ export class SymbolIndexDatabase {
 			);
 		`)
 
+		// Create dependencies table for includes/imports
+		this.db.run(`
+			CREATE TABLE IF NOT EXISTS dependencies (
+				file_id INTEGER NOT NULL,
+				dependency_id INTEGER NOT NULL,
+				FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+				FOREIGN KEY (dependency_id) REFERENCES files(id) ON DELETE CASCADE,
+				PRIMARY KEY (file_id, dependency_id)
+			);
+		`)
+
 		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_name_id ON symbols(name_id)")
 		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_name_type ON symbols(name_id, type)")
 		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id)")
+		this.db.run("CREATE INDEX IF NOT EXISTS idx_dependencies_file_id ON dependencies(file_id)")
 
 		// Perform migration if needed (detect old schema)
 		try {
-			const checkStmt = this.db.prepare("PRAGMA table_info(symbols)")
-			let hasNameId = false
-			while (checkStmt.step()) {
-				const column = checkStmt.getAsObject() as any
-				if (column.name === "name_id") {
-					hasNameId = true
-					break
-				}
-			}
+			const checkStmt = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='dependencies'")
+			const hasDependencies = checkStmt.step()
 			checkStmt.free()
 
-			if (!hasNameId) {
-				Logger.info("[SymbolIndexDatabase] Migrating database to normalized schema (v3)")
+			if (!hasDependencies) {
+				Logger.info("[SymbolIndexDatabase] Migrating database to normalized schema (v4)")
 				this.db.run("DROP TABLE IF EXISTS symbols")
 				this.db.run("DROP TABLE IF EXISTS files")
 				this.db.run("DROP TABLE IF EXISTS names")
 				this.db.run("DROP TABLE IF EXISTS kinds")
-				this.initialize() // Re-run to create new tables
+				await this.initialize() // Re-run to create new tables
 				return
 			}
 		} catch (error) {
@@ -193,7 +199,7 @@ export class SymbolIndexDatabase {
 		size: number,
 		symbols: Array<{
 			n: string
-			t: "d" | "r" | "a"
+			t: "d" | "r" | "a" | "i" // i = import/include
 			k?: string
 			r: [number, number, number, number]
 		}>,
@@ -203,17 +209,11 @@ export class SymbolIndexDatabase {
 		try {
 			// Ensure file exists and get its ID
 			this.db.run("INSERT OR REPLACE INTO files (path, mtime, size) VALUES (?, ?, ?)", [relPath, mtime, size])
-			const idStmt = this.db.prepare("SELECT id FROM files WHERE path = ?")
-			idStmt.bind([relPath])
-			if (!idStmt.step()) {
-				idStmt.free()
-				throw new Error(`Failed to get ID for file: ${relPath}`)
-			}
-			const fileId = (idStmt.getAsObject() as any).id
-			idStmt.free()
+			const fileId = this.getFileId(relPath)
 
-			// Clear old symbols for this file
+			// Clear old symbols and dependencies for this file
 			this.db.run("DELETE FROM symbols WHERE file_id = ?", [fileId])
+			this.db.run("DELETE FROM dependencies WHERE file_id = ?", [fileId])
 
 			const insertSymbol = this.db.prepare(`
 				INSERT INTO symbols (file_id, name_id, type, kind_id, start_line, start_column, end_line, end_column)
@@ -227,7 +227,7 @@ export class SymbolIndexDatabase {
 				insertSymbol.run([
 					fileId,
 					nameId,
-					sym.t, // "d", "r", or "a"
+					sym.t, // "d", "r", "a", or "i"
 					kindId,
 					sym.r[0],
 					sym.r[1],
@@ -243,6 +243,50 @@ export class SymbolIndexDatabase {
 		}
 	}
 
+	private getFileId(relPath: string): number {
+		const idStmt = this.db.prepare("SELECT id FROM files WHERE path = ?")
+		idStmt.bind([relPath])
+		if (!idStmt.step()) {
+			idStmt.free()
+			throw new Error(`Failed to get ID for file: ${relPath}`)
+		}
+		const fileId = (idStmt.getAsObject() as any).id
+		idStmt.free()
+		return fileId
+	}
+
+	public addDependency(relPath: string, dependencyRelPath: string): void {
+		this.isDirty = true
+		try {
+			const fileId = this.getFileId(relPath)
+			// Dependency might not be indexed yet, but it must exist in the files table for the FK to work.
+			// If it's not indexed, we insert a placeholder record.
+			this.db.run("INSERT OR IGNORE INTO files (path, mtime, size) VALUES (?, 0, 0)", [dependencyRelPath])
+			const depId = this.getFileId(dependencyRelPath)
+			this.db.run("INSERT OR IGNORE INTO dependencies (file_id, dependency_id) VALUES (?, ?)", [fileId, depId])
+		} catch (error) {
+			Logger.warn(`[SymbolIndexDatabase] Failed to add dependency ${relPath} -> ${dependencyRelPath}:`, error)
+		}
+	}
+
+	public getDependencies(relPath: string): string[] {
+		try {
+			const fileId = this.getFileId(relPath)
+			const stmt = this.db.prepare(
+				"SELECT f.path FROM dependencies d JOIN files f ON d.dependency_id = f.id WHERE d.file_id = ?",
+			)
+			stmt.bind([fileId])
+			const results: string[] = []
+			while (stmt.step()) {
+				results.push((stmt.getAsObject() as any).path)
+			}
+			stmt.free()
+			return results
+		} catch {
+			return []
+		}
+	}
+
 	public updateFilesSymbolsBatch(
 		updates: Array<{
 			relPath: string
@@ -250,7 +294,7 @@ export class SymbolIndexDatabase {
 			size: number
 			symbols: Array<{
 				n: string
-				t: "d" | "r" | "a"
+				t: "d" | "r" | "a" | "i"
 				k?: string
 				r: [number, number, number, number]
 			}>
@@ -280,8 +324,9 @@ export class SymbolIndexDatabase {
 				const fileId = (idStmt.getAsObject() as any).id
 				idStmt.free()
 
-				// Clear old symbols for this file
+				// Clear old symbols and dependencies for this file
 				this.db.run("DELETE FROM symbols WHERE file_id = ?", [fileId])
+				this.db.run("DELETE FROM dependencies WHERE file_id = ?", [fileId])
 
 				for (const sym of update.symbols) {
 					const nameId = this.getOrCreateId("names", sym.n)
@@ -290,7 +335,7 @@ export class SymbolIndexDatabase {
 					insertSymbol.run([
 						fileId,
 						nameId,
-						sym.t, // "d", "r", or "a"
+						sym.t, // "d", "r", "a", or "i"
 						kindId,
 						sym.r[0],
 						sym.r[1],
@@ -329,7 +374,7 @@ export class SymbolIndexDatabase {
 		if (type) {
 			query += " AND s.type = ?"
 			// Map public type names to internal compact format
-			const typeMap = {
+			const typeMap: Record<string, string> = {
 				definition: "d",
 				reference: "r",
 				declaration: "a",
@@ -359,7 +404,7 @@ export class SymbolIndexDatabase {
 				startColumn: row.start_column,
 				endLine: row.end_line,
 				endColumn: row.end_column,
-				type: reverseTypeMap[row.type] || "reference",
+				type: (reverseTypeMap[row.type] || "reference") as any,
 				kind: row.kind || undefined,
 			})
 		}
@@ -368,7 +413,7 @@ export class SymbolIndexDatabase {
 	}
 
 	public close(): void {
-		this.save()
+		void this.save()
 		this.db.close()
 	}
 }

@@ -103,4 +103,7 @@ export default `
 ;; References
 (identifier) @name.reference
 (type_identifier) @name.reference
+
+;; Includes
+(preproc_include path: (string_literal) @name.reference.file) @definition.import
 `
