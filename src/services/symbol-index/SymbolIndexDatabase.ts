@@ -16,6 +16,13 @@ export class SymbolIndexDatabase {
 	private dbPath: string
 	private isDirty = false
 
+	// Cached prepared statements for high-performance loops
+	private insertNameStmt: any | null = null
+	private getNameIdStmt: any | null = null
+	private insertKindStmt: any | null = null
+	private getKindIdStmt: any | null = null
+	private insertSymbolStmt: any | null = null
+
 	private constructor(db: Database, dbPath: string) {
 		this.db = db
 		this.dbPath = dbPath
@@ -58,6 +65,7 @@ export class SymbolIndexDatabase {
 		this.db.run("PRAGMA foreign_keys = ON")
 		this.db.run("PRAGMA page_size = 4096")
 		this.db.run("PRAGMA cache_size = -2000") // 2MB cache
+		this.db.run("PRAGMA journal_mode = MEMORY") // Speed up transactions in WASM
 
 		// Create files table
 		this.db.run(`
@@ -118,6 +126,16 @@ export class SymbolIndexDatabase {
 		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_name_type ON symbols(name_id, type)")
 		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id)")
 		this.db.run("CREATE INDEX IF NOT EXISTS idx_dependencies_file_id ON dependencies(file_id)")
+
+		// Prepare reusable statements
+		this.insertNameStmt = this.db.prepare("INSERT OR IGNORE INTO names (text) VALUES (?)")
+		this.getNameIdStmt = this.db.prepare("SELECT id FROM names WHERE text = ?")
+		this.insertKindStmt = this.db.prepare("INSERT OR IGNORE INTO kinds (text) VALUES (?)")
+		this.getKindIdStmt = this.db.prepare("SELECT id FROM kinds WHERE text = ?")
+		this.insertSymbolStmt = this.db.prepare(`
+			INSERT INTO symbols (file_id, name_id, type, kind_id, start_line, start_column, end_line, end_column)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`)
 
 		// Perform migration if needed (detect old schema)
 		try {
@@ -181,19 +199,25 @@ export class SymbolIndexDatabase {
 	}
 
 	private getOrCreateId(table: "names" | "kinds", text: string): number {
-		this.db.run(`INSERT OR IGNORE INTO ${table} (text) VALUES (?)`, [text])
-		const stmt = this.db.prepare(`SELECT id FROM ${table} WHERE text = ?`)
-		stmt.bind([text])
-		if (!stmt.step()) {
-			stmt.free()
+		const insertStmt = table === "names" ? this.insertNameStmt : this.insertKindStmt
+		const getStmt = table === "names" ? this.getNameIdStmt : this.getKindIdStmt
+
+		insertStmt.bind([text])
+		insertStmt.step()
+		insertStmt.reset()
+
+		getStmt.bind([text])
+		if (!getStmt.step()) {
+			getStmt.reset()
 			throw new Error(`Failed to get ID from ${table} for text: ${text}`)
 		}
-		const id = (stmt.getAsObject() as any).id
-		stmt.free()
+		const id = (getStmt.getAsObject() as any).id
+		getStmt.reset()
+
 		return id
 	}
 
-	public updateFileSymbols(
+	public async updateFileSymbols(
 		relPath: string,
 		mtime: number,
 		size: number,
@@ -201,9 +225,9 @@ export class SymbolIndexDatabase {
 			n: string
 			t: "d" | "r" | "a" | "i" // i = import/include
 			k?: string
-			r: [number, number, number, number]
+			r: [number, number, number, number] | Uint32Array
 		}>,
-	): void {
+	): Promise<void> {
 		this.isDirty = true
 		this.db.run("BEGIN TRANSACTION")
 		try {
@@ -215,27 +239,23 @@ export class SymbolIndexDatabase {
 			this.db.run("DELETE FROM symbols WHERE file_id = ?", [fileId])
 			this.db.run("DELETE FROM dependencies WHERE file_id = ?", [fileId])
 
-			const insertSymbol = this.db.prepare(`
-				INSERT INTO symbols (file_id, name_id, type, kind_id, start_line, start_column, end_line, end_column)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-			`)
-
 			for (const sym of symbols) {
 				const nameId = this.getOrCreateId("names", sym.n)
 				const kindId = sym.k ? this.getOrCreateId("kinds", sym.k) : null
 
-				insertSymbol.run([
+				const range = Array.isArray(sym.r) ? sym.r : [sym.r[0], sym.r[1], sym.r[2], sym.r[3]]
+
+				this.insertSymbolStmt.run([
 					fileId,
 					nameId,
 					sym.t, // "d", "r", "a", or "i"
 					kindId,
-					sym.r[0],
-					sym.r[1],
-					sym.r[2],
-					sym.r[3],
+					range[0],
+					range[1],
+					range[2],
+					range[3],
 				])
 			}
-			insertSymbol.free()
 			this.db.run("COMMIT")
 		} catch (error) {
 			this.db.run("ROLLBACK")
@@ -296,18 +316,13 @@ export class SymbolIndexDatabase {
 				n: string
 				t: "d" | "r" | "a" | "i"
 				k?: string
-				r: [number, number, number, number]
+				r: [number, number, number, number] | Uint32Array
 			}>
 		}>,
 	): void {
 		this.isDirty = true
 		this.db.run("BEGIN TRANSACTION")
 		try {
-			const insertSymbol = this.db.prepare(`
-				INSERT INTO symbols (file_id, name_id, type, kind_id, start_line, start_column, end_line, end_column)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-			`)
-
 			for (const update of updates) {
 				// Ensure file exists and get its ID
 				this.db.run("INSERT OR REPLACE INTO files (path, mtime, size) VALUES (?, ?, ?)", [
@@ -332,19 +347,20 @@ export class SymbolIndexDatabase {
 					const nameId = this.getOrCreateId("names", sym.n)
 					const kindId = sym.k ? this.getOrCreateId("kinds", sym.k) : null
 
-					insertSymbol.run([
+					const range = Array.isArray(sym.r) ? sym.r : [sym.r[0], sym.r[1], sym.r[2], sym.r[3]]
+
+					this.insertSymbolStmt.run([
 						fileId,
 						nameId,
 						sym.t, // "d", "r", "a", or "i"
 						kindId,
-						sym.r[0],
-						sym.r[1],
-						sym.r[2],
-						sym.r[3],
+						range[0],
+						range[1],
+						range[2],
+						range[3],
 					])
 				}
 			}
-			insertSymbol.free()
 			this.db.run("COMMIT")
 		} catch (error) {
 			this.db.run("ROLLBACK")
@@ -414,6 +430,11 @@ export class SymbolIndexDatabase {
 
 	public close(): void {
 		void this.save()
+		this.insertNameStmt?.free()
+		this.getNameIdStmt?.free()
+		this.insertKindStmt?.free()
+		this.getKindIdStmt?.free()
+		this.insertSymbolStmt?.free()
 		this.db.close()
 	}
 }
