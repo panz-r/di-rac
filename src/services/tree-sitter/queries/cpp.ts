@@ -100,6 +100,25 @@ export default `
   (#select-adjacent! @doc @definition.symbol)
 )
 
+;; Macros
+(
+  (comment)* @doc
+  .
+  (preproc_def
+    name: (identifier) @name.definition.macro) @definition.macro
+  (#strip! @doc "^[/\\\\*!\\\\s]+|[\\\\*!\\\\s]+$")
+  (#select-adjacent! @doc @definition.macro)
+)
+
+(
+  (comment)* @doc
+  .
+  (preproc_function_def
+    name: (identifier) @name.definition.macro) @definition.macro
+  (#strip! @doc "^[/\\\\*!\\\\s]+|[\\\\*!\\\\s]+$")
+  (#select-adjacent! @doc @definition.macro)
+)
+
 ;; Map @definition.symbol to specific kinds
 ((function_definition declarator: [
   (function_declarator declarator: (identifier))

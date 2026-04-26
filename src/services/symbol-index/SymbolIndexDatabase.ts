@@ -51,16 +51,21 @@ export class SymbolIndexDatabase {
 		Logger.info("[SymbolIndexDatabase] Running schema initialization")
 		this.db.run("PRAGMA foreign_keys = ON")
 
+		// Create files table with ID
 		this.db.run(`
 			CREATE TABLE IF NOT EXISTS files (
-				path TEXT PRIMARY KEY,
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				path TEXT UNIQUE NOT NULL,
 				mtime INTEGER NOT NULL,
 				size INTEGER NOT NULL
 			);
+		`)
 
+		// Create symbols table referencing file_id
+		this.db.run(`
 			CREATE TABLE IF NOT EXISTS symbols (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				file_path TEXT NOT NULL,
+				file_id INTEGER NOT NULL,
 				name TEXT NOT NULL,
 				type TEXT NOT NULL,
 				kind TEXT,
@@ -68,13 +73,40 @@ export class SymbolIndexDatabase {
 				start_column INTEGER NOT NULL,
 				end_line INTEGER NOT NULL,
 				end_column INTEGER NOT NULL,
-				FOREIGN KEY (file_path) REFERENCES files(path) ON DELETE CASCADE
+				FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
 			);
-
-			CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
-			CREATE INDEX IF NOT EXISTS idx_symbols_name_type ON symbols(name, type);
-			CREATE INDEX IF NOT EXISTS idx_symbols_file_path ON symbols(file_path);
 		`)
+
+		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
+		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_name_type ON symbols(name, type)")
+		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id)")
+
+		// Perform migration if needed (detect old schema)
+		try {
+			const checkStmt = this.db.prepare("PRAGMA table_info(symbols)")
+			let hasFilePath = false
+			while (checkStmt.step()) {
+				const column = checkStmt.getAsObject() as any
+				if (column.name === "file_path") {
+					hasFilePath = true
+					break
+				}
+			}
+			checkStmt.free()
+
+			if (hasFilePath) {
+				Logger.info("[SymbolIndexDatabase] Migrating database to normalized schema")
+				// The easiest "migration" for a cache is to clear it and let it re-index
+				// This avoids complex SQL migration logic while ensuring a clean state
+				this.db.run("DROP TABLE symbols")
+				this.db.run("DROP TABLE files")
+				this.initialize() // Re-run to create new tables
+				return
+			}
+		} catch (error) {
+			Logger.warn("[SymbolIndexDatabase] Migration check failed, ignoring:", error)
+		}
+
 		Logger.info("[SymbolIndexDatabase] Schema initialization complete")
 	}
 
@@ -127,17 +159,28 @@ export class SymbolIndexDatabase {
 		this.isDirty = true
 		this.db.run("BEGIN TRANSACTION")
 		try {
-			this.db.run("DELETE FROM symbols WHERE file_path = ?", [relPath])
+			// Ensure file exists and get its ID
 			this.db.run("INSERT OR REPLACE INTO files (path, mtime, size) VALUES (?, ?, ?)", [relPath, mtime, size])
+			const idStmt = this.db.prepare("SELECT id FROM files WHERE path = ?")
+			idStmt.bind([relPath])
+			if (!idStmt.step()) {
+				idStmt.free()
+				throw new Error(`Failed to get ID for file: ${relPath}`)
+			}
+			const fileId = (idStmt.getAsObject() as any).id
+			idStmt.free()
+
+			// Clear old symbols for this file
+			this.db.run("DELETE FROM symbols WHERE file_id = ?", [fileId])
 
 			const insertSymbol = this.db.prepare(`
-				INSERT INTO symbols (file_path, name, type, kind, start_line, start_column, end_line, end_column)
+				INSERT INTO symbols (file_id, name, type, kind, start_line, start_column, end_line, end_column)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			`)
 
 			for (const sym of symbols) {
 				insertSymbol.run([
-					relPath,
+					fileId,
 					sym.n,
 					sym.t, // "d", "r", or "a"
 					sym.k || null,
@@ -172,21 +215,32 @@ export class SymbolIndexDatabase {
 		this.db.run("BEGIN TRANSACTION")
 		try {
 			const insertSymbol = this.db.prepare(`
-				INSERT INTO symbols (file_path, name, type, kind, start_line, start_column, end_line, end_column)
+				INSERT INTO symbols (file_id, name, type, kind, start_line, start_column, end_line, end_column)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			`)
 
 			for (const update of updates) {
-				this.db.run("DELETE FROM symbols WHERE file_path = ?", [update.relPath])
+				// Ensure file exists and get its ID
 				this.db.run("INSERT OR REPLACE INTO files (path, mtime, size) VALUES (?, ?, ?)", [
 					update.relPath,
 					update.mtime,
 					update.size,
 				])
+				const idStmt = this.db.prepare("SELECT id FROM files WHERE path = ?")
+				idStmt.bind([update.relPath])
+				if (!idStmt.step()) {
+					idStmt.free()
+					continue
+				}
+				const fileId = (idStmt.getAsObject() as any).id
+				idStmt.free()
+
+				// Clear old symbols for this file
+				this.db.run("DELETE FROM symbols WHERE file_id = ?", [fileId])
 
 				for (const sym of update.symbols) {
 					insertSymbol.run([
-						update.relPath,
+						fileId,
 						sym.n,
 						sym.t, // "d", "r", or "a"
 						sym.k || null,
@@ -216,11 +270,13 @@ export class SymbolIndexDatabase {
 		limit?: number,
 	): SymbolLocation[] {
 		let query =
-			"SELECT file_path, name, type, kind, start_line, start_column, end_line, end_column FROM symbols WHERE name = ?"
+			"SELECT f.path as file_path, s.name, s.type, s.kind, s.start_line, s.start_column, s.end_line, s.end_column " +
+			"FROM symbols s JOIN files f ON s.file_id = f.id " +
+			"WHERE s.name = ?"
 		const params: any[] = [name]
 
 		if (type) {
-			query += " AND type = ?"
+			query += " AND s.type = ?"
 			// Map public type names to internal compact format
 			const typeMap = {
 				definition: "d",

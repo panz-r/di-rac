@@ -54,6 +54,25 @@ export default `
   (#select-adjacent! @doc @definition.function)
 )
 
+;; Macros
+(
+  (comment)* @doc
+  .
+  (preproc_def
+    name: (identifier) @name.definition.macro) @definition.macro
+  (#strip! @doc "^[/\\\\*!\\\\s]+|[\\\\*!\\\\s]+$")
+  (#select-adjacent! @doc @definition.macro)
+)
+
+(
+  (comment)* @doc
+  .
+  (preproc_function_def
+    name: (identifier) @name.definition.macro) @definition.macro
+  (#strip! @doc "^[/\\\\*!\\\\s]+|[\\\\*!\\\\s]+$")
+  (#select-adjacent! @doc @definition.macro)
+)
+
 ;; Function Prototypes
 (
   (comment)* @doc
