@@ -33,12 +33,17 @@ export class SymbolIndexDatabase {
 		})
 		let db: Database
 
-		if (fs.existsSync(dbPath)) {
-			Logger.info(`[SymbolIndexDatabase] Loading existing database from ${dbPath}`)
-			const fileBuffer = fs.readFileSync(dbPath)
-			db = new SQL.Database(fileBuffer)
-		} else {
-			Logger.info(`[SymbolIndexDatabase] Creating new database`)
+		try {
+			if (fs.existsSync(dbPath)) {
+				Logger.info(`[SymbolIndexDatabase] Loading existing database from ${dbPath}`)
+				const fileBuffer = await fs.promises.readFile(dbPath)
+				db = new SQL.Database(fileBuffer)
+			} else {
+				Logger.info(`[SymbolIndexDatabase] Creating new database`)
+				db = new SQL.Database()
+			}
+		} catch (error) {
+			Logger.error(`[SymbolIndexDatabase] Failed to load database, creating new:`, error)
 			db = new SQL.Database()
 		}
 
@@ -50,6 +55,8 @@ export class SymbolIndexDatabase {
 	private initialize(): void {
 		Logger.info("[SymbolIndexDatabase] Running schema initialization")
 		this.db.run("PRAGMA foreign_keys = ON")
+		this.db.run("PRAGMA page_size = 4096")
+		this.db.run("PRAGMA cache_size = -2000") // 2MB cache
 
 		// Create files table with ID
 		this.db.run(`
@@ -61,45 +68,63 @@ export class SymbolIndexDatabase {
 			);
 		`)
 
-		// Create symbols table referencing file_id
+		// Create names table for normalization (deduplication)
+		this.db.run(`
+			CREATE TABLE IF NOT EXISTS names (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				text TEXT UNIQUE NOT NULL
+			);
+		`)
+
+		// Create kinds table for normalization
+		this.db.run(`
+			CREATE TABLE IF NOT EXISTS kinds (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				text TEXT UNIQUE NOT NULL
+			);
+		`)
+
+		// Create symbols table referencing file_id, name_id, and kind_id
 		this.db.run(`
 			CREATE TABLE IF NOT EXISTS symbols (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				file_id INTEGER NOT NULL,
-				name TEXT NOT NULL,
+				name_id INTEGER NOT NULL,
 				type TEXT NOT NULL,
-				kind TEXT,
+				kind_id INTEGER,
 				start_line INTEGER NOT NULL,
 				start_column INTEGER NOT NULL,
 				end_line INTEGER NOT NULL,
 				end_column INTEGER NOT NULL,
-				FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+				FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+				FOREIGN KEY (name_id) REFERENCES names(id) ON DELETE CASCADE,
+				FOREIGN KEY (kind_id) REFERENCES kinds(id) ON DELETE SET NULL
 			);
 		`)
 
-		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
-		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_name_type ON symbols(name, type)")
+		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_name_id ON symbols(name_id)")
+		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_name_type ON symbols(name_id, type)")
 		this.db.run("CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id)")
 
 		// Perform migration if needed (detect old schema)
 		try {
 			const checkStmt = this.db.prepare("PRAGMA table_info(symbols)")
-			let hasFilePath = false
+			let hasNameId = false
 			while (checkStmt.step()) {
 				const column = checkStmt.getAsObject() as any
-				if (column.name === "file_path") {
-					hasFilePath = true
+				if (column.name === "name_id") {
+					hasNameId = true
 					break
 				}
 			}
 			checkStmt.free()
 
-			if (hasFilePath) {
-				Logger.info("[SymbolIndexDatabase] Migrating database to normalized schema")
-				// The easiest "migration" for a cache is to clear it and let it re-index
-				// This avoids complex SQL migration logic while ensuring a clean state
-				this.db.run("DROP TABLE symbols")
-				this.db.run("DROP TABLE files")
+			if (!hasNameId) {
+				Logger.info("[SymbolIndexDatabase] Migrating database to normalized schema (v3)")
+				this.db.run("DROP TABLE IF EXISTS symbols")
+				this.db.run("DROP TABLE IF EXISTS files")
+				this.db.run("DROP TABLE IF EXISTS names")
+				this.db.run("DROP TABLE IF EXISTS kinds")
 				this.initialize() // Re-run to create new tables
 				return
 			}
@@ -110,16 +135,20 @@ export class SymbolIndexDatabase {
 		Logger.info("[SymbolIndexDatabase] Schema initialization complete")
 	}
 
-	public save(): void {
+	public async save(): Promise<void> {
 		if (!this.isDirty) {
 			return
 		}
-		Logger.info(`[SymbolIndexDatabase] Saving database to ${this.dbPath}`)
-		const data = this.db.export()
-		const buffer = Buffer.from(data)
-		fs.writeFileSync(this.dbPath, buffer)
-		this.isDirty = false
-		Logger.info(`[SymbolIndexDatabase] Database saved successfully`)
+		try {
+			Logger.info(`[SymbolIndexDatabase] Saving database to ${this.dbPath}`)
+			const data = this.db.export()
+			const buffer = Buffer.from(data)
+			await fs.promises.writeFile(this.dbPath, buffer)
+			this.isDirty = false
+			Logger.info(`[SymbolIndexDatabase] Database saved successfully`)
+		} catch (error) {
+			Logger.error(`[SymbolIndexDatabase] Failed to save database:`, error)
+		}
 	}
 
 	public getFileMetadata(relPath: string): FileMetadata | null {
@@ -143,6 +172,19 @@ export class SymbolIndexDatabase {
 		}
 		stmt.free()
 		return map
+	}
+
+	private getOrCreateId(table: "names" | "kinds", text: string): number {
+		this.db.run(`INSERT OR IGNORE INTO ${table} (text) VALUES (?)`, [text])
+		const stmt = this.db.prepare(`SELECT id FROM ${table} WHERE text = ?`)
+		stmt.bind([text])
+		if (!stmt.step()) {
+			stmt.free()
+			throw new Error(`Failed to get ID from ${table} for text: ${text}`)
+		}
+		const id = (stmt.getAsObject() as any).id
+		stmt.free()
+		return id
 	}
 
 	public updateFileSymbols(
@@ -174,16 +216,19 @@ export class SymbolIndexDatabase {
 			this.db.run("DELETE FROM symbols WHERE file_id = ?", [fileId])
 
 			const insertSymbol = this.db.prepare(`
-				INSERT INTO symbols (file_id, name, type, kind, start_line, start_column, end_line, end_column)
+				INSERT INTO symbols (file_id, name_id, type, kind_id, start_line, start_column, end_line, end_column)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			`)
 
 			for (const sym of symbols) {
+				const nameId = this.getOrCreateId("names", sym.n)
+				const kindId = sym.k ? this.getOrCreateId("kinds", sym.k) : null
+
 				insertSymbol.run([
 					fileId,
-					sym.n,
+					nameId,
 					sym.t, // "d", "r", or "a"
-					sym.k || null,
+					kindId,
 					sym.r[0],
 					sym.r[1],
 					sym.r[2],
@@ -215,7 +260,7 @@ export class SymbolIndexDatabase {
 		this.db.run("BEGIN TRANSACTION")
 		try {
 			const insertSymbol = this.db.prepare(`
-				INSERT INTO symbols (file_id, name, type, kind, start_line, start_column, end_line, end_column)
+				INSERT INTO symbols (file_id, name_id, type, kind_id, start_line, start_column, end_line, end_column)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			`)
 
@@ -239,11 +284,14 @@ export class SymbolIndexDatabase {
 				this.db.run("DELETE FROM symbols WHERE file_id = ?", [fileId])
 
 				for (const sym of update.symbols) {
+					const nameId = this.getOrCreateId("names", sym.n)
+					const kindId = sym.k ? this.getOrCreateId("kinds", sym.k) : null
+
 					insertSymbol.run([
 						fileId,
-						sym.n,
+						nameId,
 						sym.t, // "d", "r", or "a"
-						sym.k || null,
+						kindId,
 						sym.r[0],
 						sym.r[1],
 						sym.r[2],
@@ -270,9 +318,12 @@ export class SymbolIndexDatabase {
 		limit?: number,
 	): SymbolLocation[] {
 		let query =
-			"SELECT f.path as file_path, s.name, s.type, s.kind, s.start_line, s.start_column, s.end_line, s.end_column " +
-			"FROM symbols s JOIN files f ON s.file_id = f.id " +
-			"WHERE s.name = ?"
+			"SELECT f.path as file_path, n.text as name, s.type, k.text as kind, s.start_line, s.start_column, s.end_line, s.end_column " +
+			"FROM symbols s " +
+			"JOIN files f ON s.file_id = f.id " +
+			"JOIN names n ON s.name_id = n.id " +
+			"LEFT JOIN kinds k ON s.kind_id = k.id " +
+			"WHERE n.text = ?"
 		const params: any[] = [name]
 
 		if (type) {
