@@ -23,7 +23,8 @@
 export { CommandExecutor } from "./CommandExecutor"
 
 // Export command orchestrator (shared logic)
-export { findLastIndex, orchestrateCommandExecution } from "./CommandOrchestrator"
+export { findLastIndex } from "@shared/array"
+export { orchestrateCommandExecution } from "./CommandOrchestrator"
 
 // Export standalone terminal implementations
 export { StandaloneTerminal } from "./standalone/StandaloneTerminal"

@@ -846,6 +846,11 @@ export class DiracAgent implements acp.Agent {
 
 			// Track what we've sent (use extracted text, not raw JSON)
 			sessionState.partialMessageLastContent.set(messageKey, textContent)
+
+			// Clean up tracking state when the message is complete (not partial)
+			if (!message.partial) {
+				sessionState.partialMessageLastContent.delete(messageKey)
+			}
 		} else {
 			// For non-streaming messages, use the full translator
 			// Check if we already have a toolCallId for this message (from a previous partial update)
@@ -878,9 +883,12 @@ export class DiracAgent implements acp.Agent {
 				sessionState.partialMessageLastContent.set(messageKey, message.text)
 			}
 
-			// Clean up the mapping when the message is complete (not partial)
-			if (!message.partial && result.toolCallId) {
-				sessionState.messageToToolCallId.delete(messageKey)
+			// Clean up tracking state when the message is complete (not partial)
+			if (!message.partial) {
+				sessionState.partialMessageLastContent.delete(messageKey)
+				if (result.toolCallId) {
+					sessionState.messageToToolCallId.delete(messageKey)
+				}
 			}
 		}
 	}
