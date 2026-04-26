@@ -60,9 +60,20 @@ async function disposeTelemetryServices(): Promise<void> {
 
 async function disposeCliContext(ctx: CliContext): Promise<void> {
 	const { ErrorService } = await import("@/services/error/ErrorService")
+	const { SymbolIndexService } = await import("@/services/symbol-index/SymbolIndexService")
+	const { syncWorker } = await import("@/shared/services/worker/sync")
+	const { HookProcessRegistry } = await import("@/core/hooks/HookProcessRegistry")
+	const { HookDiscoveryCache } = await import("@/core/hooks/HookDiscoveryCache")
+	const { DiracTempManager } = await import("@/services/temp")
+
 	await ctx.controller.stateManager.flushPendingState()
 	await ctx.controller.dispose()
 	await ErrorService.get().dispose()
+	SymbolIndexService.getInstance().dispose()
+	await syncWorker().dispose()
+	await HookProcessRegistry.terminateAll()
+	HookDiscoveryCache.getInstance().dispose()
+	DiracTempManager.stopPeriodicCleanup()
 	await disposeTelemetryServices()
 }
 

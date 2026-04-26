@@ -19,6 +19,28 @@ export interface TerminalInfo {
 export class TerminalRegistry {
 	private static terminals: TerminalInfo[] = []
 	private static nextTerminalId = 1
+	private static isInitialized = false
+
+	/**
+	 * Initialize the registry by setting up a global listener for terminal closure.
+	 */
+	static initialize(): void {
+		if (TerminalRegistry.isInitialized) {
+			return
+		}
+
+		try {
+			vscode.window.onDidCloseTerminal((terminal) => {
+				const terminalInfo = TerminalRegistry.terminals.find((t) => t.terminal === terminal)
+				if (terminalInfo) {
+					TerminalRegistry.removeTerminal(terminalInfo.id)
+				}
+			})
+			TerminalRegistry.isInitialized = true
+		} catch (error) {
+			// Window may not be available in some environments
+		}
+	}
 
 	static createTerminal(
 		cwd?: string | vscode.Uri | undefined,

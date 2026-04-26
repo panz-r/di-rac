@@ -319,7 +319,8 @@ export async function orchestrateCommandExecution(
 	}
 
 	const outputLines: string[] = []
-	process.on("line", async (line: string) => {
+
+	const onLine = async (line: string) => {
 		if (didCancelViaUi) {
 			return
 		}
@@ -380,21 +381,9 @@ export async function orchestrateCommandExecution(
 				await say("command_output", line)
 			}
 		}
-	})
+	}
 
-	let completed = false
-	let completionDetails: TerminalCompletionDetails | undefined
-	let completionTimer: NodeJS.Timeout | null = null
-
-	// Start timer to detect if waiting for completion takes too long
-	completionTimer = setTimeout(() => {
-		if (!completed) {
-			telemetryService.captureTerminalHang(TerminalHangStage.WAITING_FOR_COMPLETION, terminalType)
-			completionTimer = null
-		}
-	}, COMPLETION_TIMEOUT_MS)
-
-	process.once("completed", async (details?: TerminalCompletionDetails) => {
+	const onCompleted = async (details?: TerminalCompletionDetails) => {
 		completed = true
 		completionDetails = details
 		// Clear the completion timer
@@ -410,15 +399,29 @@ export async function orchestrateCommandExecution(
 			}
 			await flushBuffer(true)
 		}
-	})
+	}
 
-	process.once("no_shell_integration", async () => {
+	const onNoShellIntegration = async () => {
 		if (showShellIntegrationSuggestion) {
 			await say("shell_integration_warning_with_suggestion")
 		} else {
 			await say("shell_integration_warning")
 		}
-	})
+	}
+
+	const removeListeners = () => {
+		process.removeListener("line", onLine)
+		process.removeListener("completed", onCompleted)
+		process.removeListener("no_shell_integration", onNoShellIntegration)
+	}
+
+	process.on("line", onLine)
+	process.once("completed", onCompleted)
+	process.once("no_shell_integration", onNoShellIntegration)
+
+	let completed = false
+	let completionDetails: TerminalCompletionDetails | undefined
+	let completionTimer: NodeJS.Timeout | null = null
 
 	// Handle timeout if specified, or wait for process to complete
 	if (!didCancelViaUi) {
@@ -473,6 +476,7 @@ export async function orchestrateCommandExecution(
 						}
 
 						// Now resume the process - any new lines will be handled by the background tracker
+						removeListeners()
 						process.continue()
 						// Clean up file-based logging if active before returning
 						cleanupFileBased()
@@ -481,6 +485,7 @@ export async function orchestrateCommandExecution(
 
 					// VSCode terminal mode: no background tracking available
 					// Just continue the process and return timeout result
+					removeListeners()
 					process.continue()
 
 					// Process any output we captured before timeout
@@ -520,6 +525,8 @@ export async function orchestrateCommandExecution(
 
 	// Wait for a short delay to ensure all messages are sent to the webview
 	await setTimeoutPromise(50)
+
+	removeListeners()
 
 	// Clean up file-based logging if active
 	cleanupFileBased()

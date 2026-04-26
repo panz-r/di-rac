@@ -64,6 +64,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	// IMPORTANT: This must be done before any service can be registered
 	setupHostProvider(context)
 
+	// 1.5. Initialize TerminalRegistry proactive cleanup
+	TerminalRegistry.initialize()
+
 	// 2. Clean up legacy data patterns within VSCode's native storage.
 	// Moves workspace→global keys, task history→file, custom instructions→rules, etc.
 	// Must run BEFORE the file export so we copy clean state.
