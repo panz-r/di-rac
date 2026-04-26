@@ -25,8 +25,9 @@ export interface FileIndexEntry {
 		n: string // name
 		t: "d" | "r" | "a" | "i" // type: definition, reference, declaration, or import/include
 		k?: string // kind
-		r: [number, number, number, number] // range: [startLine, startColumn, endLine, endColumn]
+		ri: number // range index in the flat ranges array
 	}>
+	ranges: Uint32Array // Flat array of [startLine, startColumn, endLine, endColumn] for all symbols
 }
 
 export interface PersistentIndex {
@@ -266,19 +267,22 @@ export class SymbolIndexService {
 		Logger.info("[SymbolIndexService] Starting runFullScan")
 		const root = this.projectRoot
 		this.scanQueue = [{ absolutePath: root, relPath: "" }]
+		let queueIndex = 0
 
 		let filesChecked = 0
 		let filesIndexed = 0
 		const limit = pLimit(SymbolIndexService.PARALLEL_PARSING_LIMIT)
 
-		while (this.scanQueue.length > 0) {
+		const supportedExtSet = new Set(SymbolIndexService.SUPPORTED_EXTENSIONS)
+
+		while (queueIndex < this.scanQueue.length) {
 			if (this.projectRoot !== root) return
 
 			const filesToUpdate: { absolutePath: string; relPath: string }[] = []
 			let itemsProcessedInBatch = 0
 
-			while (this.scanQueue.length > 0 && itemsProcessedInBatch < SymbolIndexService.FILES_PER_BATCH) {
-				const { absolutePath, relPath } = this.scanQueue.shift()!
+			while (queueIndex < this.scanQueue.length && itemsProcessedInBatch < SymbolIndexService.FILES_PER_BATCH) {
+				const { absolutePath, relPath } = this.scanQueue[queueIndex++]
 				itemsProcessedInBatch++
 
 				try {
@@ -294,7 +298,7 @@ export class SymbolIndexService {
 						}
 					} else if (stats.isFile()) {
 						const ext = path.extname(relPath).toLowerCase().slice(1)
-						if (SymbolIndexService.SUPPORTED_EXTENSIONS.includes(ext)) {
+						if (supportedExtSet.has(ext)) {
 							filesChecked++
 							const existing = this.db?.getFileMetadata(relPath)
 							const mtimeSecs = existing ? Math.floor(existing.mtime / 1000) : 0
@@ -338,7 +342,12 @@ export class SymbolIndexService {
 								relPath: r.file.relPath,
 								mtime: r.entry.mtime,
 								size: r.entry.size,
-								symbols: r.entry.symbols,
+								symbols: r.entry.symbols.map((s) => ({
+									n: s.n,
+									t: s.t,
+									k: s.k,
+									r: r.entry.ranges.subarray(s.ri, s.ri + 4) as any as [number, number, number, number],
+								})),
 							})),
 						)
 						this.scheduleSave()
@@ -352,6 +361,9 @@ export class SymbolIndexService {
 
 			await new Promise((resolve) => setImmediate(resolve))
 		}
+
+		// Clear queue to free memory
+		this.scanQueue = []
 
 		Logger.info(`Symbol index scan complete. Checked ${filesChecked} files, re-indexed ${filesIndexed} files.`)
 	}
@@ -378,6 +390,8 @@ export class SymbolIndexService {
 
 				const symbols: FileIndexEntry["symbols"] = []
 				const captures = query.captures(tree.rootNode)
+				const ranges = new Uint32Array(captures.length * 4)
+				let symbolCount = 0
 
 				for (const capture of captures) {
 					const { node, name } = capture
@@ -392,12 +406,19 @@ export class SymbolIndexService {
 							type = "i"
 						}
 
+						const rangeIdx = symbolCount * 4
+						ranges[rangeIdx] = node.startPosition.row
+						ranges[rangeIdx + 1] = node.startPosition.column
+						ranges[rangeIdx + 2] = node.endPosition.row
+						ranges[rangeIdx + 3] = node.endPosition.column
+
 						symbols.push({
 							n: text,
 							t: type,
 							k: name.split(".").pop(),
-							r: [node.startPosition.row, node.startPosition.column, node.endPosition.row, node.endPosition.column],
+							ri: rangeIdx,
 						})
+						symbolCount++
 					}
 				}
 
@@ -425,6 +446,7 @@ export class SymbolIndexService {
 					size: stats.size,
 					hash: "",
 					symbols,
+					ranges: ranges.slice(0, symbolCount * 4),
 				}
 			} finally {
 				if (tree) {
@@ -468,7 +490,12 @@ export class SymbolIndexService {
 			const languageParsers = await loadRequiredLanguageParsers([absolutePath])
 			const entry = await this.indexFile(absolutePath, relPath, languageParsers)
 			if (entry && this.db) {
-				this.db.updateFileSymbols(relPath, entry.mtime, entry.size, entry.symbols)
+				this.db.updateFileSymbols(relPath, entry.mtime, entry.size, entry.symbols.map((s) => ({
+					n: s.n,
+					t: s.t,
+					k: s.k,
+					r: entry.ranges.subarray(s.ri, s.ri + 4) as any as [number, number, number, number],
+				})))
 				this.scheduleSave()
 			}
 		} finally {
@@ -506,5 +533,6 @@ export class SymbolIndexService {
 			this.db.close()
 			this.db = null
 		}
+		CompilationDatabaseLoader.getInstance().dispose()
 	}
 }

@@ -11,7 +11,7 @@ export interface CompilationEntry {
 }
 
 /**
- * Loader for compile_commands.json, which provides precise build flags for C/C++ projects.
+ * Loader for compile_commands.json and compile_flags.txt, which provides precise build flags for C/C++ projects.
  * This is essential for resolving headers in complex build systems (Meson, CMake, Make).
  */
 export class CompilationDatabaseLoader {
@@ -33,12 +33,12 @@ export class CompilationDatabaseLoader {
 		if (this.isLoaded) return
 
 		try {
-			// Find all compile_commands.json files in the project, excluding node_modules and other huge folders
+			// 1. Find all compile_commands.json files in the project
 			const dbPaths = await globby("**/compile_commands.json", {
 				cwd: projectRoot,
 				absolute: true,
 				ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/out/**"],
-				deep: 5, // Limit depth to avoid massive scans
+				deep: 5,
 			})
 
 			if (dbPaths.length === 0) {
@@ -67,7 +67,27 @@ export class CompilationDatabaseLoader {
 				}
 			}
 
-			if (dbPaths.length > 0) {
+			// 2. Fallback to compile_flags.txt if no commands DB found or to supplement it
+			const flagPaths = await globby("**/compile_flags.txt", {
+				cwd: projectRoot,
+				absolute: true,
+				ignore: ["**/node_modules/**", "**/.git/**"],
+				deep: 5,
+			})
+
+			for (const flagPath of flagPaths) {
+				try {
+					const content = await fs.readFile(flagPath, "utf8")
+					const lines = content.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+					const dir = path.dirname(flagPath)
+					this.parseFlags(lines, dir)
+					Logger.info(`[CompilationDB] Loaded flags from ${flagPath}`)
+				} catch (err) {
+					Logger.warn(`[CompilationDB] Failed to parse ${flagPath}:`, err)
+				}
+			}
+
+			if (dbPaths.length > 0 || flagPaths.length > 0) {
 				this.isLoaded = true
 			}
 		} catch (error) {
@@ -78,21 +98,24 @@ export class CompilationDatabaseLoader {
 	private parseEntries(entries: CompilationEntry[]): void {
 		for (const entry of entries) {
 			this.entries.set(path.normalize(entry.file), entry)
-
 			const args = entry.arguments || entry.command?.split(/\s+/) || []
-			for (let i = 0; i < args.length; i++) {
-				const arg = args[i]
-				if (arg.startsWith("-I")) {
-					let includePath = arg.slice(2)
-					if (!includePath && i + 1 < args.length) {
-						includePath = args[++i]
-					}
-					if (includePath) {
-						this.includePaths.add(path.resolve(entry.directory, includePath))
-					}
-				} else if (arg === "-isystem" && i + 1 < args.length) {
-					this.includePaths.add(path.resolve(entry.directory, args[++i]))
+			this.parseFlags(args, entry.directory)
+		}
+	}
+
+	private parseFlags(args: string[], baseDir: string): void {
+		for (let i = 0; i < args.length; i++) {
+			const arg = args[i]
+			if (arg.startsWith("-I")) {
+				let includePath = arg.slice(2)
+				if (!includePath && i + 1 < args.length) {
+					includePath = args[++i]
 				}
+				if (includePath) {
+					this.includePaths.add(path.resolve(baseDir, includePath))
+				}
+			} else if (arg === "-isystem" && i + 1 < args.length) {
+				this.includePaths.add(path.resolve(baseDir, args[++i]))
 			}
 		}
 	}
