@@ -199,7 +199,7 @@ export function getButtonConfig(message: DiracMessage | undefined, isStreaming =
 	}
 
 	// Handle partial/streaming messages first
-	if (isStreaming && !isError) {
+	if ((isStreaming || message.partial) && !isError) {
 		return BUTTON_CONFIGS.partial
 	}
 
