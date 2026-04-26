@@ -25,8 +25,15 @@ export interface EnvironmentMetadataEntry {
 	dirac_version: string
 }
 
+export interface PruningEvent {
+	ts: number
+	type: "files_in_context"
+	count: number
+}
+
 export interface TaskMetadata {
 	files_in_context: FileMetadataEntry[]
 	model_usage: ModelMetadataEntry[]
 	environment_history: EnvironmentMetadataEntry[]
+	pruning_events?: PruningEvent[]
 }

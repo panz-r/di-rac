@@ -27,6 +27,7 @@ import {
     writeTaskHistoryToState,
     writeTaskSettingsToStorage,
 } from "./disk"
+import { HistoryItem } from "@shared/HistoryItem"
 import { STATE_MANAGER_NOT_INITIALIZED } from "./error-messages"
 import { readGlobalStateFromStorage, readSecretsFromStorage, readWorkspaceStateFromStorage } from "./utils/state-helpers"
 export interface PersistenceErrorEvent {
@@ -190,9 +191,24 @@ export class StateManager {
 
 		// Update cache immediately for instant access
 		if (key === "taskHistory" && Array.isArray(value)) {
+			const history = value as HistoryItem[]
 			const MAX_HISTORY_ITEMS = 200
-			if (value.length > MAX_HISTORY_ITEMS) {
-				this.globalStateCache[key] = value.slice(-MAX_HISTORY_ITEMS) as GlobalStateAndSettings[K]
+
+			if (history.length > MAX_HISTORY_ITEMS) {
+				// 1. Keep all favorited tasks
+				const favorites = history.filter((item) => item.isFavorited)
+				const nonFavorites = history.filter((item) => !item.isFavorited)
+
+				// 2. Calculate how many non-favorites we can keep
+				const nonFavoritesToKeep = Math.max(0, MAX_HISTORY_ITEMS - favorites.length)
+
+				// 3. Take the most recent non-favorites
+				const recentNonFavorites = nonFavorites.slice(-nonFavoritesToKeep)
+
+				// 4. Merge and sort by timestamp to maintain chronological order
+				const prunedHistory = [...favorites, ...recentNonFavorites].sort((a, b) => a.ts - b.ts)
+
+				this.globalStateCache[key] = prunedHistory as GlobalStateAndSettings[K]
 			} else {
 				this.globalStateCache[key] = value
 			}

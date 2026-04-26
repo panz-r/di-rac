@@ -157,10 +157,40 @@ export class FileContextTracker {
 
 			metadata.files_in_context.push(newEntry)
 
-			// Prune old entries to prevent unbounded metadata growth
-			const MAX_METADATA_ENTRIES = 100
+			// Smart Pruning: Keep only latest 1,000 entries but NEVER drop the latest record for any unique file.
+			const MAX_METADATA_ENTRIES = 1000
 			if (metadata.files_in_context.length > MAX_METADATA_ENTRIES) {
-				metadata.files_in_context = metadata.files_in_context.slice(-MAX_METADATA_ENTRIES)
+				const initialCount = metadata.files_in_context.length
+				// 1. Identify the latest entry for every unique file path
+				const latestEntries = new Map<string, number>() // path -> index
+				metadata.files_in_context.forEach((entry, idx) => {
+					latestEntries.set(entry.path, idx)
+				})
+				const latestIndices = new Set(latestEntries.values())
+
+				// 2. Prune old entries that are NOT the latest for their file
+				const prunedList: FileMetadataEntry[] = []
+				const toPrune = metadata.files_in_context.length - MAX_METADATA_ENTRIES
+				let prunedCount = 0
+
+				for (let i = 0; i < metadata.files_in_context.length; i++) {
+					if (prunedCount < toPrune && !latestIndices.has(i)) {
+						prunedCount++
+						continue // Drop this entry
+					}
+					prunedList.push(metadata.files_in_context[i])
+				}
+
+				if (prunedCount > 0) {
+					metadata.files_in_context = prunedList
+					metadata.pruning_events = metadata.pruning_events || []
+					metadata.pruning_events.push({
+						ts: now,
+						type: "files_in_context",
+						count: prunedCount,
+					})
+					Logger.info(`[FileContextTracker] Pruned ${prunedCount} stale file metadata entries (Total: ${initialCount} -> ${metadata.files_in_context.length})`)
+				}
 			}
 
 			await saveTaskMetadata(taskId, metadata)
@@ -214,6 +244,13 @@ export class FileContextTracker {
 						editedFiles.push(fileEntry.path)
 					}
 				}
+			}
+
+			// Check if any pruning occurred after the message timestamp
+			const pruningAfter = taskMetadata.pruning_events?.some((e) => e.ts > messageTs)
+			if (pruningAfter) {
+				// If pruning happened, we can't be 100% sure about stale context for dropped files
+				Logger.warn(`[FileContextTracker] Task metadata was pruned after message timestamp ${messageTs}. Stale context detection for some files might be incomplete.`)
 			}
 		} catch (error) {
 			Logger.error("Error checking file context metadata:", error)

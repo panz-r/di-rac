@@ -34,16 +34,55 @@ export class ContextLoader {
         text: string,
         cwd: string,
     ): Promise<{ filePaths: string[]; directoryPaths: string[]; symbols: string[] }> {
-        // 0) Scrub code fences and URLs to avoid false positives
-        let scrubbedText = text.replace(/```[\s\S]*?```/g, (match) => " ".repeat(match.length))
-        scrubbedText = scrubbedText.replace(/\b\w+:\/\/[^\s]+/g, (match) => " ".repeat(match.length))
+        // Collect all regions that need to be scrubbed to avoid false positives
+        const scrubRegions: { start: number; end: number }[] = []
+
+        const addRegion = (start: number, end: number) => {
+            scrubRegions.push({ start, end })
+        }
+
+        // 0) Identify code fences and URLs
+        const fenceRegex = /```[\s\S]*?```/g
+        let match: RegExpExecArray | null
+        while ((match = fenceRegex.exec(text)) !== null) {
+            addRegion(match.index, match.index + match[0].length)
+        }
+
+        const urlRegex = /\b\w+:\/\/[^\s]+/g
+        while ((match = urlRegex.exec(text)) !== null) {
+            addRegion(match.index, match.index + match[0].length)
+        }
 
         // 1) Mentions
-        scrubbedText = scrubbedText.replace(mentionRegexGlobal, (match) => " ".repeat(match.length))
+        while ((match = mentionRegexGlobal.exec(text)) !== null) {
+            addRegion(match.index, match.index + match[0].length)
+        }
 
         // 2) Slash commands
         const slashCommandInTextRegex = /(^|\s)\/([a-zA-Z0-9_.:@-]+)(?=\s|$)/g
-        scrubbedText = scrubbedText.replace(slashCommandInTextRegex, (match, prefix) => prefix + " ".repeat(match.length - prefix.length))
+        while ((match = slashCommandInTextRegex.exec(text)) !== null) {
+            const prefix = match[1]
+            addRegion(match.index + prefix.length, match.index + match[0].length)
+        }
+
+        // Create a version of text where identified regions are replaced with spaces for path matching
+        // We use a high-performance array join pattern
+        const getScrubbedText = (regions: { start: number; end: number }[]) => {
+            if (regions.length === 0) return text
+            const sorted = regions.slice().sort((a, b) => a.start - b.start)
+            const pieces: string[] = []
+            let lastIdx = 0
+            for (const r of sorted) {
+                if (r.start < lastIdx) continue // Skip overlapping
+                pieces.push(text.substring(lastIdx, r.start))
+                pieces.push(" ".repeat(r.end - r.start))
+                lastIdx = r.end
+            }
+            pieces.push(text.substring(lastIdx))
+            return pieces.join("")
+        }
+
+        let scrubbedText = getScrubbedText(scrubRegions)
 
         const filePaths: string[] = []
         const directoryPaths: string[] = []
@@ -58,8 +97,6 @@ export class ContextLoader {
                 let relPath = match[1]
                 const start = match.index + match[0].indexOf(relPath)
 
-                // Trim trailing punctuation and dashes that are likely noise
-                // but only if it's not a valid path like "." or ".."
                 while (relPath.length > 0 && /[,.;:!?\-]$/.test(relPath)) {
                     if (relPath === "." || relPath === "..") break
                     relPath = relPath.slice(0, -1)
@@ -74,7 +111,7 @@ export class ContextLoader {
 
         // 3) File Paths
         const fileCandidates = getPathMatches(scrubbedText)
-        const fileMatchesToScrub: typeof fileCandidates = []
+        const pathRegions: { start: number; end: number }[] = []
 
         for (const pc of fileCandidates) {
             try {
@@ -91,23 +128,16 @@ export class ContextLoader {
                 const stats = await fs.stat(absolutePath)
                 if (stats.isFile()) {
                     filePaths.push(pc.relPath)
-                    fileMatchesToScrub.push(pc)
+                    pathRegions.push({ start: pc.start, end: pc.end })
                 }
             } catch (e: any) {
                 // Ignore errors for individual paths
             }
         }
 
-        // Scrub all file paths in reverse order
-        fileMatchesToScrub.sort((a, b) => b.start - a.start).forEach((pc) => {
-            const before = scrubbedText.substring(0, pc.start)
-            const after = scrubbedText.substring(pc.end)
-            scrubbedText = before + " ".repeat(pc.relPath.length) + after
-        })
-
-        // 4) Directory Paths
+        // 4) Directory Paths (re-scan scrubbed text to catch paths that might have been partially shadowed)
+        scrubbedText = getScrubbedText([...scrubRegions, ...pathRegions])
         const dirCandidates = getPathMatches(scrubbedText)
-        const dirMatchesToScrub: typeof dirCandidates = []
 
         for (const pc of dirCandidates) {
             try {
@@ -124,22 +154,16 @@ export class ContextLoader {
                 const stats = await fs.stat(absolutePath)
                 if (stats.isDirectory()) {
                     directoryPaths.push(pc.relPath)
-                    dirMatchesToScrub.push(pc)
+                    pathRegions.push({ start: pc.start, end: pc.end })
                 }
             } catch (e: any) {
                 // Ignore errors
             }
         }
 
-        // Scrub all directory paths in reverse order
-        dirMatchesToScrub.sort((a, b) => b.start - a.start).forEach((pc) => {
-            const before = scrubbedText.substring(0, pc.start)
-            const after = scrubbedText.substring(pc.end)
-            scrubbedText = before + " ".repeat(pc.relPath.length) + after
-        })
-
-        // 5) Symbols
-        const symbols = extractSymbolLikeStrings(scrubbedText)
+        // 5) Symbols (final scan on fully scrubbed text)
+        const finalScrubbedText = getScrubbedText([...scrubRegions, ...pathRegions])
+        const symbols = extractSymbolLikeStrings(finalScrubbedText)
 
         return { filePaths, directoryPaths, symbols }
     }
