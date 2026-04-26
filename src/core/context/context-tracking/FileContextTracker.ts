@@ -156,6 +156,13 @@ export class FileContextTracker {
 			}
 
 			metadata.files_in_context.push(newEntry)
+
+			// Prune old entries to prevent unbounded metadata growth
+			const MAX_METADATA_ENTRIES = 100
+			if (metadata.files_in_context.length > MAX_METADATA_ENTRIES) {
+				metadata.files_in_context = metadata.files_in_context.slice(-MAX_METADATA_ENTRIES)
+			}
+
 			await saveTaskMetadata(taskId, metadata)
 		} catch (error) {
 			Logger.error("Failed to add file to metadata:", error)

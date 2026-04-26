@@ -74,6 +74,8 @@ export class ContextLoader {
 
         // 3) File Paths
         const fileCandidates = getPathMatches(scrubbedText)
+        const fileMatchesToScrub: typeof fileCandidates = []
+
         for (const pc of fileCandidates) {
             try {
                 const pathResult = resolveWorkspacePath(
@@ -89,19 +91,24 @@ export class ContextLoader {
                 const stats = await fs.stat(absolutePath)
                 if (stats.isFile()) {
                     filePaths.push(pc.relPath)
-                    // Consume from scrubbedText
-                    const before = scrubbedText.substring(0, pc.start)
-                    const after = scrubbedText.substring(pc.end)
-                    scrubbedText = before + " ".repeat(pc.relPath.length) + after
-                } else {
+                    fileMatchesToScrub.push(pc)
                 }
             } catch (e: any) {
                 // Ignore errors for individual paths
             }
         }
 
+        // Scrub all file paths in reverse order
+        fileMatchesToScrub.sort((a, b) => b.start - a.start).forEach((pc) => {
+            const before = scrubbedText.substring(0, pc.start)
+            const after = scrubbedText.substring(pc.end)
+            scrubbedText = before + " ".repeat(pc.relPath.length) + after
+        })
+
         // 4) Directory Paths
         const dirCandidates = getPathMatches(scrubbedText)
+        const dirMatchesToScrub: typeof dirCandidates = []
+
         for (const pc of dirCandidates) {
             try {
                 const pathResult = resolveWorkspacePath(
@@ -117,16 +124,19 @@ export class ContextLoader {
                 const stats = await fs.stat(absolutePath)
                 if (stats.isDirectory()) {
                     directoryPaths.push(pc.relPath)
-                    // Consume from scrubbedText
-                    const before = scrubbedText.substring(0, pc.start)
-                    const after = scrubbedText.substring(pc.end)
-                    scrubbedText = before + " ".repeat(pc.relPath.length) + after
-                } else {
+                    dirMatchesToScrub.push(pc)
                 }
             } catch (e: any) {
                 // Ignore errors
             }
         }
+
+        // Scrub all directory paths in reverse order
+        dirMatchesToScrub.sort((a, b) => b.start - a.start).forEach((pc) => {
+            const before = scrubbedText.substring(0, pc.start)
+            const after = scrubbedText.substring(pc.end)
+            scrubbedText = before + " ".repeat(pc.relPath.length) + after
+        })
 
         // 5) Symbols
         const symbols = extractSymbolLikeStrings(scrubbedText)

@@ -187,12 +187,14 @@ export class ApiConversationManager {
 			})
 		}
 
+		const requestMarkdown = userContent.map((block) => formatContentBlockToMarkdown(block)).join("\n\n")
+
 		// getting verbose details is an expensive operation, it uses globby to top-down build file structure of project which for large projects can take a few seconds
 		// for the best UX we show a placeholder api_req_started message with a loading spinner as this happens
 		await this.dependencies.say(
 			"api_req_started",
 			JSON.stringify({
-				request: userContent.map((block) => formatContentBlockToMarkdown(block)).join("\n\n") + "\n\nLoading...",
+				request: requestMarkdown + "\n\nLoading...",
 			}),
 		)
 
@@ -228,7 +230,7 @@ export class ApiConversationManager {
 		)
 		await this.dependencies.messageStateHandler.updateDiracMessage(lastApiReqIndex, {
 			text: JSON.stringify({
-				request: userContent.map((block) => formatContentBlockToMarkdown(block)).join("\n\n"),
+				request: requestMarkdown,
 			} satisfies DiracApiReqInfo),
 		})
 

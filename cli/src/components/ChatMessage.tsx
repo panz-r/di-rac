@@ -182,7 +182,7 @@ function renderToken(token: Token, key: number, color?: string): React.ReactNode
  * each token to the appropriate Ink component.
  */
 const MarkdownText: React.FC<{ children: string; color?: string }> = ({ children, color }) => {
-	const tokens = lexer(children)
+	const tokens = React.useMemo(() => lexer(children), [children])
 	return <Box flexDirection="column">{renderTokens(tokens, color)}</Box>
 }
 

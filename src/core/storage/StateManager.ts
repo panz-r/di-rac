@@ -189,7 +189,16 @@ export class StateManager {
 		}
 
 		// Update cache immediately for instant access
-		this.globalStateCache[key] = value
+		if (key === "taskHistory" && Array.isArray(value)) {
+			const MAX_HISTORY_ITEMS = 200
+			if (value.length > MAX_HISTORY_ITEMS) {
+				this.globalStateCache[key] = value.slice(-MAX_HISTORY_ITEMS) as GlobalStateAndSettings[K]
+			} else {
+				this.globalStateCache[key] = value
+			}
+		} else {
+			this.globalStateCache[key] = value
+		}
 
 		// Add to pending persistence set and schedule debounced write
 		this.pendingGlobalState.add(key)
