@@ -290,15 +290,15 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 			messageTs = initialResult.askTs
 		}
 
-		const updateMessage = async () => {
+		const updateMessage = async (isCompleted = false) => {
 			if (messageTs === undefined) return
 			const messages = config.callbacks.getDiracMessages()
 			const index = messages.findIndex((m) => m.ts === messageTs)
 			if (index !== -1) {
 				await config.callbacks.updateDiracMessage(index, {
 					multiCommandState: { ...multiCommandState },
-					commandCompleted: false,
-					partial: false,
+					commandCompleted: isCompleted,
+					partial: !isCompleted,
 				})
 			}
 		}
@@ -514,14 +514,7 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 		}
 
 		// Mark the final message as completed
-		const messages = config.callbacks.getDiracMessages()
-		const index = messages.findIndex((m) => m.ts === messageTs)
-		if (index !== -1) {
-			await config.callbacks.updateDiracMessage(index, {
-				commandCompleted: true,
-				partial: false,
-			})
-		}
+		await updateMessage(true)
 
 		return formatResponse.toolResult(results.join("\n\n"))
 	}

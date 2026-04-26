@@ -453,6 +453,9 @@ export class StandaloneTerminalManager implements ITerminalManager {
 				if (process && typeof (process as any).terminate === "function") {
 					;(process as any).terminate()
 				}
+
+				this.logStreams.delete(id)
+				this.backgroundCommands.delete(id)
 			}
 		}, BACKGROUND_COMMAND_TIMEOUT_MS)
 		this.backgroundTimeouts.set(id, timeoutId)
@@ -486,6 +489,8 @@ export class StandaloneTerminalManager implements ITerminalManager {
 				backgroundCommand.status = "completed"
 			}
 			logStream.end()
+			this.logStreams.delete(id)
+			this.backgroundCommands.delete(id)
 		})
 
 		// Listen for errors - clear timeout
@@ -506,6 +511,8 @@ export class StandaloneTerminalManager implements ITerminalManager {
 				backgroundCommand.exitCode = Number.parseInt(exitCodeMatch[1], 10)
 			}
 			logStream.end()
+			this.logStreams.delete(id)
+			this.backgroundCommands.delete(id)
 		})
 
 		this.backgroundCommands.set(id, backgroundCommand)

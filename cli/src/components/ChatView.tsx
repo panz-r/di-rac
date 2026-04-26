@@ -429,6 +429,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
 			setPastedTexts(stored.pastedTexts)
 			pasteCounterRef.current = stored.pasteCounter
 		}
+
+		return () => {
+			if (pasteUpdateTimeoutRef.current) {
+				clearTimeout(pasteUpdateTimeoutRef.current)
+			}
+		}
 	}, [storageKey, setTextInput, setCursorPos])
 
 	// Persist input state to storage whenever it changes (survives remount)
