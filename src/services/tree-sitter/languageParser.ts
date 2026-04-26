@@ -123,6 +123,11 @@ export async function loadRequiredLanguageParsers(filesToParse: string[]): Promi
 				break
 			case "cpp":
 			case "hpp":
+			case "cc":
+			case "cxx":
+			case "hh":
+			case "hxx":
+			case "mm":
 				langName = "cpp"
 				queryText = cppQuery
 				break
