@@ -145,6 +145,8 @@ export interface AcpSessionState {
 	pendingToolCalls: Map<string, acp.ToolCall>
 	/** Track last sent content for partial messages to compute deltas (per-session) */
 	partialMessageLastContent: Map<number, string>
+	/** Track the raw unparsed text of messages to avoid redundant work (per-session) */
+	rawMessageLastText: Map<number, string>
 	/** Map message timestamps to toolCallIds to avoid creating duplicate tool calls (per-session) */
 	messageToToolCallId: Map<number, string>
 }

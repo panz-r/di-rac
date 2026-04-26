@@ -1,5 +1,6 @@
 import * as fs from "fs/promises"
 import * as path from "path"
+import { globby } from "globby"
 import { Logger } from "@/shared/services/Logger"
 
 export interface CompilationEntry {
@@ -31,24 +32,46 @@ export class CompilationDatabaseLoader {
 	async initialize(projectRoot: string): Promise<void> {
 		if (this.isLoaded) return
 
-		const searchPaths = [
-			path.join(projectRoot, "compile_commands.json"),
-			path.join(projectRoot, "build", "compile_commands.json"),
-			path.join(projectRoot, "builddir", "compile_commands.json"),
-			path.join(projectRoot, "out", "compile_commands.json"),
-		]
+		try {
+			// Find all compile_commands.json files in the project, excluding node_modules and other huge folders
+			const dbPaths = await globby("**/compile_commands.json", {
+				cwd: projectRoot,
+				absolute: true,
+				ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/out/**"],
+				deep: 5, // Limit depth to avoid massive scans
+			})
 
-		for (const dbPath of searchPaths) {
-			try {
-				const content = await fs.readFile(dbPath, "utf8")
-				const data = JSON.parse(content) as CompilationEntry[]
-				this.parseEntries(data)
-				Logger.info(`[CompilationDB] Loaded ${data.length} entries from ${dbPath}`)
-				this.isLoaded = true
-				return
-			} catch {
-				// Continue to next path
+			if (dbPaths.length === 0) {
+				// Fallback to common locations if globby missed something (rare)
+				const fallbackPaths = [
+					path.join(projectRoot, "compile_commands.json"),
+					path.join(projectRoot, "build", "compile_commands.json"),
+					path.join(projectRoot, "builddir", "compile_commands.json"),
+				]
+				for (const p of fallbackPaths) {
+					try {
+						await fs.access(p)
+						dbPaths.push(p)
+					} catch {}
+				}
 			}
+
+			for (const dbPath of dbPaths) {
+				try {
+					const content = await fs.readFile(dbPath, "utf8")
+					const data = JSON.parse(content) as CompilationEntry[]
+					this.parseEntries(data)
+					Logger.info(`[CompilationDB] Loaded ${data.length} entries from ${dbPath}`)
+				} catch (err) {
+					Logger.warn(`[CompilationDB] Failed to parse ${dbPath}:`, err)
+				}
+			}
+
+			if (dbPaths.length > 0) {
+				this.isLoaded = true
+			}
+		} catch (error) {
+			Logger.error("[CompilationDB] Initialization failed:", error)
 		}
 	}
 

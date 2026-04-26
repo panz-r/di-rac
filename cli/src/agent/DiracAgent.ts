@@ -309,6 +309,7 @@ export class DiracAgent implements acp.Agent {
 			status: AcpSessionStatus.Idle,
 			pendingToolCalls: new Map(),
 			partialMessageLastContent: new Map(),
+			rawMessageLastText: new Map(),
 			messageToToolCallId: new Map(),
 		}
 
@@ -787,6 +788,13 @@ export class DiracAgent implements acp.Agent {
 		message: DiracMessageType,
 	): Promise<void> {
 		const messageKey = message.ts
+
+		// Optimization: If the raw text of the message hasn't changed since the last update,
+		// skip processing entirely to avoid redundant work (like JSON parsing).
+		if (message.text && sessionState.rawMessageLastText.get(messageKey) === message.text) {
+			return
+		}
+
 		const lastText = sessionState.partialMessageLastContent.get(messageKey) || ""
 
 		// Determine if this is a text-streaming message type that needs delta handling
@@ -846,10 +854,14 @@ export class DiracAgent implements acp.Agent {
 
 			// Track what we've sent (use extracted text, not raw JSON)
 			sessionState.partialMessageLastContent.set(messageKey, textContent)
+			if (message.text) {
+				sessionState.rawMessageLastText.set(messageKey, message.text)
+			}
 
 			// Clean up tracking state when the message is complete (not partial)
 			if (!message.partial) {
 				sessionState.partialMessageLastContent.delete(messageKey)
+				sessionState.rawMessageLastText.delete(messageKey)
 			}
 		} else {
 			// For non-streaming messages, use the full translator
@@ -881,11 +893,13 @@ export class DiracAgent implements acp.Agent {
 			// Track text content for this message (in case of future updates)
 			if (message.text) {
 				sessionState.partialMessageLastContent.set(messageKey, message.text)
+				sessionState.rawMessageLastText.set(messageKey, message.text)
 			}
 
 			// Clean up tracking state when the message is complete (not partial)
 			if (!message.partial) {
 				sessionState.partialMessageLastContent.delete(messageKey)
+				sessionState.rawMessageLastText.delete(messageKey)
 				if (result.toolCallId) {
 					sessionState.messageToToolCallId.delete(messageKey)
 				}

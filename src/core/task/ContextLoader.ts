@@ -14,7 +14,7 @@ import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import { USER_CONTENT_TAGS } from "@shared/messages/constants"
 import { DiracContent, DiracTextContentBlock } from "@shared/messages/content"
 import { ASTAnchorBridge } from "@utils/ASTAnchorBridge"
-import { getBuddyPaths } from "@utils/path"
+import { getBuddyPaths, isLocatedInWorkspace } from "@utils/path"
 import * as fs from "fs/promises"
 import * as path from "path"
 import { SymbolIndexService, SymbolLocation } from "../../services/symbol-index/SymbolIndexService"
@@ -147,7 +147,7 @@ export class ContextLoader {
                             )
                             const buddyAbsPath = typeof buddyResult === "string" ? buddyResult : buddyResult.absolutePath
                             const buddyStats = await fs.stat(buddyAbsPath)
-                            if (buddyStats.isFile()) {
+                            if (buddyStats.isFile() && (await isLocatedInWorkspace(buddyAbsPath))) {
                                 filePaths.push(buddy)
                             }
                         } catch {
@@ -334,7 +334,23 @@ export class ContextLoader {
                         const deps = indexService.getDependencies(loc.path)
                         for (const dep of deps) {
                             if (filePaths.indexOf(dep) === -1) {
-                                filePaths.push(dep)
+                                try {
+                                    const depResult = resolveWorkspacePath(
+                                        {
+                                            cwd: cwd,
+                                            workspaceManager: this.dependencies.workspaceManager,
+                                            isMultiRootEnabled: isMultiRootEnabled(this.dependencies.stateManager),
+                                        },
+                                        dep,
+                                        "Task.loadContext.context",
+                                    )
+                                    const depAbsPath = typeof depResult === "string" ? depResult : depResult.absolutePath
+                                    if (await isLocatedInWorkspace(depAbsPath)) {
+                                        filePaths.push(dep)
+                                    }
+                                } catch {
+                                    // Ignore if can't resolve
+                                }
                             }
                         }
 
