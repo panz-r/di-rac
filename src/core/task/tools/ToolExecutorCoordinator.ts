@@ -1,4 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
+import { formatResponse } from "@core/prompts/responses"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../index"
 import { AskFollowupQuestionToolHandler } from "./handlers/AskFollowupQuestionToolHandler"
@@ -30,6 +31,8 @@ import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
 import { AgentConfigLoader } from "./subagent/AgentConfigLoader"
 import { ToolValidator } from "./ToolValidator"
+import { TOOL_SCHEMAS } from "./schemas"
+import { validateArgs } from "./validateArgs"
 import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
 
@@ -162,6 +165,16 @@ export class ToolExecutorCoordinator {
 		if (!handler) {
 			throw new Error(`No handler registered for tool: ${block.name}`)
 		}
+
+		// Pre-execution argument validation via Zod schema
+		const schema = TOOL_SCHEMAS[block.name as DiracDefaultTool]
+		if (schema) {
+			const validation = validateArgs(schema, block.params, block.name)
+			if (!validation.success) {
+				return formatResponse.formatToolErrorForLLM(validation.error)
+			}
+		}
+
 		return handler.execute(config, block)
 	}
 }

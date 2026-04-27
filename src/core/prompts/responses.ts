@@ -360,6 +360,8 @@ function formatToolErrorGuidance(error: ToolError): string {
 			return `A speculative workspace change was rejected. The primary workspace state is unchanged — continue with the current approach.`
 		case "speculative.verify.failed":
 			return `Speculative verification failed. The proposed changes may have issues — review and adjust before retrying.`
+case "arg.invalidArgument":
+			return `One or more arguments you provided were of the wrong type or format. Check the parameter types and try again with corrected values.`
 		case "tool.unknownError":
 			return `An unexpected error occurred during tool execution. Try a different approach or re-read relevant files to ensure your context is up to date.`
 		case "tool.internalError":

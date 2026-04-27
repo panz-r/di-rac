@@ -17,6 +17,8 @@ export type ToolErrorCode =
 	| "io.file.notFound"
 	| "io.file.permissionDenied"
 	| "io.file.locked"
+	// Argument validation
+	| "arg.invalidArgument"
 	// Anchor & Edit
 	| "anchor.notFound"
 	| "anchor.contentMismatch"
@@ -141,6 +143,10 @@ export function routeToolError(
 		case "speculative.workspace.rejected":
 		case "speculative.verify.failed":
 			return phase >= 4 ? { type: "ignore" } : { type: "abort" }
+
+		case "arg.invalidArgument":
+			// Invalid arguments — retry once with corrected params
+			return { type: "retry", maxTimes: 1 }
 
 		case "tool.internalError":
 			return { type: "abort" }
