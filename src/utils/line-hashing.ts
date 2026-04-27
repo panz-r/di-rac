@@ -48,7 +48,7 @@ export function parseAnchorFromLine(anchoredLine: string): { hash: string; conte
 	if (delimiterIndex === -1) {
 		// No delimiter found — if it looks like just a hash, treat as hash with empty content
 		const potentialHash = afterGutter.trim()
-		if (/^[a-z0-9_]{2,5}$/.test(potentialHash)) {
+		if (/^[a-z0-9_]{1,32}$/.test(potentialHash)) {
 			return { hash: potentialHash, content: "" }
 		}
 		return null
@@ -58,7 +58,7 @@ export function parseAnchorFromLine(anchoredLine: string): { hash: string; conte
 	const content = afterGutter.substring(delimiterIndex + ANCHOR_DELIMITER.length)
 
 	// Validate hash format
-	if (!/^[a-z0-9_]{2,5}$/.test(hash)) {
+	if (!/^[a-z0-9_]{1,32}$/.test(hash)) {
 		return null
 	}
 

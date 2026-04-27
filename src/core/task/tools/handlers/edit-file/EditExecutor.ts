@@ -109,7 +109,7 @@ export class EditExecutor {
 		}
 
 		// Echo stripping
-		const echoPattern = new RegExp(`^[a-z0-9_]{2,5}\\${ANCHOR_DELIMITER}`)
+		const echoPattern = new RegExp(`^[a-z0-9_]{1,32}\\${ANCHOR_DELIMITER}`)
 		let providedContent = providedContentRaw.replace(echoPattern, "")
 
 		if (providedContent.includes("\n") || providedContent.includes("\r")) {

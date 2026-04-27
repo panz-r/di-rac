@@ -28,16 +28,22 @@ function escapeRegExp(string: string) {
  * from the beginning of each line.
  *
  * @param content - The content containing hashed lines
+ * @param options - Optional settings (e.g., preserveGutter to keep line numbers)
  * @returns The clean content without hashes
  */
-export function stripHashes(content: string): string {
+export function stripHashes(content: string, options?: { preserveGutter?: boolean }): string {
 	if (!content) {
 		return ""
 	}
 
-	// Match content-hash anchors: 2-5 lowercase alphanumeric + underscore chars followed by delimiter.
+	// Match content-hash anchors: 1-32 lowercase alphanumeric + underscore chars followed by delimiter.
 	// Anchors appear at the start of a line (after optional gutter like "   42 | ").
-	const delimiterRegex = new RegExp(`(?:^\\s*\\d+\\s*[│|]\\s*)?[a-z0-9_]{2,5}${escapeRegExp(ANCHOR_DELIMITER)}`, "gm")
+	// Using capturing group for the gutter to allow preservation.
+	const delimiterRegex = new RegExp(`^(\\s*\\d+\\s*[│|]\\s*)?[a-z0-9_]{1,32}${escapeRegExp(ANCHOR_DELIMITER)}`, "gm")
+	
+	if (options?.preserveGutter) {
+		return content.replace(delimiterRegex, "$1")
+	}
 	return content.replace(delimiterRegex, "")
 }
 

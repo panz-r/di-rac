@@ -54,13 +54,13 @@ You MUST batch all non-overlapping edits into a single tool call. As long as the
 									type: "string",
 									description:
 										"Anchor for the start of the edit or the insertion point. Must contain a single line only, no newline char.",
-									pattern: `^[a-z0-9_]{2,5}\\${getDelimiter()}[^\\r\\n]*$`,
+									pattern: `^[a-z0-9_]{1,32}\\${getDelimiter()}[^\\r\\n]*$`,
 								},
 								end_anchor: {
 									type: "string",
 									description:
 										"Anchor for the end of the edit (required for 'replace'). Must contain a single line only, no newline char.",
-									pattern: `^[a-z0-9_]{2,5}\\${getDelimiter()}[^\\r\\n]*$`,
+									pattern: `^[a-z0-9_]{1,32}\\${getDelimiter()}[^\\r\\n]*$`,
 								},
 								text: {
 									type: "string",
