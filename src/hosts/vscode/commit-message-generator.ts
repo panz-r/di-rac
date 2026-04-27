@@ -6,6 +6,8 @@ import { HostProvider } from "@/hosts/host-provider"
 import { ShowMessageType } from "@/shared/proto/host/window"
 import { Logger } from "@/shared/services/Logger"
 import { getGitDiff } from "@/utils/git"
+import { buildPrompt } from "@/prompts"
+import type { PromptConfig } from "@/prompts"
 
 /**
  * Git commit message generator module
@@ -25,17 +27,17 @@ export async function getGitDiffStagedFirst(cwd: string): Promise<string> {
 
 let commitGenerationAbortController: AbortController | undefined
 
-const PROMPT = {
-	system: "You are a helpful assistant that generates informative git commit messages based on git diffs output. Skip preamble and remove all backticks surrounding the commit message.",
-	user: "Notes from developer (ignore if not relevant): {{USER_CURRENT_INPUT}}",
-	instruction: `Based on the provided git diff, generate a concise and descriptive commit message.
+const COMMIT_SYSTEM_PROMPT = "You are a helpful assistant that generates informative git commit messages based on git diffs output. Skip preamble and remove all backticks surrounding the commit message."
+
+const COMMIT_INSTRUCTION = `Based on the provided git diff, generate a concise and descriptive commit message.
 
 The commit message should:
 1. Has a short title (50-72 characters)
 2. The commit message should adhere to the conventional commit format
 3. Describe what was changed and why
-4. Be clear and informative`,
-}
+4. Be clear and informative`
+
+const USER_NOTE_TEMPLATE = "Notes from developer (ignore if not relevant): {{USER_CURRENT_INPUT}}"
 
 export async function generateCommitMsg(controller: Controller, scm?: vscode.SourceControl) {
 	try {
@@ -170,25 +172,25 @@ async function performCommitMsgGeneration(controller: Controller, gitDiff: strin
 	try {
 		vscode.commands.executeCommand("setContext", "dirac.isGeneratingCommit", true)
 
-		const prompts = [PROMPT.instruction]
+		const userParts: string[] = []
 
 		const workspaceManager = await controller.ensureWorkspaceManager()
 		if (workspaceManager) {
 			const workspacesJson = await workspaceManager.buildWorkspacesJson()
 			if (workspacesJson) {
-				prompts.push(`# Workspace Configuration\n${workspacesJson}`)
+				userParts.push(`# Workspace Configuration\n${workspacesJson}`)
 			}
 		}
 
 		const currentInput = inputBox.value?.trim() || ""
 		if (currentInput) {
-			prompts.push(PROMPT.user.replace("{{USER_CURRENT_INPUT}}", currentInput))
+			userParts.push(USER_NOTE_TEMPLATE.replace("{{USER_CURRENT_INPUT}}", currentInput))
 		}
 
 		const truncatedDiff = gitDiff.length > 5000 ? gitDiff.substring(0, 5000) + "\n\n[Diff truncated due to size]" : gitDiff
-		prompts.push(truncatedDiff)
+		userParts.push(truncatedDiff)
 
-		const prompt = prompts.join("\n\n")
+		const userMessage = userParts.join("\n\n")
 
 		// Get the current API configuration
 		// Set to use Act mode for now by default
@@ -198,11 +200,16 @@ async function performCommitMsgGeneration(controller: Controller, gitDiff: strin
 		// Build the API handler
 		const apiHandler = buildApiHandler(apiConfiguration, currentMode)
 
-		// Create a system prompt
-		const systemPrompt = PROMPT.system
+		const promptConfig: PromptConfig = {
+			baseSystem: COMMIT_SYSTEM_PROMPT,
+			task: COMMIT_INSTRUCTION,
+			phase: 2,
+			constraints: ["bareMinimum", "noExplanations"],
+		}
+		const systemPrompt = buildPrompt(promptConfig)
 
 		// Create a message for the API
-		const messages = [{ role: "user" as const, content: prompt }]
+		const messages = [{ role: "user" as const, content: userMessage }]
 
 		commitGenerationAbortController = new AbortController()
 		const stream = apiHandler.createMessage(systemPrompt, messages)

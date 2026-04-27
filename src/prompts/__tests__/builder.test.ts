@@ -1,0 +1,109 @@
+import { expect } from "chai"
+import { buildPrompt, validatePromptConfig } from "../builder"
+import type { PromptConfig } from "../types"
+
+describe("buildPrompt", () => {
+	const base: PromptConfig = { baseSystem: "Test system", task: "Test task", phase: 1 }
+
+	it("includes base system and task", () => {
+		const result = buildPrompt(base)
+		expect(result).to.include("Test system")
+		expect(result).to.include("Test task")
+	})
+
+	it("appends constraints when provided", () => {
+		const config = { ...base, constraints: ["noSelfReview", "noApologies"] }
+		const result = buildPrompt(config)
+		expect(result).to.include("Do NOT self-review")
+		expect(result).to.include("Do NOT include apologies")
+	})
+
+	it("does NOT append constraints when none provided", () => {
+		const result = buildPrompt(base)
+		expect(result).to.not.include("## Rules")
+		expect(result).to.not.include("Do NOT self-review")
+	})
+
+	it("injects schema description", () => {
+		const config = { ...base, schemaVersion: "v1", constraints: ["strictJSON"] }
+		const result = buildPrompt(config)
+		expect(result).to.include("Output a JSON object with property")
+		expect(result).to.include('"edits"')
+	})
+
+	it("shows error context concisely", () => {
+		const config = {
+			...base,
+			errorContext: {
+				failedOps: [{ anchor: "a3", reason: "hash mismatch" }],
+				diagnostics: ["line 42: syntax error"],
+			},
+		}
+		const result = buildPrompt(config)
+		expect(result).to.include('Anchor "a3": hash mismatch')
+		expect(result).to.include("line 42: syntax error")
+	})
+
+	it("deduplicates constraints", () => {
+		const config = { ...base, constraints: ["noSelfReview", "noSelfReview"] }
+		const result = buildPrompt(config)
+		const matches = result.match(/Do NOT self-review/g)
+		expect(matches?.length).to.equal(1)
+	})
+
+	it("shows DAG summary when provided", () => {
+		const config = {
+			...base,
+			dagSummary: {
+				nodes: 5,
+				edges: 7,
+				blastRadius: { "file1.ts": 10, "file2.ts": 3 },
+				criticalPaths: ["a.ts", "b.ts"],
+			},
+		}
+		const result = buildPrompt(config)
+		expect(result).to.include("5 files, 7 relationships")
+		expect(result).to.include("High‑impact: file1.ts")
+		expect(result).to.not.include("file2.ts") // only > 5
+		expect(result).to.include("Critical path: a.ts → b.ts")
+	})
+
+	it("skips task section when task is empty", () => {
+		const config = { ...base, task: "" }
+		const result = buildPrompt(config)
+		expect(result).to.not.include("## Task")
+	})
+
+	it("includes mode indicator when predictive", () => {
+		const config = { ...base, mode: "predictive" as const }
+		const result = buildPrompt(config)
+		expect(result).to.include("predictive execution mode")
+	})
+
+	it("does not include mode indicator when interactive", () => {
+		const config = { ...base, mode: "interactive" as const }
+		const result = buildPrompt(config)
+		expect(result).to.not.include("predictive execution mode")
+	})
+})
+
+describe("validatePromptConfig", () => {
+	it("throws if baseSystem is missing", () => {
+		expect(() => validatePromptConfig({ baseSystem: "", task: "x", phase: 1 })).to.throw("baseSystem is required")
+	})
+
+	it("throws if phase is out of range", () => {
+		expect(() => validatePromptConfig({ baseSystem: "x", task: "x", phase: 0 })).to.throw("phase must be 1-5")
+		expect(() => validatePromptConfig({ baseSystem: "x", task: "x", phase: 6 })).to.throw("phase must be 1-5")
+	})
+
+	it("throws if predictive phase >=2 and no schemaVersion", () => {
+		expect(() =>
+			validatePromptConfig({ baseSystem: "x", task: "x", phase: 2, mode: "predictive" }),
+		).to.throw("Predictive phase >=2 requires schemaVersion")
+	})
+
+	it("passes for valid config", () => {
+		expect(() => validatePromptConfig({ baseSystem: "x", task: "x", phase: 1 })).to.not.throw()
+	})
+})

@@ -5,6 +5,8 @@ import { formatContentBlockToMarkdown } from "@/integrations/misc/export-markdow
 import { ApiConfiguration } from "@/shared/api"
 import { DiracStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
+import { buildPrompt } from "@/prompts"
+import type { PromptConfig } from "@/prompts"
 
 export interface ChangedFile {
 	relativePath: string
@@ -125,7 +127,9 @@ export async function streamAIExplanationComments(
 	const fileCount = changedFiles.length
 	const maxCommentsPerFile = fileCount > 3 ? 1 : 3
 
-	const systemPrompt = `${EXPLAINER_SYSTEM_PROMPT}
+	const systemPromptConfig: PromptConfig = {
+		baseSystem: EXPLAINER_SYSTEM_PROMPT,
+		task: `Explain code changes with the following rules:
 
 CRITICAL: Create comments for LOGICAL GROUPINGS of changes, not individual lines. Think in terms of:
 - "Added a new function that does X" (spanning the entire function)
@@ -152,8 +156,11 @@ Rules:
 3. Then write your comment text (can span multiple lines). Use markdown formatting where appropriate.
 4. End with @@@ on its own line
 5. Each file MUST have at least one comment, MAX ${maxCommentsPerFile} comment${maxCommentsPerFile > 1 ? "s" : ""} per file - focus on the most significant changes
-6. Explain important/non-obvious changes, not every little thing. Skip trivial changes - ignore whitespace, formatting, simple renames, obvious fixes.
-`
+6. Explain important/non-obvious changes, not every little thing. Skip trivial changes - ignore whitespace, formatting, simple renames, obvious fixes.`,
+		phase: 2,
+		constraints: ["bareMinimum"],
+	}
+	const systemPrompt = buildPrompt(systemPromptConfig)
 
 	const userMessage = `Explain these code changes:
 
@@ -320,13 +327,16 @@ async function handleCommentReply(
 
 	const apiHandler = buildApiHandler(configWithoutThinking, "act")
 
-	const systemPrompt = `${EXPLAINER_SYSTEM_PROMPT}
-
-The user is asking followup questions about code change explanations you provided.
+	const replyPromptConfig: PromptConfig = {
+		baseSystem: EXPLAINER_SYSTEM_PROMPT,
+		task: `The user is asking followup questions about code change explanations you provided.
 Respond helpfully to the user's question about the code.
 Use markdown formatting where appropriate.
-If the user asks you to make changes, fix something, or do any work that requires modifying code, let them know they can click the "Add to Dirac Chat" button (the arrow icon in the top-right of the comment box) to send this conversation to the main Dirac agent, which can then make the requested changes.
-`
+If the user asks you to make changes, fix something, or do any work that requires modifying code, let them know they can click the "Add to Dirac Chat" button (the arrow icon in the top-right of the comment box) to send this conversation to the main Dirac agent, which can then make the requested changes.`,
+		phase: 2,
+		constraints: ["bareMinimum"],
+	}
+	const systemPrompt = buildPrompt(replyPromptConfig)
 
 	const userMessage = `## Context
 ${conversationContext}

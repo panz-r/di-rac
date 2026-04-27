@@ -7,6 +7,7 @@ import { getProviderModelIdKey } from "@/shared/storage/provider-keys"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { AgentBaseConfig } from "./AgentConfigLoader"
 import { AgentConfigLoader } from "./AgentConfigLoader"
+import { buildPrompt } from "@/prompts"
 
 export type AgentConfig = Partial<AgentBaseConfig>
 
@@ -58,7 +59,15 @@ export class SubagentBuilder {
 	buildSystemPrompt(generatedSystemPrompt: string): string {
 		const configuredSystemPrompt = this.agentConfig?.systemPrompt?.trim()
 		const systemPrompt = configuredSystemPrompt || generatedSystemPrompt
-		return `${systemPrompt}${this.buildAgentIdentitySystemPrefix()}${SUBAGENT_SYSTEM_SUFFIX}`
+		const identityPrefix = this.buildAgentIdentitySystemPrefix()
+		const baseSystem = `${systemPrompt}${identityPrefix}${SUBAGENT_SYSTEM_SUFFIX}`
+
+		return buildPrompt({
+			baseSystem,
+			task: "",
+			phase: 1,
+			constraints: ["noSelfReview", "bareMinimum"],
+		})
 	}
 
 	buildNativeTools(context: SystemPromptContext) {

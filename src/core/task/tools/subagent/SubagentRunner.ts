@@ -23,6 +23,7 @@ import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import { SubagentBuilder } from "./SubagentBuilder"
 import { excerpt } from "../../utils/excerpt"
+import { buildPrompt } from "@/prompts"
 
 const MAX_EMPTY_ASSISTANT_RETRIES = 3
 const MAX_INITIAL_STREAM_ATTEMPTS = 3
@@ -378,16 +379,22 @@ export class SubagentRunner {
 
 			const promptRegistry = PromptRegistry.getInstance()
 			const generatedSystemPrompt = await promptRegistry.get(context)
-			let systemPrompt = this.agent.buildSystemPrompt(generatedSystemPrompt)
+			const baseSystemPrompt = this.agent.buildSystemPrompt(generatedSystemPrompt)
+			let systemPrompt = baseSystemPrompt
 			if (timeout || maxTurns) {
-				const limits = []
+				const limits: string[] = []
 				if (timeout) {
 					limits.push(`${timeout} seconds`)
 				}
 				if (maxTurns) {
 					limits.push(`${maxTurns} turns`)
 				}
-				systemPrompt += `\n\n# Execution Limits\nYou must complete your task and call attempt_completion within ${limits.join(" and ")}.`
+				systemPrompt = buildPrompt({
+					baseSystem: baseSystemPrompt,
+					task: `You must complete your task and call attempt_completion within ${limits.join(" and ")}.`,
+					phase: 1,
+					constraints: ["noSelfReview", "bareMinimum"],
+				})
 			}
 			const nativeTools = this.agent.buildNativeTools(context)
 			const useNativeToolCalls = !!nativeTools && nativeTools.length > 0

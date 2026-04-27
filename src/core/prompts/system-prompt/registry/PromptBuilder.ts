@@ -2,6 +2,8 @@ import { SYSTEM_PROMPT } from "../template"
 import { TemplateEngine } from "../templates/TemplateEngine"
 import type { SystemPromptContext } from "../types"
 import { SkillMetadata } from "@/shared/skills"
+import { buildPrompt } from "@/prompts"
+import type { PromptConfig } from "@/prompts"
 
 export class PromptBuilder {
 	private templateEngine: TemplateEngine
@@ -13,8 +15,16 @@ export class PromptBuilder {
 	async build(): Promise<string> {
 		const promptTemplate = SYSTEM_PROMPT(this.context)
 		const placeholders = this.preparePlaceholders()
-		const prompt = this.templateEngine.resolve(promptTemplate, this.context, placeholders)
-		return this.postProcess(prompt)
+		const baseSystem = this.templateEngine.resolve(promptTemplate, this.context, placeholders)
+		const cleaned = this.postProcess(baseSystem)
+
+		// Use centralized prompt builder for final assembly
+		const config: PromptConfig = {
+			baseSystem: cleaned,
+			task: "",
+			phase: 1,
+		}
+		return buildPrompt(config)
 	}
 
 	private preparePlaceholders(): Record<string, unknown> {
