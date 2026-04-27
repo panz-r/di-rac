@@ -4,7 +4,7 @@ import { DiracIgnoreController } from "../core/ignore/DiracIgnoreController"
 import { SymbolContextResolver } from "../core/task/tools/utils/SymbolContextResolver"
 import { parseFile } from "../services/tree-sitter"
 import { loadRequiredLanguageParsers } from "../services/tree-sitter/languageParser"
-import { AnchorStateManager } from "./AnchorStateManager"
+import { FileAnchorIndex } from "../shared/utils/file-anchor-index"
 import { contentHash, formatLineWithHash } from "./line-hashing"
 
 export interface SymbolRange {
@@ -37,7 +37,7 @@ export class ASTAnchorBridge {
 
 		const fileContent = await fs.readFile(absolutePath, "utf8")
 		const lines = fileContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(absolutePath, lines, taskId)
+		const anchors = new FileAnchorIndex(lines).getAllHashes()
 
 		let formattedOutput = ""
 		let lastLineAdded = -1
@@ -105,7 +105,7 @@ export class ASTAnchorBridge {
 		}
 
 		const allLines = fileContent.split(/\r?\n/)
-		const allAnchors = AnchorStateManager.reconcile(absolutePath, allLines, taskId)
+		const allAnchors = new FileAnchorIndex(allLines).getAllHashes()
 
 		const matches = query.matches(tree.rootNode)
 		const nodeToMatch = new Map<number, any>()

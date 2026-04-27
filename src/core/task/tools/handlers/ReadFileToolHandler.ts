@@ -293,7 +293,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 				if (providedHash === currentHash && !startLineNum && !endLineNum) {
 					results.push(`${header}no changes have been made to the file since your last read (Hash: ${providedHash})`)
 				} else {
-					let hashedContent = hashLines(fileContent.text, absolutePath, config.ulid)
+					let hashedContent = hashLines(fileContent.text)
 					if (startLineNum || endLineNum) {
 						const lines = hashedContent.split("\n")
 						const start = Math.max(0, (startLineNum || 1) - 1)

@@ -9,7 +9,7 @@ import { ReplaceSymbolToolHandler } from "@core/task/tools/handlers/ReplaceSymbo
 import { ToolValidator } from "@core/task/tools/ToolValidator"
 import { DiracDefaultTool } from "@shared/tools"
 import { stripHashes } from "@shared/utils/line-hashing"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { before, beforeEach, describe, it } from "mocha"
 import sinon from "sinon"
 import { HostProvider } from "@/hosts/host-provider"
@@ -170,7 +170,7 @@ describe("Language Compatibility Tests (Big Four)", () => {
 
 			beforeEach(async () => {
 				config = createMockConfig(langDir)
-				AnchorStateManager.reset("test-ulid")
+				
 			})
 
 			it("get_file_skeleton", async () => {

@@ -1,10 +1,114 @@
-import { AnchorStateManager } from "./AnchorStateManager"
-
 export { ANCHOR_DELIMITER, extractId, getDelimiter, stripHashes } from "../shared/utils/line-hashing"
 
+import { ANCHOR_DELIMITER } from "../shared/utils/line-hashing"
+import { computeLineHash } from "../shared/utils/hash-utils"
+import { FileAnchorIndex } from "../shared/utils/file-anchor-index"
+
 /**
- * Generates a 32-bit hash for the given content string.
- * Uses FNV-1a algorithm for high performance.
+ * Generates a content-based hash for a single line.
+ * Delegates to computeLineHash from hash-utils.ts.
+ */
+export function hashLine(line: string): string {
+	return computeLineHash(line)
+}
+
+export function formatAnchoredLine(line: string, hash: string, lineNum?: number, gutterWidth: number = 4): string {
+	if (lineNum === undefined) {
+		return `${hash}${ANCHOR_DELIMITER}${line}`
+	}
+	const paddedNum = String(lineNum).padStart(gutterWidth, " ")
+	return `${paddedNum} │ ${hash}${ANCHOR_DELIMITER}${line}`
+}
+
+// Keep backwards-compatible export name
+export { formatAnchoredLine as formatLineWithHash }
+
+/**
+ * Parses an anchored line returned by the LLM and extracts the hash and content.
+ * Handles the optional gutter prefix ("   42 │ ").
+ *
+ * @param anchoredLine - The anchored line string (e.g., "   42 │ a3|def foo()" or just "a3|def foo()")
+ * @returns Object with hash and content, or null if parsing fails
+ */
+export function parseAnchorFromLine(anchoredLine: string): { hash: string; content: string } | null {
+	if (!anchoredLine) {
+		return null
+	}
+	const trimmed = anchoredLine.trim()
+
+	// Pattern: optional gutter number + separator, then hash + delimiter + content
+	// First try to strip the gutter: "42 │ a3|content" → "a3|content"
+	let afterGutter = trimmed
+	const gutterMatch = trimmed.match(/^\d+\s*[│|]\s*/)
+	if (gutterMatch) {
+		afterGutter = trimmed.substring(gutterMatch[0].length)
+	}
+
+	const delimiterIndex = afterGutter.indexOf(ANCHOR_DELIMITER)
+	if (delimiterIndex === -1) {
+		// No delimiter found — if it looks like just a hash, treat as hash with empty content
+		const potentialHash = afterGutter.trim()
+		if (/^[a-z0-9_]{2,5}$/.test(potentialHash)) {
+			return { hash: potentialHash, content: "" }
+		}
+		return null
+	}
+
+	const hash = afterGutter.substring(0, delimiterIndex)
+	const content = afterGutter.substring(delimiterIndex + ANCHOR_DELIMITER.length)
+
+	// Validate hash format
+	if (!/^[a-z0-9_]{2,5}$/.test(hash)) {
+		return null
+	}
+
+	return { hash, content }
+}
+
+/**
+ * Splits an anchored line into anchor and content.
+ * Backwards compatible wrapper around parseAnchorFromLine.
+ */
+export function splitAnchor(rawAnchor: string): { anchor: string; content: string } {
+	const result = parseAnchorFromLine(rawAnchor)
+	if (!result) {
+		// Fallback: return trimmed anchor, empty content
+		return { anchor: rawAnchor.trim(), content: "" }
+	}
+	return { anchor: result.hash, content: result.content }
+}
+
+/**
+ * Generates fully anchored content for a whole file using content-hash anchors.
+ * Uses FileAnchorIndex to build deterministic, content-based anchors.
+ *
+ * @param content - Array of line strings
+ * @returns Array of formatted lines with gutter, anchors, and delimiters
+ */
+export function generateFullAnchoredContent(content: string[]): string[] {
+	const index = new FileAnchorIndex(content)
+	return index.getGutterRepresentation()
+}
+
+/**
+ * Hashes all lines in a given content string using content-based anchors.
+ * This replaces the old stateful anchor system with deterministic hashes.
+ *
+ * @param content - The full text content to hash
+ * @returns The content with each line prefixed by its gutter, anchor, and delimiter
+ */
+export function hashLines(content: string): string {
+	if (!content) {
+		return ""
+	}
+
+	const lines = content.split(/\r?\n/)
+	return generateFullAnchoredContent(lines).join("\n")
+}
+
+/**
+ * Generates a 32-bit FNV-1a hash for the given content string.
+ * Used for whole-file content comparison (cheap change detection).
  *
  * @param content - The text content to hash
  * @returns An 8-character hex string representing the hash
@@ -15,74 +119,4 @@ export function contentHash(content: string): string {
 		h = Math.imul(h ^ content.charCodeAt(i), 16777619) // FNV-1a prime
 	}
 	return (h >>> 0).toString(16).padStart(8, "0")
-}
-
-/**
- * Formats a single line with its hash prefix.
- *
- * @param content - The text content of the line
- * @param anchor - The pre-calculated anchor for this line
- * @returns The formatted string in "ID:CONTENT" format
- */
-
-/**
- * Splits a raw anchor string into its anchor word and content parts.
- *
- * @param rawAnchor - The raw anchor string (e.g., "    def process(data):")
- * @returns An object containing the anchor word and the content part
- */
-export function splitAnchor(rawAnchor: string): { anchor: string; content: string } {
-	const delimiterIndex = rawAnchor.indexOf(ANCHOR_DELIMITER)
-	if (delimiterIndex === -1) {
-		return { anchor: rawAnchor.trim(), content: "" }
-	}
-	return {
-		anchor: rawAnchor.substring(0, delimiterIndex).trim(),
-		content: rawAnchor.substring(delimiterIndex + ANCHOR_DELIMITER.length),
-	}
-}
-
-import { ANCHOR_DELIMITER } from "../shared/utils/line-hashing"
-export function formatLineWithHash(content: string, anchor: string): string {
-	return `${anchor}${ANCHOR_DELIMITER}${content}`
-}
-
-/**
- * Hashes all lines in a given content string using the stateful anchor manager.
- *
- * @param absolutePath - The absolute path of the file being hashed
- * @param content - The full text content to hash
- * @param taskId - The unique ID of the task for scoping anchors
- * @returns The content with each line prefixed by its stateful anchor
- */
-export function hashLinesStateful(absolutePath: string, content: string, taskId?: string): string {
-	if (!content) {
-		return ""
-	}
-
-	const lines = content.split(/\r?\n/)
-	const anchors = AnchorStateManager.reconcile(absolutePath, lines, taskId)
-
-	return lines.map((line, index) => formatLineWithHash(line, anchors[index])).join("\n")
-}
-
-/**
- * Legacy wrapper for hashLines. Now requires absolutePath for stateful hashing.
- * If absolutePath is not provided, it will return the content as-is (with no anchors).
- *
- * @param content - The text content to hash
- * @param absolutePath - The absolute path of the file (required for stateful hashing)
- * @param taskId - The unique ID of the task for scoping anchors
- * @returns The content with each line prefixed by its hash
- */
-export function hashLines(content: string, absolutePath?: string, taskId?: string): string {
-	if (!content) {
-		return ""
-	}
-
-	if (!absolutePath) {
-		return content
-	}
-
-	return hashLinesStateful(absolutePath, content, taskId)
 }

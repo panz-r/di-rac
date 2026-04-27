@@ -16,9 +16,9 @@ EDIT TYPES:
 3. insert_before: Inserts the provided text immediately before the line specified by anchor. end_anchor is not used.
 
 ANCHOR RULES:
-1. Anchors are a single opaque word (e.g., "AppleBanana") and basically hashes that carry no meaning, ollowed by ${getDelimiter()} which is followed by the actual line content.
+1. Anchors are short hash codes (e.g., "a3", "k7_1") that carry no meaning, followed by ${getDelimiter()} which is followed by the actual line content.
 2. For 'replace', anchors are inclusive, meaning what you specify as anchor and end_anchor, the lines belonging to both and everything in between will be overwritten.
-3. Anchors are file scoped. "Apple${getDelimiter()}" in one file is different from "Apple${getDelimiter()}" in another file.  
+3. Anchors are file scoped. "a3${getDelimiter()}" in one file is different from "a3${getDelimiter()}" in another file.  
 
 When replacing multi-line statements, function calls, or dictionaries, you MUST ensure your end_anchor points to precisely the line where the construct ends (e.g. a closing bracket or end of function). Do not leave orphaned closing syntax on the following lines NOR do miss the closing syntax. 
 
@@ -54,13 +54,13 @@ You MUST batch all non-overlapping edits into a single tool call. As long as the
 									type: "string",
 									description:
 										"Anchor for the start of the edit or the insertion point. Must contain a single line only, no newline char.",
-									pattern: `^[A-Za-z]+${getDelimiter()}[^\\r\\n]*$`,
+									pattern: `^[a-z0-9_]{2,5}\\${getDelimiter()}[^\\r\\n]*$`,
 								},
 								end_anchor: {
 									type: "string",
 									description:
 										"Anchor for the end of the edit (required for 'replace'). Must contain a single line only, no newline char.",
-									pattern: `^[A-Za-z]+${getDelimiter()}[^\\r\\n]*$`,
+									pattern: `^[a-z0-9_]{2,5}\\${getDelimiter()}[^\\r\\n]*$`,
 								},
 								text: {
 									type: "string",

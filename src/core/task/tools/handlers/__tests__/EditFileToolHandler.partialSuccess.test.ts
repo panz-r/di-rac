@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { DiracDefaultTool } from "@shared/tools"
 import { ANCHOR_DELIMITER } from "@shared/utils/line-hashing"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import * as pathUtils from "@utils/path"
 import { afterEach, beforeEach, describe, it } from "mocha"
 import sinon from "sinon"
@@ -188,7 +188,7 @@ describe("EditFileToolHandler.execute – partial success", () => {
 
 		// Get initial anchors
 		const lines = originalContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 
@@ -261,7 +261,7 @@ describe("EditFileToolHandler.execute – partial success", () => {
 		await fs.writeFile(filePath, originalContent)
 
 		const lines = originalContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 
@@ -295,7 +295,7 @@ describe("EditFileToolHandler.execute – partial success", () => {
 		const originalContent = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10"
 		await fs.writeFile(filePath, originalContent)
 		const lines = originalContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 

@@ -3,7 +3,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { DiracDefaultTool } from "@shared/tools"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { ANCHOR_DELIMITER } from "@utils/line-hashing"
 import { afterEach, beforeEach, describe, it } from "mocha"
 import sinon from "sinon"
@@ -108,7 +108,7 @@ describe("EditFileToolHandler – debug syntax", () => {
 		await fs.writeFile(filePath, originalContent)
 
 		const lines = originalContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 
@@ -160,10 +160,10 @@ describe("EditFileToolHandler – debug syntax", () => {
 
 		const lines1 = content1.split("\n")
 		const lines2 = content2.split("\n")
-		const anchors1 = AnchorStateManager.reconcile(path1, lines1, config.ulid).map(
+		const anchors1 = new FileAnchorIndex(lines1).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines1[i]}`,
 		)
-		const anchors2 = AnchorStateManager.reconcile(path2, lines2, config.ulid).map(
+		const anchors2 = new FileAnchorIndex(lines2).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines2[i]}`,
 		)
 

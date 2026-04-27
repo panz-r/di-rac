@@ -3,7 +3,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { DiracDefaultTool } from "@shared/tools"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import * as pathUtils from "@utils/path"
 import { afterEach, beforeEach, describe, it } from "mocha"
 import sinon from "sinon"
@@ -124,7 +124,7 @@ describe("ListFilesToolHandler.execute – error recovery", () => {
 		sandbox = sinon.createSandbox()
 		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dirac-listfiles-test-"))
 		sandbox.stub(pathUtils, "isLocatedInWorkspace").resolves(true)
-		AnchorStateManager.reset("ulid-1")
+		
 	})
 
 	afterEach(async () => {
@@ -318,7 +318,7 @@ describe("SearchFilesToolHandler.execute – error recovery", () => {
 		sandbox = sinon.createSandbox()
 		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dirac-search-test-"))
 		sandbox.stub(pathUtils, "isLocatedInWorkspace").resolves(true)
-		AnchorStateManager.reset("ulid-1")
+		
 	})
 
 	afterEach(async () => {

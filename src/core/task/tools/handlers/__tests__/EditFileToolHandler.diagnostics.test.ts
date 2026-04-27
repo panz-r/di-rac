@@ -3,7 +3,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { DiracDefaultTool } from "@shared/tools"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { ANCHOR_DELIMITER } from "@utils/line-hashing"
 import { afterEach, beforeEach, describe, it } from "mocha"
 import sinon from "sinon"
@@ -169,7 +169,7 @@ describe("EditFileToolHandler – diagnostics", () => {
 		const originalContent = "line 1\nline 2\nline 3"
 		await fs.writeFile(filePath, originalContent)
 		const lines = originalContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 
@@ -228,7 +228,7 @@ describe("EditFileToolHandler – diagnostics", () => {
 		const originalContent = "line 1\nline 2\nline 3"
 		await fs.writeFile(filePath, originalContent)
 		const lines = originalContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 
@@ -274,7 +274,7 @@ describe("EditFileToolHandler – diagnostics", () => {
 		assert.ok(result.includes("New Syntax Error"))
 
 		const finalLines = ["line 1", "bad line 2", "line 3"]
-		const finalAnchors = AnchorStateManager.reconcile(filePath, finalLines, config.ulid).map(
+		const finalAnchors = new FileAnchorIndex(finalLines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${finalLines[i]}`,
 		)
 		assert.ok(result.includes(finalAnchors[1]))
@@ -290,7 +290,7 @@ describe("EditFileToolHandler – diagnostics", () => {
 		await fs.writeFile(filePath, originalContent)
 
 		const lines = originalContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 		// Mock pre-diagnostics with 0 errors
@@ -345,7 +345,7 @@ describe("EditFileToolHandler – diagnostics", () => {
 		await fs.writeFile(filePath, originalContent)
 
 		const lines = originalContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 
@@ -411,7 +411,7 @@ describe("EditFileToolHandler – diagnostics", () => {
 		await fs.writeFile(filePath, "line 1")
 
 		const lines = ["line 1"]
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 

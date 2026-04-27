@@ -56,11 +56,16 @@
 			]
 		},
 		"rootDir": "..",
+		"typeRoots": [
+			"../node_modules/@types",
+			"../src/types"
+		],
 		"outDir": "dist"
 	},
 	"include": [
 		"src/**/*",
-		"esbuild.mts"
+		"esbuild.mts",
+		"../src/types/**/*"
 	],
 	"exclude": [
 		"node_modules",

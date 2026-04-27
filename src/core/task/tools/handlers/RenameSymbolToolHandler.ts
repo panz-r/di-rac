@@ -1,6 +1,6 @@
 import { ToolUse } from "@core/assistant-message"
 import { resolveWorkspacePath } from "@core/workspace"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { formatLineWithHash } from "@utils/line-hashing"
 import { getReadablePath } from "@utils/path"
 import * as fs from "fs/promises"
@@ -153,7 +153,7 @@ export class RenameSymbolToolHandler implements IFullyManagedTool {
 				await HostProvider.workspace.saveOpenDocumentIfDirty({ filePath: absolutePath })
 				const originalContent = await fs.readFile(absolutePath, "utf8")
 				const originalLines = originalContent.split(/\r?\n/)
-				const originalHashes = AnchorStateManager.reconcile(absolutePath, originalLines, config.ulid)
+				const originalHashes = new FileAnchorIndex(originalLines).getAllHashes()
 
 				// Sort locations from bottom to top, and right to left on the same line
 				const sortedLocs = [...locs].sort((a, b) => {

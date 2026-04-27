@@ -11,7 +11,6 @@ import { DiracApiReqInfo, DiracAsk } from "@shared/ExtensionMessage"
 import { DiracContent, DiracImageContentBlock, DiracUserContent } from "@shared/messages/content"
 import { ShowMessageType } from "@shared/proto/index.host"
 import { Logger } from "@shared/services/Logger"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
 import { releaseTaskLock } from "./TaskLockUtils"
 import { LifecycleManagerDependencies } from "./types/lifecycle-manager"
 import { buildUserFeedbackContent } from "./utils/buildUserFeedbackContent"
@@ -501,7 +500,6 @@ export class LifecycleManager {
 			this.dependencies.fileContextTracker.dispose()
 			this.dependencies.messageStateHandler.dispose()
 			await this.dependencies.diffViewProvider.revertChanges()
-			AnchorStateManager.reset(this.dependencies.taskId)
 		} finally {
 			if (this.dependencies.taskState.taskLockAcquired) {
 				try {

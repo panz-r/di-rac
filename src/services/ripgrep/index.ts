@@ -1,5 +1,5 @@
 import { DiracIgnoreController } from "@core/ignore/DiracIgnoreController"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { formatLineWithHash } from "@utils/line-hashing"
 import * as childProcess from "child_process"
 import * as fs from "fs/promises"
@@ -199,13 +199,9 @@ async function formatResults(results: FileSearchResult[], matchCount: number, cw
 		let anchors: string[] = []
 
 		try {
-			if (AnchorStateManager.isTracking(absoluteFilePath, taskId)) {
-				anchors = AnchorStateManager.getAnchors(absoluteFilePath, taskId)!
-			} else {
-				const content = await fs.readFile(absoluteFilePath, "utf8")
-				const lines = content.split(/\r?\n/)
-				anchors = AnchorStateManager.reconcile(absoluteFilePath, lines, taskId)
-			}
+			const content = await fs.readFile(absoluteFilePath, "utf8")
+			const lines = content.split(/\r?\n/)
+			anchors = new FileAnchorIndex(lines).getAllHashes()
 		} catch (error) {
 			Logger.error(`Error reading file for search anchors: ${absoluteFilePath}`, error)
 		}

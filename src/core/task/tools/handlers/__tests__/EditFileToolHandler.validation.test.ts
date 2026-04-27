@@ -3,7 +3,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { DiracDefaultTool } from "@shared/tools"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { ANCHOR_DELIMITER } from "@utils/line-hashing"
 import { afterEach, beforeEach, describe, it } from "mocha"
 import sinon from "sinon"
@@ -164,7 +164,7 @@ describe("EditFileToolHandler.execute – validation", () => {
 		await fs.writeFile(filePath, originalContent)
 
 		const lines = originalContent.split("\n")
-		const anchors = AnchorStateManager.reconcile(filePath, lines, config.ulid).map(
+		const anchors = new FileAnchorIndex(lines).getAllHashes().map(
 			(a, i) => `${a}${ANCHOR_DELIMITER}${lines[i]}`,
 		)
 

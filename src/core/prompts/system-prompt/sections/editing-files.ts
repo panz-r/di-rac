@@ -14,23 +14,23 @@ You have 4 file editing tools:
 
 
 ### LINE-HASH PROTOCOL
-Every line returned by read tools (read_file, get_function, get_file_skeleton, search_files) follows the format: ANCHOR${delimiter}CONTENT
+Every line returned by read tools (read_file, get_function, get_file_skeleton, search_files) follows the format: LINE_NUM │ ANCHOR${delimiter}CONTENT
 
-- ANCHOR: An opaque word-based tag (e.g., "Apple") used for stable referencing.
-- CONTENT: The original line text, verbatim. Blank lines are shown as "ANCHOR${delimiter}".
+- ANCHOR: A short content-hash code (e.g., "a3", "k7_1") used for stable referencing.
+- CONTENT: The original line text, verbatim. Blank lines are shown as "LINE_NUM │ ANCHOR${delimiter}".
 
 Example read output:
-Apple${delimiter}    def process(param1, param2):
+   42 │ a3${delimiter}    def process(param1, param2):
 
 ### CRITICAL RULES FOR ANCHORS
-1. FULL LINE MATCH: When providing \`anchor\` and \`end_anchor\`, you MUST include the ENTIRE line exactly as it appears in the read tool (Anchor Word + Delimiter + Content).
-   - Correct: "Apple${delimiter}    def process(data):"
-   - Incorrect: "Apple" or "Apple${delimiter}"
+1. FULL LINE MATCH: When providing \`anchor\` and \`end_anchor\`, you MUST include the ENTIRE line exactly as it appears in the read tool (Line Number + Anchor + Delimiter + Content).
+   - Correct: "   42 │ a3${delimiter}    def process(data):"
+   - Incorrect: "a3" or "a3${delimiter}"
 2. ORDERING: \`anchor\` MUST appear before or be the exact same line as \`end_anchor\` in the file.
 
 ### CRITICAL RULES FOR EDITING
 1. INDENTATION: You are strictly responsible for indentation. \`replace\` destroys the original lines, so your \`text\` parameter MUST include the correct leading spaces for every single line you insert.
-2. NO ANCHORS IN TEXT: The \`text\` parameter represents the raw, final code. NEVER include Anchor words or delimiters inside \`text\`.
+2. NO ANCHORS IN TEXT: The \`text\` parameter represents the raw, final code. NEVER include anchor hashes or delimiters inside \`text\`.
 3. THE MOST COMMON error type is not balancing braces/indents. You edits must make sure the you neither omit a closing brace not emit an extra closing brace. 
 4. NON-OVERLAPPING: Multiple edits in the same file MUST NOT overlap.
 

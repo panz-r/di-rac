@@ -23,6 +23,10 @@
 		"target": "es2022",
 		"useDefineForClassFields": true,
 		"useUnknownInCatchVariables": false,
+		"typeRoots": [
+			"./node_modules/@types",
+			"./src/types"
+		],
 		"paths": {
 			"@/*": [
 				"./src/*"

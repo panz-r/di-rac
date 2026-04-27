@@ -271,7 +271,7 @@ Otherwise, if you have not completed the task and do not need additional informa
 	diffError: (relPath: string, originalContent: string | undefined, absolutePath?: string, ulid?: string) =>
 		`This is likely because your edit could not be applied. Ensure your anchors (anchor and end_anchor) match specific, unique words that only appear on those lines. (Do NOT include the line's actual code, spaces, or braces in the anchors. Malformed XML will cause complete tool failure and break the entire editing process.)\n\n` +
 		`The file was reverted to its original state:\n\n` +
-		`<file_content path="${relPath.toPosix()}">\n${hashLines(originalContent || "", absolutePath, ulid)}\n</file_content>\n\n` +
+		`<file_content path="${relPath.toPosix()}">\n${hashLines(originalContent || "")}\n</file_content>\n\n` +
 		`Now that you have the latest state of the file, try the operation again with fewer, more precise SEARCH blocks. (If you run into this error 3 times in a row, you may use the write_to_file tool as a fallback.)`,
 
 	diracIgnoreInstructions: (content: string) =>

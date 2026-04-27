@@ -1,6 +1,6 @@
 import { ToolUse } from "@core/assistant-message"
 import { resolveWorkspacePath } from "@core/workspace"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { formatLineWithHash, stripHashes } from "@utils/line-hashing"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import * as fs from "fs/promises"
@@ -164,7 +164,7 @@ export class FindSymbolReferencesToolHandler implements IFullyManagedTool {
 						const fileHits = fileHitsMap.get(absFilePath)!
 						const fileContent = await fs.readFile(absFilePath, "utf8")
 						const lines = fileContent.split(/\r?\n/)
-						const anchors = AnchorStateManager.reconcile(absFilePath, lines, config.ulid)
+						const anchors = new FileAnchorIndex(lines).getAllHashes()
 
 						// Sort and merge hits on the same line
 						const sortedHits = [...fileHits].sort((a, b) => a.startLine - b.startLine)

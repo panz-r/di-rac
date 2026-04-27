@@ -2,7 +2,7 @@ import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { resolveWorkspacePath } from "@core/workspace"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { isLocatedInWorkspace } from "@utils/path"
 import * as fs from "fs/promises"
 import * as path from "path"
@@ -405,7 +405,7 @@ export class BatchProcessor {
             config.services.fileContextTracker.markFileAsEditedByDirac(displayPath)
             await config.services.fileContextTracker.trackFileContext(displayPath, "dirac_edited")
 
-            const newLineHashes = AnchorStateManager.reconcile(absolutePath, finalLines, config.ulid)
+            const newLineHashes = new FileAnchorIndex(finalLines).getAllHashes()
 
             return {
                 saveResult: {
@@ -439,7 +439,7 @@ export class BatchProcessor {
             finalLines = finalContent.split(/\r?\n/)
         }
 
-        const newLineHashes = AnchorStateManager.reconcile(absolutePath, finalLines, config.ulid)
+        const newLineHashes = new FileAnchorIndex(finalLines).getAllHashes()
 
         return { saveResult, finalContent, finalLines, newLineHashes }
     }
@@ -454,9 +454,10 @@ export class BatchProcessor {
             await HostProvider.workspace.saveOpenDocumentIfDirty({ filePath: absolutePath })
             const content = await fs.readFile(absolutePath, "utf8")
             const lines = content.split(/\r?\n/)
-            const lineHashes = AnchorStateManager.reconcile(absolutePath, lines, config.ulid)
+            const index = new FileAnchorIndex(lines)
+            const lineHashes = index.getAllHashes()
 
-            const { resolvedEdits, failedEdits } = this.executor.resolveEdits(blocks, lines, lineHashes)
+            const { resolvedEdits, failedEdits } = this.executor.resolveEdits(blocks, lines, lineHashes, index, absolutePath)
 
             if (resolvedEdits.length === 0) {
                 const failureMessages = failedEdits.map((f) => this.executor.formatFailureMessage(f.edit, f.error))

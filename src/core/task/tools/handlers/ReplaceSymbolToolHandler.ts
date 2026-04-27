@@ -2,7 +2,7 @@
 import { ToolUse } from "@core/assistant-message"
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { resolveWorkspacePath } from "@core/workspace"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
+import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { ASTAnchorBridge, SymbolRange } from "@utils/ASTAnchorBridge"
 import { formatLineWithHash, stripHashes } from "@utils/line-hashing"
 import { getReadablePath } from "@utils/path"
@@ -134,7 +134,7 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 				await HostProvider.workspace.saveOpenDocumentIfDirty({ filePath: batch.absolutePath })
 				const originalContent = await fs.readFile(batch.absolutePath, "utf8")
 				const originalLines = originalContent.split(/\r?\n/)
-				const originalHashes = AnchorStateManager.reconcile(batch.absolutePath, originalLines, config.ulid)
+				const originalHashes = new FileAnchorIndex(originalLines).getAllHashes()
 
 				const resolvedReplacements: Array<{
 					replacement: Replacement

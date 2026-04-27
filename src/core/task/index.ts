@@ -75,7 +75,6 @@ import { Logger } from "@shared/services/Logger"
 import { Session } from "@shared/services/Session"
 import { DiracDefaultTool } from "@shared/tools"
 import { DiracAskResponse } from "@shared/WebviewMessage"
-import { AnchorStateManager } from "@utils/AnchorStateManager"
 import { isLocalModel, isParallelToolCallingEnabled } from "@utils/model-utils"
 import fs from "fs/promises"
 import Mutex from "p-mutex"
@@ -290,7 +289,6 @@ export class Task {
 		this.diffViewProvider = backgroundEditEnabled ? new FileEditProvider() : HostProvider.get().createDiffViewProvider()
 
 		this.taskId = taskId
-		AnchorStateManager.reset(this.taskId)
 
 		// Initialize taskId first
 		if (historyItem) {
