@@ -234,6 +234,9 @@ export interface DiracSayTool {
 	| "diagnostics_scan"
 	| "executeCommand"
 	| "execute_command"
+	| "expand_symbol"
+	| "search_symbols"
+	| "repo_map"
 
 	script?: string;
 	language?: string;
@@ -272,6 +275,12 @@ export interface DiracSayTool {
 	browser_action?: DiracSayBrowserAction
 	browser_action_result?: BrowserActionResult
 	readFileResults?: ReadFileResult[]
+
+	detail?: string
+	max_tokens?: number
+	page?: string
+	section?: string
+	results?: any[]
 
 	editSummaries?: Array<{
 		path: string

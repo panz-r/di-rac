@@ -75,12 +75,19 @@ export const toolParamNames = [
 	"existing_symbol",
 	"new_symbol",
 	"required_files",
+	"detail",
+	"max_tokens",
+	"page",
+	"section",
+	"max_results",
+	"kind",
 ] as const
 
 export type ToolParamName = (typeof toolParamNames)[number]
 
 export interface ToolUse {
 	type: "tool_use"
+	id?: string // legacy id, use call_id
 	name: DiracDefaultTool // id of the tool being used
 	// params is a partial record, allowing only some or none of the possible parameters to be used
 	params: Partial<Record<ToolParamName, any>>

@@ -59,6 +59,9 @@ export default `
     (identifier)
   ]) @definition.type
 
+(import_statement) @import
+(import_from_statement) @import
+
 ;; References
 (identifier) @name.reference
 (attribute attribute: (identifier) @name.reference)

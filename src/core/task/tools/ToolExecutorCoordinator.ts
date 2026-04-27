@@ -27,6 +27,9 @@ import { UseSkillToolHandler } from "./handlers/UseSkillToolHandler"
 import { ListSkillsToolHandler } from "./handlers/ListSkillsToolHandler"
 import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
+import { ExpandSymbolToolHandler } from "./handlers/ExpandSymbolToolHandler"
+import { SearchSymbolsToolHandler } from "./handlers/SearchSymbolsToolHandler"
+import { RepoMapToolHandler } from "./handlers/RepoMapToolHandler"
 
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
 import { AgentConfigLoader } from "./subagent/AgentConfigLoader"
@@ -112,6 +115,10 @@ export class ToolExecutorCoordinator {
 		[DiracDefaultTool.USE_SKILL]: (_v: ToolValidator) => new UseSkillToolHandler(),
 		[DiracDefaultTool.LIST_SKILLS]: (_v: ToolValidator) => new ListSkillsToolHandler(),
 		[DiracDefaultTool.USE_SUBAGENTS]: (_v: ToolValidator) => new UseSubagentsToolHandler(),
+
+		[DiracDefaultTool.EXPAND_SYMBOL]: (v: ToolValidator) => new ExpandSymbolToolHandler(v),
+		[DiracDefaultTool.SEARCH_SYMBOLS]: (v: ToolValidator) => new SearchSymbolsToolHandler(v),
+		[DiracDefaultTool.REPO_MAP]: (v: ToolValidator) => new RepoMapToolHandler(v),
 	}
 
 	/**

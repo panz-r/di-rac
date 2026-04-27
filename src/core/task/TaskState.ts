@@ -78,4 +78,15 @@ export class TaskState {
 	availableSkills: SkillMetadata[] = []
 	discoveredSkillsCache?: SkillMetadata[]
 
+	// Exploration state
+	fileCursors: Map<string, number> = new Map() // maps absolute path to start line (1-based)
+	symbolIndex: Map<string, SymbolIndexEntry[]> = new Map() // maps relative path to symbols
+}
+
+export interface SymbolIndexEntry {
+	id: string
+	name: string
+	kind: string
+	line: number
+	signature?: string
 }

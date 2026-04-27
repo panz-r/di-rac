@@ -1,9 +1,83 @@
 import { workspaceResolver } from "@core/workspace"
+import { createReadStream } from "node:fs"
 import fs from "fs/promises"
 import * as path from "path"
+import * as readline from "node:readline"
 import { HostProvider } from "@/hosts/host-provider"
 
 const IS_WINDOWS = /^win/.test(process.platform)
+
+/**
+ * Efficiently counts the number of lines in a file using a stream.
+ * Includes a timeout to avoid hanging on extremely large files.
+ *
+ * @param filePath - Absolute path to the file.
+ * @param timeoutMs - Maximum time to spend counting (default 1000ms).
+ * @returns Promise<number | undefined> - Number of lines, or undefined if timeout or error.
+ */
+export async function countFileLines(filePath: string, timeoutMs = 1000): Promise<number | undefined> {
+	return new Promise((resolve) => {
+		const fileStream = createReadStream(filePath)
+		const rl = readline.createInterface({
+			input: fileStream,
+			crlfDelay: Infinity,
+		})
+
+		let count = 0
+		const timeout = setTimeout(() => {
+			rl.close()
+			fileStream.destroy()
+			resolve(undefined)
+		}, timeoutMs)
+
+		rl.on("line", () => {
+			count++
+		})
+
+		rl.on("close", () => {
+			clearTimeout(timeout)
+			resolve(count)
+		})
+
+		rl.on("error", () => {
+			clearTimeout(timeout)
+			resolve(undefined)
+		})
+	})
+}
+
+/**
+ * Reads the first N lines of a file efficiently using a stream.
+ *
+ * @param filePath - Absolute path to the file.
+ * @param n - Number of lines to read.
+ * @returns Promise<string> - The first N lines of the file.
+ */
+export async function readFirstNLines(filePath: string, n: number): Promise<string> {
+	const fileStream = createReadStream(filePath)
+	const rl = readline.createInterface({
+		input: fileStream,
+		crlfDelay: Infinity,
+	})
+
+	let content = ""
+	let count = 0
+	try {
+		for await (const line of rl) {
+			content += line + "\n"
+			count++
+			if (count >= n) {
+				rl.close()
+				fileStream.destroy()
+				break
+			}
+		}
+	} catch (error) {
+		// If error occurs during streaming, we return whatever we managed to read
+		return content
+	}
+	return content
+}
 
 /**
  * Asynchronously creates all non-existing subdirectories for a given file path

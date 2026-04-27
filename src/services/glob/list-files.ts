@@ -30,6 +30,7 @@ const DEFAULT_IGNORE_DIRECTORIES = [
 export interface FileInfo {
 	path: string
 	mtime: number
+	size: number
 	isDirectory: boolean
 	lineCount?: number
 }
@@ -105,6 +106,7 @@ export async function listFiles(dirPath: string, recursive: boolean, limit: numb
 						{
 							path: absolutePath,
 							mtime: stats.mtimeMs,
+							size: stats.size,
 							isDirectory: false,
 							lineCount,
 						},
@@ -156,6 +158,7 @@ export async function listFiles(dirPath: string, recursive: boolean, limit: numb
 			return {
 				path: entry.path,
 				mtime: entry.stats?.mtimeMs ?? 0,
+				size: entry.stats?.size ?? 0,
 				isDirectory: isDir,
 				lineCount,
 			}

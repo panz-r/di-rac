@@ -31,6 +31,18 @@ PRIME DIRECTIVES
 2. MINIMIZE THE NUMBER OF ROUND TRIPS NEEDED TO DO THIS. BATCH TOOL CALLS TOGETHER TO AVOID MULTIPLE ROUND TRIPS.
 3. LOAD INTO CONTEXT ONLY WHAT IS NECESSARY.
 
+CODE EXPLORATION
+
+To efficiently explore a codebase, follow the "Cost Ladder" to minimize token usage and round trips:
+- Orientation: Use \`repo_map\` for a high-level overview of the project structure and top-level symbols.
+- Search: Use \`search_symbols\` to find specific definitions across the project by name/pattern.
+- Structure: Use \`read_file(detail="outline")\` to see all symbols in a file, or \`detail="skeleton"\` to see structure without bodies.
+- Drill-down: Use \`expand_symbol\` to read the full body of a specific class or function using its structural handle (e.g., 'fn:myFunc').
+- Targeted Read: Use \`read_file\` with \`start_line\` and \`end_line\` for specific edits.
+- Navigation: Use \`read_file(page="next")\` to browse large files.
+
+Always prefer structural handles and detailed visibility modes over reading full files.
+
 TOOL USE
 
 ${

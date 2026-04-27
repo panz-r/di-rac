@@ -153,6 +153,7 @@ export default `
   (#select-adjacent! @doc @definition.method)
 )
 ;; References
+(import_statement) @import
 (identifier) @name.reference
 (property_identifier) @name.reference
 (type_identifier) @name.reference

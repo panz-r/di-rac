@@ -5,8 +5,11 @@ import { formatResponse } from "@core/prompts/responses"
 import { createToolError } from "@shared/tool-response"
 import { resolveWorkspacePath } from "@core/workspace"
 import { extractFileContent } from "@integrations/misc/extract-file-content"
+import { parseContent, parseFile, generateSkeleton, ParsedDefinition } from "@services/tree-sitter"
+import { loadRequiredLanguageParsers } from "@services/tree-sitter/languageParser"
 import { contentHash, hashLines, stripHashes } from "@utils/line-hashing"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
+import { countFileLines, readFirstNLines } from "@utils/fs"
 import { telemetryService } from "@/services/telemetry"
 import { DiracSayTool } from "@/shared/ExtensionMessage"
 import { DiracAssistantToolUseBlock, DiracStorageMessage, DiracUserToolResultContentBlock } from "@/shared/messages"
@@ -20,6 +23,10 @@ import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 const MAX_FILE_READ_SIZE = 50 * 1024 // 50KB limit for full file reads
+const OVERSIZED_FILE_PREVIEW_LINES = 200
+const TOKEN_ESTIMATE_RATIO = 1 / 3 // approx chars per token
+const SUPPORTED_EXTENSIONS = new Set(["ts", "tsx", "js", "jsx", "py", "rs", "go", "c", "cpp", "h", "hpp", "java", "php", "rb", "swift", "kt"])
+
 export class ReadFileToolHandler implements IFullyManagedTool {
 	readonly name = DiracDefaultTool.FILE_READ
 
@@ -146,6 +153,15 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 		return undefined
 	}
 
+	private buildOutline(definitions: ParsedDefinition[]): string {
+		return definitions
+			.map(
+				(d) =>
+					`  - [${d.id}] ${d.signature || d.text.trim()} (lines ${d.fullBodyRange?.startLine || d.lineIndex + 1}-${d.fullBodyRange?.endLine || d.lineIndex + 1})`,
+			)
+			.join("\n")
+	}
+
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
 		const relPaths = Array.isArray(block.params.paths) ? block.params.paths : (block.params.paths ? [block.params.paths as string] : [])
 		const startLineNum = block.params.start_line ? Number.parseInt(String(block.params.start_line)) : undefined
@@ -255,64 +271,136 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 						| "primary_fallback",
 				})
 
-				// 3. Safety check: prevent reading files too large
-				if (!startLineNum && !endLineNum) {
-					const stats = await fs.stat(absolutePath)
-					const ext = path.extname(absolutePath).toLowerCase()
-					const isImage = [".png", ".jpg", ".jpeg", ".webp"].includes(ext)
-					if (stats.isFile() && !isImage && stats.size > MAX_FILE_READ_SIZE) {
-						results.push(
-							`${header}The file size is ${Math.round(
-								stats.size / 1024,
-							)}KB, which exceeds the ${MAX_FILE_READ_SIZE / 1024}KB limit for full file reads. Reading this file will likely flood the context window. Please use more surgical means or specify a line range using 'start_line' and 'end_line' parameters.`,
-						)
-						readFileResults.push({
-							path: displayPath,
-							status: "error",
-							label: `File too large (> ${MAX_FILE_READ_SIZE / 1024}KB)`,
-						})
-						anyFailed = true
-						continue
+				// 3. Exploration Parameters
+				let detail = block.params.detail as "preview" | "skeleton" | "outline" | "full" | undefined
+				const maxTokens = block.params.max_tokens ? Number.parseInt(String(block.params.max_tokens)) : undefined
+				const page = block.params.page as "next" | "prev" | "section" | undefined
+				const section = block.params.section as string | undefined
+
+				const stats = await fs.stat(absolutePath)
+				const ext = path.extname(absolutePath).toLowerCase()
+				const isImage = [".png", ".jpg", ".jpeg", ".webp"].includes(ext)
+				const fileSizeKB = stats.size / 1024
+
+				// Auto-select detail if not specified
+				if (!detail && !startLineNum && !endLineNum && !page) {
+					detail = stats.size > MAX_FILE_READ_SIZE && !isImage ? "preview" : "full"
+				}
+
+				// 4. Handle Pagination/Jump
+				let finalStartLine = startLineNum || 1
+				let finalEndLine = endLineNum
+
+				if (page || section) {
+					const currentCursor = config.taskState.fileCursors.get(absolutePath) || 1
+					if (page === "next") {
+						finalStartLine = currentCursor + OVERSIZED_FILE_PREVIEW_LINES
+					} else if (page === "prev") {
+						finalStartLine = Math.max(1, currentCursor - OVERSIZED_FILE_PREVIEW_LINES)
+					} else if (page === "section" && section) {
+						const languageParsers = await loadRequiredLanguageParsers([absolutePath])
+						const definitions = await parseFile(absolutePath, languageParsers, config.services.diracIgnoreController)
+						const target = definitions?.find(d => d.id === section)
+						if (target) {
+							finalStartLine = target.fullBodyRange?.startLine || target.lineIndex + 1
+						}
+					}
+					finalEndLine = finalStartLine + OVERSIZED_FILE_PREVIEW_LINES - 1
+					config.taskState.fileCursors.set(absolutePath, finalStartLine)
+				} else if (startLineNum) {
+					config.taskState.fileCursors.set(absolutePath, startLineNum)
+				}
+
+				// 5. Execute based on detail level with budget awareness
+				let content = ""
+				let degraded = false
+				let usedDetail = detail || "full"
+
+				const tryGenerateContent = async (mode: string): Promise<string> => {
+					if (isImage) return (await extractFileContent(absolutePath, supportsImages)).text
+					const cleanExt = ext.startsWith(".") ? ext.slice(1) : ext
+					const isSupported = SUPPORTED_EXTENSIONS.has(cleanExt)
+
+					switch (mode) {
+						case "outline": {
+							if (!isSupported) return "Outline not available for this file type."
+							const languageParsers = await loadRequiredLanguageParsers([absolutePath])
+							const definitions = await parseFile(absolutePath, languageParsers, config.services.diracIgnoreController)
+							return definitions ? this.buildOutline(definitions) : "No definitions found."
+						}
+						case "skeleton": {
+							if (!isSupported) return (await extractFileContent(absolutePath, false)).text
+							const languageParsers = await loadRequiredLanguageParsers([absolutePath])
+							const fullContent = (await extractFileContent(absolutePath, false)).text
+							return await generateSkeleton(fullContent, cleanExt, languageParsers)
+						}
+						case "preview": {
+							const preview = await readFirstNLines(absolutePath, OVERSIZED_FILE_PREVIEW_LINES)
+							const totalLines = await countFileLines(absolutePath)
+							let chunkMap = ""
+							
+							if (isSupported) {
+								try {
+									const languageParsers = await loadRequiredLanguageParsers([absolutePath])
+									const definitions = await parseFile(absolutePath, languageParsers, config.services.diracIgnoreController)
+									if (definitions) {
+										chunkMap = "\nChunk map (full file):\n" + definitions
+											.filter(d => d.kind === "class" || d.kind === "function" || d.kind === "interface")
+											.map(d => `  - [${d.id}] ${d.name} (lines ${d.fullBodyRange?.startLine || d.lineIndex + 1}-${d.fullBodyRange?.endLine || d.lineIndex + 1})`)
+											.join("\n")
+									}
+								} catch (e) {
+									// Ignore parse errors for chunk map
+								}
+							}
+							
+							const hint = formatResponse.readFilePreviewHint(relPath, totalLines, OVERSIZED_FILE_PREVIEW_LINES, fileSizeKB)
+							return `${hashLines(preview)}${chunkMap}${hint}`
+						}
+						case "full":
+						default: {
+							const fullContent = (await extractFileContent(absolutePath, supportsImages)).text
+							let result = hashLines(fullContent)
+							if (finalStartLine > 1 || finalEndLine) {
+								const lines = result.split("\n")
+								const start = Math.max(0, finalStartLine - 1)
+								const end = finalEndLine ? Math.min(lines.length, finalEndLine) : lines.length
+								result = lines.slice(start, end).join("\n")
+							}
+							return result
+						}
 					}
 				}
 
-				// 4. Execute the file read operation
-				const providedHash = this.extractLastKnownHashFromHistory(history, relPath)
-				const fileContent = await extractFileContent(absolutePath, supportsImages)
+				content = await tryGenerateContent(usedDetail)
 
-				// Track file read operation
-				await config.services.fileContextTracker.trackFileContext(relPath, "read_tool")
-				anySucceeded = true
-
-				// Store image blocks to push after potential approval
-				if (fileContent.imageBlock) {
-					imageBlocks.push(fileContent.imageBlock)
-				}
-
-				const currentHash = contentHash(fileContent.text)
-
-				if (providedHash === currentHash && !startLineNum && !endLineNum) {
-					results.push(`${header}no changes have been made to the file since your last read (Hash: ${providedHash})`)
-				} else {
-					let hashedContent = hashLines(fileContent.text)
-					if (startLineNum || endLineNum) {
-						const lines = hashedContent.split("\n")
-						const start = Math.max(0, (startLineNum || 1) - 1)
-						const end = Math.min(lines.length, endLineNum || lines.length)
-						hashedContent = lines.slice(start, end).join("\n")
+				// Budget-aware degradation
+				if (maxTokens && content.length * TOKEN_ESTIMATE_RATIO > maxTokens) {
+					degraded = true
+					const degradationPath = ["full", "skeleton", "outline"]
+					let currentIndex = degradationPath.indexOf(usedDetail)
+					while (currentIndex < degradationPath.length - 1 && content.length * TOKEN_ESTIMATE_RATIO > maxTokens) {
+						currentIndex++
+						usedDetail = degradationPath[currentIndex] as any
+						content = await tryGenerateContent(usedDetail)
 					}
-					results.push(`${header}[File Hash: ${currentHash}]\n${hashedContent}`)
 				}
 
-				const range =
-					startLineNum || endLineNum
-						? `lines ${startLineNum || 1} to ${endLineNum || "end"}`
-						: "full file"
+				const currentHash = contentHash(content)
+				const tokenInfo = maxTokens ? ` [Budget: ${maxTokens}, Actual: ~${Math.round(content.length * TOKEN_ESTIMATE_RATIO)}]` : ""
+				const degradedInfo = degraded ? " [DEGRADED TO STAY IN BUDGET]" : ""
+				
+				results.push(`${header}[File Hash: ${currentHash}]${tokenInfo}${degradedInfo}\n${content}`)
+				
 				readFileResults.push({
 					path: displayPath,
 					status: "success",
-					label: `Read ${range}`,
+					label: `Read ${usedDetail} (lines ${finalStartLine}-${finalEndLine || "end"})`,
 				})
+
+				await config.services.fileContextTracker.trackFileContext(relPath, "read_tool")
+				anySucceeded = true
+				continue
 			} catch (error) {
 				anyFailed = true
 				const errorMessage = error instanceof Error ? error.message : String(error)

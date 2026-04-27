@@ -27,6 +27,17 @@ export const formatResponse = {
 
 	toolError: (error?: string) => `The tool execution failed with the following error:\n<error>\n${error}\n</error>`,
 
+	readFilePreviewHint: (
+		relPath: string,
+		totalLines: number | undefined,
+		previewLines: number,
+		fileSizeKB: number,
+	) => {
+		const sizeInfo = `File '${relPath.toPosix()}' is ${Math.round(fileSizeKB)} KB`
+		const lineInfo = totalLines !== undefined ? ` (~${totalLines.toLocaleString()} lines)` : ""
+		return `\n\nNOTE: ${sizeInfo}${lineInfo}. Showing first ${previewLines} lines. To view other sections, add 'start_line' and 'end_line' parameters (e.g. start_line=${previewLines + 1}, end_line=${previewLines + 200}).`
+	},
+
 	diracIgnoreError: (path: string) =>
 		`Access to ${path} is blocked by the .diracignore file settings. You must try to continue in the task without using this file, or ask the user to update the .diracignore file.`,
 

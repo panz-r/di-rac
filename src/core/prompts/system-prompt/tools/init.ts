@@ -23,6 +23,9 @@ import { list_skills } from "./list_skills"
 import { web_fetch } from "./web_fetch"
 import { web_search } from "./web_search"
 import { write_to_file } from "./write_to_file"
+import { expand_symbol } from "./expand_symbol"
+import { search_symbols } from "./search_symbols"
+import { repo_map } from "./repo_map"
 
 /**
  * Registers all tools with the DiracToolSet provider.
@@ -43,6 +46,9 @@ export function registerDiracToolSets(): void {
 		get_function,
 		get_file_skeleton,
 		find_symbol_references,
+		expand_symbol,
+		search_symbols,
+		repo_map,
 
 		list_files,
 		new_task,
