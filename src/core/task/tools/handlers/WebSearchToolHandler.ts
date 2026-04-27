@@ -1,5 +1,6 @@
 import { DiracSayTool } from "@shared/ExtensionMessage"
 import { DiracDefaultTool } from "@shared/tools"
+import { createToolError } from "@shared/tool-response"
 import axios from "axios"
 import { DiracEnv } from "@/config"
 import { buildDiracExtraHeaders } from "@/services/EnvUtils"
@@ -59,7 +60,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 			const diracWebToolsEnabled = config.services.stateManager.getGlobalSettingsKey("diracWebToolsEnabled")
 			const featureFlagEnabled = featureFlagsService.getWebtoolsEnabled()
 			if (provider !== "dirac" || !diracWebToolsEnabled || !featureFlagEnabled) {
-				return formatResponse.toolError("Dirac web tools are currently disabled.")
+				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Dirac web tools are currently disabled.", "unrecoverable"))
 			}
 
 			// Validate required parameters
@@ -76,7 +77,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 			// Validate mutual exclusivity
 			if (allowedDomains.length > 0 && blockedDomains.length > 0) {
 				config.taskState.consecutiveMistakeCount++
-				return formatResponse.toolError("Cannot specify both allowed_domains and blocked_domains")
+				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Cannot specify both allowed_domains and blocked_domains", "recoverable"))
 			}
 
 			// Create message for approval

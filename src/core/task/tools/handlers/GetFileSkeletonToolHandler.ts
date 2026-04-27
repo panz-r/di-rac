@@ -3,6 +3,7 @@ import { resolveWorkspacePath } from "@core/workspace"
 import { ASTAnchorBridge } from "@utils/ASTAnchorBridge"
 import { stripHashes } from "@utils/line-hashing"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
+import { createToolError } from "@shared/tool-response"
 import { formatResponse } from "@/core/prompts/responses"
 import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
@@ -95,7 +96,7 @@ export class GetFileSkeletonToolHandler implements IFullyManagedTool {
 		} catch (error) {
 			config.taskState.consecutiveMistakeCount++
 			const errorMessage = error instanceof Error ? error.message : String(error)
-			return formatResponse.toolError(`Error extracting skeleton: ${errorMessage}`)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", `Error extracting skeleton: ${errorMessage}`, "recoverable"))
 		}
 		const result = skeletons.map((s) => `--- ${s.path} ---\nStable Anchors are provided with each line.\n ${s.content}`).join("\n\n")
 

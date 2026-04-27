@@ -2,6 +2,7 @@ import path from "node:path"
 import fs from "node:fs/promises"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
+import { createToolError } from "@shared/tool-response"
 import { resolveWorkspacePath } from "@core/workspace"
 import { extractFileContent } from "@integrations/misc/extract-file-content"
 import { contentHash, hashLines, stripHashes } from "@utils/line-hashing"
@@ -175,7 +176,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "tool")
 			await config.callbacks.say("tool", completeMessage, undefined, undefined, false)
 
-			return formatResponse.toolError(error)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", error, "recoverable"))
 		}
 
 		// Ensure apiConversationHistory is passed into TaskConfig from the main Dirac instance

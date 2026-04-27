@@ -4,6 +4,7 @@ import { formatResponse } from "@core/prompts/responses"
 import { getWorkspaceBasename, resolveWorkspacePath } from "@core/workspace"
 import { listFiles } from "@services/glob/list-files"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
+import { createToolError } from "@shared/tool-response"
 import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
@@ -83,7 +84,7 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 					"error",
 					`Dirac tried to use ${this.name} without providing any paths. Retrying...`
 				)
-				return formatResponse.toolError(validation.error!)
+				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", validation.error!, "recoverable"))
 			}
 		}
 

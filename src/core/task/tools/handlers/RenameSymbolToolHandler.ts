@@ -3,6 +3,7 @@ import { resolveWorkspacePath } from "@core/workspace"
 import { FileAnchorIndex } from "@shared/utils/file-anchor-index"
 import { formatLineWithHash } from "@utils/line-hashing"
 import { getReadablePath } from "@utils/path"
+import { createToolError } from "@shared/tool-response"
 import * as fs from "fs/promises"
 import * as path from "path"
 import { formatResponse } from "@/core/prompts/responses"
@@ -346,7 +347,7 @@ export class RenameSymbolToolHandler implements IFullyManagedTool {
 		} catch (error) {
 			config.taskState.consecutiveMistakeCount++
 			const errorMessage = error instanceof Error ? error.message : String(error)
-			return formatResponse.toolError(`Error renaming symbol: ${errorMessage}`)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", `Error renaming symbol: ${errorMessage}`, "recoverable"))
 		}
 	}
 

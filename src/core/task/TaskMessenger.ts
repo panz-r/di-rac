@@ -8,6 +8,7 @@ import { convertDiracMessageToProto } from "@shared/proto-conversions/dirac-mess
 import { Logger } from "@shared/services/Logger"
 import { DiracDefaultTool } from "@shared/tools"
 import { DiracAskResponse } from "@shared/WebviewMessage"
+import { createToolError } from "@shared/tool-response"
 import pWaitFor from "p-wait-for"
 import { TaskMessengerDependencies } from "./types/task-messenger"
 
@@ -340,7 +341,7 @@ export class TaskMessenger {
 			"error",
 			`Dirac tried to use ${toolName}${relPath ? ` for '${relPath.toPosix()}'` : ""} without providing a value for '${paramName}'. Retrying...`,
 		)
-		return formatResponse.toolError(formatResponse.missingToolParameterError(paramName))
+		return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", formatResponse.missingToolParameterError(paramName), "recoverable"))
 	}
 
 	async removeLastPartialMessageIfExistsWithType(type: "ask" | "say", askOrSay: DiracAsk | DiracSay) {

@@ -9,6 +9,7 @@ import {
     stringifyConversationHistory,
 } from "@core/controller/task/explainChangesShared"
 import { formatResponse } from "@core/prompts/responses"
+import { createToolError } from "@shared/tool-response"
 import { telemetryService } from "@/services/telemetry"
 
 import fs from "fs/promises"
@@ -97,7 +98,7 @@ export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlo
 				undefined,
 				false,
 			)
-			return formatResponse.toolError("API configuration not available")
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", "API configuration not available", "unrecoverable"))
 		}
 
 		try {
@@ -116,7 +117,7 @@ export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlo
 					undefined,
 					false,
 				)
-				return formatResponse.toolError(errorMsg)
+				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", errorMsg, "recoverable"))
 			}
 
 			// Validate the refs exist
@@ -131,7 +132,7 @@ export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlo
 					undefined,
 					false,
 				)
-				return formatResponse.toolError(errorMsg)
+				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", errorMsg, "recoverable"))
 			}
 
 			if (toRef) {
@@ -146,7 +147,7 @@ export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlo
 						undefined,
 						false,
 					)
-					return formatResponse.toolError(errorMsg)
+					return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", errorMsg, "recoverable"))
 				}
 			}
 
@@ -329,7 +330,7 @@ export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlo
 			)
 
 
-			return formatResponse.toolError(`Failed to generate explanations: ${errorMessage}`)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", `Failed to generate explanations: ${errorMessage}`, "recoverable"))
 		}
 	}
 }

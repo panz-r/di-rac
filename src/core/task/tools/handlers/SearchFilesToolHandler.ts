@@ -4,6 +4,7 @@ import { regexSearchFiles } from "@services/ripgrep"
 import { DiracSayTool } from "@shared/ExtensionMessage"
 import { stripHashes } from "@utils/line-hashing"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
+import { createToolError } from "@shared/tool-response"
 import * as path from "path"
 import { formatResponse } from "@/core/prompts/responses"
 import { parseWorkspaceInlinePath } from "@/core/workspace/utils/parseWorkspaceInlinePath"
@@ -273,7 +274,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 		} catch (error) {
 			config.taskState.consecutiveMistakeCount++
 			const errorMessage = error instanceof Error ? error.message : String(error)
-			return formatResponse.toolError(`Error resolving search path: ${errorMessage}`)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", `Error resolving search path: ${errorMessage}`, "recoverable"))
 		}
 
 		// Determine workspace context for telemetry

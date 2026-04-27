@@ -12,6 +12,7 @@ import { DiracAsk, DiracMessage, DiracSay, MultiCommandState } from "@shared/Ext
 import { DiracContent } from "@shared/messages/content"
 import { DiracDefaultTool, toolUseNames } from "@shared/tools"
 import { DiracAskResponse } from "@shared/WebviewMessage"
+import { createToolError } from "@shared/tool-response"
 import { isParallelToolCallingEnabled, modelDoesntSupportWebp } from "@/utils/model-utils"
 import { ToolUse } from "../assistant-message"
 import { ContextManager } from "../context/context-management/ContextManager"
@@ -245,7 +246,7 @@ export class ToolExecutor {
 		await this.say("error", errorString)
 
 		// Create error response for the tool
-		const errorResponse = formatResponse.toolError(errorString)
+		const errorResponse = formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", errorString, "unrecoverable"))
 		this.pushToolResult(errorResponse, block)
 	}
 
@@ -347,7 +348,7 @@ export class ToolExecutor {
 				await this.say("error", errorMessage)
 				// Only push the final error message when the streaming is done.
 				if (!block.partial) {
-					this.pushToolResult(formatResponse.toolError(errorMessage), block)
+					this.pushToolResult(formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", errorMessage, "recoverable")), block)
 				}
 				return true
 			}
@@ -620,7 +621,7 @@ export class ToolExecutor {
 			}
 		} catch (error) {
 			executionSuccess = false
-			toolResult = formatResponse.toolError(`Tool execution failed: ${error}`)
+			toolResult = formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", `Tool execution failed: ${error}`, "unrecoverable"))
 
 			// Check abort before running PostToolUse hook (error path)
 			if (this.taskState.abort) {

@@ -9,6 +9,7 @@ import { getReadablePath } from "@utils/path"
 import * as fs from "fs/promises"
 import * as path from "path"
 import { formatResponse } from "@/core/prompts/responses"
+import { createToolError } from "@shared/tool-response"
 import { HostProvider } from "@/hosts/host-provider"
 import { getDiagnosticsProviders } from "@/integrations/diagnostics/getDiagnosticsProviders"
 import { telemetryService } from "@/services/telemetry"
@@ -151,7 +152,7 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 					)
 
 					if (!symbolRange) {
-						return formatResponse.toolError(`Symbol '${r.symbol}'${r.type ? ` of type '${r.type}'` : ""} not found in ${r.path}.`)
+						return formatResponse.formatToolErrorForLLM(createToolError("anchor.notFound", `Symbol '${r.symbol}'${r.type ? ` of type '${r.type}'` : ""} not found in ${r.path}.`, "recoverable"))
 					}
 					resolvedReplacements.push({ replacement: r, range: symbolRange })
 				}
@@ -160,9 +161,7 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 				resolvedReplacements.sort((a, b) => a.range.startIndex - b.range.startIndex)
 				for (let i = 0; i < resolvedReplacements.length - 1; i++) {
 					if (resolvedReplacements[i].range.endIndex > resolvedReplacements[i + 1].range.startIndex) {
-						return formatResponse.toolError(
-							`Overlapping replacements detected for symbols '${resolvedReplacements[i].replacement.symbol}' and '${resolvedReplacements[i + 1].replacement.symbol}' in ${batch.displayPath}.`,
-						)
+						return formatResponse.formatToolErrorForLLM(createToolError("edit.multiFileConflict", `Overlapping replacements detected for symbols '${resolvedReplacements[i].replacement.symbol}' and '${resolvedReplacements[i + 1].replacement.symbol}' in ${batch.displayPath}.`, "unrecoverable"))
 					}
 				}
 
@@ -349,7 +348,7 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 		} catch (error) {
 			config.taskState.consecutiveMistakeCount++
 			const errorMessage = error instanceof Error ? error.message : String(error)
-			return formatResponse.toolError(`Error replacing symbols: ${errorMessage}`)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", `Error replacing symbols: ${errorMessage}`, "recoverable"))
 		}
 	}
 

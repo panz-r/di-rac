@@ -1,5 +1,6 @@
 import { DiracSayTool } from "@shared/ExtensionMessage"
 import { DiracDefaultTool } from "@shared/tools"
+import { createToolError } from "@shared/tool-response"
 import axios from "axios"
 import { DiracEnv } from "@/config"
 import { buildDiracExtraHeaders } from "@/services/EnvUtils"
@@ -57,7 +58,7 @@ export class WebFetchToolHandler implements IFullyManagedTool {
 			const diracWebToolsEnabled = config.services.stateManager.getGlobalSettingsKey("diracWebToolsEnabled")
 			const featureFlagEnabled = featureFlagsService.getWebtoolsEnabled()
 			if (provider !== "dirac" || !diracWebToolsEnabled || !featureFlagEnabled) {
-				return formatResponse.toolError("Dirac web tools are currently disabled.")
+				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Dirac web tools are currently disabled.", "unrecoverable"))
 			}
 
 			// Validate required parameters

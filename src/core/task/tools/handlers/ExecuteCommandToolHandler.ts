@@ -2,6 +2,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { WorkspacePathAdapter } from "@core/workspace/WorkspacePathAdapter"
 import { MultiCommandState } from "@shared/ExtensionMessage"
+import { createToolError } from "@shared/tool-response"
 import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
@@ -163,7 +164,7 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 					"error",
 					`Dirac tried to use ${this.name} without providing any commands or script. Retrying...`
 				)
-				return formatResponse.toolError(validation.error!)
+				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", validation.error!, "recoverable"))
 			}
 		}
 

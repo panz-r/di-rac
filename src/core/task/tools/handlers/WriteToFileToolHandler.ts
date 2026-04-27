@@ -9,6 +9,7 @@ import { getLastApiReqTotalTokens } from "@shared/getApiMetrics"
 import { fileExistsAtPath } from "@utils/fs"
 import { stripHashes } from "@utils/line-hashing"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
+import { createToolError } from "@shared/tool-response"
 import { applyPatch } from "diff"
 import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
@@ -129,7 +130,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 						: "Retrying..."
 				}`,
 			)
-			return formatResponse.toolError(errorMessage)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", errorMessage, "recoverable"))
 		}
 
 		if (block.name === "new_rule" && !rawContent) {
@@ -413,7 +414,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			await config.callbacks.say("diracignore_error", resolvedPath)
 
 			// Push tool result and save checkpoint using existing utilities
-			const errorResponse = formatResponse.toolError(formatResponse.diracIgnoreError(resolvedPath))
+			const errorResponse = formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", formatResponse.diracIgnoreError(resolvedPath), "recoverable"))
 			ToolResultUtils.pushToolResult(
 				errorResponse,
 				block,

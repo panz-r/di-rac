@@ -10,6 +10,7 @@ import { findLastIndex } from "@shared/array"
 import { COMPLETION_RESULT_CHANGES_FLAG } from "@shared/ExtensionMessage"
 import { Logger } from "@shared/services/Logger"
 import { DiracDefaultTool } from "@shared/tools"
+import { createToolError } from "@shared/tool-response"
 import type { ToolResponse } from "../../index"
 import { showNotificationForApproval } from "../../utils"
 import { buildUserFeedbackContent } from "../../utils/buildUserFeedbackContent"
@@ -76,8 +77,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			const taskPreview = getInitialTaskPreview(config)
 			const taskSection = taskPreview ? `\n\n<initial_task>\n${taskPreview}\n</initial_task>` : ""
 
-			return formatResponse.toolError(
-				"Before completing, re-verify your work against the original task requirements. Check that:\n" +
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Before completing, re-verify your work against the original task requirements. Check that:\n" +
 					"1. All requested changes have been made (verify using a script/`exceute_command` when possible)\n" +
 					"2. No steps were skipped or partially completed\n" +
 					"3. Edge cases and error handling are addressed\n" +
@@ -85,8 +85,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 					"5. Output files contain exactly what was specified - no extra columns, fields, debug output, or commentary\n" +
 					"6. If the task specifies numerical thresholds or accuracy targets, verify your result meets the criteria. If close but not passing, iterate rather than declaring completion" + 
 					taskSection +
-					"\n\nIf everything checks out, call attempt_completion again with your final result.",
-			)
+					"\n\nIf everything checks out, call attempt_completion again with your final result.", "recoverable"))
 		}
 		// Reset so the next attempt_completion pair triggers double-check again
 		config.taskState.doubleCheckCompletionPending = false

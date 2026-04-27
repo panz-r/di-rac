@@ -10,6 +10,7 @@ import { StreamResponseHandler } from "@core/task/StreamResponseHandler"
 import { DiracAssistantToolUseBlock, DiracStorageMessage, DiracTextContentBlock, DiracUserContent } from "@shared/messages"
 import { Logger } from "@shared/services/Logger"
 import { DiracDefaultTool, DiracTool } from "@shared/tools"
+import { createToolError } from "@shared/tool-response"
 import { ContextManager } from "@/core/context/context-management/ContextManager"
 import { checkContextWindowExceededError } from "@/core/context/context-management/context-error-handling"
 import { getContextWindowInfo } from "@/core/context/context-management/context-window-utils"
@@ -739,7 +740,7 @@ ${partialResult}`
 					}
 
 					if (!this.allowedTools.includes(toolName)) {
-						const deniedResult = formatResponse.toolError(`Tool '${toolName}' is not available inside subagent runs.`)
+						const deniedResult = formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", `Tool '${toolName}' is not available inside subagent runs.`, "unrecoverable"))
 						pushSubagentToolResultBlock(toolResultBlocks, call, toolName, deniedResult)
 						continue
 					}
@@ -766,12 +767,12 @@ ${partialResult}`
 					let toolResult: unknown
 
 					if (!handler) {
-						toolResult = formatResponse.toolError(`No handler registered for tool '${toolName}'.`)
+						toolResult = formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", `No handler registered for tool '${toolName}'.`, "unrecoverable"))
 					} else {
 						try {
 							toolResult = await handler.execute(subagentConfig, toolCallBlock)
 						} catch (error) {
-							toolResult = formatResponse.toolError((error as Error).message)
+							toolResult = formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", (error as Error).message, "recoverable"))
 						}
 					}
 
@@ -861,7 +862,7 @@ ${partialResult}`
 				...baseCallbacks,
 				say: async () => undefined,
 				sayAndCreateMissingParamError: async (_toolName, paramName) =>
-					formatResponse.toolError(formatResponse.missingToolParameterError(paramName)),
+					formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", formatResponse.missingToolParameterError(paramName), "recoverable")),
 				executeCommandTool: async (command: string, timeoutSeconds: number | undefined) => {
 					this.activeCommandExecutions += 1
 					try {

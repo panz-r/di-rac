@@ -5,6 +5,7 @@ import * as path from "path"
 import { Mode } from "../../shared/storage/types"
 import { DiracIgnoreController, LOCK_TEXT_SYMBOL } from "../ignore/DiracIgnoreController"
 import type { FileInfo } from "../../services/glob/list-files"
+import type { ToolError } from "@shared/tool-response"
 
 const CONTEXT_WINDOW_WARNING_THRESHOLD_PERCENT = 50
 
@@ -298,7 +299,22 @@ Otherwise, if you have not completed the task and do not need additional informa
 	agentsRulesLocalFileInstructions: (cwd: string, content: string) =>
 		`# AGENTS.md\n\nThe following is provided by AGENTS.md files found recursively throughout this working directory (${cwd.toPosix()}) where the user has specified instructions. Nested AGENTS.md will be combined below, and you should only apply the instructions for each AGENTS.md file that is directly applicable to the current task, i.e. if you are reading or writing to a file in that directory.\n\n${content}`,
 
+	/**
+	 * Serialize a structured ToolError into LLM-actionable prose.
+	 * Each error code maps to concrete, actionable recovery guidance.
+	 */
+	formatToolErrorForLLM: (error: ToolError): string => {
+		const guidance = formatToolErrorGuidance(error)
+		const details = error.details
+			? "\nAdditional context: " + Object.entries(error.details)
+					.map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+					.join(", ")
+			: ""
+		return `<tool_error severity="${error.severity}">\n${guidance}${details}\n</tool_error>`
+	},
+
 	fileContextWarning: (editedFiles: string[]): string => {
+
 		const fileCount = editedFiles.length
 		const fileVerb = fileCount === 1 ? "file has" : "files have"
 		const fileDemonstrativePronoun = fileCount === 1 ? "this file" : "these files"
@@ -310,6 +326,47 @@ Otherwise, if you have not completed the task and do not need additional informa
 			`Failure to re-read before editing will result in edit_file errors, requiring subsequent attempts and wasting tokens. You DO NOT need to re-read these files after subsequent edits, unless instructed to do so.\n</explicit_instructions>`
 		)
 	},
+}
+
+// ── Structured ToolError → LLM Guidance ────────────────────────────────────
+
+function formatToolErrorGuidance(error: ToolError): string {
+	switch (error.code) {
+		case "io.file.notFound":
+			return `The specified file could not be found. Double-check the file path and try again.`
+		case "io.file.permissionDenied":
+			return `Permission denied when accessing the file. You do not have rights to read or write this file.`
+		case "io.file.locked":
+			return `The file is locked by another process. Wait a moment and retry the operation.`
+		case "anchor.notFound":
+			return `One or more line anchors could not be found in the current file content. The file may have been modified externally — re-read the file to obtain current anchors, then retry the edit with updated anchors.`
+		case "anchor.contentMismatch":
+			return `The content at an anchor line has changed since you last read the file. Re-read the file to get the current state and anchors, then retry the edit.`
+		case "anchor.invalidFormat":
+			return `An anchor was incorrectly formatted. Anchors must follow the format "content" (e.g., "code"). Check your edit parameters and retry.`
+		case "edit.multiFileConflict":
+			return `Conflicting edits were detected across multiple files. Ensure your edits do not overlap and retry each conflicting file separately.`
+		case "lsp.timeout":
+			return `A language server operation timed out. Retry the operation — if it persists, try a different approach.`
+		case "lsp.connectionLost":
+			return `The language server connection was lost. Retry the operation; the connection may recover automatically.`
+		case "manifest.invalidSchema":
+			return `The operation manifest had an invalid structure. Check the manifest format and retry.`
+		case "manifest.duplicateOp":
+			return `A duplicate operation was detected in the manifest. Remove the duplicate and retry.`
+		case "manifest.orderingConflict":
+			return `Operation ordering conflicts were detected in the manifest. Reorder the operations to resolve dependencies.`
+		case "speculative.workspace.rejected":
+			return `A speculative workspace change was rejected. The primary workspace state is unchanged — continue with the current approach.`
+		case "speculative.verify.failed":
+			return `Speculative verification failed. The proposed changes may have issues — review and adjust before retrying.`
+		case "tool.unknownError":
+			return `An unexpected error occurred during tool execution. Try a different approach or re-read relevant files to ensure your context is up to date.`
+		case "tool.internalError":
+			return `An internal error occurred in the tool infrastructure. This is not caused by your action — retry the operation, or try a different approach to accomplish the same goal.`
+		default:
+			return `Tool execution failed${error.message ? ": " + error.message : ""}. Try a different approach or check your inputs.`
+	}
 }
 
 // to avoid circular dependency

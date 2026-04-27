@@ -1,6 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import { Logger } from "@/shared/services/Logger"
 import { formatResponse } from "@core/prompts/responses"
+import { createToolError } from "@shared/tool-response"
 import {
 	DiracAskUseSubagents,
 	DiracSaySubagentStatus,
@@ -91,12 +92,12 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
 		if (config.isSubagentExecution) {
-			return formatResponse.toolError("Subagents cannot spawn other subagents.")
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Subagents cannot spawn other subagents.", "recoverable"))
 		}
 
 		const subagentsEnabled = config.services.stateManager.getGlobalSettingsKey("subagentsEnabled")
 		if (!subagentsEnabled) {
-			return formatResponse.toolError("Subagents are disabled. Enable them in Settings > Features to use this tool.")
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Subagents are disabled. Enable them in Settings > Features to use this tool.", "recoverable"))
 		}
 
 		const configuredSubagentName = resolveConfiguredSubagentName(block.name)
@@ -109,10 +110,10 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 		const includeHistory = block.params.include_history === true || String(block.params.include_history) === "true" || String(block.params.include_history) === "1"
 
 		if (timeout !== undefined && (isNaN(timeout) || timeout <= 0)) {
-			return formatResponse.toolError("timeout must be a positive number.")
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "timeout must be a positive number.", "recoverable"))
 		}
 		if (maxTurns !== undefined && (isNaN(maxTurns) || maxTurns <= 0)) {
-			return formatResponse.toolError("max_turns must be a positive number.")
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "max_turns must be a positive number.", "recoverable"))
 		}
 
 		if (prompts.length === 0) {
@@ -122,9 +123,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 
 		if (!configuredSubagentName && prompts.length > MAX_SUBAGENT_PROMPTS) {
 			config.taskState.consecutiveMistakeCount++
-			return formatResponse.toolError(
-				`Too many subagent prompts provided (${prompts.length}). Maximum is ${MAX_SUBAGENT_PROMPTS}.`,
-			)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", `Too many subagent prompts provided (${prompts.length}). Maximum is ${MAX_SUBAGENT_PROMPTS}.`, "recoverable"))
 		}
 
 		const apiConfig = config.services.stateManager.getApiConfiguration()

@@ -12,6 +12,7 @@ import { getDiagnosticsProviders } from "@/integrations/diagnostics/getDiagnosti
 import { DiracSayTool } from "@/shared/ExtensionMessage"
 import { DiracDefaultTool } from "@/shared/tools"
 import { ToolResponse } from "../../../index"
+import { createToolError } from "@shared/tool-response"
 import { showNotificationForApproval } from "../../../utils"
 import { ToolValidator } from "../../ToolValidator"
 import { TaskConfig } from "../../types/TaskConfig"
@@ -187,7 +188,7 @@ export class BatchProcessor {
             } catch (error) {
                 anyFailed = true;
                 const errorMessage = error instanceof Error ? error.message : String(error)
-                results.set(batch.absolutePath, formatResponse.toolError(`Error applying edits to ${batch.displayPath}: ${errorMessage}`))
+                results.set(batch.absolutePath, formatResponse.formatToolErrorForLLM(createToolError("io.file.locked", `Error applying edits to ${batch.displayPath}: ${errorMessage}`, "recoverable")))
             } finally {
                 await config.services.diffViewProvider.reset().catch(() => { })
             }
@@ -272,14 +273,14 @@ export class BatchProcessor {
                 }
                 if (!Array.isArray(files)) {
                     config.taskState.consecutiveMistakeCount++
-                    return { error: formatResponse.toolError("The 'files' parameter must be a valid JSON array of objects. If you provided a string, ensure it is valid JSON.") }
+                    return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "The 'files' parameter must be a valid JSON array of objects. If you provided a string, ensure it is valid JSON.", "recoverable")) }
                 }
             }
 
             const edits = block.params.edits
             if (!Array.isArray(edits)) {
                 config.taskState.consecutiveMistakeCount++
-                return { error: formatResponse.toolError("The 'edits' parameter must be a valid JSON array of objects. If you provided a string, ensure it is valid JSON.") }
+                return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "The 'edits' parameter must be a valid JSON array of objects. If you provided a string, ensure it is valid JSON.", "recoverable")) }
             }
 
             for (const edit of edits) {
@@ -296,7 +297,7 @@ export class BatchProcessor {
                             : isReplace && !hasEndAnchor
                                 ? "end_anchor"
                                 : "text"
-                    return { error: formatResponse.toolError(`Each edit must contain '${missingField}'.`) }
+                    return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", `Each edit must contain '${missingField}'.`, "recoverable")) }
                 }
             }
         }
@@ -461,7 +462,7 @@ export class BatchProcessor {
 
             if (resolvedEdits.length === 0) {
                 const failureMessages = failedEdits.map((f) => this.executor.formatFailureMessage(f.edit, f.error))
-                return { error: formatResponse.toolError(failureMessages.join("\n\n")) }
+                return { error: formatResponse.formatToolErrorForLLM(createToolError("anchor.notFound", failureMessages.join("\n\n"), "recoverable")) }
             }
 
             return {
@@ -477,7 +478,7 @@ export class BatchProcessor {
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error)
-            return { error: formatResponse.toolError(`Error preparing edits: ${errorMessage}`) }
+            return { error: formatResponse.formatToolErrorForLLM(createToolError("io.file.notFound", `Error preparing edits: ${errorMessage}`, "recoverable")) }
         }
     }
 

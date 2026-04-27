@@ -1,5 +1,6 @@
 import { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
+import { createToolError } from "@shared/tool-response"
 import { telemetryService } from "@/services/telemetry"
 
 import { DiracDefaultTool } from "@/shared/tools"
@@ -106,7 +107,7 @@ export class EditFileToolHandler implements IFullyManagedTool {
 			// Blocks can span multiple files, so we collect and combine results by call_id.
 			const combinedResults = new Map<string, ToolResponse[]>()
 			for (const batch of allBatches.values()) {
-				const result = resultsMap.get(batch.absolutePath) || formatResponse.toolError("Result missing for file.")
+				const result = resultsMap.get(batch.absolutePath) || formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", "Result missing for file.", "recoverable"))
 				for (const b of batch.blocks) {
 					if (b.call_id) {
 						if (!combinedResults.has(b.call_id)) {
@@ -145,7 +146,7 @@ export class EditFileToolHandler implements IFullyManagedTool {
 			const singleBatch = new Map<string, PreparedFileBatch>()
 			singleBatch.set(absolutePath, { absolutePath, displayPath, blocks: [block], wasStringified })
 			const resultsMap = await this.processor.executeMultiFileBatch(config, singleBatch)
-			result = resultsMap.get(absolutePath) || formatResponse.toolError("Unexpected error.")
+			result = resultsMap.get(absolutePath) || formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", "Unexpected error.", "recoverable"))
 		} else {
 			const singleBlockBatches = new Map<string, PreparedFileBatch>()
 			for (const fe of files) {
