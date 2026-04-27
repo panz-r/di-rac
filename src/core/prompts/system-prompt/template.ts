@@ -41,6 +41,8 @@ To efficiently explore a codebase, follow the "Cost Ladder" to minimize token us
 - Targeted Read: Use \`read_file\` with \`start_line\` and \`end_line\` for specific edits.
 - Navigation: Use \`read_file(page="next")\` to browse large files.
 
+BASH TIP: Use \`grep -n -C 5 'pattern' file\` via the \`bash\` tool to see matches with 5 lines of surrounding context in a single turn.
+
 Always prefer structural handles and detailed visibility modes over reading full files.
 
 TOOL USE

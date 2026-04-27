@@ -7,7 +7,7 @@ import { resolveWorkspacePath } from "@core/workspace"
 import { extractFileContent } from "@integrations/misc/extract-file-content"
 import { parseContent, parseFile, generateSkeleton, ParsedDefinition } from "@services/tree-sitter"
 import { loadRequiredLanguageParsers } from "@services/tree-sitter/languageParser"
-import { contentHash, hashLines, stripHashes } from "@utils/line-hashing"
+import { contentHash, hashLines, stripHashes, generateFullAnchoredContent } from "@utils/line-hashing"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { countFileLines, readFirstNLines } from "@utils/fs"
 import { telemetryService } from "@/services/telemetry"
@@ -24,8 +24,14 @@ import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 const MAX_FILE_READ_SIZE = 50 * 1024 // 50KB limit for full file reads
 const OVERSIZED_FILE_PREVIEW_LINES = 200
+const AUTO_EXPAND_PREVIEW_LINES = 500
 const TOKEN_ESTIMATE_RATIO = 1 / 3 // approx chars per token
 const SUPPORTED_EXTENSIONS = new Set(["ts", "tsx", "js", "jsx", "py", "rs", "go", "c", "cpp", "h", "hpp", "java", "php", "rb", "swift", "kt"])
+
+interface Range {
+	start: number
+	end: number
+}
 
 export class ReadFileToolHandler implements IFullyManagedTool {
 	readonly name = DiracDefaultTool.FILE_READ
@@ -162,6 +168,24 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			.join("\n")
 	}
 
+	private mergeRanges(ranges: Range[]): Range[] {
+		if (ranges.length <= 1) return ranges
+		const sorted = [...ranges].sort((a, b) => a.start - b.start)
+		const merged: Range[] = [sorted[0]]
+
+		for (let i = 1; i < sorted.length; i++) {
+			const last = merged[merged.length - 1]
+			const current = sorted[i]
+			// Merge if overlapping or within 5 lines
+			if (current.start <= last.end + 5) {
+				last.end = Math.max(last.end, current.end)
+			} else {
+				merged.push(current)
+			}
+		}
+		return merged
+	}
+
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
 		const relPaths = Array.isArray(block.params.paths) ? block.params.paths : (block.params.paths ? [block.params.paths as string] : [])
 		const startLineNum = block.params.start_line ? Number.parseInt(String(block.params.start_line)) : undefined
@@ -271,32 +295,44 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 						| "primary_fallback",
 				})
 
-				// 3. Exploration Parameters
+				// 3. Exploration Parameters & Auto-Expansion
 				let detail = block.params.detail as "preview" | "skeleton" | "outline" | "full" | undefined
 				const maxTokens = block.params.max_tokens ? Number.parseInt(String(block.params.max_tokens)) : undefined
 				const page = block.params.page as "next" | "prev" | "section" | undefined
 				const section = block.params.section as string | undefined
+				const rangesRaw = block.params.ranges as { start: number; end: number }[] | undefined
 
 				const stats = await fs.stat(absolutePath)
 				const ext = path.extname(absolutePath).toLowerCase()
 				const isImage = [".png", ".jpg", ".jpeg", ".webp"].includes(ext)
 				const fileSizeKB = stats.size / 1024
 
+				// Auto-Expansion: increment read count
+				const currentReadCount = (config.taskState.readCounts.get(relPath) || 0) + 1
+				config.taskState.readCounts.set(relPath, currentReadCount)
+
+				let effectivePreviewLines = OVERSIZED_FILE_PREVIEW_LINES
+				if (currentReadCount >= 3 && !startLineNum && !endLineNum && !rangesRaw && !page) {
+					effectivePreviewLines = AUTO_EXPAND_PREVIEW_LINES
+				}
+
 				// Auto-select detail if not specified
-				if (!detail && !startLineNum && !endLineNum && !page) {
+				if (!detail && !startLineNum && !endLineNum && !rangesRaw && !page) {
 					detail = stats.size > MAX_FILE_READ_SIZE && !isImage ? "preview" : "full"
 				}
 
-				// 4. Handle Pagination/Jump
-				let finalStartLine = startLineNum || 1
-				let finalEndLine = endLineNum
-
-				if (page || section) {
+				// 4. Handle Ranges / Pagination / Jump
+				let ranges: Range[] = []
+				
+				if (rangesRaw && Array.isArray(rangesRaw)) {
+					ranges = this.mergeRanges(rangesRaw.map(r => ({ start: Number(r.start), end: Number(r.end) })))
+				} else if (page || section) {
 					const currentCursor = config.taskState.fileCursors.get(absolutePath) || 1
+					let finalStartLine = 1
 					if (page === "next") {
-						finalStartLine = currentCursor + OVERSIZED_FILE_PREVIEW_LINES
+						finalStartLine = currentCursor + effectivePreviewLines
 					} else if (page === "prev") {
-						finalStartLine = Math.max(1, currentCursor - OVERSIZED_FILE_PREVIEW_LINES)
+						finalStartLine = Math.max(1, currentCursor - effectivePreviewLines)
 					} else if (page === "section" && section) {
 						const languageParsers = await loadRequiredLanguageParsers([absolutePath])
 						const definitions = await parseFile(absolutePath, languageParsers, config.services.diracIgnoreController)
@@ -305,18 +341,25 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 							finalStartLine = target.fullBodyRange?.startLine || target.lineIndex + 1
 						}
 					}
-					finalEndLine = finalStartLine + OVERSIZED_FILE_PREVIEW_LINES - 1
+					ranges = [{ start: finalStartLine, end: finalStartLine + effectivePreviewLines - 1 }]
 					config.taskState.fileCursors.set(absolutePath, finalStartLine)
-				} else if (startLineNum) {
-					config.taskState.fileCursors.set(absolutePath, startLineNum)
+				} else if (startLineNum || endLineNum) {
+					const start = startLineNum || 1
+					const end = endLineNum || start + effectivePreviewLines - 1
+					ranges = [{ start, end }]
+					config.taskState.fileCursors.set(absolutePath, start)
 				}
 
-				// 5. Execute based on detail level with budget awareness
-				let content = ""
-				let degraded = false
+				// 5. Execute based on detail level with budget awareness and diff-caching
 				let usedDetail = detail || "full"
+				let responseContent = ""
+				let degraded = false
 
-				const tryGenerateContent = async (mode: string): Promise<string> => {
+				const getCacheKey = (mode: string, r?: Range) => {
+					return `${relPath}:${mode}:${r ? `${r.start}-${r.end}` : "full"}`
+				}
+
+				const tryGenerateContent = async (mode: string, activeRanges: Range[]): Promise<string> => {
 					if (isImage) return (await extractFileContent(absolutePath, supportsImages)).text
 					const cleanExt = ext.startsWith(".") ? ext.slice(1) : ext
 					const isSupported = SUPPORTED_EXTENSIONS.has(cleanExt)
@@ -335,7 +378,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 							return await generateSkeleton(fullContent, cleanExt, languageParsers)
 						}
 						case "preview": {
-							const preview = await readFirstNLines(absolutePath, OVERSIZED_FILE_PREVIEW_LINES)
+							const preview = await readFirstNLines(absolutePath, effectivePreviewLines)
 							const totalLines = await countFileLines(absolutePath)
 							let chunkMap = ""
 							
@@ -344,58 +387,96 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 									const languageParsers = await loadRequiredLanguageParsers([absolutePath])
 									const definitions = await parseFile(absolutePath, languageParsers, config.services.diracIgnoreController)
 									if (definitions) {
-										chunkMap = "\nChunk map (full file):\n" + definitions
-											.filter(d => d.kind === "class" || d.kind === "function" || d.kind === "interface")
+										const filtered = definitions.filter(d => d.kind === "class" || d.kind === "function" || d.kind === "interface")
+										const limited = filtered.slice(0, 50)
+										chunkMap = "\nChunk map (full file):\n" + limited
 											.map(d => `  - [${d.id}] ${d.name} (lines ${d.fullBodyRange?.startLine || d.lineIndex + 1}-${d.fullBodyRange?.endLine || d.lineIndex + 1})`)
 											.join("\n")
+										if (filtered.length > 50) {
+											chunkMap += `\n  ... and ${filtered.length - 50} more symbols. Use detail="outline" to see all.`
+										}
 									}
 								} catch (e) {
 									// Ignore parse errors for chunk map
 								}
 							}
 							
-							const hint = formatResponse.readFilePreviewHint(relPath, totalLines, OVERSIZED_FILE_PREVIEW_LINES, fileSizeKB)
-							return `${hashLines(preview)}${chunkMap}${hint}`
+							const hint = formatResponse.readFilePreviewHint(relPath, totalLines, effectivePreviewLines, fileSizeKB)
+							const note = currentReadCount >= 3 ? "\nNOTE: Extended preview shown due to multiple reads.\n" : ""
+							return `${hashLines(preview)}${chunkMap}${note}${hint}`
 						}
 						case "full":
 						default: {
 							const fullContent = (await extractFileContent(absolutePath, supportsImages)).text
-							let result = hashLines(fullContent)
-							if (finalStartLine > 1 || finalEndLine) {
-								const lines = result.split("\n")
-								const start = Math.max(0, finalStartLine - 1)
-								const end = finalEndLine ? Math.min(lines.length, finalEndLine) : lines.length
-								result = lines.slice(start, end).join("\n")
+							const lines = fullContent.split(/\r?\n/)
+							
+							if (activeRanges.length > 0) {
+								const rangeResults: string[] = []
+								for (const r of activeRanges) {
+									const start = Math.max(0, r.start - 1)
+									const end = Math.min(lines.length, r.end)
+									const slice = lines.slice(start, end)
+									const anchoredSlice = generateFullAnchoredContent(slice).map((line: string) => {
+										// Adjust line numbers in gutter if present
+										return line.replace(/^(\s*)(\d+)/, (_: string, space: string, num: string) => {
+											return space + (Number(num) + start).toString()
+										})
+									}).join("\n")
+
+									const currentRangeHash = contentHash(slice.join("\n"))
+									const cacheKey = getCacheKey(mode, r)
+									const lastHash = config.taskState.contentHashCache.get(cacheKey)
+
+									if (lastHash === currentRangeHash) {
+										rangeResults.push(`[Lines ${r.start}-${r.end}: unchanged since your last read (Hash: ${currentRangeHash})]`)
+									} else {
+										config.taskState.contentHashCache.set(cacheKey, currentRangeHash)
+										rangeResults.push(`[Lines ${r.start}-${r.end}, Hash: ${currentRangeHash}]\n${anchoredSlice}`)
+									}
+								}
+								return rangeResults.join("\n\n")
 							}
-							return result
+
+							// Full file
+							const currentHash = contentHash(fullContent)
+							const cacheKey = getCacheKey(mode)
+							const lastHash = config.taskState.contentHashCache.get(cacheKey)
+							
+							if (lastHash === currentHash) {
+								return `[Full file: unchanged since your last read (Hash: ${currentHash})]`
+							}
+							
+							config.taskState.contentHashCache.set(cacheKey, currentHash)
+							return `[File Hash: ${currentHash}]\n${hashLines(fullContent)}`
 						}
 					}
 				}
 
-				content = await tryGenerateContent(usedDetail)
+				responseContent = await tryGenerateContent(usedDetail, ranges)
 
-				// Budget-aware degradation
-				if (maxTokens && content.length * TOKEN_ESTIMATE_RATIO > maxTokens) {
+				// Budget-aware degradation (only if not already an "unchanged" response)
+				if (maxTokens && !responseContent.includes("unchanged") && responseContent.length * TOKEN_ESTIMATE_RATIO > maxTokens) {
 					degraded = true
-					const degradationPath = ["full", "skeleton", "outline"]
+					const degradationPath = ["full", "preview", "skeleton", "outline"]
 					let currentIndex = degradationPath.indexOf(usedDetail)
-					while (currentIndex < degradationPath.length - 1 && content.length * TOKEN_ESTIMATE_RATIO > maxTokens) {
+					while (currentIndex < degradationPath.length - 1 && responseContent.length * TOKEN_ESTIMATE_RATIO > maxTokens) {
 						currentIndex++
 						usedDetail = degradationPath[currentIndex] as any
-						content = await tryGenerateContent(usedDetail)
+						responseContent = await tryGenerateContent(usedDetail, ranges)
 					}
 				}
 
-				const currentHash = contentHash(content)
-				const tokenInfo = maxTokens ? ` [Budget: ${maxTokens}, Actual: ~${Math.round(content.length * TOKEN_ESTIMATE_RATIO)}]` : ""
+				const currentHash = contentHash(responseContent)
+				const tokenInfo = maxTokens ? ` [Budget: ${maxTokens}, Actual: ~${Math.round(responseContent.length * TOKEN_ESTIMATE_RATIO)}]` : ""
 				const degradedInfo = degraded ? " [DEGRADED TO STAY IN BUDGET]" : ""
 				
-				results.push(`${header}[File Hash: ${currentHash}]${tokenInfo}${degradedInfo}\n${content}`)
+				results.push(`${header}[File Hash: ${currentHash}]${tokenInfo}${degradedInfo}\n${responseContent}`)
 				
+				const labelRange = ranges.length > 0 ? `lines ${ranges.map(r => `${r.start}-${r.end}`).join(", ")}` : "full"
 				readFileResults.push({
 					path: displayPath,
 					status: "success",
-					label: `Read ${usedDetail} (lines ${finalStartLine}-${finalEndLine || "end"})`,
+					label: `Read ${usedDetail} (${labelRange})`,
 				})
 
 				await config.services.fileContextTracker.trackFileContext(relPath, "read_tool")

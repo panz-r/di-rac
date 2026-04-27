@@ -1,7 +1,7 @@
 export { ANCHOR_DELIMITER, extractId, getDelimiter, stripHashes } from "../shared/utils/line-hashing"
 
 import { ANCHOR_DELIMITER } from "../shared/utils/line-hashing"
-import { computeLineHash } from "../shared/utils/hash-utils"
+import { computeLineHash, xxHash32 } from "../shared/utils/hash-utils"
 import { FileAnchorIndex } from "../shared/utils/file-anchor-index"
 
 /**
@@ -107,16 +107,13 @@ export function hashLines(content: string): string {
 }
 
 /**
- * Generates a 32-bit FNV-1a hash for the given content string.
+ * Generates a 32-bit xxHash for the given content string.
  * Used for whole-file content comparison (cheap change detection).
  *
  * @param content - The text content to hash
  * @returns An 8-character hex string representing the hash
  */
 export function contentHash(content: string): string {
-	let h = 2166136261 // FNV-1a offset basis
-	for (let i = 0; i < content.length; i++) {
-		h = Math.imul(h ^ content.charCodeAt(i), 16777619) // FNV-1a prime
-	}
-	return (h >>> 0).toString(16).padStart(8, "0")
+	const hash = xxHash32(content)
+	return (hash >>> 0).toString(16).padStart(8, "0")
 }

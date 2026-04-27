@@ -286,7 +286,12 @@ export function resolveWorkspacePath(
 	relativePath: string,
 	context?: string,
 ): string | WorkspacePathResult {
-	const rewritePaths = StateManager.get().getGlobalSettingsKey("rewritePaths")
+	let rewritePaths = false
+	try {
+		rewritePaths = StateManager.get().getGlobalSettingsKey("rewritePaths")
+	} catch (e) {
+		// StateManager not initialized, default to false
+	}
 
 	// Backward compatibility: if first param is a string, return string
 	if (typeof cwdOrConfig === "string") {

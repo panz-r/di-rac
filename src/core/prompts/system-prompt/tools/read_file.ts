@@ -14,8 +14,22 @@ export const read_file: DiracToolSpec = {
 			required: true,
 			type: "array",
 			items: { type: "string" },
-			instruction: "An array of relative paths to the source files.",
-			usage: '["src/utils/math.ts"]',
+			instruction: "An array of relative paths to the source files. Supports reading multiple files in one call.",
+			usage: '["src/main.ts", "package.json"]',
+		},
+		{
+			name: "ranges",
+			required: false,
+			type: "array",
+			items: {
+				type: "object",
+				properties: {
+					start: { type: "integer" },
+					end: { type: "integer" },
+				},
+			},
+			instruction: "Optional array of non-contiguous line ranges to read. Takes precedence over start_line/end_line.",
+			usage: "[{start: 1, end: 50}, {start: 100, end: 150}]",
 		},
 		{
 			name: "detail",
