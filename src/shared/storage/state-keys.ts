@@ -225,6 +225,7 @@ const USER_SETTINGS_FIELDS = {
 	worktreesEnabled: { default: false as boolean },
 	preferredLanguage: { default: "English" as string },
 	mode: { default: "act" as Mode },
+	rewritePaths: { default: false as boolean },
 	customPrompt: { default: undefined as "compact" | undefined },
 	backgroundEditEnabled: { default: false as boolean },
 	optOutOfRemoteConfig: { default: false as boolean },

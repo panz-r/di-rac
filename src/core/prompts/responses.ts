@@ -371,12 +371,12 @@ function formatToolErrorGuidance(error: ToolError): string {
 			return `A speculative workspace change was rejected. The primary workspace state is unchanged — continue with the current approach.`
 		case "speculative.verify.failed":
 			return `Speculative verification failed. The proposed changes may have issues — review and adjust before retrying.`
-case "arg.invalidArgument":
-			return `One or more arguments you provided were of the wrong type or format. Check the parameter types and try again with corrected values.`
+		case "arg.invalidArgument":
+			return `One or more arguments you provided were of the wrong type or format. ${error.message ? error.message + " " : ""}Check the parameter types and try again with corrected values.`
 		case "tool.unknownError":
-			return `An unexpected error occurred during tool execution. Try a different approach or re-read relevant files to ensure your context is up to date.`
+			return `An unexpected error occurred during tool execution. ${error.message ? error.message + " " : ""}Try a different approach or re-read relevant files to ensure your context is up to date.`
 		case "tool.internalError":
-			return `An internal error occurred in the tool infrastructure. This is not caused by your action — retry the operation, or try a different approach to accomplish the same goal.`
+			return `An internal error occurred in the tool infrastructure. ${error.message ? error.message + " " : ""}This is not caused by your action — retry the operation, or try a different approach to accomplish the same goal.`
 		default:
 			return `Tool execution failed${error.message ? ": " + error.message : ""}. Try a different approach or check your inputs.`
 	}

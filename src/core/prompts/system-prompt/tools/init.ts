@@ -26,6 +26,7 @@ import { write_to_file } from "./write_to_file"
 import { expand_symbol } from "./expand_symbol"
 import { search_symbols } from "./search_symbols"
 import { repo_map } from "./repo_map"
+import { bash } from "./bash"
 
 /**
  * Registers all tools with the DiracToolSet provider.
@@ -49,6 +50,7 @@ export function registerDiracToolSets(): void {
 		expand_symbol,
 		search_symbols,
 		repo_map,
+		bash,
 
 		list_files,
 		new_task,

@@ -11,6 +11,8 @@ import { Logger } from "@/shared/services/Logger"
 import { MigrationReporter, type UsageStats } from "./MigrationReporter"
 import { parseWorkspaceInlinePath } from "./utils/parseWorkspaceInlinePath"
 import { WorkspacePathAdapter } from "./WorkspacePathAdapter"
+import { normalizePath } from "@/utils/path-utils"
+import { StateManager } from "../storage/StateManager"
 
 /**
  * Maximum number of example paths to store per component for debugging purposes.
@@ -284,18 +286,28 @@ export function resolveWorkspacePath(
 	relativePath: string,
 	context?: string,
 ): string | WorkspacePathResult {
+	const rewritePaths = StateManager.get().getGlobalSettingsKey("rewritePaths")
+
 	// Backward compatibility: if first param is a string, return string
 	if (typeof cwdOrConfig === "string") {
-		return workspaceResolver.resolveWorkspacePath(cwdOrConfig, relativePath, context) as string
+		let finalRelPath = relativePath
+		if (rewritePaths) {
+			finalRelPath = normalizePath(relativePath, cwdOrConfig)
+		}
+		return workspaceResolver.resolveWorkspacePath(cwdOrConfig, finalRelPath, context) as string
 	}
 
 	// New behavior: handle multi-root workspaces
 	const config = cwdOrConfig
+	let finalRelPath = relativePath
+	if (rewritePaths) {
+		finalRelPath = normalizePath(relativePath, config.cwd)
+	}
 
 	// If multi-root is enabled and we have a workspace manager
 	if (config.isMultiRootEnabled && config.workspaceManager) {
 		// Parse workspace hint from the path (e.g., @frontend:src/index.ts)
-		const { workspaceHint, relPath: parsedPath } = parseWorkspaceInlinePath(relativePath)
+		const { workspaceHint, relPath: parsedPath } = parseWorkspaceInlinePath(finalRelPath)
 
 		// Create adapter for multi-workspace path resolution
 		const adapter = new WorkspacePathAdapter({
@@ -318,12 +330,12 @@ export function resolveWorkspacePath(
 	}
 
 	// Fallback to single-workspace behavior
-	const absolutePath = workspaceResolver.resolveWorkspacePath(config.cwd, relativePath, context) as string
+	const absolutePath = workspaceResolver.resolveWorkspacePath(config.cwd, finalRelPath, context) as string
 
 	return {
 		absolutePath,
-		displayPath: relativePath,
-		resolvedPath: relativePath,
+		displayPath: finalRelPath,
+		resolvedPath: finalRelPath,
 	}
 }
 

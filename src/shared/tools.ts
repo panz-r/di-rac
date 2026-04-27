@@ -9,6 +9,7 @@ export enum DiracDefaultTool {
 	ASK = "ask_followup_question",
 	ATTEMPT = "attempt_completion",
 	BASH = "execute_command",
+	BASH_RESTRICTED = "bash",
 	FILE_READ = "read_file",
 	FILE_NEW = "write_to_file",
 	SEARCH = "search_files",
@@ -78,4 +79,5 @@ export const READ_ONLY_TOOLS = [
 	DiracDefaultTool.EXPAND_SYMBOL,
 	DiracDefaultTool.SEARCH_SYMBOLS,
 	DiracDefaultTool.REPO_MAP,
+	DiracDefaultTool.BASH_RESTRICTED,
 ] as const

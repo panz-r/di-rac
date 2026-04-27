@@ -985,6 +985,7 @@ export class Task {
 			workspaceRoots,
 			isSubagentRun: false,
 			isCliEnvironment,
+			rewritePaths: this.stateManager.getGlobalSettingsKey("rewritePaths"),
 			enableParallelToolCalling: this.isParallelToolCallingEnabled(),
 			terminalExecutionMode: this.terminalExecutionMode,
 			activeShellType: shellInfo.type,

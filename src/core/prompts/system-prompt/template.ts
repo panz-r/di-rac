@@ -80,7 +80,7 @@ SYSTEM INFO
 	context.activeShellType === "wsl" ? "\n- Note: Windows drives are mounted at `/mnt/c/`." : ""
 }
 - Current Working Directory: ${currentCwd} (this is where all the tools will be executed from)
-- Available CPU Cores: {{AVAILABLE_CORES}} (Use this value for parallel jobs like 'make -j' instead of 'nproc')
+${context.rewritePaths ? "- PROJECT-RELATIVE PATHS: All file paths you provide MUST be project-relative (e.g., 'src/main.ts', not '/absolute/path/src/main.ts'). The system will automatically translate them.\n" : ""}- Available CPU Cores: {{AVAILABLE_CORES}} (Use this value for parallel jobs like 'make -j' instead of 'nproc')
 ${yoloModeToggled ? "- You are running in fully autonomous mode.\n" : ""}
 
 OBJECTIVE
