@@ -116,6 +116,34 @@ describe("BashToolHandler", () => {
 		assert.equal(parsed.error, "PATH_ESCAPE")
 	})
 
+	it("blocks path arguments exceeding 255 bytes", async () => {
+		const { config, validator } = createConfig()
+		const handler = new BashToolHandler(validator)
+
+		const longPath = "/tmp/" + "a".repeat(300)
+		const result = await handler.execute(config, {
+			type: "tool_use", id: "t1", name: DiracDefaultTool.BASH_RESTRICTED, partial: false,
+			params: { command: `cat ${longPath}` }
+		})
+		const parsed = JSON.parse(result as string)
+		assert.equal(parsed.ok, false)
+		assert.equal(parsed.error, "PATH_TOO_LONG")
+		assert.ok(parsed.message.includes("305 bytes"))
+	})
+
+	it("allows normal-length path arguments", async () => {
+		const { config, validator } = createConfig()
+		const handler = new BashToolHandler(validator)
+
+		const normalPath = "/tmp/test.txt"
+		const result = await handler.execute(config, {
+			type: "tool_use", id: "t1", name: DiracDefaultTool.BASH_RESTRICTED, partial: false,
+			params: { command: `cat ${normalPath}` }
+		})
+		const parsed = JSON.parse(result as string)
+		assert.equal(parsed.ok, true)
+	})
+
 	it("respects timeout", async function() {
 		this.timeout(40000)
 		const { config, validator } = createConfig()

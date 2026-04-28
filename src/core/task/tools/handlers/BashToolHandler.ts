@@ -17,6 +17,7 @@ import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 const MAX_BASH_OUTPUT_SIZE = 400 * 1024 // 400KB
 const BASH_TIMEOUT_MS = 30000 // 30 seconds
+const MAX_PATH_LENGTH = 255 // Linux/macOS single path component limit
 
 const ALLOWED_BINARIES = new Set([
 	"git",
@@ -83,6 +84,22 @@ export class BashToolHandler implements IFullyManagedTool {
 					ok: false,
 					error: "BINARY_NOT_ALLOWED",
 					message: `Command '${bin}' is not allowed. Allowed binaries: ${Array.from(ALLOWED_BINARIES).join(", ")}`
+				}
+				return formatResponse.toolResult(JSON.stringify(resultObj, null, 2))
+			}
+		}
+
+		// 1b. Validate: reject path-like arguments exceeding OS filename length limit
+		for (const entry of entries) {
+			if (
+				(entry.startsWith("/") || entry.startsWith("./") || entry.startsWith("../") || entry.includes("/")) &&
+				Buffer.byteLength(entry) > MAX_PATH_LENGTH
+			) {
+				const preview = entry.slice(0, 80)
+				const resultObj = {
+					ok: false,
+					error: "PATH_TOO_LONG",
+					message: `Path argument exceeds maximum allowed length (${MAX_PATH_LENGTH} bytes). Saw: ${preview}${entry.length > 80 ? "..." : ""} (total ${Buffer.byteLength(entry)} bytes). If you meant to pass file contents, use a pipe or write to a file first.`
 				}
 				return formatResponse.toolResult(JSON.stringify(resultObj, null, 2))
 			}
