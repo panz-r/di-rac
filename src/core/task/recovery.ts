@@ -67,6 +67,7 @@ export interface StagnationResult {
 export class RecoveryEngine {
 	private recoveryTable: Record<string, RecoveryEntry> = {}
 	private failureMemory = new Map<string, FailureRecord>()
+	private globalFailureMemory = new Map<string, FailureRecord>() // Phase 15: Global Playbook
 	private circuitBreakers = new Map<string, CircuitState>()
 	private callHistory: CallRecord[] = []
 	private perTurnTokenBudget: number = 5 // max 5 recovery retries per turn
@@ -91,25 +92,43 @@ export class RecoveryEngine {
 		this.loadRecoveryMemory()
 	}
 
+	private async getGlobalPlaybookPath(): Promise<string> {
+		const os = await import("os")
+		const path = await import("path")
+		return path.join(os.homedir(), ".dirac", "recovery-playbook.json")
+	}
+
 	private async loadRecoveryMemory() {
+		const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+
+		// Helper to load a memory file into a map
+		const loadToMap = async (filePath: string, targetMap: Map<string, FailureRecord>) => {
+			try {
+				const fs = await import("fs/promises")
+				const content = await fs.readFile(filePath, "utf-8")
+				const data = JSON.parse(content)
+				Object.entries(data).forEach(([key, value]) => {
+					const record = value as FailureRecord
+					// Weight decay: if not seen in 30 days, demote (reduce success count)
+					if (Date.now() - record.lastSeen > THIRTY_DAYS_MS && record.successCount >= 3) {
+						record.successCount = 2 // Demote from graduated
+					}
+					targetMap.set(key, record)
+				})
+			} catch (e) {
+				// Ignore if file doesn't exist or is malformed
+			}
+		}
+
 		try {
-			const fs = await import("fs/promises")
 			const path = await import("path")
-			const memoryFile = path.join(process.cwd(), ".dirac-state", "recovery-memory.json")
-			const content = await fs.readFile(memoryFile, "utf-8")
-			const data = JSON.parse(content)
-			
-			const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
-			Object.entries(data).forEach(([key, value]) => {
-				const record = value as FailureRecord
-				// Weight decay: if not seen in 30 days, demote (reduce success count)
-				if (Date.now() - record.lastSeen > THIRTY_DAYS_MS && record.successCount >= 3) {
-					record.successCount = 2 // Demote from graduated
-				}
-				this.failureMemory.set(key, record)
-			})
+			const localMemoryFile = path.join(process.cwd(), ".dirac-state", "recovery-memory.json")
+			const globalMemoryFile = await this.getGlobalPlaybookPath()
+
+			await loadToMap(localMemoryFile, this.failureMemory)
+			await loadToMap(globalMemoryFile, this.globalFailureMemory)
 		} catch (e) {
-			// Ignore if file doesn't exist or is malformed
+			// Ignore
 		}
 	}
 
@@ -184,14 +203,27 @@ export class RecoveryEngine {
 	}
 
 	private async saveRecoveryMemory() {
+		const fs = await import("fs/promises")
+		const path = await import("path")
+
+		// Helper to save a map to a file
+		const saveMapToFile = async (filePath: string, sourceMap: Map<string, FailureRecord>) => {
+			try {
+				const dir = path.dirname(filePath)
+				await fs.mkdir(dir, { recursive: true })
+				const data = Object.fromEntries(sourceMap.entries())
+				await fs.writeFile(filePath, JSON.stringify(data, null, 2))
+			} catch (e) {
+				// Ignore
+			}
+		}
+
 		try {
-			const fs = await import("fs/promises")
-			const path = await import("path")
-			const diracStateDir = path.join(process.cwd(), ".dirac-state")
-			await fs.mkdir(diracStateDir, { recursive: true })
-			const memoryFile = path.join(diracStateDir, "recovery-memory.json")
-			const data = Object.fromEntries(this.failureMemory.entries())
-			await fs.writeFile(memoryFile, JSON.stringify(data, null, 2))
+			const localMemoryFile = path.join(process.cwd(), ".dirac-state", "recovery-memory.json")
+			const globalMemoryFile = await this.getGlobalPlaybookPath()
+
+			await saveMapToFile(localMemoryFile, this.failureMemory)
+			await saveMapToFile(globalMemoryFile, this.globalFailureMemory)
 		} catch (e) {
 			// Ignore errors
 		}
@@ -1310,24 +1342,28 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 	// --- Failure Memory (Graduated Recovery) ---
 
 	private recordRecovery(errorCode: string, success: boolean) {
-		let record = this.failureMemory.get(errorCode)
-		if (!record) {
-			record = { errorCode, tool: "", successCount: 0, failureCount: 0, lastSeen: 0 }
-		}
-
-		record.lastSeen = Date.now()
-		if (success) {
-			record.successCount++
-		} else {
-			record.failureCount++
-			// Phase 7: Correction Learning (Memelord pattern)
-			// If a specific recovery pattern fails 3+ times in a session, mark it as permanentSkip
-			if (record.failureCount >= 3 && record.successCount < 3) {
-				record.permanentSkip = true
+		const updateMap = (targetMap: Map<string, FailureRecord>) => {
+			let record = targetMap.get(errorCode)
+			if (!record) {
+				record = { errorCode, tool: "", successCount: 0, failureCount: 0, lastSeen: 0 }
 			}
+
+			record.lastSeen = Date.now()
+			if (success) {
+				record.successCount++
+			} else {
+				record.failureCount++
+				// Phase 7: Correction Learning (Memelord pattern)
+				// If a specific recovery pattern fails 3+ times in a session, mark it as permanentSkip
+				if (record.failureCount >= 3 && record.successCount < 3) {
+					record.permanentSkip = true
+				}
+			}
+			targetMap.set(errorCode, record)
 		}
 
-		this.failureMemory.set(errorCode, record)
+		updateMap(this.failureMemory)
+		updateMap(this.globalFailureMemory)
 		this.saveRecoveryMemory()
 	}
 
@@ -1336,15 +1372,19 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 			return true
 		}
 
-		const record = this.failureMemory.get(errorCode)
-		if (!record) return false
-
-		if (record.permanentSkip) {
+		const localRecord = this.failureMemory.get(errorCode)
+		const globalRecord = this.globalFailureMemory.get(errorCode)
+		
+		if (localRecord?.permanentSkip || globalRecord?.permanentSkip) {
 			return true
 		}
 
+		// A pattern is graduated if it has 3+ successful recoveries across all projects
+		const totalSuccess = (localRecord?.successCount || 0) + (globalRecord?.successCount || 0)
+		const totalFailure = (localRecord?.failureCount || 0) + (globalRecord?.failureCount || 0)
+
 		// If a pattern has failed 3+ times without graduating, skip it
-		if (record.failureCount >= 3 && record.successCount < 3) {
+		if (totalFailure >= 3 && totalSuccess < 3) {
 			return true
 		}
 		return false
