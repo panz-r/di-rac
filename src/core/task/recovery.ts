@@ -42,6 +42,7 @@ export interface FailureRecord {
 	successCount: number
 	failureCount: number
 	lastSeen: number
+	permanentSkip?: boolean // Phase 7: Correction Learning
 }
 
 export interface CircuitState {
@@ -340,9 +341,26 @@ export class RecoveryEngine {
 						detail: "outline"
 					})
 
-					// Extract the new line number for the anchor from the outline
-					// (Implementation would need to match anchor text/id to the new outline)
-					// For now, return the outline to the LLM so it can pick the correct anchor
+					// Phase 7: Autonomous Anchor Re-mapping
+					const outlineText = this.extractErrorMessage(outlineResult)
+					
+					// Try to find the symbol handle in the original params
+					// If LLM used a symbol-based anchor like "fn:login", we can find its new line
+					const anchor = input.anchor
+					if (anchor && typeof anchor === "string") {
+						// Look for [anchor] in the outline using regex
+						// Format:   - [anchor] signature (lines start-end)
+						const anchorEscaped = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+						const lineMatch = outlineText.match(new RegExp(`\\[${anchorEscaped}\\] .* \\(lines (\\d+)-(\\d+)\\)`))
+						if (lineMatch) {
+							const newLine = Number.parseInt(lineMatch[1])
+							const newInput = { ...input, line: newLine }
+							// Success! Re-execute the edit with the corrected line
+							this.updateAuditChain(toolName, "ANCHOR_REMAPPED", "SILENT_FIX")
+							return await execute(toolName as any, newInput)
+						}
+					}
+
 					return outlineResult
 				},
 			},
@@ -370,6 +388,20 @@ export class RecoveryEngine {
 					const searchResult = await execute(DiracDefaultTool.SEARCH_SYMBOLS, {
 						query: symbolName
 					})
+
+					// Phase 7: One-Hit Expansion
+					const resultText = this.extractErrorMessage(searchResult)
+					const matchCountMatch = resultText.match(/Found (\d+) matching symbols/)
+					if (matchCountMatch && matchCountMatch[1] === "1") {
+						const handleMatch = resultText.match(/\[([^\]]+)\]/)
+						if (handleMatch) {
+							const handle = handleMatch[1]
+							this.updateAuditChain(toolName, "SYMBOL_AUTO_EXPANDED", "SILENT_FIX")
+							return await execute(DiracDefaultTool.EXPAND_SYMBOL, {
+								handle
+							})
+						}
+					}
 
 					return searchResult
 				},
@@ -964,6 +996,11 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 			record.successCount++
 		} else {
 			record.failureCount++
+			// Phase 7: Correction Learning (Memelord pattern)
+			// If a specific recovery pattern fails 3+ times in a session, mark it as permanentSkip
+			if (record.failureCount >= 3 && record.successCount < 3) {
+				record.permanentSkip = true
+			}
 		}
 
 		this.failureMemory.set(errorCode, record)
@@ -977,6 +1014,10 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 
 		const record = this.failureMemory.get(errorCode)
 		if (!record) return false
+
+		if (record.permanentSkip) {
+			return true
+		}
 
 		// If a pattern has failed 3+ times without graduating, skip it
 		if (record.failureCount >= 3 && record.successCount < 3) {
