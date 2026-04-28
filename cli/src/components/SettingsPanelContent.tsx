@@ -260,6 +260,20 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 						type: "editable",
 						value: provider ? getProviderLabel(provider) : "not configured",
 					},
+					...(provider === "zai"
+						? [
+								{
+									key: "zaiApiLine",
+									label: "Entrypoint",
+									type: "cycle" as const,
+									value: {
+										international: "api.z.ai",
+										"coding-plan": "Coding Plan",
+										china: "open.bigmodel.cn",
+									}[(stateManager.getGlobalSettingsKey("zaiApiLine") as string) || "international"] || "api.z.ai",
+								},
+							]
+						: []),
 					...(provider === "openai-codex" && openAiCodexIsAuthenticated
 						? [
 								{
@@ -476,6 +490,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		}
 	}, [
 		currentTab,
+		modelRefreshKey,
 		provider,
 		actModelId,
 		planModelId,
@@ -549,6 +564,20 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		}
 
 		if (item.type === "cycle") {
+			if (item.key === "zaiApiLine") {
+				const current = (stateManager.getGlobalSettingsKey("zaiApiLine") as string) || "international"
+				const lines = ["international", "coding-plan", "china"]
+				const next = lines[(lines.indexOf(current) + 1) % lines.length]
+				stateManager.setGlobalState("zaiApiLine", next)
+				stateManager.flushPendingState()
+				setModelRefreshKey((k) => k + 1)
+				if (controller?.task) {
+					const mode = stateManager.getGlobalSettingsKey("mode")
+					const apiConfig = stateManager.getApiConfiguration()
+					controller.task.api = buildApiHandler({ ...apiConfig, ulid: controller.task.ulid }, mode)
+				}
+				return
+			}
 			const targetMode = item.key === "actReasoningEffort" ? "act" : item.key === "planReasoningEffort" ? "plan" : undefined
 			if (targetMode) {
 				const currentEffort = targetMode === "act" ? actReasoningEffort : planReasoningEffort

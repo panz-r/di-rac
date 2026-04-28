@@ -38,6 +38,7 @@ import {
     mainlandQwenModels,
     mainlandZAiDefaultModelId,
     mainlandZAiModels,
+    codingPlanZAiModelInfoSaneDefaults,
     minimaxDefaultModelId,
     minimaxModels,
     mistralDefaultModelId,
@@ -138,6 +139,7 @@ export function getModelsForProvider(
 		case "huawei-cloud-maas":
 			return huaweiCloudMaasModels
 		case "zai":
+			if (apiConfiguration?.zaiApiLine === "coding-plan") return undefined // free-form model ID
 			return apiConfiguration?.zaiApiLine === "china" ? mainlandZAiModels : internationalZAiModels
 		case "fireworks":
 			return fireworksModels
@@ -445,6 +447,17 @@ export function normalizeApiConfiguration(
 				selectedModelInfo: vercelModelInfo || openRouterDefaultModelInfo,
 			}
 		case "zai":
+			if (apiConfiguration?.zaiApiLine === "coding-plan") {
+				const codingPlanModelId =
+					currentMode === "plan" ? apiConfiguration?.planModeCodingPlanZAiModelId : apiConfiguration?.actModeCodingPlanZAiModelId
+				const codingPlanModelInfo =
+					currentMode === "plan" ? apiConfiguration?.planModeCodingPlanZAiModelInfo : apiConfiguration?.actModeCodingPlanZAiModelInfo
+				return {
+					selectedProvider: provider,
+					selectedModelId: codingPlanModelId || "glm-5",
+					selectedModelInfo: codingPlanModelInfo || codingPlanZAiModelInfoSaneDefaults,
+				}
+			}
 			const zaiModels = apiConfiguration?.zaiApiLine === "china" ? mainlandZAiModels : internationalZAiModels
 			const zaiDefaultId =
 				apiConfiguration?.zaiApiLine === "china" ? mainlandZAiDefaultModelId : internationalZAiDefaultModelId

@@ -398,7 +398,18 @@ function createHandlerForProvider(
 				zaiApiKey: options.zaiApiKey,
 				thinkingBudgetTokens:
 					mode === "plan" ? options.planModeThinkingBudgetTokens : options.actModeThinkingBudgetTokens,
-				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				apiModelId:
+					options.zaiApiLine === "coding-plan"
+						? mode === "plan"
+							? (options as any).planModeCodingPlanZAiModelId
+							: (options as any).actModeCodingPlanZAiModelId
+						: mode === "plan"
+							? options.planModeApiModelId
+							: options.actModeApiModelId,
+				codingPlanZAiModelInfo:
+					mode === "plan"
+						? (options as any).planModeCodingPlanZAiModelInfo
+						: (options as any).actModeCodingPlanZAiModelInfo,
 			})
 		case "aihubmix":
 			return new AIhubmixHandler({

@@ -1,4 +1,5 @@
 import {
+	codingPlanZAiModelInfoSaneDefaults,
 	internationalZAiDefaultModelId,
 	internationalZAiModelId,
 	internationalZAiModels,
@@ -25,6 +26,7 @@ interface ZAiHandlerOptions extends CommonApiHandlerOptions {
 	zaiApiKey?: string
 	apiModelId?: string
 	thinkingBudgetTokens?: number
+	codingPlanZAiModelInfo?: ModelInfo
 }
 
 export class ZAiHandler implements ApiHandler {
@@ -38,6 +40,16 @@ export class ZAiHandler implements ApiHandler {
 		return this.options.zaiApiLine === "china"
 	}
 
+	private useCodingPlanApi(): boolean {
+		return this.options.zaiApiLine === "coding-plan"
+	}
+
+	private getBaseUrl(): string {
+		if (this.useChinaApi()) return "https://open.bigmodel.cn/api/paas/v4"
+		if (this.useCodingPlanApi()) return "https://api.z.ai/api/coding/paas/v4"
+		return "https://api.z.ai/api/paas/v4"
+	}
+
 	private ensureClient(): OpenAI {
 		if (!this.client) {
 			if (!this.options.zaiApiKey) {
@@ -45,7 +57,7 @@ export class ZAiHandler implements ApiHandler {
 			}
 			try {
 				this.client = createOpenAIClient({
-					baseURL: this.useChinaApi() ? "https://open.bigmodel.cn/api/paas/v4" : "https://api.z.ai/api/paas/v4",
+					baseURL: this.getBaseUrl(),
 					apiKey: this.options.zaiApiKey,
 					defaultHeaders: {
 						"HTTP-Referer": "https://dirac.run",
@@ -60,7 +72,12 @@ export class ZAiHandler implements ApiHandler {
 		return this.client
 	}
 
-	getModel(): { id: mainlandZAiModelId | internationalZAiModelId; info: ModelInfo } {
+	getModel(): { id: mainlandZAiModelId | internationalZAiModelId | string; info: ModelInfo } {
+		if (this.useCodingPlanApi()) {
+			const id = this.options.apiModelId || "glm-5"
+			const info = this.options.codingPlanZAiModelInfo || codingPlanZAiModelInfoSaneDefaults
+			return { id, info }
+		}
 		const modelId = this.options.apiModelId
 		if (this.useChinaApi()) {
 			const id = modelId && modelId in mainlandZAiModels ? (modelId as mainlandZAiModelId) : mainlandZAiDefaultModelId

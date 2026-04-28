@@ -3358,6 +3358,19 @@ export const mainlandZAiModels = {
 	},
 } as const satisfies Record<string, OpenAiCompatibleModelInfo>
 
+// Z AI Coding Plan (subscription, free-form model ID)
+export const codingPlanZAiModelInfoSaneDefaults: ModelInfo = {
+	maxTokens: 128_000,
+	contextWindow: 200_000,
+	supportsImages: false,
+	supportsPromptCache: true,
+	supportsReasoning: true,
+	inputPrice: 0,
+	outputPrice: 0,
+	cacheReadsPrice: 0,
+	thinkingConfig: { maxBudget: 128_000 },
+}
+
 // Fireworks AI
 export type FireworksModelId = keyof typeof fireworksModels
 export const fireworksDefaultModelId: FireworksModelId = "accounts/fireworks/models/kimi-k2p6"
