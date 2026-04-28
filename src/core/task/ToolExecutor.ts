@@ -14,6 +14,7 @@ import { DiracDefaultTool, toolUseNames } from "@shared/tools"
 import { DiracAskResponse } from "@shared/WebviewMessage"
 import { createToolError } from "@shared/tool-response"
 import { isParallelToolCallingEnabled, modelDoesntSupportWebp } from "@/utils/model-utils"
+import { Logger } from "../../shared/services/Logger"
 import { ToolUse } from "../assistant-message"
 import { ContextManager } from "../context/context-management/ContextManager"
 import { formatResponse } from "../prompts/responses"
@@ -577,6 +578,14 @@ export class ToolExecutor {
 		// Update file access tracking and check for staleness
 		const filePath = (block.params as any)?.path || (block.params as any)?.file_path || (block.params as any)?.absolutePath
 		if (filePath && typeof filePath === "string") {
+			// Check for overlapping edits in the same turn
+			if (block.name === DiracDefaultTool.EDIT_FILE) {
+				if (this.taskState.filesTouchedInCurrentTurn.has(filePath)) {
+					// We've already touched this file in this turn.
+					Logger.debug(`[ToolExecutor] Potential overlapping edit detected for ${filePath}`)
+				}
+			}
+
 			const lastAccess = this.taskState.fileLastAccessToolIndex.get(filePath)
 			if (lastAccess !== undefined && this.taskState.totalToolCallCount - lastAccess > 10) {
 				// File is potentially stale (read > 10 tool calls ago).

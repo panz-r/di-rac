@@ -194,6 +194,24 @@ export class RecoveryEngine {
 					return searchResult
 				},
 			},
+			FILE_CHANGED_SINCE_READ: {
+				domain: ErrorDomain.MEMORY,
+				category: ErrorCategory.PERMANENT,
+				tier: "recoverable_logic",
+				maxRetries: 1,
+				handler: async (toolName, input: any, _error, _attempt, execute) => {
+					const filePath = input.path || input.file_path
+					if (!filePath) return null
+
+					// Automatically re-read outline to show what changed
+					const outlineResult = await execute(DiracDefaultTool.FILE_READ, {
+						path: filePath,
+						detail: "outline"
+					})
+
+					return outlineResult
+				},
+			},
 			PathEscapeError: {
 				domain: ErrorDomain.ACTION,
 				category: ErrorCategory.PERMANENT,
@@ -270,12 +288,15 @@ export class RecoveryEngine {
 		// 2. Check Stagnation (L2 Backtracking)
 		const stagnation = this.detectStagnation(toolName, args, taskState)
 		if (stagnation) {
+			const isExactRepeat = stagnation.summary.includes("identical")
 			return this.formatStructuredEscalation(
 				toolName,
 				args,
 				"STAGNATION_DETECTED",
 				stagnation.summary,
-				"You are repeating the same action. Please pivot to a different strategy."
+				isExactRepeat 
+					? "You are repeating the same action. Please reconsider your approach or check the tool parameters."
+					: "You have been exploring without making progress. Consider switching to editing or refine your search."
 			)
 		}
 
@@ -601,23 +622,36 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 		const fingerprint = this.fingerprintToolCall(toolName, args)
 		
 		// 1. Exact/Semantic Repeat (L2 Backtracking)
-		// Check last 3 calls
 		const recentCalls = this.callHistory.slice(-3)
 		if (recentCalls.length === 3) {
 			const allMatch = recentCalls.every(c => c.tool === toolName && c.fingerprint === fingerprint)
 			if (allMatch) {
 				return {
 					stagnationDetected: true,
-					summary: `Repeated identical semantic call to ${toolName} (3x). Loop broken to prevent token exhaustion. Please reconsider your approach or check the tool parameters.`
+					summary: `Repeated identical semantic call to ${toolName} (3x). Loop broken to prevent token exhaustion.`
 				}
 			}
 		}
 
-		// 2. Non-progress File Loop Detection
-		if (taskState && taskState.filesTouchedInCurrentTurn.size >= 2) {
-			// If we've touched the same set of files in a turn without making edits or commands
-			// this is simplified; a more robust version would track across multiple turns.
-			// For now, let's stick to the 3-repeat rule but expanded to tool + arg pattern.
+		// 2. Non-progress File Loop Detection (Progress Awareness)
+		if (taskState && taskState.filesTouchedInCurrentTurn.size >= 1) {
+			// Track history of touched file sets per turn
+			// If we touch the same set of files for 3 consecutive tool calls 
+			// without any edits or commands, suggest a pivot.
+			const readOnlyTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.GET_FUNCTION, DiracDefaultTool.EXPAND_SYMBOL]
+			const isReadOnly = readOnlyTools.includes(toolName as any)
+			
+			if (isReadOnly) {
+				const recentReadOnlyCount = this.callHistory.slice(-5).filter(c => readOnlyTools.includes(c.tool as any)).length
+				if (recentReadOnlyCount >= 5) {
+					// We've been exploring for a while. Check if we're stuck on the same files.
+					const touchedFiles = Array.from(taskState.filesTouchedInCurrentTurn)
+					return {
+						stagnationDetected: true,
+						summary: `You have inspected ${touchedFiles.length} files (${touchedFiles.join(", ")}) across 5+ read-only calls without making changes.`
+					}
+				}
+			}
 		}
 
 		return null
