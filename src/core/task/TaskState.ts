@@ -87,6 +87,8 @@ export class TaskState {
 	// Advanced recovery state
 	fileLastAccessToolIndex: Map<string, number> = new Map() // maps absolute path to tool call index
 	filesTouchedInCurrentTurn: Set<string> = new Set()
+	currentTaskPhase: "exploration" | "editing" | "verification" = "exploration"
+	turnTokenEstimates: number = 0
 }
 
 export interface SymbolIndexEntry {

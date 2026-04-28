@@ -79,6 +79,9 @@ export class RecoveryEngine {
 	}
 	private lastAuditHash: string = "INIT"
 
+	// Phase 5: Advanced Ledger and Session Skips
+	private sessionSkips = new Set<string>()
+
 	constructor() {
 		this.initializeRecoveryTable()
 		this.loadRecoveryMemory()
@@ -146,6 +149,36 @@ export class RecoveryEngine {
 		}
 	}
 
+	private async logToLedger(errorCode: string, toolName: string, action: string, success: boolean, args: unknown) {
+		try {
+			const fs = await import("fs/promises")
+			const path = await import("path")
+			const diracStateDir = path.join(process.cwd(), ".dirac-state")
+			await fs.mkdir(diracStateDir, { recursive: true })
+			const ledgerFile = path.join(diracStateDir, "recovery-ledger.jsonl")
+			
+			// Simple context fingerprint: stringify core args
+			let contextFingerprint = ""
+			try {
+				contextFingerprint = this.fingerprintToolCall(toolName, args)
+			} catch {
+				contextFingerprint = "unknown"
+			}
+
+			const record = JSON.stringify({
+				errorCode,
+				tool: toolName,
+				recoveryAction: action,
+				success,
+				contextFingerprint,
+				timestamp: Date.now()
+			}) + "\n"
+			await fs.appendFile(ledgerFile, record)
+		} catch (e) {
+			// Silent fail
+		}
+	}
+
 	private async saveRecoveryMemory() {
 		try {
 			const fs = await import("fs/promises")
@@ -179,6 +212,28 @@ export class RecoveryEngine {
 
 		// --- Stage II: Content & State Scanning ---
 		
+		// 0. Phase and Token Tracking (Phase 5)
+		if (taskState) {
+			const mutationTools = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.BASH]
+			const verificationTools = [DiracDefaultTool.BASH_RESTRICTED, DiracDefaultTool.DIAGNOSTICS_SCAN]
+			
+			if (mutationTools.includes(toolName as any) && taskState.currentTaskPhase === "exploration") {
+				taskState.currentTaskPhase = "editing"
+			} else if (verificationTools.includes(toolName as any) && taskState.currentTaskPhase === "editing") {
+				taskState.currentTaskPhase = "verification"
+			}
+
+			// Token Efficiency Heuristic
+			if (toolName === DiracDefaultTool.FILE_READ && typeof startLine === "number" && typeof endLine === "number") {
+				const lineCount = endLine - startLine
+				taskState.turnTokenEstimates += lineCount * 50 // Very rough estimate
+				if (taskState.turnTokenEstimates > 5000 && taskState.currentTaskPhase === "exploration") {
+					this.updateAuditChain(toolName, "LOW_EFFICIENCY_READ", "WARNING")
+					// We don't block here, but detectStagnation will use this
+				}
+			}
+		}
+
 		// 1. Paradoxical Ranges Check
 		if (toolName === DiracDefaultTool.FILE_READ && typeof startLine === "number" && typeof endLine === "number") {
 			if (startLine > endLine) {
@@ -578,6 +633,14 @@ export class RecoveryEngine {
 			recoveryResult = await entry.handler(toolName, args, originalError, 1, dispatch)
 		} catch (handlerError: any) {
 			this.recordRecovery(errorCode, false)
+			this.logToLedger(errorCode, toolName, "handler_crash", false, args)
+			
+			// Claude-smart rule: demote graduated pattern if it fails in this session
+			const record = this.failureMemory.get(errorCode)
+			if (record && record.successCount >= 3) {
+				this.sessionSkips.add(errorCode)
+			}
+
 			this.telemetry.escalatedCount++
 			this.saveTelemetrySummary()
 			this.updateAuditChain(toolName, errorCode, "HANDLER_CRASH")
@@ -603,6 +666,14 @@ export class RecoveryEngine {
 		if (recoveryResult === null) {
 			// Handler passed through to L3 Escalation
 			this.recordRecovery(errorCode, false)
+			this.logToLedger(errorCode, toolName, "handler_deferred", false, args)
+
+			// Claude-smart rule: demote graduated pattern if it fails in this session
+			const record = this.failureMemory.get(errorCode)
+			if (record && record.successCount >= 3) {
+				this.sessionSkips.add(errorCode)
+			}
+
 			this.telemetry.escalatedCount++
 			this.saveTelemetrySummary()
 			this.updateAuditChain(toolName, errorCode, "HANDLER_DEFERRED")
@@ -629,6 +700,14 @@ export class RecoveryEngine {
 		const recoveryErrorCode = this.extractErrorCode(recoveryResult)
 		if (recoveryErrorCode) {
 			this.recordRecovery(errorCode, false)
+			this.logToLedger(errorCode, toolName, `chain_failure:${recoveryErrorCode}`, false, args)
+
+			// Claude-smart rule: demote graduated pattern if it fails in this session
+			const record = this.failureMemory.get(errorCode)
+			if (record && record.successCount >= 3) {
+				this.sessionSkips.add(errorCode)
+			}
+
 			this.telemetry.escalatedCount++
 			this.saveTelemetrySummary()
 			this.updateAuditChain(toolName, errorCode, "CHAIN_FAILURE")
@@ -653,6 +732,8 @@ export class RecoveryEngine {
 
 		// Recovery Success!
 		this.recordRecovery(errorCode, true)
+		this.logToLedger(errorCode, toolName, "success", true, args)
+
 		this.telemetry.interceptedCount++
 		this.telemetry.totalTurnSavings += 1.5
 		this.saveTelemetrySummary()
@@ -796,20 +877,26 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 
 		// 2. Non-progress File Loop Detection (Progress Awareness)
 		if (taskState && taskState.filesTouchedInCurrentTurn.size >= 1) {
-			// Track history of touched file sets per turn
-			// If we touch the same set of files for 3 consecutive tool calls 
-			// without any edits or commands, suggest a pivot.
 			const readOnlyTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.GET_FUNCTION, DiracDefaultTool.EXPAND_SYMBOL]
 			const isReadOnly = readOnlyTools.includes(toolName as any)
 			
 			if (isReadOnly) {
 				const recentReadOnlyCount = this.callHistory.slice(-5).filter(c => readOnlyTools.includes(c.tool as any)).length
-				if (recentReadOnlyCount >= 5) {
-					// We've been exploring for a while. Check if we're stuck on the same files.
+				
+				// Phase 5: Phase Tracking Nudge
+				if (recentReadOnlyCount >= 5 && taskState.currentTaskPhase === "exploration") {
 					const touchedFiles = Array.from(taskState.filesTouchedInCurrentTurn)
 					return {
 						stagnationDetected: true,
-						summary: `You have inspected ${touchedFiles.length} files (${touchedFiles.join(", ")}) across 5+ read-only calls without making changes.`
+						summary: `Extended exploration phase detected (${recentReadOnlyCount} calls, ${touchedFiles.length} files). If you have enough context, please proceed to editing.`
+					}
+				}
+
+				// Phase 5: Token Efficiency Nudge
+				if (taskState.turnTokenEstimates > 10000 && isReadOnly) {
+					return {
+						stagnationDetected: true,
+						summary: `High token consumption detected for exploration. Consider using targeted tools like expand_symbol or search_symbols.`
 					}
 				}
 			}
@@ -875,6 +962,10 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 	}
 
 	private shouldSkipRecovery(errorCode: string): boolean {
+		if (this.sessionSkips.has(errorCode)) {
+			return true
+		}
+
 		const record = this.failureMemory.get(errorCode)
 		if (!record) return false
 
