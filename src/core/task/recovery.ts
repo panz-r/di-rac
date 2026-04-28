@@ -71,6 +71,14 @@ export class RecoveryEngine {
 	private perTurnTokenBudget: number = 5 // max 5 recovery retries per turn
 	private currentTurnRetries: number = 0
 
+	// Phase 3: Telemetry and Audit
+	private telemetry = {
+		interceptedCount: 0,
+		escalatedCount: 0,
+		totalTurnSavings: 0,
+	}
+	private lastAuditHash: string = "INIT"
+
 	constructor() {
 		this.initializeRecoveryTable()
 		this.loadRecoveryMemory()
@@ -83,11 +91,58 @@ export class RecoveryEngine {
 			const memoryFile = path.join(process.cwd(), ".dirac-state", "recovery-memory.json")
 			const content = await fs.readFile(memoryFile, "utf-8")
 			const data = JSON.parse(content)
+			
+			const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 			Object.entries(data).forEach(([key, value]) => {
-				this.failureMemory.set(key, value as FailureRecord)
+				const record = value as FailureRecord
+				// Weight decay: if not seen in 30 days, demote (reduce success count)
+				if (Date.now() - record.lastSeen > THIRTY_DAYS_MS && record.successCount >= 3) {
+					record.successCount = 2 // Demote from graduated
+				}
+				this.failureMemory.set(key, record)
 			})
 		} catch (e) {
 			// Ignore if file doesn't exist or is malformed
+		}
+	}
+
+	private async saveTelemetrySummary() {
+		try {
+			const fs = await import("fs/promises")
+			const path = await import("path")
+			const diracStateDir = path.join(process.cwd(), ".dirac-state")
+			await fs.mkdir(diracStateDir, { recursive: true })
+			const summaryFile = path.join(diracStateDir, "recovery-summary.json")
+			const recoveryRate = this.telemetry.interceptedCount + this.telemetry.escalatedCount > 0
+				? (this.telemetry.interceptedCount / (this.telemetry.interceptedCount + this.telemetry.escalatedCount)) * 100
+				: 0
+			
+			const summary = {
+				...this.telemetry,
+				recoveryRate: `${recoveryRate.toFixed(1)}%`,
+				timestamp: new Date().toISOString()
+			}
+			await fs.writeFile(summaryFile, JSON.stringify(summary, null, 2))
+		} catch (e) {
+			// Ignore errors
+		}
+	}
+
+	private async updateAuditChain(toolName: string, errorCode: string, outcome: string) {
+		try {
+			const { createHash } = await import("node:crypto")
+			const fs = await import("fs/promises")
+			const path = await import("path")
+			
+			const data = `${this.lastAuditHash}:${toolName}:${errorCode}:${outcome}`
+			this.lastAuditHash = createHash("sha256").update(data).digest("hex")
+			
+			const diracStateDir = path.join(process.cwd(), ".dirac-state")
+			await fs.mkdir(diracStateDir, { recursive: true })
+			const auditFile = path.join(diracStateDir, "recovery-audit.log")
+			await fs.appendFile(auditFile, `${new Date().toISOString()} [${outcome}] ${toolName} (${errorCode}) -> ${this.lastAuditHash}\n`)
+		} catch (e) {
+			// Silent fail
 		}
 	}
 
@@ -276,6 +331,7 @@ export class RecoveryEngine {
 		// 1. Check Circuit Breaker
 		const circuit = this.checkCircuit(toolName)
 		if (circuit.state === "OPEN") {
+			this.updateAuditChain(toolName, "CIRCUIT_BREAKER_OPEN", "BLOCKED")
 			return this.formatStructuredEscalation(
 				toolName,
 				args,
@@ -288,6 +344,7 @@ export class RecoveryEngine {
 		// 2. Check Stagnation (L2 Backtracking)
 		const stagnation = this.detectStagnation(toolName, args, taskState)
 		if (stagnation) {
+			this.updateAuditChain(toolName, "STAGNATION_DETECTED", "BLOCKED")
 			const isExactRepeat = stagnation.summary.includes("identical")
 			return this.formatStructuredEscalation(
 				toolName,
@@ -312,6 +369,7 @@ export class RecoveryEngine {
 			const errorCode = this.extractErrorCode(result)
 			if (!errorCode) {
 				this.updateCircuit(toolName, true)
+				this.updateAuditChain(toolName, "NONE", "SUCCESS")
 				return result // Success
 			}
 
@@ -371,6 +429,10 @@ export class RecoveryEngine {
 
 		// Check if we should skip due to graduated failure memory
 		if (this.shouldSkipRecovery(errorCode)) {
+			this.telemetry.escalatedCount++
+			this.saveTelemetrySummary()
+			this.updateAuditChain(toolName, errorCode, "SKIPPED_GRADUATED")
+
 			const skipReason = `Prior recovery attempts for ${errorCode} have consistently failed. Bypassing deterministic recovery.`
 			this.logRecoveryMiss(
 				errorCode,
@@ -392,6 +454,10 @@ export class RecoveryEngine {
 		const entry = this.recoveryTable[errorCode]
 		if (!entry) {
 			// No deterministic fix known -> L3 Escalation
+			this.telemetry.escalatedCount++
+			this.saveTelemetrySummary()
+			this.updateAuditChain(toolName, errorCode, "UNHANDLED")
+
 			this.logRecoveryMiss(
 				errorCode,
 				toolName,
@@ -405,6 +471,10 @@ export class RecoveryEngine {
 
 		// Check Domain & Category heuristics
 		if (entry.category === ErrorCategory.PERMANENT && entry.maxRetries === 0) {
+			this.telemetry.escalatedCount++
+			this.saveTelemetrySummary()
+			this.updateAuditChain(toolName, errorCode, "PERMANENT_NO_RETRY")
+
 			this.logRecoveryMiss(
 				errorCode,
 				toolName,
@@ -418,6 +488,10 @@ export class RecoveryEngine {
 
 		// Budget check
 		if (this.currentTurnRetries >= this.perTurnTokenBudget) {
+			this.telemetry.escalatedCount++
+			this.saveTelemetrySummary()
+			this.updateAuditChain(toolName, errorCode, "BUDGET_EXCEEDED")
+
 			const budgetReason = "Recovery retry budget exceeded for this turn."
 			this.logRecoveryMiss(
 				errorCode,
@@ -443,6 +517,10 @@ export class RecoveryEngine {
 			recoveryResult = await entry.handler(toolName, args, originalError, 1, dispatch)
 		} catch (handlerError: any) {
 			this.recordRecovery(errorCode, false)
+			this.telemetry.escalatedCount++
+			this.saveTelemetrySummary()
+			this.updateAuditChain(toolName, errorCode, "HANDLER_CRASH")
+
 			const crashReason = `Recovery handler crashed for ${errorCode}.`
 			this.logRecoveryMiss(
 				errorCode,
@@ -464,6 +542,10 @@ export class RecoveryEngine {
 		if (recoveryResult === null) {
 			// Handler passed through to L3 Escalation
 			this.recordRecovery(errorCode, false)
+			this.telemetry.escalatedCount++
+			this.saveTelemetrySummary()
+			this.updateAuditChain(toolName, errorCode, "HANDLER_DEFERRED")
+
 			const failReason = `Deterministic recovery failed or deferred for ${errorCode}.`
 			this.logRecoveryMiss(
 				errorCode,
@@ -486,6 +568,10 @@ export class RecoveryEngine {
 		const recoveryErrorCode = this.extractErrorCode(recoveryResult)
 		if (recoveryErrorCode) {
 			this.recordRecovery(errorCode, false)
+			this.telemetry.escalatedCount++
+			this.saveTelemetrySummary()
+			this.updateAuditChain(toolName, errorCode, "CHAIN_FAILURE")
+
 			const retryErrorReason = `Recovery attempt for ${errorCode} resulted in another error: ${recoveryErrorCode}.`
 			this.logRecoveryMiss(
 				errorCode,
@@ -506,6 +592,20 @@ export class RecoveryEngine {
 
 		// Recovery Success!
 		this.recordRecovery(errorCode, true)
+		this.telemetry.interceptedCount++
+		this.telemetry.totalTurnSavings += 1.5
+		this.saveTelemetrySummary()
+		this.updateAuditChain(toolName, errorCode, "RECOVERED")
+
+		// Mark as compaction-safe (L-ICL principle / Governance Integration)
+		if (Array.isArray(recoveryResult)) {
+			recoveryResult.push({
+				type: "text",
+				text: "[SYSTEM: DETERMINISTIC_RECOVERY_SUCCESS - COMPACTION_SAFE]",
+				metadata: { compactionSafe: true }
+			} as any)
+		}
+
 		return recoveryResult
 	}
 
