@@ -20,6 +20,7 @@ import { formatResponse } from "../prompts/responses"
 import { StateManager } from "../storage/StateManager"
 import { WorkspaceRootManager } from "../workspace"
 import { ToolResponse } from "."
+import { RecoveryEngine } from "./recovery"
 import { MessageStateHandler } from "./message-state"
 import { TaskState } from "./TaskState"
 import { AutoApprove } from "./tools/autoApprove"
@@ -42,6 +43,7 @@ export function canonicalizeAttemptCompletionParams(block: ToolUse): boolean {
 export class ToolExecutor {
 	private autoApprover: AutoApprove
 	private coordinator: ToolExecutorCoordinator
+	public recoveryEngine: RecoveryEngine
 
 	// Auto-approval methods using the AutoApprove class
 	private shouldAutoApproveTool(toolName: DiracDefaultTool): boolean | [boolean, boolean] {
@@ -127,6 +129,7 @@ export class ToolExecutor {
 
 		// Initialize the coordinator and register all tool handlers
 		this.coordinator = new ToolExecutorCoordinator()
+		this.recoveryEngine = new RecoveryEngine()
 		this.registerToolHandlers()
 	}
 
@@ -579,8 +582,20 @@ export class ToolExecutor {
 				return
 			}
 
-			// Execute the actual tool
-			toolResult = await this.coordinator.execute(config, block)
+			// Execute the actual tool, wrapped in the recovery engine if enabled
+			const toolRecoveryEnabled = this.stateManager.getGlobalSettingsKey("toolRecoveryEnabled")
+			if (toolRecoveryEnabled) {
+				toolResult = await this.recoveryEngine.wrapWithRecovery(
+					block.name,
+					block.params,
+					async (name, args) => {
+						const wrappedBlock: ToolUse = { ...block, name: name as any, params: args as any }
+						return this.coordinator.execute(config, wrappedBlock)
+					}
+				)
+			} else {
+				toolResult = await this.coordinator.execute(config, block)
+			}
 			toolWasExecuted = true
 
 			// Increment tool call count and inject warning if needed

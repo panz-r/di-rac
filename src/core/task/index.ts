@@ -1240,6 +1240,8 @@ ${notice}`
 		if (this.taskState.abort) {
 			throw new Error("Task instance aborted")
 		}
+		
+		this.toolExecutor.recoveryEngine.resetTurnBudget()
 
 
 		const { model, providerId, customPrompt, mode } = this.getCurrentProviderInfo()

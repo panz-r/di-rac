@@ -232,6 +232,7 @@ const USER_SETTINGS_FIELDS = {
 	rewritePaths: { default: false as boolean },
 	bashToolEnabled: { default: false as boolean },
 	bashAutoApproveAll: { default: false as boolean },
+	toolRecoveryEnabled: { default: false as boolean },
 	customPrompt: { default: undefined as "compact" | undefined },
 	backgroundEditEnabled: { default: false as boolean },
 	optOutOfRemoteConfig: { default: false as boolean },
