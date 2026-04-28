@@ -164,6 +164,67 @@ export class RecoveryEngine {
 		this.currentTurnRetries = 0
 	}
 
+	/**
+	 * AEGIS-inspired Pre-Execution Firewall.
+	 * Interposes on the tool-execution path to stop errors before they happen.
+	 */
+	public async runPreflightFirewall(block: ToolUse, taskState: any): Promise<ToolResponse | null> {
+		const toolName = block.name
+		const params = block.params as any
+
+		// --- Stage I: Argument Extraction ---
+		const filePath = params?.path || params?.file_path || params?.absolutePath
+		const startLine = params?.start_line
+		const endLine = params?.end_line
+
+		// --- Stage II: Content & State Scanning ---
+		
+		// 1. Paradoxical Ranges Check
+		if (toolName === DiracDefaultTool.FILE_READ && typeof startLine === "number" && typeof endLine === "number") {
+			if (startLine > endLine) {
+				// Stage III Policy: Silent Fix
+				block.params.start_line = endLine
+				block.params.end_line = startLine
+				this.updateAuditChain(toolName, "PARADOXICAL_RANGE", "SILENT_FIX")
+			}
+		}
+
+		// 2. Stale Context Check
+		if (toolName === DiracDefaultTool.EDIT_FILE && typeof filePath === "string") {
+			const lastAccess = taskState.fileLastAccessToolIndex.get(filePath)
+			const currentCount = taskState.totalToolCallCount
+			
+			if (lastAccess !== undefined && (currentCount - lastAccess) > 15) {
+				// Stage III Policy: Stale Context Block
+				this.updateAuditChain(toolName, "STALE_CONTEXT", "BLOCKED")
+				return this.formatStructuredEscalation(
+					toolName,
+					block.params,
+					"STALE_CONTEXT",
+					`The context for '${filePath}' is stale (last read ${currentCount - lastAccess} tool calls ago).`,
+					`Please use read_file (detail="outline" or normal) to refresh your context before attempting an edit.`
+				)
+			}
+		}
+
+		// 3. Overlapping Edit Check
+		if (toolName === DiracDefaultTool.EDIT_FILE && typeof filePath === "string") {
+			if (taskState.filesTouchedInCurrentTurn.has(filePath)) {
+				// Stage III Policy: Overlapping Edit Warning/Block
+				// For now, let's just log it and allow it if it's not graduated to a full block
+				this.updateAuditChain(toolName, "OVERLAPPING_EDIT", "WARNING")
+			}
+		}
+
+		// Update tracking state (AEGIS Stage I/II side effect)
+		if (filePath && typeof filePath === "string") {
+			taskState.fileLastAccessToolIndex.set(filePath, taskState.totalToolCallCount)
+			taskState.filesTouchedInCurrentTurn.add(filePath)
+		}
+
+		return null // Pass through to execution
+	}
+
 	private initializeRecoveryTable() {
 		this.recoveryTable = {
 			// --- SYSTEM DOMAIN ---

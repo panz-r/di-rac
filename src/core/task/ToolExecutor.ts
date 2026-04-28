@@ -561,60 +561,6 @@ export class ToolExecutor {
 	 * @param block The complete tool use block with all parameters
 	 * @param config The task configuration containing all necessary context
 	 */
-	/**
-	 * Run preemptive heuristics to avoid errors before tool execution
-	 */
-	private runPreemptiveChecks(block: ToolUse): void {
-		if (block.name === DiracDefaultTool.FILE_READ && block.params) {
-			const startLine = block.params.start_line
-			const endLine = block.params.end_line
-			if (typeof startLine === "number" && typeof endLine === "number" && startLine > endLine) {
-				// Silently swap paradoxical ranges
-				block.params.start_line = endLine
-				block.params.end_line = startLine
-			}
-		}
-
-		// Update file access tracking and check for staleness
-		const filePath = (block.params as any)?.path || (block.params as any)?.file_path || (block.params as any)?.absolutePath
-		if (filePath && typeof filePath === "string") {
-			// Check for overlapping edits in the same turn
-			if (block.name === DiracDefaultTool.EDIT_FILE) {
-				if (this.taskState.filesTouchedInCurrentTurn.has(filePath)) {
-					// We've already touched this file in this turn.
-					Logger.debug(`[ToolExecutor] Potential overlapping edit detected for ${filePath}`)
-				}
-			}
-
-			const lastAccess = this.taskState.fileLastAccessToolIndex.get(filePath)
-			if (lastAccess !== undefined && this.taskState.totalToolCallCount - lastAccess > 10) {
-				// File is potentially stale (read > 10 tool calls ago).
-				// We don't automatically fix it here to avoid side-effects,
-				// but the RecoveryEngine will handle it if an anchor error occurs.
-			}
-			this.taskState.fileLastAccessToolIndex.set(filePath, this.taskState.totalToolCallCount)
-			this.taskState.filesTouchedInCurrentTurn.add(filePath)
-		}
-	}
-
-	/**
-	 * Handle complete block execution.
-	 *
-	 * This is the main execution flow for a tool:
-	 * 1. Execute the actual tool (tool handlers now run PreToolUse hooks post-approval)
-	 * 2. Run PostToolUse hooks (if enabled) - cannot block, only observe
-	 * 3. Add hook context modifications to the conversation
-	 * 4. Update focus chain tracking
-	 *
-	 * Note: PreToolUse hooks are now executed by individual tool handlers after approval
-	 * and before the actual tool operation. This provides better UX as approval dialogs
-	 * appear immediately without hook execution delay.
-	 *
-	 * PostToolUse hooks are for observation/logging only and cannot block.
-	 *
-	 * @param block The complete tool use block with all parameters
-	 * @param config The task configuration containing all necessary context
-	 */
 	private async handleCompleteBlock(block: ToolUse, config: any): Promise<void> {
 		// Check abort flag at the very start to prevent execution after cancellation
 		if (this.taskState.abort) {
@@ -640,7 +586,13 @@ export class ToolExecutor {
 			// Execute the actual tool, wrapped in the recovery engine if enabled
 			const toolRecoveryEnabled = this.stateManager.getGlobalSettingsKey("toolRecoveryEnabled")
 			if (toolRecoveryEnabled) {
-				this.runPreemptiveChecks(block)
+				// AEGIS Pre-Execution Firewall
+				const preflightResult = await this.recoveryEngine.runPreflightFirewall(block, this.taskState)
+				if (preflightResult) {
+					this.pushToolResult(preflightResult, block)
+					return
+				}
+
 				toolResult = await this.recoveryEngine.wrapWithRecovery(
 					block.name,
 					block.params,
