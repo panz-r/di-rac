@@ -3,10 +3,11 @@ import xxhashjs from "xxhashjs"
 const { h32 } = xxhashjs
 
 /**
- * 37-character alphabet: digits + consonants (no vowels).
- * Avoids creating accidentally readable words or offensive combinations.
+ * 32-character base32 alphabet: digits + lowercase a-v.
+ * Every 3-char code fits in a single LLM token across BBPE/SentencePiece tokenizers.
+ * Provides 32,768 unique anchors (32^3), sufficient for files up to several thousand lines.
  */
-const ALPHABET = "0123456789bcdfghjklmnpqrstvwxyz"
+const ALPHABET = "0123456789abcdefghijklmnopqrstuv"
 const ALPHABET_LENGTH = ALPHABET.length
 
 /** Default length of short hash codes. */
@@ -16,7 +17,7 @@ const DEFAULT_HASH_LENGTH = 3
 const XXHASH_SEED = 0
 
 /**
- * Returns the 37-character alphabet used for short encoding.
+ * Returns the 32-character base32 alphabet used for short encoding.
  */
 export function getAlphabet(): string {
 	return ALPHABET
@@ -32,7 +33,7 @@ export function xxHash32(data: string): number {
 
 /**
  * Encodes a 32-bit hash into a short alphanumeric string of the given length.
- * Uses the custom alphabet (digits + consonants only).
+ * Uses the base32 alphabet (digits + a-v).
  */
 export function encodeShortHash(hash32: number, length: number = DEFAULT_HASH_LENGTH): string {
 	let result = ""

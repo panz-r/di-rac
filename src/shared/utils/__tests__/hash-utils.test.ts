@@ -3,17 +3,23 @@ import { xxHash32, encodeShortHash, computeLineHash, getAlphabet } from "../hash
 
 describe("hash-utils", () => {
 	describe("getAlphabet", () => {
-		it("returns the 31-char alphabet with digits and consonants", () => {
+		it("returns the 32-char base32 alphabet with digits and a-v", () => {
 			const alphabet = getAlphabet()
-			expect(alphabet).toBe("0123456789bcdfghjklmnpqrstvwxyz")
-			expect(alphabet.length).toBe(31)
+			expect(alphabet).toBe("0123456789abcdefghijklmnopqrstuv")
+			expect(alphabet.length).toBe(32)
 		})
 
-		it("contains no vowels", () => {
+		it("contains no characters outside [0-9a-v]", () => {
 			const alphabet = getAlphabet()
-			const vowels = ["a", "e", "i", "o", "u"]
-			for (const v of vowels) {
-				expect(alphabet).not.toContain(v)
+			for (const ch of alphabet) {
+				expect(/^[0-9a-v]$/.test(ch)).toBe(true)
+			}
+		})
+
+		it("contains no w, x, y, z", () => {
+			const alphabet = getAlphabet()
+			for (const c of ["w", "x", "y", "z"]) {
+				expect(alphabet).not.toContain(c)
 			}
 		})
 	})
@@ -103,6 +109,32 @@ describe("hash-utils", () => {
 		it("empty line produces valid hash", () => {
 			const hash = computeLineHash("")
 			expect(hash.length).toBe(3)
+		})
+
+		it("all characters are from [0-9a-v]", () => {
+			const validChars = new Set("0123456789abcdefghijklmnopqrstuv")
+			for (const input of ["", "hello", "  spaces  ", "unicode: 你好", "\t\t"]) {
+				const hash = computeLineHash(input)
+				for (const ch of hash) {
+					expect(validChars.has(ch)).toBe(true)
+				}
+			}
+		})
+
+		it("collision rate is acceptable for 200 unique lines", () => {
+			const hashes = new Map<string, number>()
+			let collisions = 0
+			for (let i = 0; i < 200; i++) {
+				const hash = computeLineHash(`line ${i} with unique content ${Math.sqrt(i)}`)
+				if (hashes.has(hash)) {
+					collisions++
+				} else {
+					hashes.set(hash, i)
+				}
+			}
+			// Expected collisions for 200 lines in 32768 space: ~0.6
+			// Allow generous threshold to avoid flaky tests
+			expect(collisions).toBeLessThan(5)
 		})
 	})
 })
