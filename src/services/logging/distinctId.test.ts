@@ -38,7 +38,7 @@ describe("distinctId", () => {
 			}
 
 			HostProvider.initialize(
-				"extension",
+				"cli",
 				() => null as any, // createDiracWebviewProvider
 				() => null as any, // createDiffViewProvider
 				() => null as any, // createCommentReviewController

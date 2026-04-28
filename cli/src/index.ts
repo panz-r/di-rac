@@ -72,6 +72,7 @@ async function disposeCliContext(ctx: CliContext): Promise<void> {
 	const { DiracTempManager } = await import("@/services/temp")
 	const { AgentConfigLoader } = await import("@/core/task/tools/subagent/AgentConfigLoader")
 
+	ctx.workspaceLogHandle?.destroy()
 	await ctx.controller.stateManager.flushPendingState()
 	await ctx.controller.dispose()
 	await ErrorService.get().dispose()
@@ -586,6 +587,7 @@ interface CliContext {
 	extensionDir: string
 	workspacePath: string
 	controller: Controller
+	workspaceLogHandle?: import("@/shared/services/WorkspaceLogSubscriber").WorkspaceLogHandle
 }
 
 interface InitOptions {
@@ -629,7 +631,7 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 
 	// Set up output channel and Logger early so DiracEndpoint.initialize logs are captured
 	const outputChannel = window.createOutputChannel("Dirac CLI")
-	const logToChannel = (message: string) => outputChannel.appendLine(message)
+	const logToChannel = (message: string, record?: any) => outputChannel.appendLine(message, record)
 
 	// Configure the shared Logging class early to capture all initialization logs
 	Logger.subscribe(logToChannel)
@@ -641,6 +643,16 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 
 	// Initialize/reset session tracking for this CLI run
 	Session.reset()
+
+	// Set up structured workspace logging to .dirac-logs/
+	let workspaceLogHandle: import("@/shared/services/WorkspaceLogSubscriber").WorkspaceLogHandle | undefined
+	try {
+		const { createWorkspaceLogSubscriber } = await import("@/shared/services/WorkspaceLogSubscriber")
+		const sessionId = Session.get().getSessionId()
+		workspaceLogHandle = createWorkspaceLogSubscriber(workspacePath, sessionId)
+	} catch (error) {
+		Logger.error("[Dirac] Failed to initialize workspace logging:", error)
+	}
 
 	if (options.enableAuth) {
 		AuthHandler.getInstance().setEnabled(true)

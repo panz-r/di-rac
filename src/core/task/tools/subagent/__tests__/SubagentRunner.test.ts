@@ -16,7 +16,7 @@ import { SubagentRunner } from "../SubagentRunner"
 function initializeHostProvider() {
 	HostProvider.reset()
 	HostProvider.initialize(
-		"extension",
+		"cli",
 		() => ({}) as never,
 		() => ({}) as never,
 		() => ({}) as never,

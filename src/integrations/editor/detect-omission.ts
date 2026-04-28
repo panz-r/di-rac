@@ -50,7 +50,7 @@ export function showOmissionWarning(originalFileContent: string, newFileContent:
 					items: ["Follow this guide to fix the issue"],
 				},
 			})
-			.then((response) => {
+			.then((response: any) => {
 				if (response.selectedOption === "Follow this guide to fix the issue") {
 					openExternal(
 						"https://github.com/dirac/dirac/wiki/Troubleshooting-%E2%80%90-Dirac-Deleting-Code-with-%22Rest-of-Code-Here%22-Comments",

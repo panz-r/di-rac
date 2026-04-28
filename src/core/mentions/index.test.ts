@@ -8,7 +8,6 @@ import * as isBinaryFileModule from "isbinaryfile"
 import * as path from "path"
 import * as sinon from "sinon"
 import { HostProvider } from "@/hosts/host-provider"
-import * as terminalModule from "@/hosts/vscode/terminal/get-latest-output"
 import { setVscodeHostProviderMock } from "@/test/host-provider-test-utils"
 import { parseMentions } from "."
 
@@ -48,7 +47,7 @@ describe("parseMentions", () => {
 		// Stub other modules
 		extractTextStub = sandbox.stub(extractTextModule, "extractTextFromFile")
 		isBinaryFileStub = sandbox.stub(isBinaryFileModule, "isBinaryFile")
-		getLatestTerminalOutputStub = sandbox.stub(terminalModule, "getLatestTerminalOutput")
+		getLatestTerminalOutputStub = sandbox.stub().resolves('')
 		getWorkingStateStub = sandbox.stub(gitModule, "getWorkingState")
 		getCommitInfoStub = sandbox.stub(gitModule, "getCommitInfo")
 		showMessageStub = sandbox.stub(HostProvider.window, "showMessage")

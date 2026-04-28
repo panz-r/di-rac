@@ -48,7 +48,7 @@ export class DiracFileStorage<T = any> extends DiracSyncStorage<T> {
 	 * More efficient than calling set() for each key individually,
 	 * since it only writes to disk once.
 	 */
-	public setBatch(entries: Record<string, T | undefined>): Thenable<void> {
+	public setBatch(entries: Record<string, T | undefined>): Promise<void> {
 		const changedKeys: string[] = []
 		for (const [key, value] of Object.entries(entries)) {
 			if (value === undefined) {

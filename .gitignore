@@ -63,3 +63,5 @@ test_out/
 tmp_*.txt
 *scratch*
 .dirac-symbol-index*
+.dirac-logs/
+.dirac-state/

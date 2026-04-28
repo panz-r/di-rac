@@ -18,6 +18,8 @@ import { Logger } from "../../shared/services/Logger"
 import { ToolUse } from "../assistant-message"
 import { ContextManager } from "../context/context-management/ContextManager"
 import { formatResponse } from "../prompts/responses"
+import { Session } from "@/shared/services/Session"
+import { StructuredLogger } from "@/shared/services/StructuredLogger"
 import { StateManager } from "../storage/StateManager"
 import { WorkspaceRootManager } from "../workspace"
 import { ToolResponse } from "."
@@ -130,7 +132,7 @@ export class ToolExecutor {
 
 		// Initialize the coordinator and register all tool handlers
 		this.coordinator = new ToolExecutorCoordinator()
-		this.recoveryEngine = new RecoveryEngine()
+		this.recoveryEngine = new RecoveryEngine(this.cwd)
 		this.registerToolHandlers()
 	}
 
@@ -165,6 +167,7 @@ export class ToolExecutor {
 				commandPermissionController: this.commandPermissionController,
 				contextManager: this.contextManager,
 				stateManager: this.stateManager,
+				structuredLogger: new StructuredLogger(this.taskId, Session.get().getSessionId(), this.cwd),
 			},
 			callbacks: {
 				say: this.say,

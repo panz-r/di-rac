@@ -17,10 +17,7 @@ import type { Controller } from ".."
  * @param _controller - Controller instance (not used)
  * @returns Empty VsCodeLmModelsArray
  */
-export async function getVsCodeLmModels(
-	_request: EmptyRequest,
-	_controller: Controller,
-): Promise<VsCodeLmModelsArray> {
+export async function getVsCodeLmModels(_controller: Controller, _request: EmptyRequest): Promise<VsCodeLmModelsArray> {
 	// Return empty models - VS Code LM API is not available in standalone mode
 	return VsCodeLmModelsArray.create({ models: [] })
 }

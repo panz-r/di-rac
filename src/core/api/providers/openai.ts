@@ -1,4 +1,3 @@
-import { DefaultAzureCredential, getBearerTokenProvider } from "@azure/identity"
 import { azureOpenAiDefaultApiVersion, ModelInfo, OpenAiCompatibleModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
 import { normalizeOpenaiReasoningEffort } from "@shared/storage/types"
 import OpenAI, { AzureOpenAI } from "openai"
@@ -62,6 +61,12 @@ export class OpenAiHandler implements ApiHandler {
 					(isAzureDomain && !this.options.openAiModelId?.toLowerCase().includes("deepseek"))
 				) {
 					if (this.options.azureIdentity) {
+						let DefaultAzureCredential: any, getBearerTokenProvider: any
+						try {
+							;({ DefaultAzureCredential, getBearerTokenProvider } = require("@azure/identity"))
+						} catch {
+							throw new Error("@azure/identity is required for Azure identity auth")
+						}
 						this.client = new AzureOpenAI({
 							baseURL: baseUrl,
 							azureADTokenProvider: getBearerTokenProvider(

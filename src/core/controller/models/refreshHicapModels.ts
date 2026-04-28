@@ -88,7 +88,7 @@ async function readHicapModels(controller: Controller): Promise<Record<string, O
  * Ensures the cache directory exists and returns its path
  */
 async function ensureCacheDirectoryExists(controller: Controller): Promise<string> {
-	const cacheDir = path.join(controller.context.globalStorageUri.fsPath, "cache")
+	const cacheDir = path.join(controller.context.globalStorageUri, "cache")
 	await fs.mkdir(cacheDir, { recursive: true })
 	return cacheDir
 }

@@ -125,7 +125,7 @@ describe("Language Compatibility Tests (Big Four)", () => {
 		SymbolIndexService.getInstance().setPersistenceEnabled(false)
 		if (!HostProvider.isInitialized()) {
 			HostProvider.initialize(
-				"extension",
+				"cli",
 				null as any,
 				null as any,
 				null as any,

@@ -86,7 +86,7 @@ export async function selectFiles(imagesAllowed: boolean): Promise<{ images: str
 	})
 
 	const dataUrlsWithNulls = await Promise.all(processFilesPromises)
-	const dataUrlsWithoutNulls = dataUrlsWithNulls.filter((item): item is { type: string; data: string } => item !== null)
+	const dataUrlsWithoutNulls = dataUrlsWithNulls.filter((item: { type: string; data: string } | null): item is { type: string; data: string } => item !== null)
 
 	const images: string[] = []
 	const files: string[] = []

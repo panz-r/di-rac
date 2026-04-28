@@ -1,6 +1,5 @@
 import { RelativePaths, RelativePathsRequest } from "@shared/proto/dirac/file"
 import * as path from "path"
-import { URI } from "vscode-uri"
 import { Logger } from "@/shared/services/Logger"
 import { isDirectory } from "@/utils/fs"
 import { asRelativePath } from "@/utils/path"
@@ -25,7 +24,7 @@ export async function getRelativePaths(_controller: Controller, request: Relativ
 }
 
 async function getRelativePath(uriString: string): Promise<string> {
-	const filePath = URI.parse(uriString, true).fsPath
+	const filePath = fileUriToPath(uriString)
 	const relativePath = await asRelativePath(filePath)
 
 	// If the path is still absolute, it's outside the workspace
@@ -38,4 +37,13 @@ async function getRelativePath(uriString: string): Promise<string> {
 		result += "/"
 	}
 	return result
+}
+
+function fileUriToPath(uriString: string): string {
+	const parsed = new URL(uriString)
+	let pathname = decodeURIComponent(parsed.pathname)
+	if (process.platform === "win32" && pathname.startsWith("/")) {
+		pathname = pathname.substring(1)
+	}
+	return pathname
 }

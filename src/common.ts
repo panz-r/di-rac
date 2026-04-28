@@ -3,6 +3,7 @@ import "./utils/path"; // necessary to have access to String.prototype.toPosix
 
 import { HostProvider } from "@/hosts/host-provider";
 import { Logger } from "@/shared/services/Logger";
+import type { WorkspaceLogHandle } from "@/shared/services/WorkspaceLogSubscriber";
 import type { StorageContext } from "@/shared/storage/storage-context";
 import { FileContextTracker } from "./core/context/context-tracking/FileContextTracker";
 import { clearOnboardingModelsCache } from "./core/controller/models/getDiracOnboardingModels";
@@ -18,7 +19,6 @@ import { SymbolIndexService } from "./services/symbol-index/SymbolIndexService";
 import { telemetryService } from "./services/telemetry";
 // Legacy telemetry removed
 import { DiracTempManager } from "./services/temp";
-import { cleanupTestMode } from "./services/test/TestMode";
 import { ShowMessageType } from "./shared/proto/host/window";
 import { syncWorker } from "./shared/services/worker/sync";
 
@@ -28,6 +28,7 @@ import { arePathsEqual } from "./utils/path";
 
 let initializationTimer: NodeJS.Timeout | null = null
 const logSubscribers: ((msg: string) => void)[] = []
+let workspaceLogHandle: WorkspaceLogHandle | null = null
 
 /**
  * Performs intialization for Dirac that is common to all platforms.
@@ -44,6 +45,19 @@ export async function initialize(storageContext: StorageContext): Promise<DiracW
 	Logger.subscribe(channelSubscriber)
 	Logger.subscribe(debugSubscriber)
 	logSubscribers.push(channelSubscriber, debugSubscriber)
+
+	// Set up structured workspace logging to .dirac-logs/
+	try {
+		const workspacePaths = (await HostProvider.workspace.getWorkspacePaths({})).paths
+		if (workspacePaths && workspacePaths.length > 0) {
+			const { Session } = await import("@/shared/services/Session")
+			const { createWorkspaceLogSubscriber } = await import("@/shared/services/WorkspaceLogSubscriber")
+			const sessionId = Session.get().getSessionId()
+			workspaceLogHandle = createWorkspaceLogSubscriber(workspacePaths[0], sessionId)
+		}
+	} catch (error) {
+		Logger.error("[Dirac] Failed to initialize workspace logging:", error)
+	}
 
 	// Initialize DiracEndpoint configuration (reads bundled and ~/.dirac/endpoints.json if present)
 	// This must be done before any other code that calls DiracEnv.config()
@@ -90,7 +104,7 @@ export async function initialize(storageContext: StorageContext): Promise<DiracW
 	const INITIALIZATION_DELAY_MS = 5000
 	initializationTimer = setTimeout(() => {
 		initializationTimer = null
-		HostProvider.workspace.getWorkspacePaths({}).then((response) => {
+		HostProvider.workspace.getWorkspacePaths({}).then((response: { paths: string[] }) => {
 			const paths = response.paths
 			if (paths && paths.length > 0) {
 				const projectRoot = paths[0]
@@ -192,6 +206,10 @@ export async function tearDown(): Promise<void> {
 	}
 	logSubscribers.length = 0
 
+	// Close workspace log stream
+	workspaceLogHandle?.destroy()
+	workspaceLogHandle = null
+
 	AgentConfigLoader.getInstance()?.dispose()
 	// Legacy telemetry removed
 	telemetryService.dispose()
@@ -211,5 +229,5 @@ export async function tearDown(): Promise<void> {
 	SymbolIndexService.getInstance().dispose()
 
 	// Clean up test mode
-	cleanupTestMode()
+	// cleanupTestMode: removed (was VS Code extension-only)
 }

@@ -53,7 +53,7 @@ export const window = {
 	createOutputChannel(name: string) {
 		return {
 			name,
-			appendLine(message: string) {
+			appendLine(message: string, _record?: any) {
 				// Write to log file
 				const fs = require("fs")
 				const dir = path.dirname(CLI_LOG_FILE)

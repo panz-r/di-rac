@@ -101,9 +101,9 @@ export class LinterFeedbackProvider implements IDiagnosticsProvider {
 
 	private async getDiagnosticsSafe(): Promise<FileDiagnostics[]> {
 		try {
-			const response = await pTimeout(HostProvider.workspace.getDiagnostics({ filePaths: [] }), {
+			const response = (await pTimeout(HostProvider.workspace.getDiagnostics({ filePaths: [] }), {
 				milliseconds: this.diagnosticsTimeoutMs,
-			})
+			})) as { fileDiagnostics: FileDiagnostics[] }
 			return response.fileDiagnostics
 		} catch (error) {
 			return []

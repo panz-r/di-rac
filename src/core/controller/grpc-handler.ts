@@ -15,7 +15,7 @@ export type StreamingResponseHandler<TResponse> = (
 	sequenceNumber?: number,
 ) => Promise<void>
 
-export type PostMessageToWebview = (message: ExtensionMessage) => Thenable<boolean | undefined>
+export type PostMessageToWebview = (message: ExtensionMessage) => Promise<boolean | undefined>
 
 /**
  * Creates a middleware wrapper for recording gRPC requests and responses

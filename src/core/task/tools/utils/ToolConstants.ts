@@ -45,6 +45,7 @@ export const TASK_SERVICES_KEYS = [
 	"commandPermissionController",
 	"contextManager",
 	"stateManager",
+	"structuredLogger",
 ] as const
 
 /**

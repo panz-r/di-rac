@@ -1,6 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import type { ToolResponse } from "./index"
 import { DiracDefaultTool } from "@/shared/tools"
+import { Logger } from "@/shared/services/Logger"
 
 // --- Taxonomy ---
 
@@ -97,8 +98,7 @@ export class RecoveryEngine {
 		private nudgeOutcomes = new Map<string, { toolName: string, turnWhenNudged: number }>()
 		private currentTurnNumber: number = 0
 
-	constructor() {
-		this.initializeRecoveryTable()
+	constructor(private workspaceRoot?: string) {
 		this.loadRecoveryMemory()
 	}
 
@@ -132,7 +132,8 @@ export class RecoveryEngine {
 
 		try {
 			const path = await import("path")
-			const localMemoryFile = path.join(process.cwd(), ".dirac-state", "recovery-memory.json")
+			const root = this.workspaceRoot || process.cwd()
+			const localMemoryFile = path.join(root, ".dirac-state", "recovery-memory.json")
 			const globalMemoryFile = await this.getGlobalPlaybookPath()
 
 			await loadToMap(localMemoryFile, this.failureMemory)
@@ -146,7 +147,7 @@ export class RecoveryEngine {
 		try {
 			const fs = await import("fs/promises")
 			const path = await import("path")
-			const diracStateDir = path.join(process.cwd(), ".dirac-state")
+			const diracStateDir = path.join(this.workspaceRoot || process.cwd(), ".dirac-state")
 			await fs.mkdir(diracStateDir, { recursive: true })
 			const summaryFile = path.join(diracStateDir, "recovery-summary.json")
 			const recoveryRate = this.telemetry.interceptedCount + this.telemetry.escalatedCount > 0
@@ -1104,35 +1105,16 @@ Some line numbers may have shifted. Please locate your target function in the ne
 
 	// --- Recovery Logic (L1 & L3) ---
 
-	private async logRecoveryMiss(
-		errorCode: string,
-		toolName: string,
-		domain: string,
-		failureCategory: string,
-		attemptedRecovery: boolean,
-		turnNumber: number
-	) {
-		try {
-			const fs = await import("fs/promises")
-			const path = await import("path")
-			const diracStateDir = path.join(process.cwd(), ".dirac-state")
-			await fs.mkdir(diracStateDir, { recursive: true })
-			const logFile = path.join(diracStateDir, "recovery-misses.jsonl")
-			const record = JSON.stringify({
-				errorCode,
-				tool: toolName,
-				domain,
-				failureCategory,
-				attemptedRecovery,
-				turnNumber,
-				timestamp: Date.now(),
-				recovered: false
-			}) + "\n"
-			await fs.appendFile(logFile, record)
-		} catch (e) {
-			// Silently fail logging to avoid disrupting the main loop
+		private async logRecoveryMiss(
+			errorCode: string,
+			toolName: string,
+			domain: string,
+			failureCategory: string,
+			attemptedRecovery: boolean,
+			turnNumber: number
+		) {
+			Logger.warn("recovery_miss", { errorCode, tool: toolName, domain, failureCategory, attemptedRecovery, turnNumber, recovered: false })
 		}
-	}
 
 	private async handleErrorRecovery(
 		toolName: string,

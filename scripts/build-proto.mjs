@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url)
 const PROTOC = path.join(require.resolve("grpc-tools"), "../bin/protoc")
 
 const PROTO_DIR = path.resolve("proto")
+const GRPC_TOOLS_BIN = path.dirname(PROTOC)
 const TS_OUT_DIR = path.resolve("src/shared/proto")
 const GRPC_JS_OUT_DIR = path.resolve("src/generated/grpc-js")
 const NICE_JS_OUT_DIR = path.resolve("src/generated/nice-grpc")
@@ -66,6 +67,7 @@ async function compileProtos() {
 		PROTOC,
 		`--proto_path="${PROTO_DIR}"`,
 		`--descriptor_set_out="${descriptorFile}"`,
+		`--proto_path="${GRPC_TOOLS_BIN}"`,
 		"--include_imports",
 		...protoFiles,
 	].join(" ")
@@ -86,6 +88,7 @@ async function tsProtoc(outDir, protoFiles, protoOptions) {
 	const command = [
 		PROTOC,
 		`--proto_path="${PROTO_DIR}"`,
+		`--proto_path="${GRPC_TOOLS_BIN}"`,
 		`--plugin=protoc-gen-ts_proto="${TS_PROTO_PLUGIN}"`,
 		`--ts_proto_out="${outDir}"`,
 		`--ts_proto_opt=${protoOptions.join(",")} `,
