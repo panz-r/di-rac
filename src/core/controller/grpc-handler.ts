@@ -1,5 +1,5 @@
 import { Controller } from "@core/controller/index"
-import { serviceHandlers } from "@generated/hosts/vscode/protobus-services"
+import { serviceHandlers } from "@generated/hosts/standalone/protobus-services"
 import { GrpcRecorderBuilder } from "@/core/controller/grpc-recorder/grpc-recorder.builder"
 import { GrpcRequestRegistry } from "@/core/controller/grpc-request-registry"
 import { ExtensionMessage } from "@/shared/ExtensionMessage"

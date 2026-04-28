@@ -41,7 +41,7 @@ describe("GrpcHandler Recording Middleware", () => {
 			},
 		}
 
-		sinon.stub(require("@generated/hosts/vscode/protobus-services"), "serviceHandlers").value(mockServiceHandlers)
+		sinon.stub(require("@generated/hosts/standalone/protobus-services"), "serviceHandlers").value(mockServiceHandlers)
 	})
 
 	afterEach(() => {
