@@ -685,6 +685,57 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				handler: async (toolName, _input, _error, _attempt, _execute) => {
 					return null // Escalate with the heuristic message
 				}
+			},
+			EMPTY_SEARCH_RESULTS: {
+				domain: ErrorDomain.MEMORY,
+				category: ErrorCategory.PERMANENT,
+				tier: "recoverable_logic",
+				maxRetries: 1,
+				handler: async (toolName, input: any, _error, _attempt, execute) => {
+					const query = input.query || input.regex
+					if (!query || typeof query !== "string") return null
+
+					// Phase 14: Search Broadening
+					// If the query looks like a path, try broadening it to just the filename
+					if (query.includes("/") || query.includes("\\")) {
+						const path = await import("path")
+						const broaderQuery = path.basename(query)
+						if (broaderQuery !== query) {
+							this.updateAuditChain(toolName, "SEARCH_BROADENED", "SILENT_FIX")
+							const newInput = { ...input }
+							if (input.query) newInput.query = broaderQuery
+							if (input.regex) newInput.regex = broaderQuery
+							
+							const result = await execute(toolName as any, newInput)
+							if (Array.isArray(result)) {
+								const hint = `[SYSTEM: SEARCH_BROADENED - COMPACTION_SAFE] Your original search was too specific. I have broadened it to '${broaderQuery}' and found the following results.]`
+								const textBlock = result.find(b => b.type === "text")
+								if (textBlock && (textBlock as any).text) {
+									(textBlock as any).text = `${hint}\n\n${(textBlock as any).text}`
+								}
+							}
+							return result
+						}
+					}
+					return null
+				},
+			},
+			CONTEXT_OVERFLOW: {
+				domain: ErrorDomain.SYSTEM,
+				category: ErrorCategory.PERMANENT,
+				tier: "recoverable_logic",
+				maxRetries: 1,
+				handler: async (toolName, input, _error, _attempt, execute) => {
+					// Phase 14: Context Pressure Recovery
+					this.updateAuditChain(toolName, "CONTEXT_PRESSURE", "SILENT_CONDENSE")
+					
+					// Trigger automatic condensation
+					const condenseResult = await execute(DiracDefaultTool.CONDENSE, {})
+					
+					// If condensation succeeded (or even if it returned a summary), retry the original tool
+					// We check if the result looks like a success or a summary
+					return await execute(toolName as any, input)
+				}
 			}
 		}
 	}
@@ -719,9 +770,12 @@ Some line numbers may have shifted. Please locate your target function in the ne
 			this.updateAuditChain(toolName, "STAGNATION_DETECTED", "BLOCKED")
 			const isExactRepeat = stagnation.summary.includes("identical")
 			const isAlternating = stagnation.summary.includes("Alternating")
+			const isCircular = stagnation.summary.includes("Circular")
 			
 			let nextSteps = "You are repeating the same action. Please reconsider your approach or check the tool parameters."
-			if (isAlternating) {
+			if (isCircular) {
+				nextSteps = "Circular strategy loop detected. Please break the cycle, summarize what you've learned, and pivot to a new approach."
+			} else if (isAlternating) {
 				nextSteps = "You are alternating between tools without progress. Please pivot to a new strategy or summarize your current state."
 			} else if (!isExactRepeat) {
 				nextSteps = "You have been exploring without making progress. Consider switching to editing or refine your search."
@@ -1035,6 +1089,9 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				if (text.includes("ENOTDIR")) return "ENOTDIR"
 				if (text.includes("Missing required parameter")) return "MISSING_PARAMETER"
 				if (text.includes("Invalid argument") || text.includes("is not a valid")) return "INVALID_ARGUMENT"
+				if (text.includes("EADDRINUSE")) return "EADDRINUSE"
+				if (text.includes("maximum context") || text.includes("too many tokens") || text.includes("context length")) return "CONTEXT_OVERFLOW"
+				if (text.includes("No files found") || text.includes("0 symbols found")) return "EMPTY_SEARCH_RESULTS"
 				
 				return "GENERIC_ERROR" // Fallback if it looks like an error but no code is found
 			}
@@ -1057,13 +1114,14 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		const lowerMsg = errorMessage.toLowerCase()
 		if (lowerMsg.includes("anchor") || lowerMsg.includes("line")) return "ACTION"
 		if (lowerMsg.includes("symbol") || lowerMsg.includes("not found") || lowerMsg.includes("enoent")) return "MEMORY"
-		if (lowerMsg.includes("timeout") || lowerMsg.includes("rate limit") || lowerMsg.includes("lock") || lowerMsg.includes("access") || lowerMsg.includes("perm")) return "SYSTEM"
+		if (lowerMsg.includes("timeout") || lowerMsg.includes("rate limit") || lowerMsg.includes("lock") || lowerMsg.includes("access") || lowerMsg.includes("perm") || lowerMsg.includes("addr")) return "SYSTEM"
+		if (lowerMsg.includes("context") || lowerMsg.includes("token")) return "SYSTEM"
 		return "PLANNING"
 	}
 
 	private classifyFailureCategory(errorCode: string, errorMessage: string): string {
 		const lowerMsg = errorMessage.toLowerCase()
-		if (lowerMsg.includes("timeout") || lowerMsg.includes("rate limit") || lowerMsg.includes("lock") || lowerMsg.includes("econnreset")) {
+		if (lowerMsg.includes("timeout") || lowerMsg.includes("rate limit") || lowerMsg.includes("lock") || lowerMsg.includes("econnreset") || lowerMsg.includes("addr")) {
 			return "Transient"
 		}
 		if (lowerMsg.includes("context length") || lowerMsg.includes("too many tokens") || lowerMsg.includes("maximum context")) {
@@ -1140,26 +1198,35 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 	private detectStagnation(toolName: string, args: unknown, taskState?: any): StagnationResult | null {
 		const fingerprint = this.fingerprintToolCall(toolName, args)
 		
-		// 1. Exact/Semantic Repeat (L2 Backtracking)
-		const recentCalls = this.callHistory.slice(-4)
-		if (recentCalls.length === 4) {
-			const fingerprints = recentCalls.map(c => `${c.tool}:${c.fingerprint}`)
-			
-			// Pattern: A, A, A
-			const isTripleRepeat = fingerprints[3] === fingerprints[2] && fingerprints[2] === fingerprints[1]
-			if (isTripleRepeat) {
+		// 1. Cycle Detection (L2 Backtracking)
+		// We track the last 9 calls to detect patterns up to length 3 (A-B-C-A-B-C)
+		const historyLength = this.callHistory.length
+		if (historyLength >= 6) {
+			const recent = this.callHistory.slice(-9)
+			const fps = recent.map(c => `${c.tool}:${c.fingerprint}`)
+			const len = fps.length
+
+			// Check for exact triple repeat (A, A, A)
+			if (len >= 3 && fps[len-1] === fps[len-2] && fps[len-2] === fps[len-3]) {
 				return {
 					stagnationDetected: true,
-					summary: `Repeated identical semantic call to ${toolName} (3x). Loop broken to prevent token exhaustion.`
+					summary: `Repeated identical semantic call to ${toolName} (3x). Loop broken.`
 				}
 			}
 
-			// Pattern: A, B, A, B (Phase 13: Alternating Loop)
-			const isAlternatingLoop = fingerprints[3] === fingerprints[1] && fingerprints[2] === fingerprints[0]
-			if (isAlternatingLoop) {
+			// Check for alternating loop (A, B, A, B)
+			if (len >= 4 && fps[len-1] === fps[len-3] && fps[len-2] === fps[len-4]) {
 				return {
 					stagnationDetected: true,
-					summary: `Alternating loop detected between ${recentCalls[3].tool} and ${recentCalls[2].tool}. Strategy thrashing.`
+					summary: `Alternating loop detected between ${recent[len-1].tool} and ${recent[len-2].tool}.`
+				}
+			}
+
+			// Check for circular loop (A, B, C, A, B, C)
+			if (len >= 6 && fps[len-1] === fps[len-4] && fps[len-2] === fps[len-5] && fps[len-3] === fps[len-6]) {
+				return {
+					stagnationDetected: true,
+					summary: `Circular strategy loop detected (${recent[len-1].tool} -> ${recent[len-2].tool} -> ${recent[len-3].tool}).`
 				}
 			}
 		}
