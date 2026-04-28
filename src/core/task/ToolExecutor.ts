@@ -588,7 +588,14 @@ export class ToolExecutor {
 			const toolRecoveryEnabled = this.stateManager.getGlobalSettingsKey("toolRecoveryEnabled")
 			if (toolRecoveryEnabled) {
 				// AEGIS Pre-Execution Firewall
-				const preflightResult = await this.recoveryEngine.runPreflightFirewall(block, this.taskState)
+				const preflightResult = await this.recoveryEngine.runPreflightFirewall(
+					block, 
+					this.taskState,
+					async (name, args) => {
+						const wrappedBlock: ToolUse = { ...block, name: name as any, params: args as any }
+						return this.coordinator.execute(config, wrappedBlock)
+					}
+				)
 				if (preflightResult) {
 					this.pushToolResult(preflightResult, block)
 					return

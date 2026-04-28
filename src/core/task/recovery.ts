@@ -211,7 +211,11 @@ export class RecoveryEngine {
 	 * AEGIS-inspired Pre-Execution Firewall.
 	 * Interposes on the tool-execution path to stop errors before they happen.
 	 */
-	public async runPreflightFirewall(block: ToolUse, taskState: any): Promise<ToolResponse | null> {
+	public async runPreflightFirewall(
+		block: ToolUse,
+		taskState: any,
+		dispatch: (name: string, args: unknown) => Promise<ToolResponse>
+	): Promise<ToolResponse | null> {
 		const toolName = block.name
 		const params = block.params as any
 
@@ -287,7 +291,7 @@ export class RecoveryEngine {
 			}
 		}
 
-		// 4. Symbol Freshness Check (Phase 8: Pre-flight)
+		// 4. Symbol Freshness Check (Phase 8: Pre-flight -> Phase 10: Silent Re-parse)
 		if (toolName === DiracDefaultTool.EXPAND_SYMBOL && typeof filePath === "string") {
 			try {
 				const fs = await import("fs/promises")
@@ -296,15 +300,13 @@ export class RecoveryEngine {
 				const lastIndexedMtime = taskState.symbolIndexMtimes.get(filePath)
 				
 				if (lastIndexedMtime !== undefined && mtime > lastIndexedMtime) {
-					// Stage III Policy: Symbol Freshness Block
-					this.updateAuditChain(toolName, "STALE_SYMBOL_INDEX", "BLOCKED")
-					return this.formatStructuredEscalation(
-						toolName,
-						block.params,
-						"STALE_SYMBOL_INDEX",
-						`The file '${filePath}' has been modified since it was last indexed.`,
-						`Please run search_symbols or read_file (detail="outline") to refresh the symbol map before expanding.`
-					)
+					// Phase 10: Silent Re-parse instead of Block
+					this.updateAuditChain(toolName, "STALE_SYMBOL_INDEX", "SILENT_REPARSE")
+					await dispatch(DiracDefaultTool.FILE_READ, {
+						path: filePath,
+						detail: "outline"
+					})
+					// Success! The index is now refreshed. Proceeding to execution.
 				}
 			} catch {
 				// Ignore stat errors in pre-flight
@@ -466,11 +468,19 @@ export class RecoveryEngine {
 					const filePath = input.path || input.file_path
 					if (!filePath) return null
 
-					// Automatically re-read outline to show what changed
+					// Phase 10: Contextual Recovery (PALADIN style)
 					const outlineResult = await execute(DiracDefaultTool.FILE_READ, {
 						path: filePath,
 						detail: "outline"
 					})
+
+					if (Array.isArray(outlineResult)) {
+						const hint = `[SYSTEM: CONTEXTUAL_RECOVERY] The file has changed since your last read. I have fetched the updated structural outline below. Please locate your target function and issue a new edit command with the updated line numbers.`
+						const textBlock = outlineResult.find(b => b.type === "text")
+						if (textBlock && (textBlock as any).text) {
+							(textBlock as any).text = `${hint}\n\n${(textBlock as any).text}`
+						}
+					}
 
 					return outlineResult
 				},
