@@ -503,7 +503,8 @@ export class RecoveryEngine {
 							if (input.file_path) newInput.file_path = relativePath
 							if (input.absolutePath) newInput.absolutePath = relativePath
 
-							// Retry the tool with the relative path
+							// Success! Retrying with relative path.
+							this.updateAuditChain(toolName, "PATH_REWRITTEN", "SILENT_FIX")
 							return await execute(toolName as any, newInput)
 						}
 					} catch (e) {
@@ -513,15 +514,66 @@ export class RecoveryEngine {
 					return null // Escalate to LLM
 				},
 			},
+			EISDIR: {
+				domain: ErrorDomain.MEMORY,
+				category: ErrorCategory.PERMANENT,
+				tier: "recoverable_logic",
+				maxRetries: 1,
+				handler: async (_toolName, input: any, _error, _attempt, execute) => {
+					const rawPath = input.path || input.file_path || input.absolutePath
+					if (!rawPath) return null
+
+					// LLM tried to read/edit a directory. Help it by listing contents.
+					this.updateAuditChain("EISDIR", "DIRECTORY_LISTED", "SILENT_FIX")
+					return await execute(DiracDefaultTool.LIST_FILES, {
+						path: rawPath,
+						recursive: false
+					})
+				},
+			},
 			FILE_NOT_FOUND: {
 				domain: ErrorDomain.MEMORY,
 				category: ErrorCategory.PERMANENT,
 				tier: "input_error",
-				maxRetries: 0,
-				handler: async (_toolName, _input, _error, _attempt, _execute) => {
-					return null // pass through -- LLM needs to pick different path
+				maxRetries: 1,
+				handler: async (_toolName, input: any, _error, _attempt, execute) => {
+					const rawPath = input.path || input.file_path || input.absolutePath
+					if (!rawPath) return null
+
+					try {
+						const path = await import("path")
+						const parentPath = path.dirname(rawPath)
+						
+						// List parent directory to find typos or missing levels
+						this.updateAuditChain("FILE_NOT_FOUND", "PARENT_LISTED", "SILENT_FIX")
+						return await execute(DiracDefaultTool.LIST_FILES, {
+							path: parentPath,
+							recursive: false
+						})
+					} catch {
+						return null
+					}
 				},
 			},
+			MISSING_PARAMETER: {
+				domain: ErrorDomain.ACTION,
+				category: ErrorCategory.PERMANENT,
+				tier: "input_error",
+				maxRetries: 0,
+				handler: async (toolName, _input, _error, _attempt, _execute) => {
+					// We can't deterministic fix a missing parameter, but we can provide a better L3 message.
+					return null // Escalate with the heuristic message in handleErrorRecovery
+				}
+			},
+			INVALID_ARGUMENT: {
+				domain: ErrorDomain.ACTION,
+				category: ErrorCategory.PERMANENT,
+				tier: "input_error",
+				maxRetries: 0,
+				handler: async (toolName, _input, _error, _attempt, _execute) => {
+					return null // Escalate with the heuristic message
+				}
+			}
 		}
 	}
 
@@ -833,9 +885,16 @@ export class RecoveryEngine {
 
 		// Mark as compaction-safe (L-ICL principle / Governance Integration)
 		if (Array.isArray(recoveryResult)) {
+			let successHint = "[SYSTEM: DETERMINISTIC_RECOVERY_SUCCESS - COMPACTION_SAFE]"
+			if (errorCode === "ANCHOR_NOT_FOUND") {
+				successHint = `[SYSTEM: ANCHOR_REMAPPED - COMPACTION_SAFE] Anchor stale due to file modifications. I found the target and applied your change. Refer to refreshed line numbers in future calls.]`
+			} else if (errorCode === "PathEscapeError" || errorCode === "PATH_REWRITTEN") {
+				successHint = `[SYSTEM: PATH_REWRITTEN - COMPACTION_SAFE] Absolute path converted to project-relative. Please use relative paths in the future.]`
+			}
+
 			recoveryResult.push({
 				type: "text",
-				text: "[SYSTEM: DETERMINISTIC_RECOVERY_SUCCESS - COMPACTION_SAFE]",
+				text: successHint,
 				metadata: { compactionSafe: true }
 			} as any)
 		}
@@ -850,10 +909,13 @@ export class RecoveryEngine {
 		if (result && Array.isArray(result) && result.length > 0) {
 			const lastBlock = result[result.length - 1]
 			if (lastBlock.type === "text" && lastBlock.text.includes("Error")) {
-				// Naive extraction for now - needs refinement based on actual ToolResponse format
-				if (lastBlock.text.includes("ENOENT")) return "FILE_NOT_FOUND"
-				if (lastBlock.text.includes("ANCHOR_NOT_FOUND")) return "ANCHOR_NOT_FOUND"
-				// ...
+				const text = lastBlock.text
+				if (text.includes("ENOENT")) return "FILE_NOT_FOUND"
+				if (text.includes("ANCHOR_NOT_FOUND") || text.includes("anchor.notFound")) return "ANCHOR_NOT_FOUND"
+				if (text.includes("EISDIR")) return "EISDIR"
+				if (text.includes("Missing required parameter")) return "MISSING_PARAMETER"
+				if (text.includes("Invalid argument") || text.includes("is not a valid")) return "INVALID_ARGUMENT"
+				
 				return "GENERIC_ERROR" // Fallback if it looks like an error but no code is found
 			}
 		}
