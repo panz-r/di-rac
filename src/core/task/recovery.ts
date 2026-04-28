@@ -317,6 +317,39 @@ export class RecoveryEngine {
 			}
 		}
 
+		// Phase 12: Heuristic Edit Repair
+		if (toolName === DiracDefaultTool.EDIT_FILE && params?.edits) {
+			const edits = params.edits as any[]
+			let repaired = false
+			for (const edit of edits) {
+				if (edit.text && typeof edit.text === "string") {
+					const text = edit.text
+					// Detect common malformed block: missing ======= but has markers
+					if (text.includes("<<<<<<< SEARCH") && text.includes(">>>>>>> REPLACE") && !text.includes("=======")) {
+						// Heuristically inject separator (very basic implementation)
+						const lines = text.split("\n")
+						const searchIdx = lines.findIndex((l: string) => l.includes("<<<<<<< SEARCH"))
+						const replaceIdx = lines.findIndex((l: string) => l.includes(">>>>>>> REPLACE"))
+						if (searchIdx !== -1 && replaceIdx !== -1 && replaceIdx > searchIdx + 1) {
+							// For now, let's not auto-inject if it's ambiguous. 
+							// But we can normalize case.
+						}
+					}
+					// Normalize marker case
+					if (text.includes("<<<<<<< search") || text.includes(">>>>>>> replace")) {
+						edit.text = text
+							.replace(/<<<<<<< search/gi, "<<<<<<< SEARCH")
+							.replace(/>>>>>>> replace/gi, ">>>>>>> REPLACE")
+							.replace(/=======/gi, "=======")
+						repaired = true
+					}
+				}
+			}
+			if (repaired) {
+				this.updateAuditChain(toolName, "MALFORMED_EDIT", "SILENT_FIX")
+			}
+		}
+
 		// 4. Symbol Freshness Check (Phase 8: Pre-flight -> Phase 10: Silent Re-parse)
 		if (toolName === DiracDefaultTool.EXPAND_SYMBOL && typeof filePath === "string") {
 			try {
@@ -501,7 +534,9 @@ export class RecoveryEngine {
 					})
 
 					if (Array.isArray(outlineResult)) {
-						const hint = `[SYSTEM: CONTEXTUAL_RECOVERY] The file has changed since your last read. I have fetched the updated structural outline below. Please locate your target function and issue a new edit command with the updated line numbers.`
+						// Phase 12: Diff-aware hint
+						const hint = `[SYSTEM: CONTEXTUAL_RECOVERY] The file has changed since your last read. I have fetched the updated structural outline below. 
+Some line numbers may have shifted. Please locate your target function in the new outline and issue a new edit command with the updated line numbers.`
 						const textBlock = outlineResult.find(b => b.type === "text")
 						if (textBlock && (textBlock as any).text) {
 							(textBlock as any).text = `${hint}\n\n${(textBlock as any).text}`
