@@ -77,7 +77,7 @@ export const HistoryPanelContent: React.FC<HistoryPanelContentProps> = ({ onClos
 				})
 				const result = await getTaskHistory(controller, request)
 				setItems(
-					result.tasks.map((t) => ({
+					result.tasks.map((t: any) => ({
 						id: t.id,
 						ts: t.ts,
 						task: t.task,

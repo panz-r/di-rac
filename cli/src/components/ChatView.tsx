@@ -612,7 +612,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 			if (!ctrl) return
 			try {
 				const response = await getAvailableSlashCommands(ctrl, EmptyRequest.create())
-				const cliCommands = response.commands.filter((cmd) => cmd.cliCompatible !== false)
+				const cliCommands = response.commands.filter((cmd: any) => cmd.cliCompatible !== false)
 				// Add CLI-only commands (like /settings) that are handled locally
 				const cliOnlyCommands: SlashCommandInfo[] = CLI_ONLY_COMMANDS.map((cmd) => ({
 					name: cmd.name,

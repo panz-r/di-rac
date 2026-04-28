@@ -36,13 +36,14 @@ export class AutoApprove {
 		// Check if we already have cached values
 		if (this.workspacePathsCache === null || this.isMultiRootScenarioCache === null) {
 			// First time - fetch and cache for the lifetime of this task
-			this.workspacePathsCache = await HostProvider.workspace.getWorkspacePaths({})
-			this.isMultiRootScenarioCache = isMultiRootEnabled(this.stateManager) && this.workspacePathsCache.paths.length > 1
+			const result = await HostProvider.workspace.getWorkspacePaths({})
+			this.workspacePathsCache = result
+			this.isMultiRootScenarioCache = isMultiRootEnabled(this.stateManager) && result.paths.length > 1
 		}
 
 		return {
-			workspacePaths: this.workspacePathsCache,
-			isMultiRootScenario: this.isMultiRootScenarioCache,
+			workspacePaths: this.workspacePathsCache!,
+			isMultiRootScenario: this.isMultiRootScenarioCache!,
 		}
 	}
 

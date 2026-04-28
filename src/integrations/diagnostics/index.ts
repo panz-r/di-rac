@@ -15,7 +15,7 @@ export function getNewDiagnostics(oldDiagnostics: FileDiagnostics[], newDiagnost
 	for (const newDiags of newDiagnostics) {
 		const oldDiags = oldMap.get(newDiags.filePath) || []
 		const newProblemsForFile = newDiags.diagnostics.filter(
-			(newDiag) => !oldDiags.some((oldDiag) => deepEqual(oldDiag, newDiag)),
+			(newDiag: any) => !oldDiags.some((oldDiag: any) => deepEqual(oldDiag, newDiag)),
 		)
 
 		if (newProblemsForFile.length > 0) {
@@ -38,7 +38,7 @@ export async function diagnosticsToProblemsString(
 
 	for (const fileDiagnostics of diagnostics) {
 		const problems = fileDiagnostics.diagnostics
-			.filter((d) => !severities || severities.includes(d.severity))
+			.filter((d: any) => !severities || severities.includes(d.severity))
 			.slice(0, Math.max(0, maxErrors - errorCount))
 
 		errorCount += problems.length

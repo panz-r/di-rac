@@ -27,7 +27,8 @@ export async function getGitDiffStagedFirst(cwd: string): Promise<string> {
 
 let commitGenerationAbortController: AbortController | undefined
 
-const COMMIT_SYSTEM_PROMPT = "You are a helpful assistant that generates informative git commit messages based on git diffs output. Skip preamble and remove all backticks surrounding the commit message."
+const COMMIT_SYSTEM_PROMPT =
+	"You are a helpful assistant that generates informative git commit messages based on git diffs output. Skip preamble and remove all backticks surrounding the commit message."
 
 const COMMIT_INSTRUCTION = `Based on the provided git diff, generate a concise and descriptive commit message.
 

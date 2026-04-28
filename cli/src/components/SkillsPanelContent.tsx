@@ -32,7 +32,7 @@ interface SkillsPanelContentProps {
 
 const MAX_VISIBLE = 8
 
-export const SkillsPanelContent: React.FC<SkillsPanelContentProps> = ({ controller, onClose, onUseSkill }) => {
+export const SkillsPanelContent: React.FC<SkillsPanelContentProps> = ({ controller, onClose, onUseSkill }: any) => {
 	const { isRawModeSupported } = useStdinContext()
 	const [globalSkills, setGlobalSkills] = useState<SkillInfo[]>([])
 	const [localSkills, setLocalSkills] = useState<SkillInfo[]>([])
@@ -58,8 +58,8 @@ export const SkillsPanelContent: React.FC<SkillsPanelContentProps> = ({ controll
 	// Build flat list of skills with source info (global first, then local, alphabetical within each)
 	const skillEntries = useMemo(() => {
 		const entries: { skill: SkillInfo; isGlobal: boolean }[] = []
-		globalSkills.forEach((skill) => entries.push({ skill, isGlobal: true }))
-		localSkills.forEach((skill) => entries.push({ skill, isGlobal: false }))
+		globalSkills.forEach((skill: any) => entries.push({ skill, isGlobal: true }))
+		localSkills.forEach((skill: any) => entries.push({ skill, isGlobal: false }))
 		return entries.sort((a, b) => {
 			if (a.isGlobal !== b.isGlobal) return a.isGlobal ? -1 : 1
 			return a.skill.name.localeCompare(b.skill.name)
@@ -74,7 +74,7 @@ export const SkillsPanelContent: React.FC<SkillsPanelContentProps> = ({ controll
 		const newEnabled = !entry.skill.enabled
 		const setter = entry.isGlobal ? setGlobalSkills : setLocalSkills
 		const update = (enabled: boolean) =>
-			setter((prev) => prev.map((s) => (s.path === entry.skill.path ? { ...s, enabled } : s)))
+			setter((prev: any[]) => prev.map((s: any) => (s.path === entry.skill.path ? { ...s, enabled } : s)))
 
 		// Optimistic update
 		update(newEnabled)

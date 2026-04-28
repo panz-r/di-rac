@@ -283,7 +283,7 @@ export function convertProtoToDiracMessage(protoMessage: ProtoDiracMessage): App
 
 	if (protoMessage.multiCommandState) {
 		message.multiCommandState = {
-			commands: protoMessage.multiCommandState.commands.map((cmd) => ({
+			commands: protoMessage.multiCommandState.commands.map((cmd: any) => ({
 				command: cmd.command,
 				status: cmd.status as any,
 				output: cmd.output ?? undefined,

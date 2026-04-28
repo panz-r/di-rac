@@ -95,7 +95,7 @@ export async function runAcpMode(options: AcpModeOptions = {}): Promise<void> {
 	const stream = ndJsonStream(outputStream, inputStream)
 	let agent: AcpAgent | null = null
 
-	new AgentSideConnection((conn) => {
+	new AgentSideConnection((conn: any) => {
 		agent = new AcpAgent(conn, {
 			debug: Boolean(options.verbose),
 			hooksDir: options.hooksDir,

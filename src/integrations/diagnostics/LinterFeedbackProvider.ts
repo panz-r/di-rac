@@ -34,8 +34,8 @@ export class LinterFeedbackProvider implements IDiagnosticsProvider {
 		const postFileDiags = postDiagnostics.find((p) => arePathsEqual(p.filePath, filePath))?.diagnostics || []
 		const preFileDiags = preSaveDiagnostics.find((p) => arePathsEqual(p.filePath, filePath))?.diagnostics || []
 
-		const preErrors = preFileDiags.filter((d) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR)
-		const postErrors = postFileDiags.filter((d) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR)
+		const preErrors = preFileDiags.filter((d: any) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR)
+		const postErrors = postFileDiags.filter((d: any) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR)
 
 		let fixedCount = 0
 		if (postErrors.length < preErrors.length) {
@@ -76,8 +76,8 @@ export class LinterFeedbackProvider implements IDiagnosticsProvider {
 				const postFileDiags = postDiagnostics.find((p) => arePathsEqual(p.filePath, f.filePath))?.diagnostics || []
 				const preFileDiags = preSaveDiagnostics.find((p) => arePathsEqual(p.filePath, f.filePath))?.diagnostics || []
 
-				const preErrors = preFileDiags.filter((d) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR)
-				const postErrors = postFileDiags.filter((d) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR)
+				const preErrors = preFileDiags.filter((d: any) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR)
+				const postErrors = postFileDiags.filter((d: any) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR)
 
 				let fixedCount = 0
 				if (postErrors.length < preErrors.length) {
@@ -85,7 +85,7 @@ export class LinterFeedbackProvider implements IDiagnosticsProvider {
 				}
 
 				const newProblemsMessage = await diagnosticsToProblemsString(
-					newDiagnostics.filter((d) => arePathsEqual(d.filePath, f.filePath)),
+					newDiagnostics.filter((d: any) => arePathsEqual(d.filePath, f.filePath)),
 					[DiagnosticSeverity.DIAGNOSTIC_ERROR],
 					new Map([[f.filePath, { lines: f.content.split(/\r?\n/), hashes: f.hashes }]]),
 					5

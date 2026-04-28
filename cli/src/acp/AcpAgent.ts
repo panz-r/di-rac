@@ -71,7 +71,7 @@ export class AcpAgent implements acp.Agent {
 					sessionUpdate: eventName,
 					...payload,
 				} as acp.SessionUpdate
-				this.connection.sessionUpdate({ sessionId, update }).catch((error) => {
+				this.connection.sessionUpdate({ sessionId, update }).catch((error: any) => {
 					Logger.error(`[AcpAgent] Error forwarding ${eventName}:`, error)
 				})
 			})

@@ -55,7 +55,7 @@ export function useTerminalSize() {
 		// the buffered escape sequences, causing visual artifacts in the scrollback.
 		process.stdout.write("\x1b[2J\x1b[3J\x1b[H", () => {
 			// Increment key to force React remount only after clear is flushed
-			setResizeKey((prev) => prev + 1)
+			setResizeKey((prev: number) => prev + 1)
 		})
 	}, [])
 

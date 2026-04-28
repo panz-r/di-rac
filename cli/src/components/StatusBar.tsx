@@ -64,7 +64,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 	totalCost = 0,
 	contextWindowSize = 200000, // Default Claude context window
 	cwd,
-}) => {
+}: any) => {
 	const [branch, setBranch] = useState<string | null>(null)
 	const dirName = getDirName(cwd)
 

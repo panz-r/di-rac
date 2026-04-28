@@ -98,6 +98,7 @@ message Secrets {
   optional string dirac_api_key = 51;
   optional string auth_nonce = 52;
   optional string openai_codex_oauth_credentials = 53;
+  optional string open_ai_compatible_custom_api_key = 54;
 }
 
 // NOTE: Add new fields under API_HANDLER_SETTINGS_FIELDS or USER_SETTINGS_FIELDS
@@ -234,7 +235,6 @@ message Settings {
   optional bool dirac_web_tools_enabled = 144;
   optional string preferred_language = 145;
   optional PlanActMode mode = 147;
-  reserved 149; // was focus_chain_settings
   optional string custom_prompt = 150;
   optional bool hooks_enabled = 152;
   optional bool subagents_enabled = 153;
@@ -266,6 +266,10 @@ message Settings {
   optional string write_prompt_metadata_directory = 183;
   optional string minimax_api_line = 184;
   optional bool opt_out_of_remote_config = 185;
+  optional bool gemini_search_enabled = 186;
+  optional bool rewrite_paths = 187;
+  optional bool bash_tool_enabled = 188;
+  optional bool bash_auto_approve_all = 189;
 }
 
 message State {

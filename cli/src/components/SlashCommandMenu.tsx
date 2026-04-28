@@ -40,7 +40,7 @@ export const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({ commands, se
 
 	return (
 		<Box flexDirection="column" marginBottom={1} paddingLeft={1} paddingRight={1}>
-			{visibleCommands.map((cmd, idx) => {
+			{visibleCommands.map((cmd: any, idx: number) => {
 				const isSelected = startIndex + idx === selectedIndex
 				// Only show description for default commands (not workflows)
 				const showDescription = cmd.section === "default" || !cmd.section

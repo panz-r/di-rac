@@ -34,11 +34,11 @@ function formatElapsedTime(ms: number): string {
 /**
  * Render text with a shimmer effect using bold for bright characters
  */
-const ShimmerText: React.FC<{ text: string; color: string; shimmerPos: number }> = ({ text, color, shimmerPos }) => {
+const ShimmerText: React.FC<{ text: string; color: string; shimmerPos: number }> = ({ text, color, shimmerPos }: any) => {
 	const chars = text.split("")
 	return (
 		<Text>
-			{chars.map((char, i) => {
+			{chars.map((char: string, i: number) => {
 				const distFromShimmer = Math.abs(i - shimmerPos)
 				const isBright = distFromShimmer <= SHIMMER_WIDTH
 				return (
@@ -51,12 +51,12 @@ const ShimmerText: React.FC<{ text: string; color: string; shimmerPos: number }>
 	)
 }
 
-export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({ mode = "act", startTime, onCancel }) => {
+export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({ mode = "act", startTime, onCancel }: any) => {
 	const message = mode === "plan" ? "Planning" : "Acting"
 	const color = mode === "plan" ? "yellow" : COLORS.primaryBlue
 
 	// Handle esc key to cancel
-	useInput((_input, key) => {
+	useInput((_input: string, key: any) => {
 		if (key.escape && onCancel) {
 			onCancel()
 		}
@@ -77,7 +77,7 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({ mode = "ac
 	// Animate spinner
 	useEffect(() => {
 		const interval = setInterval(() => {
-			setSpinnerFrame((prev) => (prev + 1) % SPINNER_FRAMES.length)
+			setSpinnerFrame((prev: number) => (prev + 1) % SPINNER_FRAMES.length)
 		}, 80)
 
 		return () => clearInterval(interval)
@@ -86,7 +86,7 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({ mode = "ac
 	// Animate shimmer
 	useEffect(() => {
 		const interval = setInterval(() => {
-			setShimmerPos((prev) => {
+			setShimmerPos((prev: number) => {
 				const next = prev + 1
 				if (next > fullText.length + SHIMMER_WIDTH) {
 					return -SHIMMER_WIDTH

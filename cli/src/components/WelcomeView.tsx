@@ -55,7 +55,7 @@ const SEARCH_DEBOUNCE_MS = 150
 const RIPGREP_WARNING_DURATION_MS = 5000
 const MAX_SEARCH_RESULTS = 15
 
-export const WelcomeView: React.FC<WelcomeViewProps> = ({ onSubmit, onExit, controller }) => {
+export const WelcomeView: React.FC<WelcomeViewProps> = ({ onSubmit, onExit, controller }: any) => {
 	const { isRawModeSupported } = useStdinContext()
 	const quote = useMemo(() => getRandomQuote(), [])
 	const [textInput, setTextInput] = useState("")
@@ -171,7 +171,7 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onSubmit, onExit, cont
 	}, [mentionInfo.inMentionMode, mentionInfo.query, workspacePath])
 
 	useInput(
-		(input, key) => {
+		(input: string, key: any) => {
 			// Filter out mouse escape sequences
 			if (isMouseEscapeSequence(input)) {
 				return
@@ -182,11 +182,11 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onSubmit, onExit, cont
 			// Menu navigation
 			if (inMenu) {
 				if (key.upArrow) {
-					setSelectedIndex((i) => (i > 0 ? i - 1 : fileResults.length - 1))
+					setSelectedIndex((i: number) => (i > 0 ? i - 1 : fileResults.length - 1))
 					return
 				}
 				if (key.downArrow) {
-					setSelectedIndex((i) => (i < fileResults.length - 1 ? i + 1 : 0))
+					setSelectedIndex((i: number) => (i < fileResults.length - 1 ? i + 1 : 0))
 					return
 				}
 				if (key.tab || key.return) {
@@ -225,12 +225,12 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onSubmit, onExit, cont
 				return
 			}
 			if (key.backspace || key.delete) {
-				setTextInput((prev) => prev.slice(0, -1))
+				setTextInput((prev: string) => prev.slice(0, -1))
 				setEscPressedOnce(false)
 				return
 			}
 			if (input && !key.ctrl && !key.meta && !key.upArrow && !key.downArrow && !key.tab) {
-				setTextInput((prev) => prev + input)
+				setTextInput((prev: string) => prev + input)
 				setEscPressedOnce(false)
 			}
 		},

@@ -496,19 +496,19 @@ export class DiracAgent implements acp.Agent {
 		try {
 			// Extract text content from prompt
 			const textContent = params.prompt
-				.filter((block): block is acp.TextContent & { type: "text" } => block.type === "text")
-				.map((block) => block.text)
+				.filter((block: any): block is acp.TextContent & { type: "text" } => block.type === "text")
+				.map((block: any) => block.text)
 				.join("\n")
 
 			// Extract image content as base64 data URLs
 			const imageContent = params.prompt
-				.filter((block): block is acp.ImageContent & { type: "image" } => block.type === "image")
-				.map((block) => `data:${block.mimeType || "image/png"};base64,${block.data}`)
+				.filter((block: any): block is acp.ImageContent & { type: "image" } => block.type === "image")
+				.map((block: any) => `data:${block.mimeType || "image/png"};base64,${block.data}`)
 
 			// Extract file resources (embedded resources)
 			const fileResources = params.prompt
-				.filter((block): block is acp.EmbeddedResource & { type: "resource" } => block.type === "resource")
-				.map((block) => block.resource.uri)
+				.filter((block: any): block is acp.EmbeddedResource & { type: "resource" } => block.type === "resource")
+				.map((block: any) => block.resource.uri)
 
 			// Determine if this is a new task, continuation, or loaded session resume
 			const hasActiveTask = controller.task !== undefined
@@ -1009,17 +1009,20 @@ export class DiracAgent implements acp.Agent {
 			const vscodeOnlyNames = new Set(VSCODE_ONLY_COMMANDS.map((c) => c.name))
 
 			const filteredCommands = response.commands.filter(
-				(cmd) => cmd.cliCompatible && !cliOnlyNames.has(cmd.name) && !vscodeOnlyNames.has(cmd.name),
+				(cmd: { cliCompatible: boolean; name: string }) =>
+					cmd.cliCompatible && !cliOnlyNames.has(cmd.name) && !vscodeOnlyNames.has(cmd.name),
 			)
 
 			// Convert to ACP AvailableCommand format
-			const availableCommands: acp.AvailableCommand[] = filteredCommands.map((cmd) => ({
-				name: cmd.name,
-				description: cmd.description,
-				input: {
-					hint: cmd.description,
-				},
-			}))
+			const availableCommands: acp.AvailableCommand[] = filteredCommands.map(
+				(cmd: { name: string; description: string }) => ({
+					name: cmd.name,
+					description: cmd.description,
+					input: {
+						hint: cmd.description,
+					},
+				}),
+			)
 
 			// Send the available_commands_update notification
 			await this.emitSessionUpdate(sessionId, {

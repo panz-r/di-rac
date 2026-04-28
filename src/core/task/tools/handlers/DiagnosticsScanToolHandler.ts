@@ -111,10 +111,10 @@ export class DiagnosticsScanToolHandler implements IFullyManagedTool {
 
 			// Check if we found any diagnostics for the requested files
 			foundDiagnostics = validFiles.some((f) => {
-				const fileDiags = allDiagnostics.find((d) => arePathsEqual(d.filePath, f.displayPath) || arePathsEqual(d.filePath, f.absolutePath))
+				const fileDiags = allDiagnostics.find((d: any) => arePathsEqual(d.filePath, f.displayPath) || arePathsEqual(d.filePath, f.absolutePath))
 				return (
 					fileDiags?.diagnostics.some(
-						(d) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR || d.severity === DiagnosticSeverity.DIAGNOSTIC_WARNING
+						(d: any) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR || d.severity === DiagnosticSeverity.DIAGNOSTIC_WARNING
 					) ?? false
 				)
 			})
@@ -128,10 +128,10 @@ export class DiagnosticsScanToolHandler implements IFullyManagedTool {
 		}
 
 		const results = validFiles.map((f) => {
-			const fileDiags = allDiagnostics.find((d) => arePathsEqual(d.filePath, f.displayPath) || arePathsEqual(d.filePath, f.absolutePath))
+			const fileDiags = allDiagnostics.find((d: any) => arePathsEqual(d.filePath, f.displayPath) || arePathsEqual(d.filePath, f.absolutePath))
 			const allProblems =
 				fileDiags?.diagnostics.filter(
-					(d) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR || d.severity === DiagnosticSeverity.DIAGNOSTIC_WARNING
+					(d: any) => d.severity === DiagnosticSeverity.DIAGNOSTIC_ERROR || d.severity === DiagnosticSeverity.DIAGNOSTIC_WARNING
 				) || []
 
 			if (allProblems.length === 0) {
