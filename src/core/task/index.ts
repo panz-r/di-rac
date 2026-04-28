@@ -1243,6 +1243,7 @@ ${notice}`
 		
 		this.toolExecutor.recoveryEngine.resetTurnBudget()
 		this.taskState.filesTouchedInCurrentTurn.clear()
+		this.taskState.filesEditedInCurrentTurn.clear()
 		this.taskState.turnTokenEstimates = 0
 
 

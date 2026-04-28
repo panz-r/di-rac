@@ -272,12 +272,42 @@ export class RecoveryEngine {
 			}
 		}
 
-		// 3. Overlapping Edit Check
+		// 3. Overlapping Edit Check (Phase 8: Hard Block)
 		if (toolName === DiracDefaultTool.EDIT_FILE && typeof filePath === "string") {
-			if (taskState.filesTouchedInCurrentTurn.has(filePath)) {
-				// Stage III Policy: Overlapping Edit Warning/Block
-				// For now, let's just log it and allow it if it's not graduated to a full block
-				this.updateAuditChain(toolName, "OVERLAPPING_EDIT", "WARNING")
+			if (taskState.filesEditedInCurrentTurn.has(filePath)) {
+				// Stage III Policy: Overlapping Edit Block
+				this.updateAuditChain(toolName, "OVERLAPPING_EDIT", "BLOCKED")
+				return this.formatStructuredEscalation(
+					toolName,
+					block.params,
+					"OVERLAPPING_EDIT",
+					`You have already edited '${filePath}' in this turn.`,
+					`To prevent conflicting changes and line-number drift, please consolidate your edits into a single tool call or wait for the previous edit to apply.`
+				)
+			}
+		}
+
+		// 4. Symbol Freshness Check (Phase 8: Pre-flight)
+		if (toolName === DiracDefaultTool.EXPAND_SYMBOL && typeof filePath === "string") {
+			try {
+				const fs = await import("fs/promises")
+				const stats = await fs.stat(filePath)
+				const mtime = stats.mtimeMs
+				const lastIndexedMtime = taskState.symbolIndexMtimes.get(filePath)
+				
+				if (lastIndexedMtime !== undefined && mtime > lastIndexedMtime) {
+					// Stage III Policy: Symbol Freshness Block
+					this.updateAuditChain(toolName, "STALE_SYMBOL_INDEX", "BLOCKED")
+					return this.formatStructuredEscalation(
+						toolName,
+						block.params,
+						"STALE_SYMBOL_INDEX",
+						`The file '${filePath}' has been modified since it was last indexed.`,
+						`Please run search_symbols or read_file (detail="outline") to refresh the symbol map before expanding.`
+					)
+				}
+			} catch {
+				// Ignore stat errors in pre-flight
 			}
 		}
 
@@ -285,6 +315,27 @@ export class RecoveryEngine {
 		if (filePath && typeof filePath === "string") {
 			taskState.fileLastAccessToolIndex.set(filePath, taskState.totalToolCallCount)
 			taskState.filesTouchedInCurrentTurn.add(filePath)
+
+			// Phase 8: Track edit state for overlapping detection
+			if (toolName === DiracDefaultTool.EDIT_FILE || toolName === DiracDefaultTool.FILE_NEW) {
+				taskState.filesEditedInCurrentTurn.add(filePath)
+			}
+
+			// Phase 8: Track symbol freshness
+			if (toolName === DiracDefaultTool.SEARCH_SYMBOLS) {
+				// Global search operation - for simplicity, we mark all current indexed files as potentially refreshed
+				// or better, we let the individual expand_symbol check handle it.
+				// For now, clear the mtime map to force re-validation on next expand.
+				taskState.symbolIndexMtimes.clear()
+			} else if (toolName === DiracDefaultTool.FILE_READ && params?.detail === "outline") {
+				try {
+					const fs = await import("fs/promises")
+					const stats = await fs.stat(filePath)
+					taskState.symbolIndexMtimes.set(filePath, stats.mtimeMs)
+				} catch {
+					taskState.symbolIndexMtimes.set(filePath, Date.now())
+				}
+			}
 		}
 
 		return null // Pass through to execution
