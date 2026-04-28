@@ -255,15 +255,26 @@ export class RecoveryEngine {
 		const params = block.params as any
 
 		// --- Stage I: Argument Extraction ---
-		let filePath = params?.path || params?.file_path || params?.absolutePath
+		let rawPath = params?.path || params?.file_path || params?.absolutePath
 		
 		// Phase 10+: Extract path from symbol handle if needed
-		if (!filePath && params?.handle && typeof params.handle === "string") {
-			filePath = params.handle.split(":")[0]
+		if (!rawPath && params?.handle && typeof params.handle === "string") {
+			rawPath = params.handle.split(":")[0]
 		}
 
 		const startLine = params?.start_line
 		const endLine = params?.end_line
+
+		// Standardize to absolute path for tracking (Phase 15 refinement)
+		let filePath = rawPath
+		if (rawPath && typeof rawPath === "string") {
+			try {
+				const path = await import("path")
+				filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath)
+			} catch {
+				// Fallback to raw if path module fails
+			}
+		}
 
 		// --- Stage II: Content & State Scanning ---
 		
@@ -1348,7 +1359,7 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 	// --- Failure Memory (Graduated Recovery) ---
 
 	private recordRecovery(errorCode: string, success: boolean) {
-		const updateMap = (targetMap: Map<string, FailureRecord>) => {
+		const updateMap = (targetMap: Map<string, FailureRecord>, isGlobal: boolean) => {
 			let record = targetMap.get(errorCode)
 			if (!record) {
 				record = { errorCode, tool: "", successCount: 0, failureCount: 0, lastSeen: 0 }
@@ -1361,15 +1372,22 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 				record.failureCount++
 				// Phase 7: Correction Learning (Memelord pattern)
 				// If a specific recovery pattern fails 3+ times in a session, mark it as permanentSkip
-				if (record.failureCount >= 3 && record.successCount < 3) {
+				// Note: Skips are always local (isGlobal=false) to avoid project-specific failure pollution
+				if (!isGlobal && record.failureCount >= 3 && record.successCount < 3) {
 					record.permanentSkip = true
 				}
 			}
 			targetMap.set(errorCode, record)
 		}
 
-		updateMap(this.failureMemory)
-		updateMap(this.globalFailureMemory)
+		updateMap(this.failureMemory, false)
+		
+		// Only synchronize successes to the Global Playbook. 
+		// Failures and skips stay local to prevent project-specific pollution.
+		if (success) {
+			updateMap(this.globalFailureMemory, true)
+		}
+		
 		this.saveRecoveryMemory()
 	}
 

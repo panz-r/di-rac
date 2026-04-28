@@ -592,8 +592,9 @@ export class ToolExecutor {
 					block, 
 					this.taskState,
 					async (name, args) => {
-						const wrappedBlock: ToolUse = { ...block, name: name as any, params: args as any }
-						return this.coordinator.execute(config, wrappedBlock)
+						// Preflight side-effects must NOT use the original call_id to avoid UI/state collisions
+						const sideEffectBlock: ToolUse = { ...block, name: name as any, params: args as any, call_id: undefined }
+						return this.coordinator.execute(config, sideEffectBlock)
 					}
 				)
 				if (preflightResult) {
