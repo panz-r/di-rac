@@ -607,6 +607,49 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				category: ErrorCategory.PERMANENT,
 				tier: "input_error",
 				maxRetries: 1,
+				handler: async (toolName, input: any, _error, _attempt, execute) => {
+					const rawPath = input.path || input.file_path || input.absolutePath
+					if (!rawPath) return null
+
+					try {
+						const path = await import("path")
+						const fs = await import("fs/promises")
+						const parentPath = path.dirname(rawPath)
+
+						// Phase 13: Resource Acquisition (mkdir -p for writes)
+						if (toolName === DiracDefaultTool.FILE_NEW || toolName === DiracDefaultTool.EDIT_FILE) {
+							this.updateAuditChain(toolName, "RESOURCE_ACQUIRED", "SILENT_FIX")
+							await fs.mkdir(parentPath, { recursive: true })
+							
+							// Retry the original write/edit call
+							const result = await execute(toolName as any, input)
+							
+							if (Array.isArray(result)) {
+								const hint = `[SYSTEM: RESOURCE_ACQUIRED - COMPACTION_SAFE] The parent directory for '${rawPath}' did not exist. I have created it for you.]`
+								const textBlock = result.find(b => b.type === "text")
+								if (textBlock && (textBlock as any).text) {
+									(textBlock as any).text = `${hint}\n\n${(textBlock as any).text}`
+								}
+							}
+							return result
+						}
+						
+						// List parent directory to find typos or missing levels (Original recovery)
+						this.updateAuditChain("FILE_NOT_FOUND", "PARENT_LISTED", "SILENT_FIX")
+						return await execute(DiracDefaultTool.LIST_FILES, {
+							path: parentPath,
+							recursive: false
+						})
+					} catch {
+						return null
+					}
+				},
+			},
+			ENOTDIR: {
+				domain: ErrorDomain.MEMORY,
+				category: ErrorCategory.PERMANENT,
+				tier: "recoverable_logic",
+				maxRetries: 1,
 				handler: async (_toolName, input: any, _error, _attempt, execute) => {
 					const rawPath = input.path || input.file_path || input.absolutePath
 					if (!rawPath) return null
@@ -614,9 +657,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 					try {
 						const path = await import("path")
 						const parentPath = path.dirname(rawPath)
-						
-						// List parent directory to find typos or missing levels
-						this.updateAuditChain("FILE_NOT_FOUND", "PARENT_LISTED", "SILENT_FIX")
+						this.updateAuditChain("ENOTDIR", "PARENT_LISTED", "SILENT_FIX")
 						return await execute(DiracDefaultTool.LIST_FILES, {
 							path: parentPath,
 							recursive: false
@@ -677,14 +718,21 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		if (stagnation) {
 			this.updateAuditChain(toolName, "STAGNATION_DETECTED", "BLOCKED")
 			const isExactRepeat = stagnation.summary.includes("identical")
+			const isAlternating = stagnation.summary.includes("Alternating")
+			
+			let nextSteps = "You are repeating the same action. Please reconsider your approach or check the tool parameters."
+			if (isAlternating) {
+				nextSteps = "You are alternating between tools without progress. Please pivot to a new strategy or summarize your current state."
+			} else if (!isExactRepeat) {
+				nextSteps = "You have been exploring without making progress. Consider switching to editing or refine your search."
+			}
+
 			return this.formatStructuredEscalation(
 				toolName,
 				args,
 				"STAGNATION_DETECTED",
 				stagnation.summary,
-				isExactRepeat 
-					? "You are repeating the same action. Please reconsider your approach or check the tool parameters."
-					: "You have been exploring without making progress. Consider switching to editing or refine your search."
+				nextSteps
 			)
 		}
 
@@ -984,6 +1032,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				if (text.includes("ENOENT")) return "FILE_NOT_FOUND"
 				if (text.includes("ANCHOR_NOT_FOUND") || text.includes("anchor.notFound")) return "ANCHOR_NOT_FOUND"
 				if (text.includes("EISDIR")) return "EISDIR"
+				if (text.includes("ENOTDIR")) return "ENOTDIR"
 				if (text.includes("Missing required parameter")) return "MISSING_PARAMETER"
 				if (text.includes("Invalid argument") || text.includes("is not a valid")) return "INVALID_ARGUMENT"
 				
@@ -1092,13 +1141,25 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 		const fingerprint = this.fingerprintToolCall(toolName, args)
 		
 		// 1. Exact/Semantic Repeat (L2 Backtracking)
-		const recentCalls = this.callHistory.slice(-3)
-		if (recentCalls.length === 3) {
-			const allMatch = recentCalls.every(c => c.tool === toolName && c.fingerprint === fingerprint)
-			if (allMatch) {
+		const recentCalls = this.callHistory.slice(-4)
+		if (recentCalls.length === 4) {
+			const fingerprints = recentCalls.map(c => `${c.tool}:${c.fingerprint}`)
+			
+			// Pattern: A, A, A
+			const isTripleRepeat = fingerprints[3] === fingerprints[2] && fingerprints[2] === fingerprints[1]
+			if (isTripleRepeat) {
 				return {
 					stagnationDetected: true,
 					summary: `Repeated identical semantic call to ${toolName} (3x). Loop broken to prevent token exhaustion.`
+				}
+			}
+
+			// Pattern: A, B, A, B (Phase 13: Alternating Loop)
+			const isAlternatingLoop = fingerprints[3] === fingerprints[1] && fingerprints[2] === fingerprints[0]
+			if (isAlternatingLoop) {
+				return {
+					stagnationDetected: true,
+					summary: `Alternating loop detected between ${recentCalls[3].tool} and ${recentCalls[2].tool}. Strategy thrashing.`
 				}
 			}
 		}
