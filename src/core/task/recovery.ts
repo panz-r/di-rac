@@ -258,13 +258,25 @@ export class RecoveryEngine {
 		// 1. Check Circuit Breaker
 		const circuit = this.checkCircuit(toolName)
 		if (circuit.state === "OPEN") {
-			return this.formatStructuredEscalation(toolName, "Circuit Breaker OPEN: Too many consecutive failures for this tool.")
+			return this.formatStructuredEscalation(
+				toolName,
+				args,
+				"CIRCUIT_BREAKER_OPEN",
+				"Too many consecutive failures for this tool.",
+				"Stop using this tool for a while or try a different approach."
+			)
 		}
 
 		// 2. Check Stagnation (L2 Backtracking)
 		const stagnation = this.detectStagnation(toolName, args, taskState)
 		if (stagnation) {
-			return this.formatStructuredEscalation(toolName, `Stagnation Detected: ${stagnation.summary}`)
+			return this.formatStructuredEscalation(
+				toolName,
+				args,
+				"STAGNATION_DETECTED",
+				stagnation.summary,
+				"You are repeating the same action. Please pivot to a different strategy."
+			)
 		}
 
 		// Record the call for future stagnation checks
@@ -283,18 +295,25 @@ export class RecoveryEngine {
 			}
 
 			// Tool returned a structured error
-			return await this.handleErrorRecovery(toolName, args, errorCode, result, dispatch)
+			return await this.handleErrorRecovery(toolName, args, errorCode, result, dispatch, taskState)
 
 		} catch (error: any) {
 			// Tool threw an exception
 			const errorCode = error.code || error.name || "UNKNOWN_ERROR"
-			return await this.handleErrorRecovery(toolName, args, errorCode, error, dispatch)
+			return await this.handleErrorRecovery(toolName, args, errorCode, error, dispatch, taskState)
 		}
 	}
 
 	// --- Recovery Logic (L1 & L3) ---
 
-	private async logRecoveryMiss(errorCode: string, toolName: string, domain: string) {
+	private async logRecoveryMiss(
+		errorCode: string,
+		toolName: string,
+		domain: string,
+		failureCategory: string,
+		attemptedRecovery: boolean,
+		turnNumber: number
+	) {
 		try {
 			const fs = await import("fs/promises")
 			const path = await import("path")
@@ -305,6 +324,9 @@ export class RecoveryEngine {
 				errorCode,
 				tool: toolName,
 				domain,
+				failureCategory,
+				attemptedRecovery,
+				turnNumber,
 				timestamp: Date.now(),
 				recovered: false
 			}) + "\n"
@@ -319,30 +341,78 @@ export class RecoveryEngine {
 		args: unknown,
 		errorCode: string,
 		originalError: any,
-		dispatch: (name: string, args: unknown) => Promise<ToolResponse>
+		dispatch: (name: string, args: unknown) => Promise<ToolResponse>,
+		taskState?: any
 	): Promise<ToolResponse> {
 		this.updateCircuit(toolName, false)
+		const errorMessage = this.extractErrorMessage(originalError)
+		const turnNumber = taskState?.totalToolCallCount || 0
 
 		// Check if we should skip due to graduated failure memory
 		if (this.shouldSkipRecovery(errorCode)) {
-			return this.formatStructuredEscalation(toolName, `[SYSTEM: Prior recovery attempts for ${errorCode} have consistently failed. Bypassing deterministic recovery.]\n\nOriginal Error:\n${this.extractErrorMessage(originalError)}`)
+			const skipReason = `Prior recovery attempts for ${errorCode} have consistently failed. Bypassing deterministic recovery.`
+			this.logRecoveryMiss(
+				errorCode,
+				toolName,
+				this.classifyErrorDomain(errorCode, errorMessage),
+				this.classifyFailureCategory(errorCode, errorMessage),
+				false,
+				turnNumber
+			)
+			return this.formatStructuredEscalation(
+				toolName,
+				args,
+				errorCode,
+				skipReason,
+				"Deterministic recovery is disabled for this repeating error. Please resolve it manually."
+			)
 		}
 
 		const entry = this.recoveryTable[errorCode]
 		if (!entry) {
 			// No deterministic fix known -> L3 Escalation
-			this.logRecoveryMiss(errorCode, toolName, "UNKNOWN")
-			return this.formatStructuredEscalation(toolName, this.extractErrorMessage(originalError))
+			this.logRecoveryMiss(
+				errorCode,
+				toolName,
+				this.classifyErrorDomain(errorCode, errorMessage),
+				this.classifyFailureCategory(errorCode, errorMessage),
+				false,
+				turnNumber
+			)
+			return this.formatStructuredEscalation(toolName, args, errorCode, errorMessage)
 		}
 
 		// Check Domain & Category heuristics
 		if (entry.category === ErrorCategory.PERMANENT && entry.maxRetries === 0) {
-			return this.formatStructuredEscalation(toolName, this.extractErrorMessage(originalError))
+			this.logRecoveryMiss(
+				errorCode,
+				toolName,
+				entry.domain,
+				this.classifyFailureCategory(errorCode, errorMessage),
+				false,
+				turnNumber
+			)
+			return this.formatStructuredEscalation(toolName, args, errorCode, errorMessage)
 		}
 
 		// Budget check
 		if (this.currentTurnRetries >= this.perTurnTokenBudget) {
-			return this.formatStructuredEscalation(toolName, `[SYSTEM: Recovery retry budget exceeded for this turn.]\n\nOriginal Error:\n${this.extractErrorMessage(originalError)}`)
+			const budgetReason = "Recovery retry budget exceeded for this turn."
+			this.logRecoveryMiss(
+				errorCode,
+				toolName,
+				entry.domain,
+				"Budget Exceeded",
+				false,
+				turnNumber
+			)
+			return this.formatStructuredEscalation(
+				toolName,
+				args,
+				errorCode,
+				budgetReason,
+				"Too many automatic retries. Please reconsider your approach."
+			)
 		}
 
 		// L1: Context Refinement (Execute Recovery Handler)
@@ -350,22 +420,67 @@ export class RecoveryEngine {
 		let recoveryResult: ToolResponse | null = null
 		try {
 			recoveryResult = await entry.handler(toolName, args, originalError, 1, dispatch)
-		} catch (handlerError) {
+		} catch (handlerError: any) {
 			this.recordRecovery(errorCode, false)
-			return this.formatStructuredEscalation(toolName, `[SYSTEM: Recovery handler crashed for ${errorCode}.]\n\nOriginal Error:\n${this.extractErrorMessage(originalError)}`)
+			const crashReason = `Recovery handler crashed for ${errorCode}.`
+			this.logRecoveryMiss(
+				errorCode,
+				toolName,
+				entry.domain,
+				"Handler Crash",
+				true,
+				turnNumber
+			)
+			return this.formatStructuredEscalation(
+				toolName,
+				args,
+				errorCode,
+				crashReason,
+				`Original error: ${errorMessage}`
+			)
 		}
 
 		if (recoveryResult === null) {
 			// Handler passed through to L3 Escalation
 			this.recordRecovery(errorCode, false)
-			return this.formatStructuredEscalation(toolName, `[SYSTEM: Deterministic recovery failed or deferred for ${errorCode}.]\n\nOriginal Error:\n${this.extractErrorMessage(originalError)}`)
+			const failReason = `Deterministic recovery failed or deferred for ${errorCode}.`
+			this.logRecoveryMiss(
+				errorCode,
+				toolName,
+				entry.domain,
+				"Recovery Failed",
+				true,
+				turnNumber
+			)
+			return this.formatStructuredEscalation(
+				toolName,
+				args,
+				errorCode,
+				failReason,
+				`Original error: ${errorMessage}`
+			)
 		}
 
 		// Check if the recovery attempt itself returned an error
 		const recoveryErrorCode = this.extractErrorCode(recoveryResult)
 		if (recoveryErrorCode) {
 			this.recordRecovery(errorCode, false)
-			return this.formatStructuredEscalation(toolName, `[SYSTEM: Recovery attempt for ${errorCode} resulted in another error: ${recoveryErrorCode}.]\n\nOriginal Error:\n${this.extractErrorMessage(originalError)}`)
+			const retryErrorReason = `Recovery attempt for ${errorCode} resulted in another error: ${recoveryErrorCode}.`
+			this.logRecoveryMiss(
+				errorCode,
+				toolName,
+				entry.domain,
+				"Chain Failure",
+				true,
+				turnNumber
+			)
+			return this.formatStructuredEscalation(
+				toolName,
+				args,
+				errorCode,
+				retryErrorReason,
+				`Original error: ${errorMessage}`
+			)
 		}
 
 		// Recovery Success!
@@ -395,22 +510,55 @@ export class RecoveryEngine {
 			return errorOrResult.message
 		}
 		if (Array.isArray(errorOrResult)) {
-			const texts = errorOrResult.filter(b => b.type === "text").map(b => b.text)
+			const texts = errorOrResult.filter((b: any) => b.type === "text").map((b: any) => b.text)
 			return texts.join("\n")
 		}
 		return String(errorOrResult)
 	}
 
+	private classifyErrorDomain(errorCode: string, errorMessage: string): string {
+		const lowerMsg = errorMessage.toLowerCase()
+		if (lowerMsg.includes("anchor") || lowerMsg.includes("line")) return "ACTION"
+		if (lowerMsg.includes("symbol") || lowerMsg.includes("not found") || lowerMsg.includes("enoent")) return "MEMORY"
+		if (lowerMsg.includes("timeout") || lowerMsg.includes("rate limit") || lowerMsg.includes("lock")) return "SYSTEM"
+		return "PLANNING"
+	}
+
+	private classifyFailureCategory(errorCode: string, errorMessage: string): string {
+		const lowerMsg = errorMessage.toLowerCase()
+		if (lowerMsg.includes("timeout") || lowerMsg.includes("rate limit") || lowerMsg.includes("lock") || lowerMsg.includes("econnreset")) {
+			return "Transient"
+		}
+		if (lowerMsg.includes("context length") || lowerMsg.includes("too many tokens") || lowerMsg.includes("maximum context")) {
+			return "Context Overflow"
+		}
+		if (lowerMsg.includes("not found") || lowerMsg.includes("does not exist") || lowerMsg.includes("invalid") || lowerMsg.includes("mismatch")) {
+			return "Semantic Mismatch"
+		}
+		return "Unknown"
+	}
+
 	/**
 	 * L-ICL Principle: Inject structured contextual messages instead of raw error blobs.
 	 */
-	private formatStructuredEscalation(toolName: string, message: string): ToolResponse {
-		// Cast as any for now until we import the exact ToolResponse type (usually string or Array of blocks)
+	private formatStructuredEscalation(toolName: string, args: unknown, errorCode: string, message: string, nextSteps?: string): ToolResponse {
+		let argsStr = ""
+		try {
+			argsStr = JSON.stringify(args)
+		} catch {
+			argsStr = String(args)
+		}
+
+		const structuredMessage = `[SYSTEM: RECOVERY_FAILED]
+BLOCKED: ${toolName} with arguments: ${argsStr}
+REASON: ${errorCode} — ${message}
+NEXT: ${nextSteps || "Please analyze the error and try a different approach or tool."}`
+
 		return [
 			{
 				type: "text",
-				text: message
-			}
+				text: structuredMessage,
+			},
 		] as any
 	}
 
