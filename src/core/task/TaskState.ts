@@ -83,6 +83,10 @@ export class TaskState {
 	symbolIndex: Map<string, SymbolIndexEntry[]> = new Map() // maps relative path to symbols
 	readCounts: Map<string, number> = new Map() // maps relative path to number of times read
 	contentHashCache: Map<string, string> = new Map() // maps cache key to content hash
+
+	// Advanced recovery state
+	fileLastAccessToolIndex: Map<string, number> = new Map() // maps absolute path to tool call index
+	filesTouchedInCurrentTurn: Set<string> = new Set()
 }
 
 export interface SymbolIndexEntry {

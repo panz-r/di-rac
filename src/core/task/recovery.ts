@@ -73,6 +73,36 @@ export class RecoveryEngine {
 
 	constructor() {
 		this.initializeRecoveryTable()
+		this.loadRecoveryMemory()
+	}
+
+	private async loadRecoveryMemory() {
+		try {
+			const fs = await import("fs/promises")
+			const path = await import("path")
+			const memoryFile = path.join(process.cwd(), ".dirac-state", "recovery-memory.json")
+			const content = await fs.readFile(memoryFile, "utf-8")
+			const data = JSON.parse(content)
+			Object.entries(data).forEach(([key, value]) => {
+				this.failureMemory.set(key, value as FailureRecord)
+			})
+		} catch (e) {
+			// Ignore if file doesn't exist or is malformed
+		}
+	}
+
+	private async saveRecoveryMemory() {
+		try {
+			const fs = await import("fs/promises")
+			const path = await import("path")
+			const diracStateDir = path.join(process.cwd(), ".dirac-state")
+			await fs.mkdir(diracStateDir, { recursive: true })
+			const memoryFile = path.join(diracStateDir, "recovery-memory.json")
+			const data = Object.fromEntries(this.failureMemory.entries())
+			await fs.writeFile(memoryFile, JSON.stringify(data, null, 2))
+		} catch (e) {
+			// Ignore errors
+		}
 	}
 
 	public resetTurnBudget() {
@@ -120,10 +150,20 @@ export class RecoveryEngine {
 				category: ErrorCategory.PERMANENT,
 				tier: "recoverable_logic",
 				maxRetries: 1,
-				handler: async (toolName, input, error, _attempt, execute) => {
-					// Placeholder: Re-read file outline, remap anchors, retry edit
-					// If remapping fails, return null to escalate
-					return null
+				handler: async (toolName, input: any, error, _attempt, execute) => {
+					// Re-read file outline to refresh symbol/line map
+					const filePath = input.file_path || input.path
+					if (!filePath) return null
+
+					const outlineResult = await execute(DiracDefaultTool.FILE_READ, {
+						path: filePath,
+						detail: "outline"
+					})
+
+					// Extract the new line number for the anchor from the outline
+					// (Implementation would need to match anchor text/id to the new outline)
+					// For now, return the outline to the LLM so it can pick the correct anchor
+					return outlineResult
 				},
 			},
 			UNKNOWN_FLAG: {
@@ -142,9 +182,16 @@ export class RecoveryEngine {
 				category: ErrorCategory.PERMANENT,
 				tier: "recoverable_logic",
 				maxRetries: 1,
-				handler: async (toolName, input, _error, _attempt, execute) => {
-					// Placeholder: Re-run search_symbols, return results
-					return null
+				handler: async (toolName, input: any, _error, _attempt, execute) => {
+					const symbolName = input.symbol || input.name
+					if (!symbolName) return null
+
+					// Re-run search_symbols to find the new handle
+					const searchResult = await execute(DiracDefaultTool.SEARCH_SYMBOLS, {
+						query: symbolName
+					})
+
+					return searchResult
 				},
 			},
 			FILE_NOT_FOUND: {
@@ -167,6 +214,7 @@ export class RecoveryEngine {
 	public async wrapWithRecovery(
 		toolName: string,
 		args: unknown,
+		taskState: any,
 		dispatch: (name: string, args: unknown) => Promise<ToolResponse>
 	): Promise<ToolResponse> {
 		// 1. Check Circuit Breaker
@@ -176,7 +224,7 @@ export class RecoveryEngine {
 		}
 
 		// 2. Check Stagnation (L2 Backtracking)
-		const stagnation = this.detectStagnation(toolName, args)
+		const stagnation = this.detectStagnation(toolName, args, taskState)
 		if (stagnation) {
 			return this.formatStructuredEscalation(toolName, `Stagnation Detected: ${stagnation.summary}`)
 		}
@@ -208,6 +256,26 @@ export class RecoveryEngine {
 
 	// --- Recovery Logic (L1 & L3) ---
 
+	private async logRecoveryMiss(errorCode: string, toolName: string, domain: string) {
+		try {
+			const fs = await import("fs/promises")
+			const path = await import("path")
+			const diracStateDir = path.join(process.cwd(), ".dirac-state")
+			await fs.mkdir(diracStateDir, { recursive: true })
+			const logFile = path.join(diracStateDir, "recovery-misses.jsonl")
+			const record = JSON.stringify({
+				errorCode,
+				tool: toolName,
+				domain,
+				timestamp: Date.now(),
+				recovered: false
+			}) + "\n"
+			await fs.appendFile(logFile, record)
+		} catch (e) {
+			// Silently fail logging to avoid disrupting the main loop
+		}
+	}
+
 	private async handleErrorRecovery(
 		toolName: string,
 		args: unknown,
@@ -225,6 +293,7 @@ export class RecoveryEngine {
 		const entry = this.recoveryTable[errorCode]
 		if (!entry) {
 			// No deterministic fix known -> L3 Escalation
+			this.logRecoveryMiss(errorCode, toolName, "UNKNOWN")
 			return this.formatStructuredEscalation(toolName, this.extractErrorMessage(originalError))
 		}
 
@@ -337,13 +406,15 @@ export class RecoveryEngine {
 			timestamp: Date.now()
 		})
 		// Keep history bounded
-		if (this.callHistory.length > 20) {
+		if (this.callHistory.length > 50) {
 			this.callHistory.shift()
 		}
 	}
 
-	private detectStagnation(toolName: string, args: unknown): StagnationResult | null {
+	private detectStagnation(toolName: string, args: unknown, taskState?: any): StagnationResult | null {
 		const fingerprint = this.fingerprintToolCall(toolName, args)
+		
+		// 1. Exact/Semantic Repeat (L2 Backtracking)
 		// Check last 3 calls
 		const recentCalls = this.callHistory.slice(-3)
 		if (recentCalls.length === 3) {
@@ -355,6 +426,14 @@ export class RecoveryEngine {
 				}
 			}
 		}
+
+		// 2. Non-progress File Loop Detection
+		if (taskState && taskState.filesTouchedInCurrentTurn.size >= 2) {
+			// If we've touched the same set of files in a turn without making edits or commands
+			// this is simplified; a more robust version would track across multiple turns.
+			// For now, let's stick to the 3-repeat rule but expanded to tool + arg pattern.
+		}
+
 		return null
 	}
 
@@ -411,6 +490,7 @@ export class RecoveryEngine {
 		}
 
 		this.failureMemory.set(errorCode, record)
+		this.saveRecoveryMemory()
 	}
 
 	private shouldSkipRecovery(errorCode: string): boolean {

@@ -1242,6 +1242,7 @@ ${notice}`
 		}
 		
 		this.toolExecutor.recoveryEngine.resetTurnBudget()
+		this.taskState.filesTouchedInCurrentTurn.clear()
 
 
 		const { model, providerId, customPrompt, mode } = this.getCurrentProviderInfo()
