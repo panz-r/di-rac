@@ -133,13 +133,24 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		// Remove any partial completion_result message that may exist
 		await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "completion_result")
 
+		// Phase 6: Append Recovery Telemetry Summary
+		let finalResult = result
+		const toolRecoveryEnabled = config.services.stateManager.getGlobalSettingsKey("toolRecoveryEnabled")
+		if (toolRecoveryEnabled) {
+			const telemetry = config.recoveryEngine.getTelemetry()
+			if (telemetry.interceptedCount > 0) {
+				const recoverySummary = `\n\n[Deterministic Recovery Summary]\n- Intercepted: ${telemetry.interceptedCount} errors (saved ~${telemetry.totalTurnSavings.toFixed(1)} LLM turns)\n- Escalated: ${telemetry.escalatedCount} errors\n- Recovery Rate: ${telemetry.recoveryRate}`
+				finalResult += recoverySummary
+			}
+		}
+
 		let commandResult: any
 		const lastMessage = config.messageState.getDiracMessages().at(-1)
 
 		if (command) {
 			if (lastMessage && lastMessage.ask !== "command") {
 				// haven't sent a command message yet so first send completion_result then command
-				const completionMessageTs = await config.callbacks.say("completion_result", result, undefined, undefined, false)
+				const completionMessageTs = await config.callbacks.say("completion_result", finalResult, undefined, undefined, false)
 				await config.callbacks.saveCheckpoint(true, completionMessageTs)
 				await addNewChangesFlagToLastCompletionResultMessage()
 				telemetryService.captureTaskCompleted(config.ulid, getTaskCompletionTelemetry(config))
@@ -195,7 +206,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			commandResult = execCommandResult
 		} else {
 			// Send the complete completion_result message (partial was already removed above)
-			const completionMessageTs = await config.callbacks.say("completion_result", result, undefined, undefined, false)
+			const completionMessageTs = await config.callbacks.say("completion_result", finalResult, undefined, undefined, false)
 			await config.callbacks.saveCheckpoint(true, completionMessageTs)
 			await addNewChangesFlagToLastCompletionResultMessage()
 			telemetryService.captureTaskCompleted(config.ulid, getTaskCompletionTelemetry(config))

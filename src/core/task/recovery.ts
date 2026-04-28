@@ -197,6 +197,15 @@ export class RecoveryEngine {
 		this.currentTurnRetries = 0
 	}
 
+	public getTelemetry() {
+		return {
+			...this.telemetry,
+			recoveryRate: this.telemetry.interceptedCount + this.telemetry.escalatedCount > 0
+				? `${((this.telemetry.interceptedCount / (this.telemetry.interceptedCount + this.telemetry.escalatedCount)) * 100).toFixed(1)}%`
+				: "0%"
+		}
+	}
+
 	/**
 	 * AEGIS-inspired Pre-Execution Firewall.
 	 * Interposes on the tool-execution path to stop errors before they happen.

@@ -194,6 +194,7 @@ export class ToolExecutor {
 				runUserPromptSubmitHook: this.runUserPromptSubmitHook,
 			},
 			coordinator: this.coordinator,
+			recoveryEngine: this.recoveryEngine,
 		}
 
 		// Validate the config at runtime to catch any missing properties
