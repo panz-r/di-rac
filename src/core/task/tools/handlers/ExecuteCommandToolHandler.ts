@@ -128,8 +128,9 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 		const autoApproveResult = uiHelpers.shouldAutoApproveTool(this.name)
 		const autoApproveEnabled = Array.isArray(autoApproveResult) ? autoApproveResult[0] : autoApproveResult
 		const isYolo = config.yoloModeToggled || config.services.stateManager.getGlobalSettingsKey("autoApproveAllToggled")
+		const bashAutoApproveAll = config.services.stateManager.getGlobalSettingsKey("bashAutoApproveAll")
 
-		const shouldAutoApprove = isYolo || (isSafe && autoApproveEnabled)
+		const shouldAutoApprove = isYolo || bashAutoApproveAll || (isSafe && autoApproveEnabled)
 
 		if (shouldAutoApprove) {
 			await uiHelpers.removeLastPartialMessageIfExistsWithType("ask", "tool")
@@ -218,7 +219,8 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 						: false
 
 			const isYolo = config.yoloModeToggled || config.services.stateManager.getGlobalSettingsKey("autoApproveAllToggled")
-			if (!config.isSubagentExecution && !(isYolo || (isSafe && autoApproveEnabled))) {
+			const bashAutoApproveAll = config.services.stateManager.getGlobalSettingsKey("bashAutoApproveAll")
+			if (!config.isSubagentExecution && !(isYolo || bashAutoApproveAll || (isSafe && autoApproveEnabled))) {
 				commandsRequiringApproval.push(actualCommand)
 				cmdState.requiresApproval = true
 			}
@@ -379,7 +381,8 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 
 			let didAutoApprove = false
 			const isYolo = config.yoloModeToggled || config.services.stateManager.getGlobalSettingsKey("autoApproveAllToggled")
-			if (config.isSubagentExecution || isYolo || (isSafe && autoApproveEnabled)) {
+			const bashAutoApproveAll = config.services.stateManager.getGlobalSettingsKey("bashAutoApproveAll")
+			if (config.isSubagentExecution || isYolo || bashAutoApproveAll || (isSafe && autoApproveEnabled)) {
 				didAutoApprove = true
 				cmdState.wasAutoApproved = true
 			}

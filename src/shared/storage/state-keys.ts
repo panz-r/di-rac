@@ -226,6 +226,8 @@ const USER_SETTINGS_FIELDS = {
 	preferredLanguage: { default: "English" as string },
 	mode: { default: "act" as Mode },
 	rewritePaths: { default: false as boolean },
+	bashToolEnabled: { default: false as boolean },
+	bashAutoApproveAll: { default: false as boolean },
 	customPrompt: { default: undefined as "compact" | undefined },
 	backgroundEditEnabled: { default: false as boolean },
 	optOutOfRemoteConfig: { default: false as boolean },

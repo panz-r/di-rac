@@ -202,8 +202,12 @@ export class ToolExecutor {
 	 */
 	private registerToolHandlers(): void {
 		const validator = new ToolValidator(this.diracIgnoreController)
+		const bashToolEnabled = this.stateManager.getGlobalSettingsKey("bashToolEnabled")
 		// Register all tools via toolUseNames
 		for (const tool of toolUseNames) {
+			if (!bashToolEnabled && (tool === DiracDefaultTool.BASH || tool === DiracDefaultTool.BASH_RESTRICTED)) {
+				continue
+			}
 			this.coordinator.registerByName(tool, validator)
 		}
 	}
