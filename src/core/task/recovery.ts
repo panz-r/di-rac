@@ -255,7 +255,13 @@ export class RecoveryEngine {
 		const params = block.params as any
 
 		// --- Stage I: Argument Extraction ---
-		const filePath = params?.path || params?.file_path || params?.absolutePath
+		let filePath = params?.path || params?.file_path || params?.absolutePath
+		
+		// Phase 10+: Extract path from symbol handle if needed
+		if (!filePath && params?.handle && typeof params.handle === "string") {
+			filePath = params.handle.split(":")[0]
+		}
+
 		const startLine = params?.start_line
 		const endLine = params?.end_line
 
@@ -657,7 +663,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 							const result = await execute(toolName as any, input)
 							
 							if (Array.isArray(result)) {
-								const hint = `[SYSTEM: RESOURCE_ACQUIRED - COMPACTION_SAFE] The parent directory for '${rawPath}' did not exist. I have created it for you.]`
+								const hint = `[SYSTEM: RESOURCE_ACQUIRED - COMPACTION_SAFE] The parent directory for '${rawPath}' did not exist. I have created it for you.`
 								const textBlock = result.find(b => b.type === "text")
 								if (textBlock && (textBlock as any).text) {
 									(textBlock as any).text = `${hint}\n\n${(textBlock as any).text}`
@@ -1092,9 +1098,9 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		if (Array.isArray(recoveryResult)) {
 			let successHint = "[SYSTEM: DETERMINISTIC_RECOVERY_SUCCESS - COMPACTION_SAFE]"
 			if (errorCode === "ANCHOR_NOT_FOUND") {
-				successHint = `[SYSTEM: ANCHOR_REMAPPED - COMPACTION_SAFE] Anchor stale due to file modifications. I found the target and applied your change. Refer to refreshed line numbers in future calls.]`
+				successHint = "[SYSTEM: ANCHOR_REMAPPED - COMPACTION_SAFE] Anchor stale due to file modifications. I found the target and applied your change. Refer to refreshed line numbers in future calls."
 			} else if (errorCode === "PathEscapeError" || errorCode === "PATH_REWRITTEN") {
-				successHint = `[SYSTEM: PATH_REWRITTEN - COMPACTION_SAFE] Absolute path converted to project-relative. Please use relative paths in the future.]`
+				successHint = "[SYSTEM: PATH_REWRITTEN - COMPACTION_SAFE] Absolute path converted to project-relative. Please use relative paths in the future."
 			}
 
 			recoveryResult.push({
