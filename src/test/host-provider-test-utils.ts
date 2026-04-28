@@ -6,7 +6,7 @@ import {
 	DiracWebviewProviderCreator,
 } from "@/hosts/host-provider"
 import { HostBridgeClientProvider } from "@/hosts/host-provider-types"
-import { vscodeHostBridgeClient } from "@/hosts/vscode/hostbridge/client/host-grpc-client"
+import { vscodeHostBridgeClient } from "@/hosts/__mocks__/vscode-hostbridge-client"
 import { ITerminalManager } from "@/integrations/terminal/types"
 
 /**
@@ -30,7 +30,7 @@ export function setVscodeHostProviderMock(options?: {
 }) {
 	HostProvider.reset()
 	HostProvider.initialize(
-		"extension",
+		"cli",
 		options?.webviewProviderCreator ?? ((() => {}) as DiracWebviewProviderCreator),
 		options?.diffViewProviderCreator ?? ((() => {}) as DiffViewProviderCreator),
 		options?.commentReviewControllerCreator ?? ((() => {}) as CommentReviewControllerCreator),

@@ -4,53 +4,19 @@ import { HostProvider } from "./hosts/host-provider"
 const prefix = name === "claude-dev" || name === "dirac" ? "dirac" : name
 
 /**
- * List of commands with the name of the extension they are registered under.
- * These should match the command IDs defined in package.json.
- * For Nightly build, the publish script has updated all the commands to use the extension name as prefix.
- * In production, all commands are registered under "dirac" for consistency.
- */
-const DiracCommands = {
-	PlusButton: prefix + ".plusButtonClicked",
-	SettingsButton: prefix + ".settingsButtonClicked",
-	HistoryButton: prefix + ".historyButtonClicked",
-	WorktreesButton: prefix + ".worktreesButtonClicked",
-	TerminalOutput: prefix + ".addTerminalOutputToChat",
-	AddToChat: prefix + ".addToChat",
-	FixWithDirac: prefix + ".fixWithDirac",
-	ExplainCode: prefix + ".explainCode",
-	ImproveCode: prefix + ".improveCode",
-	FocusChatInput: prefix + ".focusChatInput",
-	Walkthrough: prefix + ".openWalkthrough",
-	GenerateCommit: prefix + ".generateGitCommitMessage",
-	AbortCommit: prefix + ".abortGitCommitMessage",
-	ReconstructTaskHistory: prefix + ".reconstructTaskHistory",
-	// Jupyter Notebook commands
-	JupyterGenerateCell: prefix + ".jupyterGenerateCell",
-	JupyterExplainCell: prefix + ".jupyterExplainCell",
-	JupyterImproveCell: prefix + ".jupyterImproveCell",
-}
-
-/**
- * IDs for the views registered by the extension.
- * These should match the name + view IDs defined in package.json.
- */
-const DiracViewIds = {
-	Sidebar: name + ".SidebarProvider",
-}
-
-/**
- * The registry info for the extension, including its ID, name, version, commands, and views
- * registered for the current host.
+ * The registry info for the CLI, including its ID, name, version
  */
 export const ExtensionRegistryInfo = {
 	id: publisher + "." + name,
 	name,
 	version,
 	publisher,
-	commands: DiracCommands,
-	views: DiracViewIds,
 }
 
+/**
+ * @deprecated This interface is kept for backwards compatibility but host info
+ * is now obtained dynamically from the HostBridge service.
+ */
 export interface HostInfo {
 	/**
 	 * The name of the host platform, e.g VSCode, IntelliJ Ultimate Edition, etc.
@@ -61,9 +27,7 @@ export interface HostInfo {
 	 */
 	os: string
 	/**
-	 * The type of the dirac host environment, e.g. 'VSCode Extension', 'Dirac for JetBrains', 'CLI'
-	 * This is different from the platform because there are many JetBrains IDEs, but they all use the same
-	 * plugin.
+	 * The type of the dirac host environment, e.g. 'CLI', 'Standalone'
 	 */
 	ide: string
 	/**
@@ -71,7 +35,7 @@ export interface HostInfo {
 	 */
 	distinctId: string
 	/**
-	 * The version of the host platform, e.g. 1.103.0 for VSCode, or 2025.1.1.1 for JetBrains IDEs.
+	 * The version of the host platform
 	 */
 	hostVersion?: string
 	/**

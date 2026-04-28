@@ -9,8 +9,7 @@ const __dirname = path.dirname(__filename)
 const production = process.argv.includes("--production") || process.env["IS_DEBUG_BUILD"] === "false"
 const watch = process.argv.includes("--watch")
 const standalone = process.argv.includes("--standalone")
-const e2eBuild = process.argv.includes("--e2e-build")
-const destDir = standalone ? "dist-standalone" : "dist"
+const destDir = "dist-standalone"
 
 /**
  * @type {import('esbuild').Plugin}
@@ -139,12 +138,11 @@ const copyAssets = {
 			]
 
 			languages.forEach((lang) => {
-			// Copy sql-wasm.wasm
-			const sqlJsSource = path.join(__dirname, "node_modules", "sql.js", "dist", "sql-wasm.wasm")
-			if (fs.existsSync(sqlJsSource)) {
-				fs.copyFileSync(sqlJsSource, path.join(targetDir, "sql-wasm.wasm"))
-			}
-
+				// Copy sql-wasm.wasm
+				const sqlJsSource = path.join(__dirname, "node_modules", "sql.js", "dist", "sql-wasm.wasm")
+				if (fs.existsSync(sqlJsSource)) {
+					fs.copyFileSync(sqlJsSource, path.join(targetDir, "sql-wasm.wasm"))
+				}
 
 				const filename = `tree-sitter-${lang}.wasm`
 				fs.copyFileSync(path.join(languageWasmDir, filename), path.join(targetDir, filename))
@@ -197,6 +195,7 @@ if (process.env.OTEL_EXPORTER_OTLP_HEADERS) {
 if (process.env.OTEL_METRIC_EXPORT_INTERVAL) {
 	buildEnvVars["process.env.OTEL_METRIC_EXPORT_INTERVAL"] = JSON.stringify(process.env.OTEL_METRIC_EXPORT_INTERVAL)
 }
+
 // Base configuration shared between extension and standalone builds
 const baseConfig = {
 	bundle: true,
@@ -219,14 +218,6 @@ const baseConfig = {
 	},
 }
 
-// Extension-specific configuration
-const extensionConfig = {
-	...baseConfig,
-	entryPoints: ["src/extension.ts"],
-	outfile: `${destDir}/extension.js`,
-	external: ["vscode", "web-tree-sitter"],
-}
-
 // Standalone-specific configuration
 const standaloneConfig = {
 	...baseConfig,
@@ -234,21 +225,11 @@ const standaloneConfig = {
 	outfile: `${destDir}/dirac-core.js`,
 	// These modules need to load files from the module directory at runtime,
 	// so they cannot be bundled.
-	external: ["vscode", "web-tree-sitter", "@grpc/reflection", "grpc-health-check", "better-sqlite3"],
-}
-
-// E2E build script configuration
-const e2eBuildConfig = {
-	...baseConfig,
-	entryPoints: ["src/test/e2e/utils/build.ts"],
-	outfile: `${destDir}/e2e-build.mjs`,
-	external: ["@vscode/test-electron", "execa"],
-	sourcemap: false,
-	plugins: [aliasResolverPlugin, esbuildProblemMatcherPlugin],
+	external: ["web-tree-sitter", "@grpc/reflection", "grpc-health-check", "better-sqlite3"],
 }
 
 async function main() {
-	const config = standalone ? standaloneConfig : e2eBuild ? e2eBuildConfig : extensionConfig
+	const config = standaloneConfig
 	const extensionCtx = await esbuild.context(config)
 	if (watch) {
 		await extensionCtx.watch()

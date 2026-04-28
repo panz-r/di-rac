@@ -6,7 +6,7 @@ import { HostBridgeClientProvider } from "./host-provider-types"
 /**
  * Singleton class that manages host-specific providers for dependency injection.
  *
- * This system runs on two different platforms (VSCode extension and dirac-core),
+ * This system runs on CLI and dirac-core (standalone),
  * so all the host-specific classes and properties are contained in here. The
  * rest of the codebase can use the host provider interface to access platform-specific
  * implementations in a platform-agnostic way.
@@ -19,7 +19,7 @@ import { HostBridgeClientProvider } from "./host-provider-types"
 export class HostProvider {
 	private static instance: HostProvider | null = null
 
-	diracType: "cli" | "extension"
+	diracType: "cli"
 	createDiracWebviewProvider: DiracWebviewProviderCreator
 	createDiffViewProvider: DiffViewProviderCreator
 	createCommentReviewController: CommentReviewControllerCreator
@@ -51,7 +51,7 @@ export class HostProvider {
 
 	// Private constructor to enforce singleton pattern
 	private constructor(
-		diracType: "cli" | "extension",
+		diracType: "cli",
 		createDiracWebviewProvider: DiracWebviewProviderCreator,
 		createDiffViewProvider: DiffViewProviderCreator,
 		createCommentReviewController: CommentReviewControllerCreator,
@@ -79,7 +79,7 @@ export class HostProvider {
 	}
 
 	public static initialize(
-		diracType: "cli" | "extension",
+		diracType: "cli",
 		webviewProviderCreator: DiracWebviewProviderCreator,
 		diffViewProviderCreator: DiffViewProviderCreator,
 		commentReviewControllerCreator: CommentReviewControllerCreator,
@@ -170,7 +170,7 @@ export type LogToChannel = (message: string) => void
 
 /**
  * A function that creates TerminalManager instances
- * Returns the platform-appropriate terminal manager (VSCode TerminalManager or StandaloneTerminalManager)
+ * Returns the platform-appropriate terminal manager (StandaloneTerminalManager)
  */
 export type TerminalManagerCreator = () => ITerminalManager
 

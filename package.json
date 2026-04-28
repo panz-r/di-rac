@@ -8,9 +8,6 @@
 		".",
 		"cli"
 	],
-	"engines": {
-		"vscode": "^1.84.0"
-	},
 	"author": {
 		"name": "Dirac Delta Labs"
 	},
@@ -21,14 +18,6 @@
 		"url": "https://github.com/dirac-run/dirac"
 	},
 	"homepage": "https://dirac.run",
-	"categories": [
-		"AI",
-		"Chat",
-		"Programming Languages",
-		"Education",
-		"Snippets",
-		"Testing"
-	],
 	"keywords": [
 		"hash-anchored",
 		"ast-precision",
@@ -47,312 +36,7 @@
 		"sonnet",
 		"ai"
 	],
-	"activationEvents": [
-		"onLanguage",
-		"onUri",
-		"onStartupFinished",
-		"workspaceContains:evals.env"
-	],
-	"main": "./dist/extension.js",
-	"contributes": {
-		"icons": {
-			"dirac-icon": {
-				"description": "dirac",
-				"default": {
-					"fontPath": "node_modules/@vscode/codicons/dist/codicon.ttf",
-					"fontCharacter": "\\e900"
-				}
-			}
-		},
-		"walkthroughs": [
-			{
-				"id": "DiracWalkthrough",
-				"title": "Dirac, the most token efficient and accurate AI Agent",
-				"description": "Dirac improves the dev speed and accuracy while consuming 50-80% less tokens compared to other agents.",
-				"steps": [
-					{
-						"id": "hash-anchored-edits",
-						"title": "Hash Anchored MultiFile Edits",
-						"description": "Dirac targets line hashes for high-accuracy edits, batching multiple changes across files in a single shot.",
-						"media": {
-							"markdown": "walkthrough/step1.md"
-						}
-					},
-					{
-						"id": "ast-precision",
-						"title": "AST Precision",
-						"description": "Dirac understands language syntax directly, allowing for precise structural manipulations like function extraction or replacement.",
-						"media": {
-							"markdown": "walkthrough/step2.md"
-						}
-					},
-					{
-						"id": "minimal-roundtrips",
-						"title": "Minimal Roundtrips",
-						"description": "Dirac processes multiple files and runs parallel commands to minimize latency and API costs.",
-						"media": {
-							"markdown": "walkthrough/step3.md"
-						}
-					},
-					{
-						"id": "speed-and-performance",
-						"title": "Speed and Performance",
-						"description": "Context curation optimizations keep Dirac lean and fast, significantly improving LLM performance.",
-						"media": {
-							"markdown": "walkthrough/step4.md"
-						},
-						"content": {
-							"path": "walkthrough/step4.md"
-						}
-					}
-				]
-			}
-		],
-		"viewsContainers": {
-			"activitybar": [
-				{
-					"id": "dirac-ActivityBar",
-					"title": "Dirac",
-					"icon": "assets/icons/icon.svg"
-				}
-			]
-		},
-		"views": {
-			"dirac-ActivityBar": [
-				{
-					"type": "webview",
-					"id": "dirac.SidebarProvider",
-					"name": "",
-					"icon": "assets/icons/icon.svg"
-				}
-			]
-		},
-		"commands": [
-			{
-				"command": "dirac.plusButtonClicked",
-				"title": "New Task",
-				"icon": "$(add)"
-			},
-			{
-				"command": "dirac.historyButtonClicked",
-				"title": "History",
-				"icon": "$(history)"
-			},
-			{
-				"command": "dirac.settingsButtonClicked",
-				"title": "Settings",
-				"icon": "$(settings-gear)"
-			},
-			{
-				"command": "dirac.dev.createTestTasks",
-				"title": "Create Test Tasks",
-				"category": "Dirac",
-				"when": "dirac.isDevMode"
-			},
-			{
-				"command": "dirac.addToChat",
-				"title": "Add to Dirac",
-				"category": "Dirac"
-			},
-			{
-				"command": "dirac.addTerminalOutputToChat",
-				"title": "Add to Dirac",
-				"category": "Dirac"
-			},
-			{
-				"command": "dirac.focusChatInput",
-				"title": "Jump to Chat Input",
-				"category": "Dirac"
-			},
-			{
-				"command": "dirac.generateGitCommitMessage",
-				"title": "Generate Commit Message with Dirac",
-				"category": "Dirac",
-				"icon": "$(dirac-icon)"
-			},
-			{
-				"command": "dirac.abortGitCommitMessage",
-				"title": "Generate Commit Message with Dirac - Stop",
-				"category": "Dirac",
-				"icon": "$(debug-stop)"
-			},
-			{
-				"command": "dirac.explainCode",
-				"title": "Explain with Dirac",
-				"category": "Dirac"
-			},
-			{
-				"command": "dirac.improveCode",
-				"title": "Improve with Dirac",
-				"category": "Dirac"
-			},
-			{
-				"command": "dirac.jupyterGenerateCell",
-				"title": "Generate Jupyter Cell with Dirac",
-				"category": "Dirac",
-				"icon": "$(sparkle)"
-			},
-			{
-				"command": "dirac.jupyterExplainCell",
-				"title": "Explain Jupyter Cell with Dirac",
-				"category": "Dirac",
-				"icon": "$(question)"
-			},
-			{
-				"command": "dirac.jupyterImproveCell",
-				"title": "Improve Jupyter Cell with Dirac",
-				"category": "Dirac",
-				"icon": "$(lightbulb)"
-			},
-			{
-				"command": "dirac.openWalkthrough",
-				"title": "Open Walkthrough",
-				"category": "Dirac"
-			},
-			{
-				"command": "dirac.reconstructTaskHistory",
-				"title": "Reconstruct Task History",
-				"category": "Dirac"
-			},
-			{
-				"command": "dirac.reviewComment.reply",
-				"title": "Reply",
-				"category": "Dirac",
-				"enablement": "!commentIsEmpty"
-			},
-			{
-				"command": "dirac.reviewComment.addToChat",
-				"title": "Add to Dirac Chat",
-				"category": "Dirac",
-				"icon": "$(link-external)"
-			}
-		],
-		"keybindings": [
-			{
-				"command": "editor.action.submitComment",
-				"key": "enter",
-				"when": "commentEditorFocused && commentController == dirac-ai-review && !commentIsEmpty"
-			},
-			{
-				"command": "dirac.addToChat",
-				"key": "cmd+'",
-				"mac": "cmd+'",
-				"win": "ctrl+'",
-				"linux": "ctrl+'",
-				"when": "editorHasSelection"
-			},
-			{
-				"command": "dirac.generateGitCommitMessage",
-				"when": "config.git.enabled && scmProvider == git"
-			},
-			{
-				"command": "dirac.focusChatInput",
-				"key": "cmd+'",
-				"mac": "cmd+'",
-				"win": "ctrl+'",
-				"linux": "ctrl+'",
-				"when": "!editorHasSelection"
-			}
-		],
-		"menus": {
-			"view/title": [
-				{
-					"command": "dirac.plusButtonClicked",
-					"group": "navigation@1",
-					"when": "view == dirac.SidebarProvider"
-				},
-				{
-					"command": "dirac.historyButtonClicked",
-					"group": "navigation@3",
-					"when": "view == dirac.SidebarProvider"
-				},
-				{
-					"command": "dirac.settingsButtonClicked",
-					"group": "navigation@6",
-					"when": "view == dirac.SidebarProvider"
-				}
-			],
-			"editor/context": [
-				{
-					"command": "dirac.addToChat",
-					"group": "navigation",
-					"when": "editorHasSelection"
-				}
-			],
-			"terminal/context": [
-				{
-					"command": "dirac.addTerminalOutputToChat",
-					"group": "navigation"
-				}
-			],
-			"scm/title": [
-				{
-					"command": "dirac.generateGitCommitMessage",
-					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && !dirac.isGeneratingCommit"
-				},
-				{
-					"command": "dirac.abortGitCommitMessage",
-					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && dirac.isGeneratingCommit"
-				}
-			],
-			"notebook/toolbar": [
-				{
-					"command": "dirac.jupyterGenerateCell",
-					"group": "navigation/add@1",
-					"when": "notebookType == 'jupyter-notebook'"
-				}
-			],
-			"notebook/cell/title": [
-				{
-					"command": "dirac.jupyterExplainCell",
-					"group": "inline@1",
-					"when": "notebookType == 'jupyter-notebook'"
-				},
-				{
-					"command": "dirac.jupyterImproveCell",
-					"group": "inline@2",
-					"when": "notebookType == 'jupyter-notebook'"
-				}
-			],
-			"commandPalette": [
-				{
-					"command": "dirac.generateGitCommitMessage",
-					"when": "config.git.enabled && !dirac.isGeneratingCommit"
-				},
-				{
-					"command": "dirac.abortGitCommitMessage",
-					"when": "config.git.enabled && dirac.isGeneratingCommit"
-				},
-				{
-					"command": "dirac.reviewComment.reply",
-					"when": "false"
-				}
-			],
-			"comments/commentThread/context": [
-				{
-					"command": "dirac.reviewComment.reply",
-					"group": "inline",
-					"when": "commentController == dirac-ai-review"
-				}
-			],
-			"comments/commentThread/title": [
-				{
-					"command": "dirac.reviewComment.addToChat",
-					"group": "inline",
-					"when": "commentController == dirac-ai-review"
-				}
-			]
-		},
-		"configuration": {
-			"title": "Dirac",
-			"properties": {}
-		}
-	},
 	"scripts": {
-		"vscode:prepublish": "npm run package",
-		"compile": "npm run check-types && npm run lint && node esbuild.mjs",
 		"compile-standalone": "npm run check-types && npm run lint && node esbuild.mjs --standalone",
 		"compile-standalone-npm": "npm run protos && npm run check-types && npm run lint && node esbuild.mjs --standalone",
 		"cli:link": "cd cli && npm run link",
@@ -365,11 +49,6 @@
 		"cli:dev": "cd cli && npm run dev",
 		"postcompile-standalone": "node scripts/package-standalone.mjs",
 		"postcompile-standalone-npm": "node scripts/package-npm.mjs",
-		"dev": "npm run protos && npm run watch",
-		"watch": "npx npm-run-all -p watch:*",
-		"watch:esbuild": "node esbuild.mjs --watch",
-		"watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-		"package": "npm run check-types && npm run build:webview && npm run lint && node esbuild.mjs --production",
 		"protos": "node scripts/build-proto.mjs",
 		"protos-python": "node scripts/build-python-proto.mjs",
 		"download-ripgrep": "node scripts/download-ripgrep.mjs",
@@ -386,33 +65,22 @@
 		"format:fix": "biome check --changed --no-errors-on-unmatched --files-ignore-unknown=true --write",
 		"fix:all": "biome check --no-errors-on-unmatched --files-ignore-unknown=true --write --diagnostic-level=error --unsafe",
 		"ci:check-all": "npx npm-run-all -p check-types lint format",
-		"ci:build": "npm run protos && npm run build:webview && node esbuild.mjs && npm run compile-tests",
-		"pretest": "npm run compile && npm run compile-tests && npm run compile-standalone && npm run lint",
-		"test": "npx npm-run-all test:unit test:integration",
-		"test:integration": "vscode-test",
+		"ci:build": "npm run protos && npm run build:webview && node esbuild.mjs --standalone && npm run compile-tests",
+		"pretest": "npm run compile-standalone && npm run compile-tests && npm run lint",
+		"test": "npm run test:unit",
 		"test:unit": "cross-env TS_NODE_PROJECT=./tsconfig.unit-test.json mocha",
-		"test:coverage": "vscode-test --coverage",
 		"test:sca-server": "npx tsx watch scripts/test-standalone-core-api-server.ts",
 		"test:tp-orchestrator": "npx tsx scripts/testing-platform-orchestrator.ts",
-		"e2e": "playwright test -c playwright.config.ts",
-		"test:e2e:build": "vsce package --allow-package-secrets sendgrid --out dist/e2e.vsix",
-		"test:e2e": "playwright install && npm run test:e2e:build && node src/test/e2e/utils/build.mjs && playwright test",
-		"test:e2e:optimal": "npm run test:e2e:build && node src/test/e2e/utils/build.mjs && playwright test",
 		"test:e2e:cli:tui": "cd tests/e2e/cli && tui-test",
-		"test:e2e:ui": "npx tsx scripts/interactive-playwright.ts",
 		"install:all": "npm install && cd webview-ui && npm install",
 		"dev:webview": "cd webview-ui && npm run dev",
 		"build:webview": "cd webview-ui && npm run build",
 		"test:webview": "cd webview-ui && npm run test",
-		"publish:marketplace": "vsce publish --allow-package-secrets sendgrid && ovsx publish",
-		"publish:marketplace:prerelease": "vsce publish --allow-package-secrets sendgrid --pre-release && ovsx publish --pre-release",
-		"publish:marketplace:nightly": "node ./scripts/publish-nightly.mjs",
 		"prepare": "npx husky",
 		"docs": "cd docs && npm run dev",
 		"docs:check-links": "cd docs && npm run check",
 		"docs:rename-file": "cd docs && npm run rename",
 		"report-issue": "node scripts/report-issue.js",
-		"storybook": "cd webview-ui && npm run storybook",
 		"cli:unlink": "cd cli && npm run unlink",
 		"eval:smoke:build": "npm run cli:build && npm run cli:link",
 		"eval:smoke:run": "npx tsx evals/smoke-tests/run-smoke-tests.ts",
@@ -447,10 +115,6 @@
 		"@types/should": "^11.2.0",
 		"@types/sinon": "^17.0.4",
 		"@types/turndown": "^5.0.5",
-		"@types/vscode": "1.84.0",
-		"@vscode/test-cli": "^0.0.10",
-		"@vscode/test-electron": "^2.5.2",
-		"@vscode/vsce": "^3.6.0",
 		"c8": "^10.1.3",
 		"chai": "^4.3.10",
 		"chalk": "5.6.2",
@@ -514,7 +178,6 @@
 		"@tailwindcss/vite": "^4.1.14",
 		"@types/sql.js": "^1.4.10",
 		"@types/uuid": "^10.0.0",
-		"@vscode/codicons": "^0.0.36",
 		"archiver": "^7.0.1",
 		"aws4fetch": "^1.0.20",
 		"axios": "^1.12.0",
@@ -567,7 +230,6 @@
 		"ulid": "^2.4.0",
 		"undici": "^7.16.0",
 		"uuid": "^11.1.0",
-		"vscode-uri": "^3.1.0",
 		"web-tree-sitter": "^0.22.6",
 		"zod": "^3.24.2"
 	},
@@ -585,7 +247,6 @@
 		"exclude": [
 			"**/testing-platform/**",
 			"**/webview-ui/**",
-			"**/.vscode-test/**",
 			"**/node_modules/**",
 			"node_modules",
 			"**/dist-standalone/src/**",
