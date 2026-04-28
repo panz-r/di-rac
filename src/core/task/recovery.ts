@@ -194,6 +194,44 @@ export class RecoveryEngine {
 					return searchResult
 				},
 			},
+			PathEscapeError: {
+				domain: ErrorDomain.ACTION,
+				category: ErrorCategory.PERMANENT,
+				tier: "recoverable_logic",
+				maxRetries: 1,
+				handler: async (toolName, input: any, error, _attempt, execute) => {
+					// Handle cases where the LLM provides an absolute path that is inside the workspace
+					const rawPath = input.path || input.file_path || input.absolutePath
+					if (!rawPath || typeof rawPath !== "string") return null
+
+					try {
+						const path = await import("path")
+						const fs = await import("fs/promises")
+						const workspaceRoot = process.cwd()
+
+						// Standardize the path
+						const resolvedPath = path.resolve(workspaceRoot, rawPath)
+
+						// If the path starts with the workspace root, it's a safe absolute path that can be made relative
+						if (resolvedPath.startsWith(workspaceRoot + path.sep)) {
+							const relativePath = path.relative(workspaceRoot, resolvedPath)
+							const newInput = { ...input }
+
+							// Update whatever path parameter was used
+							if (input.path) newInput.path = relativePath
+							if (input.file_path) newInput.file_path = relativePath
+							if (input.absolutePath) newInput.absolutePath = relativePath
+
+							// Retry the tool with the relative path
+							return await execute(toolName as any, newInput)
+						}
+					} catch (e) {
+						// Fall through to escalation
+					}
+
+					return null // Escalate to LLM
+				},
+			},
 			FILE_NOT_FOUND: {
 				domain: ErrorDomain.MEMORY,
 				category: ErrorCategory.PERMANENT,

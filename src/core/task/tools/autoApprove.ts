@@ -150,13 +150,20 @@ export class AutoApprove {
 			} else {
 				// Single-root: use existing logic
 				const cwd = await getCwd(getDesktopDir())
-				// When called with a string cwd, resolveWorkspacePath returns a string
-				const absolutePath = resolveWorkspacePath(
-					cwd,
-					autoApproveActionpath,
-					"AutoApprove.shouldAutoApproveToolWithPath",
-				) as string
-				isLocalRead = isLocatedInPath(cwd, absolutePath)
+				try {
+					// When called with a string cwd, resolveWorkspacePath returns a string
+					const absolutePath = resolveWorkspacePath(
+						cwd,
+						autoApproveActionpath,
+						"AutoApprove.shouldAutoApproveToolWithPath",
+					) as string
+					isLocalRead = isLocatedInPath(cwd, absolutePath)
+				} catch (e) {
+					// Catch PathEscapeError and return false. 
+					// This prevents partial absolute path fragments during streaming 
+					// from aborting the entire tool call.
+					isLocalRead = false
+				}
 			}
 		} else {
 			// If we do not get a path for some reason, default to a (safer) false return

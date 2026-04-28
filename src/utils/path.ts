@@ -133,14 +133,22 @@ export async function getWorkspacePath(defaultCwd = ""): Promise<string> {
 export async function isLocatedInWorkspace(pathToCheck = ""): Promise<boolean> {
 	const workspacePaths = (await HostProvider.workspace.getWorkspacePaths({})).paths
 	for (const workspacePath of workspacePaths) {
-		const resolvedPathResult = workspaceResolver.resolveWorkspacePath(
-			workspacePath,
-			pathToCheck,
-			"Utils.path.isLocatedInWorkspace",
-		)
-		const resolvedPath = typeof resolvedPathResult === "string" ? resolvedPathResult : resolvedPathResult.absolutePath
-		if (isLocatedInPath(workspacePath, resolvedPath)) {
-			return true
+		try {
+			const resolvedPathResult = workspaceResolver.resolveWorkspacePath(
+				workspacePath,
+				pathToCheck,
+				"Utils.path.isLocatedInWorkspace",
+			)
+			const resolvedPath = typeof resolvedPathResult === "string" ? resolvedPathResult : resolvedPathResult.absolutePath
+			if (isLocatedInPath(workspacePath, resolvedPath)) {
+				return true
+			}
+		} catch (e) {
+			// Catch PathEscapeError (or any resolution error) and return false.
+			// This is critical during streaming where partial absolute paths (e.g. "/v/rust")
+			// might be resolved before they are fully formed, triggering an escape error
+			// that would otherwise abort the tool execution mid-stream.
+			continue
 		}
 	}
 	return false
