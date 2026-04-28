@@ -83,6 +83,9 @@ export class RecoveryEngine {
 	// Phase 5: Advanced Ledger and Session Skips
 	private sessionSkips = new Set<string>()
 
+	// Phase 11: Proactive Safeguards
+	private completionAttemptCount: number = 0
+
 	constructor() {
 		this.initializeRecoveryTable()
 		this.loadRecoveryMemory()
@@ -231,8 +234,13 @@ export class RecoveryEngine {
 			const mutationTools = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.BASH]
 			const verificationTools = [DiracDefaultTool.BASH_RESTRICTED, DiracDefaultTool.DIAGNOSTICS_SCAN]
 			
-			if (mutationTools.includes(toolName as any) && taskState.currentTaskPhase === "exploration") {
-				taskState.currentTaskPhase = "editing"
+			if (mutationTools.includes(toolName as any)) {
+				if (taskState.currentTaskPhase === "exploration") {
+					taskState.currentTaskPhase = "editing"
+				}
+				if (toolName === DiracDefaultTool.BASH) {
+					taskState.didExecuteCommand = true
+				}
 			} else if (verificationTools.includes(toolName as any) && taskState.currentTaskPhase === "editing") {
 				taskState.currentTaskPhase = "verification"
 			}
@@ -246,6 +254,24 @@ export class RecoveryEngine {
 					// We don't block here, but detectStagnation will use this
 				}
 			}
+		}
+
+		// Phase 11: Premature Success Detection
+		if (toolName === DiracDefaultTool.ATTEMPT) {
+			const hasMadeChanges = taskState.didEditFile || taskState.didExecuteCommand
+			if (!hasMadeChanges && this.completionAttemptCount === 0) {
+				this.completionAttemptCount++
+				this.updateAuditChain(toolName, "PREMATURE_COMPLETION", "BLOCKED")
+				return this.formatStructuredEscalation(
+					toolName,
+					block.params,
+					"PREMATURE_COMPLETION",
+					"You are attempting to complete the task without having made any modifications or running any verification commands.",
+					"If the task requires changes, please perform them before finishing. If this is intentional, you may proceed by calling attempt_completion again."
+				)
+			}
+			// Reset or allow if it's the second attempt or changes were made
+			this.completionAttemptCount = 0
 		}
 
 		// 1. Paradoxical Ranges Check
@@ -947,7 +973,7 @@ export class RecoveryEngine {
 		const lowerMsg = errorMessage.toLowerCase()
 		if (lowerMsg.includes("anchor") || lowerMsg.includes("line")) return "ACTION"
 		if (lowerMsg.includes("symbol") || lowerMsg.includes("not found") || lowerMsg.includes("enoent")) return "MEMORY"
-		if (lowerMsg.includes("timeout") || lowerMsg.includes("rate limit") || lowerMsg.includes("lock")) return "SYSTEM"
+		if (lowerMsg.includes("timeout") || lowerMsg.includes("rate limit") || lowerMsg.includes("lock") || lowerMsg.includes("access") || lowerMsg.includes("perm")) return "SYSTEM"
 		return "PLANNING"
 	}
 
@@ -961,6 +987,9 @@ export class RecoveryEngine {
 		}
 		if (lowerMsg.includes("not found") || lowerMsg.includes("does not exist") || lowerMsg.includes("invalid") || lowerMsg.includes("mismatch")) {
 			return "Semantic Mismatch"
+		}
+		if (lowerMsg.includes("access") || lowerMsg.includes("perm") || lowerMsg.includes("denied")) {
+			return "Permission Denied"
 		}
 		return "Unknown"
 	}
@@ -1050,6 +1079,15 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 				// Phase 5: Phase Tracking Nudge
 				if (recentReadOnlyCount >= 5 && taskState.currentTaskPhase === "exploration") {
 					const touchedFiles = Array.from(taskState.filesTouchedInCurrentTurn)
+					
+					// Phase 11: Specification Drift Detection (Turn Threshold)
+					if (taskState.totalToolCallCount > 30) {
+						return {
+							stagnationDetected: true,
+							summary: `Extended exploration phase detected (${taskState.totalToolCallCount} total calls). Potential specification drift.`
+						}
+					}
+
 					return {
 						stagnationDetected: true,
 						summary: `Extended exploration phase detected (${recentReadOnlyCount} calls, ${touchedFiles.length} files). If you have enough context, please proceed to editing.`

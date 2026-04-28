@@ -91,6 +91,7 @@ export class TaskState {
 	symbolIndexMtimes: Map<string, number> = new Map() // maps relative path to last indexed mtime
 	currentTaskPhase: "exploration" | "editing" | "verification" = "exploration"
 	turnTokenEstimates: number = 0
+	didExecuteCommand: boolean = false
 }
 
 export interface SymbolIndexEntry {
