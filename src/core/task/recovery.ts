@@ -86,6 +86,7 @@ export class RecoveryEngine {
 
 	// Phase 11: Proactive Safeguards
 	private completionAttemptCount: number = 0
+	private stagnationHintCount: number = 0
 
 	constructor() {
 		this.initializeRecoveryTable()
@@ -333,21 +334,19 @@ export class RecoveryEngine {
 			}
 		}
 
-		// 2. Stale Context Check
+		// 2. Stale Context Check (Phase 8: Block -> Phase 15 Hardening: Silent Re-read)
 		if (toolName === DiracDefaultTool.EDIT_FILE && typeof filePath === "string") {
 			const lastAccess = taskState.fileLastAccessToolIndex.get(filePath)
 			const currentCount = taskState.totalToolCallCount
 			
 			if (lastAccess !== undefined && (currentCount - lastAccess) > 15) {
-				// Stage III Policy: Stale Context Block
-				this.updateAuditChain(toolName, "STALE_CONTEXT", "BLOCKED")
-				return this.formatStructuredEscalation(
-					toolName,
-					block.params,
-					"STALE_CONTEXT",
-					`The context for '${filePath}' is stale (last read ${currentCount - lastAccess} tool calls ago).`,
-					`Please use read_file (detail="outline" or normal) to refresh your context before attempting an edit.`
-				)
+				// Stage III Policy: Silent Context Refresh
+				this.updateAuditChain(toolName, "STALE_CONTEXT", "SILENT_REFRESH")
+				await dispatch(DiracDefaultTool.FILE_READ, {
+					path: filePath,
+					detail: "outline"
+				})
+				// Success! Context refreshed. Proceeding to execution.
 			}
 		}
 
@@ -816,7 +815,22 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		// 2. Check Stagnation (L2 Backtracking)
 		const stagnation = this.detectStagnation(toolName, args, taskState)
 		if (stagnation) {
-			this.updateAuditChain(toolName, "STAGNATION_DETECTED", "BLOCKED")
+			this.stagnationHintCount++
+			
+			// Hard block circuit breaker (after 3 consecutive hints)
+			if (this.stagnationHintCount >= 3) {
+				this.updateAuditChain(toolName, "STAGNATION_CIRCUIT_OPEN", "BLOCKED")
+				return this.formatStructuredEscalation(
+					toolName,
+					args,
+					"STAGNATION_LIMIT",
+					`Loop protection triggered after 3 hints. ${stagnation.summary}`,
+					"Please provide a higher-level summary of your goal or ask the user for a new direction."
+				)
+			}
+
+			// L2 Nudge: Inject a structured hint into context, but do NOT block exploration
+			this.updateAuditChain(toolName, "STAGNATION_HINT", "NUDGE")
 			const isExactRepeat = stagnation.summary.includes("identical")
 			const isAlternating = stagnation.summary.includes("Alternating")
 			const isCircular = stagnation.summary.includes("Circular")
@@ -830,14 +844,29 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				nextSteps = "You have been exploring without making progress. Consider switching to editing or refine your search."
 			}
 
-			return this.formatStructuredEscalation(
+			const hintResponse = this.formatStructuredEscalation(
 				toolName,
 				args,
 				"STAGNATION_DETECTED",
 				stagnation.summary,
 				nextSteps
 			)
+
+			// If it's a read-only tool, we can allow it to proceed BUT prepend the hint
+			const readOnlyTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.GET_FUNCTION, DiracDefaultTool.EXPAND_SYMBOL]
+			if (readOnlyTools.includes(toolName as any)) {
+				const actualResult = await dispatch(toolName, args)
+				if (Array.isArray(actualResult) && Array.isArray(hintResponse)) {
+					return [...hintResponse, ...actualResult] as any
+				}
+				return hintResponse // Fallback to just hint if types mismatch
+			}
+
+			return hintResponse // Hard block for non-read tools
 		}
+
+		// Reset hint count on progress (non-stagnant call)
+		this.stagnationHintCount = 0
 
 		// Record the call for future stagnation checks
 		this.recordCall(toolName, args)
