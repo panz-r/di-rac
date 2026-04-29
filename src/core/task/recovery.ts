@@ -87,12 +87,15 @@ export class RecoveryEngine {
 
 	// Phase 5: Advanced Ledger and Session Skips
 	private sessionSkips = new Set<string>()
+	private contextOverflowCount: number = 0
 
 	// Phase 11: Proactive Safeguards
 	private completionAttemptCount: number = 0
 	private stagnationHintCounts = new Map<string, number>()
 		private nudgedThisTurn = new Set<string>()
 		private consecutiveProgressCount: number = 0
+		private nudgeOutcomes = new Map<string, { toolName: string, turnWhenNudged: number }>()
+		private currentTurnNumber: number = 0
 
 	constructor() {
 		this.initializeRecoveryTable()
@@ -209,7 +212,19 @@ export class RecoveryEngine {
 		}
 	}
 
+	private _recoveryMemoryTimer: ReturnType<typeof setTimeout> | null = null
 	private async saveRecoveryMemory() {
+		// Debounced: coalesce rapid calls within 2 seconds
+		if (this._recoveryMemoryTimer) {
+			return // Already scheduled, skip
+		}
+		this._recoveryMemoryTimer = setTimeout(() => {
+			this._recoveryMemoryTimer = null
+			this._doSaveRecoveryMemory()
+		}, 2000)
+	}
+
+	private async _doSaveRecoveryMemory() {
 		const fs = await import("fs/promises")
 		const path = await import("path")
 
@@ -240,6 +255,7 @@ export class RecoveryEngine {
 		this.currentTurnRetries = 0
 		this.stagnationHintCounts.clear()
 			this.nudgedThisTurn.clear()
+			this.currentTurnNumber++
 	}
 
 	public getTelemetry() {
@@ -375,8 +391,21 @@ export class RecoveryEngine {
 		if (toolName === DiracDefaultTool.EDIT_FILE && typeof filePath === "string") {
 			const lastAccess = taskState.fileLastAccessToolIndex.get(filePath)
 			const currentCount = taskState.totalToolCallCount
-			
-			if (lastAccess !== undefined && (currentCount - lastAccess) > 15) {
+			let needsRefresh = lastAccess !== undefined && (currentCount - lastAccess) > 15
+
+			// Also check if file changed on disk since last read
+			if (!needsRefresh && typeof filePath === "string") {
+				try {
+					const fs = await import("fs/promises")
+					const stats = await fs.stat(filePath)
+					const lastReadMtime = taskState.symbolIndexMtimes.get(filePath) || 0
+					if (stats.mtimeMs > lastReadMtime) {
+						needsRefresh = true
+					}
+				} catch { /* ignore stat errors */ }
+			}
+
+			if (needsRefresh) {
 				// Stage III Policy: Silent Context Refresh
 				this.updateAuditChain(toolName, "STALE_CONTEXT", "SILENT_REFRESH")
 				await dispatch(DiracDefaultTool.FILE_READ, {
@@ -468,12 +497,7 @@ export class RecoveryEngine {
 			}
 
 			// Phase 8: Track symbol freshness
-			if (toolName === DiracDefaultTool.SEARCH_SYMBOLS) {
-				// Global search operation - for simplicity, we mark all current indexed files as potentially refreshed
-				// or better, we let the individual expand_symbol check handle it.
-				// For now, clear the mtime map to force re-validation on next expand.
-				taskState.symbolIndexMtimes.clear()
-			} else if (toolName === DiracDefaultTool.FILE_READ && params?.detail === "outline") {
+			if (toolName === DiracDefaultTool.FILE_READ && params?.detail === "outline") {
 				try {
 					const fs = await import("fs/promises")
 					const stats = await fs.stat(filePath)
@@ -845,6 +869,18 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				tier: "recoverable_logic",
 				maxRetries: 1,
 				handler: async (toolName, input, _error, _attempt, execute) => {
+					this.contextOverflowCount++
+					if (this.contextOverflowCount > 2) {
+						this.updateAuditChain(toolName, "CONTEXT_OVERFLOW_LOOP", "SKIPPED")
+						return this.formatStructuredEscalation(
+							toolName,
+							input,
+							"CONTEXT_OVERFLOW",
+							"Context overflow recovery attempted 2+ times already.",
+							"Condensation is not freeing enough space. Please reduce scope or ask the user to intervene."
+						)
+					}
+
 					// Phase 14: Context Pressure Recovery
 					this.updateAuditChain(toolName, "CONTEXT_PRESSURE", "SILENT_CONDENSE")
 					
@@ -855,6 +891,48 @@ Some line numbers may have shifted. Please locate your target function in the ne
 					// We check if the result looks like a success or a summary
 					return await execute(toolName as any, input)
 				}
+			},
+			CONTENT_MISMATCH: {
+				domain: ErrorDomain.ACTION,
+				category: ErrorCategory.PERMANENT,
+				tier: "recoverable_logic",
+				maxRetries: 1,
+				handler: async (toolName, input: any, _error, _attempt, execute) => {
+					const filePath = input.file_path || input.path
+					if (!filePath) return null
+
+					const readResult = await execute(DiracDefaultTool.FILE_READ, {
+						path: filePath,
+						detail: "outline"
+					})
+
+					if (Array.isArray(readResult)) {
+						const hint = "[SYSTEM: CONTENT_MISMATCH_RECOVERY] The file content did not match the expected anchor. I have fetched the updated structural outline below.\nLocate your target in the new outline and issue a new edit with the correct line numbers."
+						const textBlock = readResult.find(b => b.type === "text")
+						if (textBlock && (textBlock as any).text) {
+							(textBlock as any).text = `${hint}\n\n${(textBlock as any).text}`
+						}
+					}
+					return readResult
+				},
+			},
+			EACCES: {
+				domain: ErrorDomain.SYSTEM,
+				category: ErrorCategory.PERMANENT,
+				tier: "input_error",
+				maxRetries: 0,
+				handler: async (_toolName, _input, _error, _attempt, _execute) => {
+					return null // Escalate: permission errors need user action
+				},
+			},
+			PERMISSION_DENIED: {
+				domain: ErrorDomain.SYSTEM,
+				category: ErrorCategory.PERMANENT,
+				tier: "input_error",
+				maxRetries: 0,
+				handler: async (_toolName, _input, _error, _attempt, _execute) => {
+					return null // Escalate: permission errors need user action
+				},
 			}
 		}
 	}
@@ -909,6 +987,19 @@ Some line numbers may have shifted. Please locate your target function in the ne
 			}
 			this.nudgedThisTurn.add(stagKey)
 
+			// Reflection prompt on 2nd nudge: force the model to reason before hard block
+			if (currentCount === 2) {
+				this.updateAuditChain(toolName, "STAGNATION_HINT", "NUDGE_REFLECT")
+				this.telemetry.nudgeCount++
+				return this.formatStructuredEscalation(
+					toolName,
+					args,
+					"STAGNATION_DETECTED",
+					stagnation.summary,
+					"[REFLECTION REQUIRED] You've attempted this action twice without progress.\n1. What exactly did you try?\n2. What was the result?\n3. What alternative approach could you take now?\nAfter answering, proceed with a different tool or strategy."
+				)
+			}
+
 			// Hard block circuit breaker (after 3 consecutive hints across turns)
 			if (currentCount >= 3) {
 				this.updateAuditChain(toolName, "STAGNATION_CIRCUIT_OPEN", "BLOCKED")
@@ -925,17 +1016,28 @@ Some line numbers may have shifted. Please locate your target function in the ne
 			// L2 Nudge: Inject a structured hint into context, but do NOT block exploration
 			this.updateAuditChain(toolName, "STAGNATION_HINT", "NUDGE")
 			this.telemetry.nudgeCount++
+			this.nudgeOutcomes.set(stagKey, { toolName, turnWhenNudged: this.currentTurnNumber })
 			const isExactRepeat = stagnation.summary.includes("identical")
 			const isAlternating = stagnation.summary.includes("Alternating")
 			const isCircular = stagnation.summary.includes("Circular")
 			
-			let nextSteps = "You are repeating the same action. Please reconsider your approach or check the tool parameters."
+			let nextSteps: string
 			if (isCircular) {
-				nextSteps = "Circular strategy loop detected. Please break the cycle, summarize what you've learned, and pivot to a new approach."
+				nextSteps = "Circular strategy loop detected. Break the cycle: summarize what you've learned and pivot to a completely different approach."
 			} else if (isAlternating) {
-				nextSteps = "You are alternating between tools without progress. Please pivot to a new strategy or summarize your current state."
+				nextSteps = "Alternating between tools without progress. Pick one approach and commit to it, or summarize your findings so far."
+			} else if (toolName === DiracDefaultTool.BASH || toolName === DiracDefaultTool.BASH_RESTRICTED) {
+				nextSteps = "Shell commands are looping. Try search_symbols or read_file with detail=outline to gather information without the shell."
+			} else if (toolName === DiracDefaultTool.FILE_READ) {
+				nextSteps = "Repeated reads of the same region. Try read_file with detail=skeleton for signatures, or use --page next to advance."
+			} else if (toolName === DiracDefaultTool.SEARCH || toolName === DiracDefaultTool.LIST_FILES) {
+				nextSteps = "Repeated searching without progress. Use repo_map for a structural overview, or expand a known symbol directly."
+			} else if (toolName === DiracDefaultTool.EDIT_FILE) {
+				nextSteps = "Edits keep failing. Read the file with detail=outline to refresh anchors before editing again."
 			} else if (!isExactRepeat) {
-				nextSteps = "You have been exploring without making progress. Consider switching to editing or refine your search."
+				nextSteps = "Exploration without progress. Switch to editing if you have enough context, or refine your search target."
+			} else {
+				nextSteps = "Repeated identical action. Reconsider your approach or check tool parameters for mistakes."
 			}
 
 			const hintResponse = this.formatStructuredEscalation(
@@ -975,6 +1077,13 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				this.updateAuditChain(toolName, "NONE", "SUCCESS")
 				this.telemetry.successCount++
 				this.consecutiveProgressCount++
+				// Item 6: Check if this success resolves a prior nudge
+				for (const [nudgeKey, outcome] of this.nudgeOutcomes) {
+					if (this.currentTurnNumber - outcome.turnWhenNudged <= 2 && nudgeKey !== `${toolName}:${this.fingerprintToolCall(toolName, args)}`) {
+						this.updateAuditChain(outcome.toolName, "NUDGE_SUCCESSFUL", "PROGRESS")
+						this.nudgeOutcomes.delete(nudgeKey)
+					}
+				}
 				if (this.consecutiveProgressCount >= 2) {
 					this.stagnationHintCounts.clear()
 					this.consecutiveProgressCount = 0
@@ -1258,9 +1367,12 @@ Some line numbers may have shifted. Please locate your target function in the ne
 	private extractErrorCode(result: any): string | null {
 		// Heuristic to extract error code from tool response
 		if (result && Array.isArray(result) && result.length > 0) {
-			const lastBlock = result[result.length - 1]
-			if (lastBlock.type === "text" && lastBlock.text.includes("Error")) {
-				const text = lastBlock.text
+			// Check ALL text blocks, not just the last one
+			const textBlocks = result.filter((b: any) => b.type === "text" && b.text)
+			for (const block of textBlocks) {
+				const text = (block as any).text
+				if (!text.includes("Error") && !text.includes("error") && !text.includes("denied") && !text.includes("mismatch")) continue
+
 				if (text.includes("ENOENT")) return "FILE_NOT_FOUND"
 				if (text.includes("ANCHOR_NOT_FOUND") || text.includes("anchor.notFound")) return "ANCHOR_NOT_FOUND"
 				if (text.includes("EISDIR")) return "EISDIR"
@@ -1271,9 +1383,13 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				if (text.includes("maximum context") || text.includes("too many tokens") || text.includes("context length")) return "CONTEXT_OVERFLOW"
 				if (text.includes("No files found") || text.includes("0 symbols found")) return "EMPTY_SEARCH_RESULTS"
 				if (text.includes("blocked by the .diracignore file")) return "DIRAC_IGNORE_BLOCK"
-				
-				return "GENERIC_ERROR" // Fallback if it looks like an error but no code is found
+				if (text.includes("content.mismatch") || text.includes("Content mismatch") || text.includes("CONTENT_MISMATCH")) return "CONTENT_MISMATCH"
+				if (text.includes("file has changed since") || text.includes("FILE_CHANGED_SINCE_READ") || text.includes("file changed since last read")) return "FILE_CHANGED_SINCE_READ"
+				if (text.includes("EACCES") || text.includes("permission denied") || text.includes("Permission denied")) return "EACCES"
+				// Only return GENERIC_ERROR if the block is clearly an error message (not just mentioning 'error')
+				if (text.includes("Error:") || text.match(/^Error\b/) || text.includes("failed:") || text.includes("Exception")) return "GENERIC_ERROR"
 			}
+			return null // No recognizable error pattern found
 		}
 		return null
 	}
@@ -1376,7 +1492,14 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 
 	private detectStagnation(toolName: string, args: unknown, taskState?: any): StagnationResult | null {
 		// Current call was already recorded in callHistory before this method runs.
-		const recent = this.callHistory.slice(-8) // Last 8 calls (includes current)
+		// Adaptive window: shrink when low diversity (tight loops), widen for edit-heavy sessions
+		const lookback = this.callHistory.slice(-10)
+		const uniqueTools = new Set(lookback.map(c => c.tool)).size
+		const editTools = lookback.filter(c => c.tool === DiracDefaultTool.EDIT_FILE || c.tool === DiracDefaultTool.FILE_NEW).length
+		let windowSize = 8
+		if (uniqueTools <= 2 && lookback.length >= 5) windowSize = 5 // tight loop: detect faster
+		else if (editTools >= lookback.length * 0.7) windowSize = 10 // edit-heavy: allow longer runs
+		const recent = this.callHistory.slice(-windowSize)
 		const fps = recent.map(c => `${c.tool}:${c.fingerprint}`)
 		const len = fps.length
 
