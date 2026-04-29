@@ -272,6 +272,29 @@ export class RecoveryEngine {
 		if (rawPath && typeof rawPath === "string") {
 			try {
 				const path = await import("path")
+				
+				// Phase 15 Hardening: Silently redirect /tmp to .dirac-tmp in project root
+				if (rawPath.startsWith("/tmp")) {
+					const relativeFromTmp = rawPath.slice(4).replace(/^[\/\\]+/, "") // remove leading slash
+					const redirectedPath = path.join(".dirac-tmp", relativeFromTmp)
+					
+					// Mutate the original block params for silent redirection
+					if (params.path) params.path = redirectedPath
+					if (params.file_path) params.file_path = redirectedPath
+					if (params.absolutePath) params.absolutePath = redirectedPath
+					
+					this.updateAuditChain(toolName, "PATH_REDIRECTED", "SILENT_FIX")
+					rawPath = redirectedPath
+				}
+
+				// Phase 15 Hardening: Silently redirect /tmp in BASH commands
+				if (toolName === DiracDefaultTool.BASH && params.command && typeof params.command === "string") {
+					if (params.command.includes("/tmp")) {
+						params.command = params.command.replace(/\/tmp\b/g, ".dirac-tmp")
+						this.updateAuditChain(toolName, "CMD_REDIRECTED", "SILENT_FIX")
+					}
+				}
+
 				filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath)
 			} catch {
 				// Fallback to raw if path module fails

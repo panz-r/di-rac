@@ -212,6 +212,23 @@ class DiracTempManagerImpl {
 			this.cleanupIntervalId = null
 		}
 	}
+
+	/**
+	 * Clear the project-local temp directory (.dirac-tmp).
+	 *
+	 * @param cwd Current working directory (project root)
+	 */
+	async clearProjectTempDir(cwd: string): Promise<void> {
+		try {
+			const projectTempDir = path.join(cwd, ".dirac-tmp")
+			if (fs.existsSync(projectTempDir)) {
+				await fs.promises.rm(projectTempDir, { recursive: true, force: true })
+				Logger.info(`Cleared project temp directory: ${projectTempDir}`)
+			}
+		} catch (error) {
+			Logger.error("Failed to clear project temp directory", error)
+		}
+	}
 }
 
 // Export singleton instance

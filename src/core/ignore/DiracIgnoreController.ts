@@ -273,6 +273,11 @@ export class DiracIgnoreController {
 				return true
 			}
 
+			// Support silent /tmp redirection
+			if (relativePath.startsWith(".dirac-tmp")) {
+				return true
+			}
+
 			// Ignore expects paths to be path.relative()'d
 			return !this.ignoreInstance.ignores(relativePath)
 		} catch (_error) {

@@ -79,6 +79,7 @@ async function disposeCliContext(ctx: CliContext): Promise<void> {
 	await HookProcessRegistry.terminateAll()
 	HookDiscoveryCache.getInstance().dispose()
 	DiracTempManager.stopPeriodicCleanup()
+	await DiracTempManager.clearProjectTempDir(process.cwd())
 	await AgentConfigLoader.getInstance().dispose()
 	await disposeTelemetryServices()
 }
