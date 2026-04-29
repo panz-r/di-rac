@@ -2,10 +2,10 @@ import type { ToolUse } from "@core/assistant-message"
 import { JSONParser } from "@streamparser/json"
 import { nanoid } from "nanoid"
 import {
-    DiracAssistantRedactedThinkingBlock,
-    DiracAssistantThinkingBlock,
-    DiracAssistantToolUseBlock,
-    DiracReasoningDetailParam,
+	DiracAssistantRedactedThinkingBlock,
+	DiracAssistantThinkingBlock,
+	DiracAssistantToolUseBlock,
+	DiracReasoningDetailParam,
 } from "@/shared/messages/content"
 import { Session } from "@/shared/services/Session"
 import { DiracDefaultTool } from "@/shared/tools"
@@ -13,7 +13,7 @@ import { DiracDefaultTool } from "@/shared/tools"
 export interface PendingToolUse {
 	id: string
 	name: string
-	input: string
+	inputChunks: string[]
 	parsedInput?: unknown
 	signature?: string
 	jsonParser?: JSONParser
@@ -38,7 +38,7 @@ export interface ReasoningDelta {
 
 export interface PendingReasoning {
 	id?: string
-	content: string
+	contentChunks: string[]
 	signature: string
 	redactedThinking: DiracAssistantRedactedThinkingBlock[]
 	summary: unknown[] | DiracReasoningDetailParam[]
@@ -109,7 +109,7 @@ class ToolUseHandler {
 		}
 
 		if (delta.input) {
-			pending.input += delta.input
+			pending.inputChunks.push(delta.input)
 			try {
 				pending.jsonParser?.write(delta.input)
 			} catch {
@@ -127,11 +127,15 @@ class ToolUseHandler {
 		let input: unknown = {}
 		if (pending.parsedInput != null) {
 			input = pending.parsedInput
-		} else if (pending.input) {
-			try {
-				input = JSON.parse(pending.input)
-			} catch {
-				input = this.extractPartialJsonFields(pending.input)
+		} else {
+			const inputStr = pending.inputChunks.join("")
+			if (inputStr) {
+				try {
+					input = JSON.parse(inputStr)
+				} catch {
+					input = this.extractPartialJsonFields(inputStr)
+					pending.parsedInput = input
+				}
 			}
 		}
 
@@ -161,26 +165,27 @@ class ToolUseHandler {
 	}
 
 	getPartialToolUsesAsContent(): ToolUse[] {
-		const results: ToolUse[] = []
-		const pendingToolUses = this.pendingToolUses.values()
+		if (this.pendingToolUses.size === 0) return []
 
-		for (const pending of pendingToolUses) {
+		const results: ToolUse[] = []
+
+		for (const pending of this.pendingToolUses.values()) {
 			if (!pending.name) {
 				continue
 			}
 
-			// Try to get the most up-to-date parsed input
-			// Priority: parsedInput (from JSONParser) > fallback to manual parsing
 			let input: any = {}
 			if (pending.parsedInput != null) {
 				input = pending.parsedInput
-			} else if (pending.input) {
-				// Try full JSON parse first
-				try {
-					input = JSON.parse(pending.input)
-				} catch {
-					// Fall back to extracting partial fields from incomplete JSON
-					input = this.extractPartialJsonFields(pending.input)
+			} else {
+				const inputStr = pending.inputChunks.join("")
+				if (inputStr) {
+					try {
+						input = JSON.parse(inputStr)
+					} catch {
+						input = this.extractPartialJsonFields(inputStr)
+						pending.parsedInput = input
+					}
 				}
 			}
 
@@ -200,8 +205,8 @@ class ToolUseHandler {
 				call_id: pending.call_id,
 			})
 		}
-		// Ensure all returned tool uses are marked as partial
-		return results.map((t) => ({ ...t, partial: true }))
+
+		return results
 	}
 
 	reset(): void {
@@ -221,16 +226,14 @@ class ToolUseHandler {
 		const pending: PendingToolUse = {
 			id,
 			name,
-			input: "",
+			inputChunks: [],
 			parsedInput: undefined,
 			jsonParser,
-			// Ensure call_id is always set for tracking
 			call_id: callId || id || nanoid(8),
 			signature: undefined,
 		}
 
 		this.pendingToolUses.set(id, pending)
-		// Initialize tool call in session tracking
 		Session.get().updateToolCall(pending.call_id, pending.name)
 
 		return pending
@@ -255,24 +258,18 @@ class ReasoningHandler {
 	private pendingReasoning: PendingReasoning | null = null
 
 	processReasoningDelta(delta: ReasoningDelta): void {
-		// Initialize pending reasoning if we have an ID but no pending reasoning yet
 		if (!this.pendingReasoning) {
 			this.pendingReasoning = {
 				id: delta.id,
-				content: "",
+				contentChunks: [],
 				signature: "",
 				redactedThinking: [],
 				summary: [],
 			}
 		}
 
-		if (!this.pendingReasoning) {
-			return
-		}
-
-		// Update fields from delta
 		if (delta.reasoning) {
-			this.pendingReasoning.content += delta.reasoning
+			this.pendingReasoning.contentChunks.push(delta.reasoning)
 		}
 		if (delta.signature) {
 			this.pendingReasoning.signature = delta.signature
@@ -298,12 +295,10 @@ class ReasoningHandler {
 			return null
 		}
 
-		if (!this.pendingReasoning.summary.length && !this.pendingReasoning.content) {
+		if (!this.pendingReasoning.summary.length && !this.pendingReasoning.contentChunks.length) {
 			return null
 		}
 
-		// Ensure signature is set if it's hidden in the summary / reasoning details
-		// to ensure it's always accessible at the top level by each provider.
 		if (!this.pendingReasoning.signature && this.pendingReasoning.summary.length) {
 			const lastSummary = this.pendingReasoning.summary.at(-1)
 			if (lastSummary && typeof lastSummary === "object" && "signature" in lastSummary) {
@@ -315,7 +310,7 @@ class ReasoningHandler {
 
 		return {
 			type: "thinking",
-			thinking: this.pendingReasoning.content,
+			thinking: this.pendingReasoning.contentChunks.join(""),
 			signature: this.pendingReasoning.signature,
 			summary: this.pendingReasoning.summary,
 			call_id: this.pendingReasoning.id,
