@@ -35,19 +35,19 @@ import { createUIHelpers } from "./tools/types/UIHelpers"
 import { ToolDisplayUtils } from "./tools/utils/ToolDisplayUtils"
 import { ToolResultUtils } from "./tools/utils/ToolResultUtils"
 
-export function canonicalizeAttemptCompletionParams(block: ToolUse): boolean {
-	if (block.name === DiracDefaultTool.ATTEMPT && !block.params?.result && typeof block.params?.response === "string") {
-		block.params.result = block.params.response
-		return true
-	}
-
-	return false
-}
-
 export class ToolExecutor {
 	private autoApprover: AutoApprove
 	private coordinator: ToolExecutorCoordinator
 	public recoveryEngine: RecoveryEngine
+
+	private readonly noopReinit = async () => {}
+	private readonly noopUpdateHistory = async () => []
+
+	private canonicalizeAttemptCompletionParams(block: ToolUse): void {
+		if (block.name === DiracDefaultTool.ATTEMPT && !block.params?.result && typeof block.params?.response === "string") {
+			block.params.result = block.params.response
+		}
+	}
 
 	// Auto-approval methods using the AutoApprove class
 	private shouldAutoApproveTool(toolName: DiracDefaultTool): boolean | [boolean, boolean] {
@@ -176,9 +176,9 @@ export class ToolExecutor {
 				ask: this.ask,
 				saveCheckpoint: this.saveCheckpoint,
 				postStateToWebview: this.postStateToWebview.bind(this),
-				reinitExistingTaskFromId: async () => {},
+				reinitExistingTaskFromId: this.noopReinit,
 				cancelTask: this.cancelTask,
-				updateTaskHistory: async () => [],
+				updateTaskHistory: this.noopUpdateHistory,
 				executeCommandTool: this.executeCommandTool,
 				cancelRunningCommandTool: this.cancelRunningCommandTool,
 				doesLatestTaskCompletionHaveNewChanges: this.doesLatestTaskCompletionHaveNewChanges,
@@ -331,9 +331,11 @@ export class ToolExecutor {
 		if (!this.coordinator.has(block.name)) {
 			return false // Tool not handled by coordinator
 		}
-		canonicalizeAttemptCompletionParams(block)
+		this.canonicalizeAttemptCompletionParams(block)
 
 		const config = this.asToolConfig()
+		const mode = this.stateManager.getGlobalSettingsKey("mode")
+		const strictPlanModeEnabled = this.stateManager.getGlobalSettingsKey("strictPlanModeEnabled")
 
 		try {
 			// Check if user rejected a previous tool
@@ -351,12 +353,7 @@ export class ToolExecutor {
 			}
 
 			// Logic for plan-mode tool call restrictions
-			if (
-				this.stateManager.getGlobalSettingsKey("strictPlanModeEnabled") &&
-				this.stateManager.getGlobalSettingsKey("mode") === "plan" &&
-				block.name &&
-				this.isPlanModeToolRestricted(block.name)
-			) {
+			if (strictPlanModeEnabled && mode === "plan" && this.isPlanModeToolRestricted(block.name)) {
 				const errorMessage = `Tool '${block.name}' is not available in PLAN MODE. This tool is restricted to ACT MODE for file modifications. Only use tools available for PLAN MODE when in that mode.`
 				await this.removeLastPartialMessageIfExistsWithType("say", "error")
 				await this.say("error", errorMessage)
@@ -524,6 +521,78 @@ export class ToolExecutor {
 	}
 
 	/**
+	 * Appends a warning message to the tool result if the call count reaches certain thresholds.
+	 *
+	 * @param count The current total tool call count
+	 * @param toolResult The current tool response to potentially modify
+	 * @returns The (potentially modified) tool response
+	 */
+	private maybeAppendToolCallWarning(count: number, toolResult: ToolResponse): ToolResponse {
+		if (count < 50 || (count - 50) % 25 !== 0) {
+			return toolResult
+		}
+
+		const warning = `
+
+[SYSTEM NOTE: You have executed ${count} tool calls in this task. Please ensure you are not in an infinite loop and are making progress towards the goal. If you have completed the task, please call attempt_completion. If you are stuck, consider a different approach.]`
+
+		if (typeof toolResult === "string") {
+			return toolResult + warning
+		}
+
+		if (Array.isArray(toolResult)) {
+			const lastBlock = toolResult[toolResult.length - 1]
+			if (lastBlock && lastBlock.type === "text") {
+				lastBlock.text += warning
+			} else {
+				toolResult.push({ type: "text", text: warning } as any)
+			}
+			return toolResult
+		}
+
+		Logger.warn("toolResult has unexpected shape, cannot append warning", { toolResult })
+		return toolResult
+	}
+
+	/**
+	 * Handles the PostToolUse hook logic for both success and error paths.
+	 *
+	 * @returns true if the hook requested a task cancellation, false otherwise
+	 */
+	private async handlePostToolUse(
+		block: ToolUse,
+		toolResult: any,
+		executionSuccess: boolean,
+		executionStartTime: number,
+		hooksEnabled: boolean,
+		config: TaskConfig,
+	): Promise<boolean> {
+		if (this.taskState.abort) {
+			return false
+		}
+
+		// Skip for attempt_completion since it marks task completion, not actual work
+		if (!hooksEnabled || block.name === "attempt_completion") {
+			return false
+		}
+
+		const hookRequestedCancel = await this.runPostToolUseHook(
+			block,
+			toolResult,
+			executionSuccess,
+			executionStartTime,
+			hooksEnabled,
+		)
+
+		if (hookRequestedCancel) {
+			await config.callbacks.cancelTask()
+			return true
+		}
+
+		return false
+	}
+
+	/**
 	 * Handle partial block streaming UI updates.
 	 *
 	 * During streaming API responses, the AI sends partial tool use blocks as they're
@@ -606,6 +675,7 @@ export class ToolExecutor {
 					this.cwd
 				)
 				if (preflightResult) {
+					// Pre-flight guard blocked the tool (no execution -> no count)
 					this.pushToolResult(preflightResult, block)
 					return
 				}
@@ -626,21 +696,7 @@ export class ToolExecutor {
 
 			// Increment tool call count and inject warning if needed
 			const count = ++this.taskState.totalToolCallCount
-			if (count >= 50 && (count - 50) % 25 === 0) {
-				const warning = `
-
-[SYSTEM NOTE: You have executed ${count} tool calls in this task. Please ensure you are not in an infinite loop and are making progress towards the goal. If you have completed the task, please call attempt_completion. If you are stuck, consider a different approach.]`
-				if (typeof toolResult === "string") {
-					toolResult += warning
-				} else if (Array.isArray(toolResult)) {
-					const lastBlock = toolResult[toolResult.length - 1]
-					if (lastBlock && lastBlock.type === "text") {
-						lastBlock.text += warning
-					} else {
-						toolResult.push({ type: "text", text: warning } as any)
-					}
-				}
-			}
+			toolResult = this.maybeAppendToolCallWarning(count, toolResult)
 
 			// Enforce per-message budget on large string outputs
 			if (typeof toolResult === "string" && toolResult.length > 16 * 1024) {
@@ -654,23 +710,22 @@ export class ToolExecutor {
 			}
 
 			// Run PostToolUse hook for successful tool execution
-			// Skip for attempt_completion since it marks task completion, not actual work
-			if (hooksEnabled && block.name !== "attempt_completion") {
-				const hookRequestedCancel = await this.runPostToolUseHook(
-					block,
-					toolResult,
-					executionSuccess,
-					executionStartTime,
-					hooksEnabled, // always true here - already checked by caller
-				)
-				if (hookRequestedCancel) {
-					await config.callbacks.cancelTask()
-					shouldCancelAfterHook = true
-				}
+			const hookRequestedCancel = await this.handlePostToolUse(
+				block,
+				toolResult,
+				executionSuccess,
+				executionStartTime,
+				hooksEnabled,
+				config,
+			)
+			if (hookRequestedCancel) {
+				shouldCancelAfterHook = true
 			}
 		} catch (error) {
 			executionSuccess = false
-			toolResult = formatResponse.formatToolErrorForLLM(createToolError("tool.internalError", `Tool execution failed: ${error}`, "unrecoverable"))
+			toolResult = formatResponse.formatToolErrorForLLM(
+				createToolError("tool.internalError", `Tool execution failed: ${error}`, "unrecoverable"),
+			)
 
 			// Check abort before running PostToolUse hook (error path)
 			if (this.taskState.abort) {
@@ -678,17 +733,16 @@ export class ToolExecutor {
 			}
 
 			// Run PostToolUse hook for failed tool execution
-			// Skip for attempt_completion since it marks task completion, not actual work
-			if (toolWasExecuted && hooksEnabled && block.name !== "attempt_completion") {
-				const hookRequestedCancel = await this.runPostToolUseHook(
+			if (toolWasExecuted) {
+				const hookRequestedCancel = await this.handlePostToolUse(
 					block,
 					toolResult,
 					executionSuccess,
 					executionStartTime,
-					hooksEnabled, // always true here - already checked by caller
+					hooksEnabled,
+					config,
 				)
 				if (hookRequestedCancel) {
-					await config.callbacks.cancelTask()
 					shouldCancelAfterHook = true
 				}
 			}
