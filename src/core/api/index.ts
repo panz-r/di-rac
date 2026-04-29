@@ -38,7 +38,6 @@ import { SapAiCoreHandler } from "./providers/sapaicore"
 import { TogetherHandler } from "./providers/together"
 import { VercelAIGatewayHandler } from "./providers/vercel-ai-gateway"
 import { VertexHandler } from "./providers/vertex"
-import { VsCodeLmHandler } from "./providers/vscode-lm"
 import { WandbHandler } from "./providers/wandb"
 import { XAIHandler } from "./providers/xai"
 import { ZAiHandler } from "./providers/zai"
@@ -260,12 +259,6 @@ function createHandlerForProvider(
 				onRetryAttempt: options.onRetryAttempt,
 				mistralApiKey: options.mistralApiKey,
 				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-			})
-		case "vscode-lm":
-			return new VsCodeLmHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				vsCodeLmModelSelector:
-					mode === "plan" ? options.planModeVsCodeLmModelSelector : options.actModeVsCodeLmModelSelector,
 			})
 		case "litellm":
 			return new LiteLlmHandler({

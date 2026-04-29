@@ -6,7 +6,13 @@ import { HistoryItem } from "@shared/HistoryItem"
 import { WorkspaceRoot } from "@shared/multi-root/types"
 import { Mode } from "@shared/storage/types"
 import { TelemetrySetting } from "@shared/TelemetrySetting"
-import { LanguageModelChatSelector } from "vscode"
+// VsCodeLanguageModelChatSelector is only available in VS Code extension context
+// For CLI/non-VS Code environments, use a placeholder type
+export type VsCodeLanguageModelChatSelector = {
+	vendor?: string
+	family?: string
+	version?: string
+}
 
 // ============================================================================
 // SINGLE SOURCE OF TRUTH FOR STORAGE KEYS
@@ -113,7 +119,7 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	geminiPlanModeThinkingLevel: { default: undefined as string | undefined },
 	planModeReasoningEffort: { default: undefined as string | undefined },
 	planModeVerbosity: { default: undefined as string | undefined },
-	planModeVsCodeLmModelSelector: { default: undefined as LanguageModelChatSelector | undefined },
+	planModeVsCodeLmModelSelector: { default: undefined as VsCodeLanguageModelChatSelector | undefined },
 	planModeAwsBedrockCustomSelected: { default: undefined as boolean | undefined },
 	planModeAwsBedrockCustomModelBaseId: { default: undefined as string | undefined },
 	planModeOpenRouterModelId: { default: undefined as string | undefined },
@@ -155,7 +161,7 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	geminiActModeThinkingLevel: { default: undefined as string | undefined },
 	actModeReasoningEffort: { default: undefined as string | undefined },
 	actModeVerbosity: { default: undefined as string | undefined },
-	actModeVsCodeLmModelSelector: { default: undefined as LanguageModelChatSelector | undefined },
+	actModeVsCodeLmModelSelector: { default: undefined as VsCodeLanguageModelChatSelector | undefined },
 	actModeAwsBedrockCustomSelected: { default: undefined as boolean | undefined },
 	actModeAwsBedrockCustomModelBaseId: { default: undefined as string | undefined },
 	actModeOpenRouterModelId: { default: undefined as string | undefined },

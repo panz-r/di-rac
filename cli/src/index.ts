@@ -17,8 +17,8 @@ import type { ApiProvider } from "@shared/api"
 import type { Controller } from "@/core/controller"
 import type { HistoryItem } from "@/shared/HistoryItem"
 import type { OpenaiReasoningEffort } from "@/shared/storage/types"
-import { CLI_LOG_FILE, shutdownEvent, window } from "./vscode-shim"
 
+import { CLI_LOG_FILE, shutdownEvent, window } from "./cli-shim"
 /**
  * Common options shared between runTask and resumeTask
  */

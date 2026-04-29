@@ -1,25 +1,26 @@
-import { EmptyRequest } from "@shared/proto/dirac/common"
+/**
+ * VS Code LM Models handler
+ * This was part of the VS Code extension integration that has been removed.
+ * This stub returns empty models to prevent build errors while maintaining
+ * proto compatibility.
+ */
+
 import { VsCodeLmModelsArray } from "@shared/proto/dirac/models"
-import * as vscode from "vscode"
-import { Logger } from "@/shared/services/Logger"
-import { convertVsCodeNativeModelsToProtoModels } from "../../../shared/proto-conversions/models/vscode-lm-models-conversion"
-import { Controller } from ".."
+import { EmptyRequest } from "@shared/proto/dirac/common"
+import type { Controller } from ".."
 
 /**
- * Fetches available models from VS Code LM API
- * @param controller The controller instance
- * @param request Empty request
- * @returns Array of VS Code LM models
+ * Handler for getVsCodeLmModels RPC.
+ * Returns empty models array since VS Code LM API is not available in CLI mode.
+ *
+ * @param _request - Empty request (not used)
+ * @param _controller - Controller instance (not used)
+ * @returns Empty VsCodeLmModelsArray
  */
-export async function getVsCodeLmModels(_controller: Controller, _request: EmptyRequest): Promise<VsCodeLmModelsArray> {
-	try {
-		const models = await vscode.lm.selectChatModels({})
-
-		const protoModels = convertVsCodeNativeModelsToProtoModels(models || [])
-
-		return VsCodeLmModelsArray.create({ models: protoModels })
-	} catch (error) {
-		Logger.error("Error fetching VS Code LM models:", error)
-		return VsCodeLmModelsArray.create({ models: [] })
-	}
+export async function getVsCodeLmModels(
+	_request: EmptyRequest,
+	_controller: Controller,
+): Promise<VsCodeLmModelsArray> {
+	// Return empty models - VS Code LM API is not available in standalone mode
+	return VsCodeLmModelsArray.create({ models: [] })
 }

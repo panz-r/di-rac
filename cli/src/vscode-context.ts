@@ -1,156 +1,76 @@
 /**
- * VSCode context stub for CLI mode
- * Provides mock implementations of VSCode extension context.
+ * VS Code context shim for CLI
+ * Provides the context initialization that the VS Code extension would normally provide
  */
 
-import { fileURLToPath } from "node:url"
-import os from "os"
-import path from "path"
-import { ExtensionRegistryInfo } from "@/registry"
-import { DiracExtensionContext } from "@/shared/dirac"
-import type { DiracMemento } from "@/shared/storage/DiracStorage"
-import { createStorageContext, type StorageContext } from "@/shared/storage/storage-context"
-import { EnvironmentVariableCollection, ExtensionKind, ExtensionMode, readJson, URI } from "./vscode-shim"
+import * as path from "path"
+import * as os from "os"
+import { EventEmitter } from "events"
 
-// ES module equivalent of __dirname
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+// Re-export EventEmitter for convenience
+export { EventEmitter }
 
 /**
- * CLI-specific state overrides.
- * These values are always returned regardless of what's stored,
- * and writes to these keys are silently ignored.
+ * CLI-specific context result that mirrors VS Code extension context
  */
-const CLI_STATE_OVERRIDES: Record<string, any> = {
-	// CLI always uses background execution, not VSCode terminal
-	vscodeTerminalExecutionMode: "backgroundExec",
-	backgroundEditEnabled: true,
-	multiRootEnabled: false,
-	enableCheckpointsSetting: false,
-	browserSettings: {
-		disableToolUse: true,
-	},
+export interface CliContextResult {
+	extensionContext: any
+	storageContext: any
+	DATA_DIR: string
+	EXTENSION_DIR: string
 }
 
 /**
- * Memento adapter that wraps a DiracFileStorage with optional key overrides.
- * Used for globalState where CLI needs to inject hardcoded overrides.
+ * Options for initializing CLI context
  */
-class MementoAdapter implements DiracMemento {
-	constructor(
-		private readonly store: DiracMemento,
-		private readonly overrides: Record<string, any> = {},
-	) {}
-
-	get<T>(key: string): T | undefined
-	get<T>(key: string, defaultValue: T): T
-	get<T>(key: string, defaultValue?: T): T | undefined {
-		if (key in this.overrides) {
-			return this.overrides[key] as T
-		}
-		const value = this.store.get<T>(key)
-		return value !== undefined ? value : defaultValue
-	}
-
-	update(key: string, value: any): Thenable<void> {
-		return this.setBatch({ [key]: value })
-	}
-
-	keys(): readonly string[] {
-		return this.store.keys()
-	}
-
-	setBatch(entries: Record<string, any>): Thenable<void> {
-		// Filter out overridden keys and delegate to underlying store
-		const filteredEntries: Record<string, any> = {}
-		for (const [key, value] of Object.entries(entries)) {
-			if (!(key in this.overrides)) {
-				filteredEntries[key] = value
-			}
-		}
-		this.store.setBatch(filteredEntries)
-		return Promise.resolve()
-	}
-
-	setKeysForSync(_keys: readonly string[]): void {
-		// No-op for CLI
-	}
-}
-
-export interface CliContextConfig {
+export interface CliContextOptions {
 	diracDir?: string
-	/** The workspace directory being worked in (used to compute workspace storage hash) */
 	workspaceDir?: string
 }
 
-export interface CliContextResult {
-	extensionContext: DiracExtensionContext
-	storageContext: StorageContext
-	DATA_DIR: string
-	EXTENSION_DIR: string
-	WORKSPACE_STORAGE_DIR: string
-}
-
 /**
- * Initialize the VSCode-like context for CLI mode.
- *
- * Creates a shared StorageContext (the single source of truth for all storage)
- * and wraps it in a DiracExtensionContext shell for legacy APIs that still
- * expect the VSCode ExtensionContext shape.
+ * Initialize CLI context for standalone usage
+ * Creates directory structure and context needed by Dirac core
  */
-export function initializeCliContext(config: CliContextConfig = {}): CliContextResult {
-	const DIRAC_DIR = config.diracDir || process.env.DIRAC_DIR || path.join(os.homedir(), ".dirac")
+export function initializeCliContext(options: CliContextOptions = {}): CliContextResult {
+	// Determine Dirac directory (config override or default)
+	const diracDir = options.diracDir || path.join(os.homedir(), ".dirac")
 
-	// Create the shared StorageContext — this owns all DiracFileStorage instances.
-	// CLI, JetBrains, and VSCode all share this same file-backed implementation.
-	let storageContext = createStorageContext({
-		diracDir: DIRAC_DIR,
-		workspacePath: config.workspaceDir || process.cwd(),
-		workspaceStorageDir: process.env.WORKSPACE_STORAGE_DIR || undefined,
-	})
-	storageContext = {
-		...storageContext,
-		// Storage — delegates to storageContext stores (with CLI overrides for globalState)
-		globalState: new MementoAdapter(storageContext.globalState, CLI_STATE_OVERRIDES),
-	}
+	// Data directory for local storage
+	const DATA_DIR = path.join(diracDir, "data")
 
-	const DATA_DIR = storageContext.dataDir
-	const WORKSPACE_STORAGE_DIR = storageContext.workspaceStoragePath
+	// Extension directory for bundled resources
+	const EXTENSION_DIR = path.join(diracDir, "extension")
 
-	// For CLI, extension dir is the package root (one level up from dist/)
-	const EXTENSION_DIR = path.resolve(__dirname, "..")
-	const EXTENSION_MODE = process.env.IS_DEV === "true" ? ExtensionMode.Development : ExtensionMode.Production
-
-	const extension: DiracExtensionContext["extension"] = {
-		id: ExtensionRegistryInfo.id,
-		isActive: true,
+	// Create extension context (simplified mock for CLI)
+	const extensionContext = {
+		// Minimal extension context properties that Dirac core might use
 		extensionPath: EXTENSION_DIR,
-		extensionUri: URI.file(EXTENSION_DIR),
-		packageJSON: readJson(path.join(EXTENSION_DIR, "package.json")),
-		exports: undefined,
-		activate: async () => {},
-		extensionKind: ExtensionKind.UI,
-	}
-
-	// Build the DiracExtensionContext shell. All storage delegates to storageContext —
-	// there are NO separate DiracFileStorage instances here.
-	const extensionContext: DiracExtensionContext = {
-		extension: extension,
-		extensionMode: EXTENSION_MODE,
-
-		// URIs / paths
-		storageUri: URI.file(WORKSPACE_STORAGE_DIR),
-		storagePath: WORKSPACE_STORAGE_DIR,
-		globalStorageUri: URI.file(DATA_DIR),
-		globalStoragePath: DATA_DIR,
-		logUri: URI.file(DATA_DIR),
-		logPath: DATA_DIR,
-		extensionUri: URI.file(EXTENSION_DIR),
-		extensionPath: EXTENSION_DIR,
-		asAbsolutePath: (relPath: string) => path.join(EXTENSION_DIR, relPath),
-
+		extensionUri: `file://${EXTENSION_DIR}`,
+		extension: {
+			id: "dirac.cli",
+			packageJSON: { version: "0.0.0" },
+		},
+		// Event emitter for compatibility with VS Code API
 		subscriptions: [],
-		environmentVariableCollection: new EnvironmentVariableCollection() as any,
+	}
+
+	// Create storage context for state persistence
+	const storageContext = {
+		// Storage paths for CLI
+		globalStoragePath: path.join(DATA_DIR, "globalStorage"),
+		workspaceStoragePath: path.join(DATA_DIR, "workspaceStorage"),
+		// Extension URI for storage
+		extensionUri: `file://${DATA_DIR}`,
+		workspace: {
+			// Minimal workspace info
+			name: path.basename(options.workspaceDir || process.cwd()),
+			uri: `file://${options.workspaceDir || process.cwd()}`,
+		},
+		// Environment
+		environmentVariableCollection: {
+			persistent: false,
+		},
 	}
 
 	return {
@@ -158,6 +78,5 @@ export function initializeCliContext(config: CliContextConfig = {}): CliContextR
 		storageContext,
 		DATA_DIR,
 		EXTENSION_DIR,
-		WORKSPACE_STORAGE_DIR,
 	}
 }
