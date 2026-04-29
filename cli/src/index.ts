@@ -48,6 +48,7 @@ interface TaskOptions {
 	bashTool?: boolean
 	bashAutoApprove?: boolean
 	toolRecovery?: boolean
+	redirectTmp?: boolean
 }
 
 let telemetryDisposed = false
@@ -287,6 +288,10 @@ async function applyTaskOptions(options: TaskOptions): Promise<void> {
 
 	if (options.toolRecovery) {
 		stateManager.setSessionOverride("toolRecoveryEnabled", true)
+	}
+
+	if (options.redirectTmp) {
+		stateManager.setSessionOverride("redirectTmpEnabled", true)
 	}
 
 	if (options.bashAutoApprove === true) {
@@ -1065,6 +1070,7 @@ program
 	.option("--bash-auto-approve", "Enable auto-approval for the bash tool")
 	.option("--no-bash-auto-approve", "Disable auto-approval for the bash tool")
 	.option("--tool-recovery", "Enable deterministic error recovery engine")
+	.option("--redirect-tmp", "Silently redirect /tmp access to project-local .dirac-tmp")
 	.option("--hooks-dir <path>", "Path to additional hooks directory for runtime hook injection")
 	.option("-T, --taskId <id>", "Resume an existing task by ID")
 	.action((prompt, options) => {
@@ -1293,6 +1299,7 @@ program
 	.option("--bash-auto-approve", "Enable auto-approval for the bash tool")
 	.option("--no-bash-auto-approve", "Disable auto-approval for the bash tool")
 	.option("--tool-recovery", "Enable deterministic error recovery engine")
+	.option("--redirect-tmp", "Silently redirect /tmp access to project-local .dirac-tmp")
 	.option("--hooks-dir <path>", "Path to additional hooks directory for runtime hook injection")
 	.option("--acp", "Run in ACP (Agent Client Protocol) mode for editor integration")
 	.option("--kanban", "Run npx kanban --agent dirac")

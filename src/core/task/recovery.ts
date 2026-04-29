@@ -251,7 +251,9 @@ export class RecoveryEngine {
 	public async runPreflightFirewall(
 		block: ToolUse,
 		taskState: any,
-		dispatch: (name: string, args: unknown) => Promise<ToolResponse>
+		dispatch: (name: string, args: unknown) => Promise<ToolResponse>,
+		redirectTmpEnabled: boolean = false,
+		cwd: string = process.cwd()
 	): Promise<ToolResponse | null> {
 		const toolName = block.name
 		const params = block.params as any
@@ -274,28 +276,32 @@ export class RecoveryEngine {
 				const path = await import("path")
 				
 				// Phase 15 Hardening: Silently redirect /tmp to .dirac-tmp in project root
-				if (rawPath.startsWith("/tmp")) {
-					const relativeFromTmp = rawPath.slice(4).replace(/^[\/\\]+/, "") // remove leading slash
-					const redirectedPath = path.join(".dirac-tmp", relativeFromTmp)
-					
-					// Mutate the original block params for silent redirection
-					if (params.path) params.path = redirectedPath
-					if (params.file_path) params.file_path = redirectedPath
-					if (params.absolutePath) params.absolutePath = redirectedPath
-					
-					this.updateAuditChain(toolName, "PATH_REDIRECTED", "SILENT_FIX")
-					rawPath = redirectedPath
+				if (redirectTmpEnabled) {
+					const normalizedRawPath = rawPath.replace(/\\/g, "/").replace(/\/+/g, "/")
+					if (normalizedRawPath.startsWith("/tmp/") || normalizedRawPath === "/tmp") {
+						const relativeFromTmp = normalizedRawPath.slice(4).replace(/^\/+/, "")
+						const redirectedPath = path.join(".dirac-tmp", relativeFromTmp)
+						
+						// Mutate the original block params for silent redirection
+						if (params.path) params.path = redirectedPath
+						if (params.file_path) params.file_path = redirectedPath
+						if (params.absolutePath) params.absolutePath = redirectedPath
+						
+						this.updateAuditChain(toolName, "PATH_REDIRECTED", "SILENT_FIX")
+						rawPath = redirectedPath
+					}
 				}
 
 				// Phase 15 Hardening: Silently redirect /tmp in BASH commands
-				if (toolName === DiracDefaultTool.BASH && params.command && typeof params.command === "string") {
+				if (redirectTmpEnabled && toolName === DiracDefaultTool.BASH && params.command && typeof params.command === "string") {
 					if (params.command.includes("/tmp")) {
-						params.command = params.command.replace(/\/tmp\b/g, ".dirac-tmp")
+						// Use more robust regex for word boundaries
+						params.command = params.command.replace(/\/tmp(?=[\s\/\\]|$)/g, ".dirac-tmp")
 						this.updateAuditChain(toolName, "CMD_REDIRECTED", "SILENT_FIX")
 					}
 				}
 
-				filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath)
+				filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(cwd, rawPath)
 			} catch {
 				// Fallback to raw if path module fails
 			}

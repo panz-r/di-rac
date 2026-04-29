@@ -586,6 +586,7 @@ export class ToolExecutor {
 
 			// Execute the actual tool, wrapped in the recovery engine if enabled
 			const toolRecoveryEnabled = this.stateManager.getGlobalSettingsKey("toolRecoveryEnabled")
+			const redirectTmpEnabled = this.stateManager.getGlobalSettingsKey("redirectTmpEnabled")
 			if (toolRecoveryEnabled) {
 				// AEGIS Pre-Execution Firewall
 				const preflightResult = await this.recoveryEngine.runPreflightFirewall(
@@ -595,7 +596,9 @@ export class ToolExecutor {
 						// Preflight side-effects must NOT use the original call_id to avoid UI/state collisions
 						const sideEffectBlock: ToolUse = { ...block, name: name as any, params: args as any, call_id: undefined }
 						return this.coordinator.execute(config, sideEffectBlock)
-					}
+					},
+					redirectTmpEnabled,
+					this.cwd
 				)
 				if (preflightResult) {
 					this.pushToolResult(preflightResult, block)
