@@ -98,8 +98,11 @@ export class RecoveryEngine {
 		private nudgeOutcomes = new Map<string, { toolName: string, turnWhenNudged: number }>()
 		private currentTurnNumber: number = 0
 
+	private readyPromise: Promise<void>
+
 	constructor(private workspaceRoot?: string) {
-		this.loadRecoveryMemory()
+		this.initializeRecoveryTable()
+		this.readyPromise = this.loadRecoveryMemory()
 	}
 
 	private async getGlobalPlaybookPath(): Promise<string> {
@@ -174,7 +177,7 @@ export class RecoveryEngine {
 			const data = `${this.lastAuditHash}:${toolName}:${errorCode}:${outcome}`
 			this.lastAuditHash = createHash("sha256").update(data).digest("hex")
 			
-			const diracStateDir = path.join(process.cwd(), ".dirac-state")
+			const diracStateDir = path.join(this.workspaceRoot || process.cwd(), ".dirac-state")
 			await fs.mkdir(diracStateDir, { recursive: true })
 			const auditFile = path.join(diracStateDir, "recovery-audit.log")
 			await fs.appendFile(auditFile, `${new Date().toISOString()} [${outcome}] ${toolName} (${errorCode}) -> ${this.lastAuditHash}\n`)
@@ -187,7 +190,7 @@ export class RecoveryEngine {
 		try {
 			const fs = await import("fs/promises")
 			const path = await import("path")
-			const diracStateDir = path.join(process.cwd(), ".dirac-state")
+			const diracStateDir = path.join(this.workspaceRoot || process.cwd(), ".dirac-state")
 			await fs.mkdir(diracStateDir, { recursive: true })
 			const ledgerFile = path.join(diracStateDir, "recovery-ledger.jsonl")
 			
@@ -214,6 +217,7 @@ export class RecoveryEngine {
 	}
 
 	private _recoveryMemoryTimer: ReturnType<typeof setTimeout> | null = null
+	private _proactiveCondensedThisTurn: boolean = false
 	private async saveRecoveryMemory() {
 		// Debounced: coalesce rapid calls within 2 seconds
 		if (this._recoveryMemoryTimer) {
@@ -242,7 +246,7 @@ export class RecoveryEngine {
 		}
 
 		try {
-			const localMemoryFile = path.join(process.cwd(), ".dirac-state", "recovery-memory.json")
+			const localMemoryFile = path.join(this.workspaceRoot || process.cwd(), ".dirac-state", "recovery-memory.json")
 			const globalMemoryFile = await this.getGlobalPlaybookPath()
 
 			await saveMapToFile(localMemoryFile, this.failureMemory)
@@ -257,6 +261,13 @@ export class RecoveryEngine {
 		this.stagnationHintCounts.clear()
 			this.nudgedThisTurn.clear()
 			this.currentTurnNumber++
+			this._proactiveCondensedThisTurn = false
+			// Purge stale nudge outcomes older than 5 turns
+			for (const [key, outcome] of this.nudgeOutcomes) {
+				if (this.currentTurnNumber - outcome.turnWhenNudged > 5) {
+					this.nudgeOutcomes.delete(key)
+				}
+			}
 	}
 
 	public getTelemetry() {
@@ -282,6 +293,7 @@ export class RecoveryEngine {
 		const toolName = block.name
 		const params = block.params as any
 
+		await this.readyPromise // ensure memory loaded before first use
 		// --- Stage I: Argument Extraction ---
 		let rawPath = params?.path || params?.file_path || params?.absolutePath
 		
@@ -358,6 +370,15 @@ export class RecoveryEngine {
 					// We don't block here, but detectStagnation will use this
 				}
 			}
+		}
+
+		// Proactive condensation: if heuristic token estimate is very high, condense before failure
+		// Guard: only fire once per turn to prevent rapid re-triggering
+		if (taskState?.turnTokenEstimates > 150000 && !this._proactiveCondensedThisTurn) {
+			this._proactiveCondensedThisTurn = true
+			this.updateAuditChain("SYSTEM", "PROACTIVE_CONDENSE", "SILENT_FIX")
+			await dispatch(DiracDefaultTool.CONDENSE, {})
+			taskState.turnTokenEstimates = 0
 		}
 
 		// Phase 11: Premature Success Detection
@@ -949,6 +970,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		taskState: any,
 		dispatch: (name: string, args: unknown) => Promise<ToolResponse>
 	): Promise<ToolResponse> {
+		await this.readyPromise // ensure memory loaded before first use
 		// 1. Check Circuit Breaker
 		const circuit = this.checkCircuit(toolName)
 		if (circuit.state === "OPEN") {
@@ -990,15 +1012,27 @@ Some line numbers may have shifted. Please locate your target function in the ne
 
 			// Reflection prompt on 2nd nudge: force the model to reason before hard block
 			if (currentCount === 2) {
-				this.updateAuditChain(toolName, "STAGNATION_HINT", "NUDGE_REFLECT")
-				this.telemetry.nudgeCount++
-				return this.formatStructuredEscalation(
+				const readOnlyReflectTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.GET_FUNCTION, DiracDefaultTool.EXPAND_SYMBOL]
+				const reflectMsg = this.formatStructuredEscalation(
 					toolName,
 					args,
 					"STAGNATION_DETECTED",
 					stagnation.summary,
 					"[REFLECTION REQUIRED] You've attempted this action twice without progress.\n1. What exactly did you try?\n2. What was the result?\n3. What alternative approach could you take now?\nAfter answering, proceed with a different tool or strategy."
 				)
+				// For read-only tools, execute AND prepend reflection
+				if (readOnlyReflectTools.includes(toolName as any)) {
+					const actualResult = await dispatch(toolName, args)
+					if (Array.isArray(actualResult) && Array.isArray(reflectMsg)) {
+						this.updateAuditChain(toolName, "STAGNATION_HINT", "NUDGE_REFLECT_PASS")
+						this.telemetry.nudgeCount++
+						return [...reflectMsg, ...actualResult] as any
+					}
+				}
+				// Hard block for mutation tools
+				this.updateAuditChain(toolName, "STAGNATION_HINT", "NUDGE_REFLECT")
+				this.telemetry.nudgeCount++
+				return reflectMsg
 			}
 
 			// Hard block circuit breaker (after 3 consecutive hints across turns)
@@ -1086,6 +1120,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 					}
 				}
 				if (this.consecutiveProgressCount >= 2) {
+					// Heal all stagnation entries including open circuits
 					this.stagnationHintCounts.clear()
 					this.consecutiveProgressCount = 0
 					this.updateAuditChain("SYSTEM", "STAGNATION_HEALED", "PROGRESS")
@@ -1114,6 +1149,18 @@ Some line numbers may have shifted. Please locate your target function in the ne
 			turnNumber: number
 		) {
 			Logger.warn("recovery_miss", { errorCode, tool: toolName, domain, failureCategory, attemptedRecovery, turnNumber, recovered: false })
+			// Also persist to disk for data-driven expansion
+			try {
+				const fs = await import("fs/promises")
+				const path = await import("path")
+				const diracStateDir = path.join(this.workspaceRoot || process.cwd(), ".dirac-state")
+				await fs.mkdir(diracStateDir, { recursive: true })
+				const logFile = path.join(diracStateDir, "recovery-misses.jsonl")
+				const record = JSON.stringify({ errorCode, tool: toolName, domain, failureCategory, attemptedRecovery, turnNumber, recovered: false }) + "\n"
+				await fs.appendFile(logFile, record)
+			} catch {
+				// Silent fail
+			}
 		}
 
 	private async handleErrorRecovery(
@@ -1388,6 +1435,16 @@ Some line numbers may have shifted. Please locate your target function in the ne
 	}
 
 	private classifyErrorDomain(errorCode: string, errorMessage: string): string {
+		// Direct mapping from known error codes
+		const knownDomains: Record<string, string> = {
+			ANCHOR_NOT_FOUND: "ACTION", FILE_LOCKED: "SYSTEM", RATE_LIMITED: "SYSTEM",
+			LSP_TIMEOUT: "SYSTEM", SYMBOL_NOT_FOUND: "MEMORY", FILE_NOT_FOUND: "MEMORY",
+			FILE_CHANGED_SINCE_READ: "MEMORY", CONTEXT_OVERFLOW: "SYSTEM",
+			EACCES: "SYSTEM", PERMISSION_DENIED: "SYSTEM", CONTENT_MISMATCH: "ACTION",
+		}
+		if (knownDomains[errorCode]) return knownDomains[errorCode]
+
+		// Fallback to message-based heuristic
 		const lowerMsg = errorMessage.toLowerCase()
 		if (lowerMsg.includes("anchor") || lowerMsg.includes("line")) return "ACTION"
 		if (lowerMsg.includes("symbol") || lowerMsg.includes("not found") || lowerMsg.includes("enoent")) return "MEMORY"
@@ -1500,7 +1557,7 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 			if (fps[len - 1] === fps[len - 3] && fps[len - 2] === fps[len - 4]) {
 				return {
 					stagnationDetected: true,
-					summary: `Alternating loop detected between ${toolName} and ${recent[recent.length - 1].tool}. Strategy thrashing.`
+					summary: `Alternating loop detected between ${toolName} and ${recent[recent.length - 2].tool}. Strategy thrashing.`
 				}
 			}
 		}
@@ -1510,7 +1567,7 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 			if (fps[len - 1] === fps[len - 4] && fps[len - 2] === fps[len - 5] && fps[len - 3] === fps[len - 6]) {
 				return {
 					stagnationDetected: true,
-					summary: `Circular strategy loop detected (${toolName} -> ${recent[recent.length - 1].tool} -> ${recent[recent.length - 2].tool}).`
+					summary: `Circular strategy loop detected (${recent[recent.length - 2].tool} -> ${recent[recent.length - 3].tool} -> ${toolName}).`
 				}
 			}
 		}
@@ -1643,8 +1700,8 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 		const totalSuccess = (localRecord?.successCount || 0) + (globalRecord?.successCount || 0)
 		const totalFailure = (localRecord?.failureCount || 0) + (globalRecord?.failureCount || 0)
 
-		// If a pattern has failed 3+ times without graduating, skip it
-		if (totalFailure >= 3 && totalSuccess < 3) {
+		// If a pattern has failed clearly more than it succeeded, skip it
+		if (totalFailure >= 5 && totalFailure >= totalSuccess * 2) {
 			return true
 		}
 		return false
