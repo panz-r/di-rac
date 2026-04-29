@@ -71,6 +71,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	// Protects against data loss from race conditions when multiple
 	// operations try to modify message state simultaneously
 	// This follows the same pattern as Task.stateMutex for consistency
+	private disposed = false
+
 	private stateMutex = new Mutex()
 
 	constructor(params: MessageStateHandlerParams) {
@@ -150,14 +152,14 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 		if (now - this.lastDiskSaveTs > this.DISK_SAVE_DEBOUNCE_MS) {
 			this.lastDiskSaveTs = now
-			this.saveDiracMessagesInternal().catch((err) => Logger.error("Failed to save messages:", err))
+			if (!this.disposed) this.saveDiracMessagesInternal().catch((err) => Logger.error("Failed to save messages:", err))
 			return
 		}
 
 		this.diskSaveTimer = setTimeout(() => {
 			this.diskSaveTimer = null
 			this.lastDiskSaveTs = Date.now()
-			this.saveDiracMessagesInternal().catch((err) => Logger.error("Failed to save messages:", err))
+			if (!this.disposed) this.saveDiracMessagesInternal().catch((err) => Logger.error("Failed to save messages:", err))
 		}, this.DISK_SAVE_DEBOUNCE_MS)
 	}
 
@@ -167,6 +169,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * outside of the stateMutex lock when possible.
 	 */
 	private async updateTaskHistoryInternal(): Promise<void> {
+		if (this.disposed) return
 		try {
 			// Capture state needed for history update
 			// Note: we don't hold the lock here, but these are mostly immutable or
@@ -224,7 +227,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 	/**
 	 * Save dirac messages and update task history (public API with mutex protection)
-	 * This is the main entry point for saving message state from external callers
+	 * This is the main entry point for saving message state from external callers.
+	 * The mutex protects the scheduling decision; the debounce logic handles coalescing.
 	 */
 	async saveDiracMessagesAndUpdateHistory(): Promise<void> {
 		await this.withStateLock(async () => {
@@ -257,6 +261,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	}
 
 	dispose(): void {
+		this.disposed = true
 		if (this.historyUpdateTimer) {
 			clearTimeout(this.historyUpdateTimer)
 			this.historyUpdateTimer = null
