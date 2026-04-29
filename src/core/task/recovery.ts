@@ -78,6 +78,10 @@ export class RecoveryEngine {
 		interceptedCount: 0,
 		escalatedCount: 0,
 		totalTurnSavings: 0,
+		successCount: 0,
+		nudgeCount: 0,
+		blockedCount: 0,
+		recoveredCount: 0,
 	}
 	private lastAuditHash: string = "INIT"
 
@@ -86,7 +90,9 @@ export class RecoveryEngine {
 
 	// Phase 11: Proactive Safeguards
 	private completionAttemptCount: number = 0
-	private stagnationHintCount: number = 0
+	private stagnationHintCounts = new Map<string, number>()
+		private nudgedThisTurn = new Set<string>()
+		private consecutiveProgressCount: number = 0
 
 	constructor() {
 		this.initializeRecoveryTable()
@@ -232,7 +238,8 @@ export class RecoveryEngine {
 
 	public resetTurnBudget() {
 		this.currentTurnRetries = 0
-		this.stagnationHintCount = 0 // Phase 15 Hardening: Reset hints on new turn
+		this.stagnationHintCounts.clear()
+			this.nudgedThisTurn.clear()
 	}
 
 	public getTelemetry() {
@@ -867,6 +874,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		const circuit = this.checkCircuit(toolName)
 		if (circuit.state === "OPEN") {
 			this.updateAuditChain(toolName, "CIRCUIT_BREAKER_OPEN", "BLOCKED")
+			this.telemetry.blockedCount++
 			return this.formatStructuredEscalation(
 				toolName,
 				args,
@@ -876,14 +884,35 @@ Some line numbers may have shifted. Please locate your target function in the ne
 			)
 		}
 
+		// Record the call early so blocked/nudged calls still advance the sliding window
+		this.recordCall(toolName, args)
+
 		// 2. Check Stagnation (L2 Backtracking)
 		const stagnation = this.detectStagnation(toolName, args, taskState)
 		if (stagnation) {
-			this.stagnationHintCount++
-			
-			// Hard block circuit breaker (after 3 consecutive hints)
-			if (this.stagnationHintCount >= 3) {
+			this.consecutiveProgressCount = 0
+			const stagKey = `${toolName}:${this.fingerprintToolCall(toolName, args)}`
+			const currentCount = (this.stagnationHintCounts.get(stagKey) ?? 0) + 1
+			this.stagnationHintCounts.set(stagKey, currentCount)
+
+			// Same-turn dedup: if already nudged this fingerprint this turn, don't escalate
+			if (this.nudgedThisTurn.has(stagKey)) {
+				this.updateAuditChain(toolName, "STAGNATION_HINT", "NUDGE_DEDUP")
+				this.telemetry.nudgeCount++
+				return this.formatStructuredEscalation(
+					toolName,
+					args,
+					"STAGNATION_DETECTED",
+					stagnation.summary,
+					"Repeated stagnation hint suppressed until next turn."
+				)
+			}
+			this.nudgedThisTurn.add(stagKey)
+
+			// Hard block circuit breaker (after 3 consecutive hints across turns)
+			if (currentCount >= 3) {
 				this.updateAuditChain(toolName, "STAGNATION_CIRCUIT_OPEN", "BLOCKED")
+				this.telemetry.blockedCount++
 				return this.formatStructuredEscalation(
 					toolName,
 					args,
@@ -895,6 +924,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 
 			// L2 Nudge: Inject a structured hint into context, but do NOT block exploration
 			this.updateAuditChain(toolName, "STAGNATION_HINT", "NUDGE")
+			this.telemetry.nudgeCount++
 			const isExactRepeat = stagnation.summary.includes("identical")
 			const isAlternating = stagnation.summary.includes("Alternating")
 			const isCircular = stagnation.summary.includes("Circular")
@@ -930,10 +960,8 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		}
 
 		// Reset hint count on progress (non-stagnant call)
-		this.stagnationHintCount = 0
-
-		// Record the call for future stagnation checks
-		this.recordCall(toolName, args)
+		const stagKeyNonStagnant = `${toolName}:${this.fingerprintToolCall(toolName, args)}`
+		this.stagnationHintCounts.delete(stagKeyNonStagnant)
 
 		// 3. Execution
 		try {
@@ -945,6 +973,13 @@ Some line numbers may have shifted. Please locate your target function in the ne
 			if (!errorCode) {
 				this.updateCircuit(toolName, true)
 				this.updateAuditChain(toolName, "NONE", "SUCCESS")
+				this.telemetry.successCount++
+				this.consecutiveProgressCount++
+				if (this.consecutiveProgressCount >= 2) {
+					this.stagnationHintCounts.clear()
+					this.consecutiveProgressCount = 0
+					this.updateAuditChain("SYSTEM", "STAGNATION_HEALED", "PROGRESS")
+				}
 				return result // Success
 			}
 
@@ -1197,6 +1232,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		this.telemetry.totalTurnSavings += 1.5
 		this.saveTelemetrySummary()
 		this.updateAuditChain(toolName, errorCode, "RECOVERED")
+			this.telemetry.recoveredCount++
 
 		// Mark as compaction-safe (L-ICL principle / Governance Integration)
 		if (Array.isArray(recoveryResult)) {
@@ -1339,13 +1375,9 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 	}
 
 	private detectStagnation(toolName: string, args: unknown, taskState?: any): StagnationResult | null {
-		const fingerprint = this.fingerprintToolCall(toolName, args)
-		const currentFP = `${toolName}:${fingerprint}`
-		
-		// 1. Cycle Detection (L2 Backtracking)
-		// We include the CURRENT call in the check to see if it completes a cycle
-		const recent = this.callHistory.slice(-8) // Last 8 calls
-		const fps = [...recent.map(c => `${c.tool}:${c.fingerprint}`), currentFP]
+		// Current call was already recorded in callHistory before this method runs.
+		const recent = this.callHistory.slice(-8) // Last 8 calls (includes current)
+		const fps = recent.map(c => `${c.tool}:${c.fingerprint}`)
 		const len = fps.length
 
 		if (len >= 3) {
