@@ -18,7 +18,6 @@ import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
-import { Logger } from "@/shared/services/Logger"
 
 
 interface ZAiHandlerOptions extends CommonApiHandlerOptions {
@@ -126,10 +125,7 @@ export class ZAiHandler implements ApiHandler {
 		const toolCallProcessor = new ToolCallProcessor()
 
 		for await (const chunk of stream) {
-			
-
 			const delta = chunk.choices?.[0]?.delta
-			Logger.info("ZAI chunk", delta)
 			if (delta?.content) {
 				yield {
 					type: "text",

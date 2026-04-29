@@ -20,6 +20,7 @@ import { ContextManager } from "../context/context-management/ContextManager"
 import { formatResponse } from "../prompts/responses"
 import { Session } from "@/shared/services/Session"
 import { StructuredLogger } from "@/shared/services/StructuredLogger"
+import { OutputManager } from "@/shared/services/OutputManager"
 import { StateManager } from "../storage/StateManager"
 import { WorkspaceRootManager } from "../workspace"
 import { ToolResponse } from "."
@@ -168,6 +169,7 @@ export class ToolExecutor {
 				contextManager: this.contextManager,
 				stateManager: this.stateManager,
 				structuredLogger: new StructuredLogger(this.taskId, Session.get().getSessionId(), this.cwd),
+				outputManager: new OutputManager(this.cwd),
 			},
 			callbacks: {
 				say: this.say,
@@ -640,6 +642,10 @@ export class ToolExecutor {
 				}
 			}
 
+			// Enforce per-message budget on large string outputs
+			if (typeof toolResult === "string" && toolResult.length > 16 * 1024) {
+				toolResult = config.services.outputManager.enforceBudget(toolResult, 16 * 1024, block.name)
+			}
 			this.pushToolResult(toolResult, block)
 
 			// Check abort before running PostToolUse hook (success path)

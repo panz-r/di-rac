@@ -3,10 +3,10 @@ import { DiracMessage } from "@shared/ExtensionMessage"
 import { expect } from "chai"
 import { ContextManager } from "../ContextManager"
 
-// Minimal mock for ApiHandler — only getModel().info.contextWindow is used by shouldCompactContextWindow
-function createMockApi(contextWindow: number) {
+// Minimal mock for ApiHandler — only getModel().info.contextWindow/maxTokens is used by shouldCompactContextWindow
+function createMockApi(contextWindow: number, maxTokens = 0) {
 	return {
-		getModel: () => ({ id: "test-model", info: { contextWindow } }),
+		getModel: () => ({ id: "test-model", info: { contextWindow, maxTokens } }),
 	} as any
 }
 
@@ -308,5 +308,38 @@ describe("ContextManager", () => {
 			const result = contextManager.shouldCompactContextWindow(diracMessages, api, 0, 1.0)
 			expect(result).to.equal(true)
 		})
+
+		it("compacts early for models with high maxTokens (Z.ai: 200K ctx, 128K maxTokens)", () => {
+			// Z.ai GLM-5: contextWindow=200K, maxTokens=128K
+			// Effective input budget: max(200K-128K, 200K*0.2) = 72K
+			// maxAllowedSize: min(250K, max(72K-40K, 72K*0.8)) = 57.6K
+			// threshold: min(floor(200K*0.75), 57.6K) = min(150K, 57.6K) = 57.6K
+			const api = createMockApi(200_000, 128_000)
+			const diracMessages: DiracMessage[] = [createApiReqMessage({ tokensIn: 55_000, tokensOut: 3_000 })]
+
+			const result = contextManager.shouldCompactContextWindow(diracMessages, api, 0, 0.75)
+			expect(result).to.equal(true)
+		})
+
+		it("does not compact below threshold for high maxTokens models", () => {
+			// Same Z.ai setup - 40K tokens is below the 57.6K threshold
+			const api = createMockApi(200_000, 128_000)
+			const diracMessages: DiracMessage[] = [createApiReqMessage({ tokensIn: 35_000, tokensOut: 3_000 })]
+
+			const result = contextManager.shouldCompactContextWindow(diracMessages, api, 0, 0.75)
+			expect(result).to.equal(false)
+		})
+
+		it("compacts early for MiniMax (192K ctx, 128K maxTokens)", () => {
+			// MiniMax: contextWindow=192K, maxTokens=128K
+			// Effective input budget: max(64K, 38.4K) = 64K
+			// maxAllowedSize: min(250K, max(24K, 51.2K)) = 51.2K
+			const api = createMockApi(192_000, 128_000)
+			const diracMessages: DiracMessage[] = [createApiReqMessage({ tokensIn: 48_000, tokensOut: 4_000 })]
+
+			const result = contextManager.shouldCompactContextWindow(diracMessages, api, 0, 0.75)
+			expect(result).to.equal(true)
+		})
+
 	})
 })

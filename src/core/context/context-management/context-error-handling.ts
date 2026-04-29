@@ -7,7 +7,9 @@ export function checkContextWindowExceededError(error: unknown): boolean {
 		checkIsAnthropicContextWindowError(error) ||
 		checkIsCerebrasContextWindowError(error) ||
 		checkIsBedrockContextWindowError(error) ||
-		checkIsVercelContextWindowError(error)
+		checkIsVercelContextWindowError(error) ||
+		checkIsMiniMaxContextWindowError(error) ||
+		checkIsZAiContextWindowError(error)
 	)
 }
 
@@ -169,6 +171,74 @@ export function checkIsVercelContextWindowError(error: any): boolean {
 		return messages
 			.map((msg) => String(msg).toLowerCase())
 			.some((message) => CONTEXT_ERROR_PATTERNS.some((pattern) => pattern.test(message)))
+	} catch {
+		return false
+	}
+}
+
+// MiniMax uses the Anthropic SDK but also returns its own business error codes:
+// - 1039: "Token limitation" (plan/token quota exceeded)
+// - 2056: "Token Plan exceeded"
+function checkIsMiniMaxContextWindowError(error: any): boolean {
+	try {
+		const message: string = String(error?.message || error?.error?.message || "").toLowerCase()
+
+		// MiniMax business error codes for token/context limits
+		const errorCode = String(error?.error?.error?.code ?? error?.code ?? error?.error?.code ?? "")
+		if (errorCode === "1039" || errorCode === "2056") {
+			return true
+		}
+
+		// Anthropic-format errors from MiniMax (status 400 + token/context keywords)
+		const status = error?.status ?? error?.error?.status ?? error?.error?.error?.status
+		if (String(status) === "400") {
+			const MINIMAX_CONTEXT_PATTERNS = [
+				/\btoken\s*(?:limit|limitation|exceed)/i,
+				/\bcontext\s*(?:length|window)\b/i,
+				/\btoo\s*many\s*tokens?\b/i,
+			] as const
+			if (MINIMAX_CONTEXT_PATTERNS.some((pattern) => pattern.test(message))) {
+				return true
+			}
+		}
+
+		return false
+	} catch {
+		return false
+	}
+}
+
+// Z.ai uses the OpenAI SDK. Known context overflow signals:
+// - Error code 1261: "Prompt exceeds max length"
+// - Standard OpenAI 400 + "prompt"/"exceed" patterns
+function checkIsZAiContextWindowError(error: any): boolean {
+	try {
+		// Z.ai-specific error code 1261
+		if (error instanceof APIError && String(error.code) === "1261") {
+			return true
+		}
+
+		// Also check raw code field (non-APIError path)
+		const rawCode = String(error?.code ?? error?.error?.code ?? "")
+		if (rawCode === "1261") {
+			return true
+		}
+
+		// Z.ai 400 errors with context/prompt overflow messages
+		const status = error?.status ?? error?.error?.status
+		if (String(status) === "400") {
+			const message: string = String(error?.message || error?.error?.message || "")
+			const ZAI_CONTEXT_PATTERNS = [
+				/\bprompt\s*(?:exceeds?|exceed)\s*(?:max|maximum)\s*(?:length|token)/i,
+				/\bcontext\s*(?:length|window)\b.*exceed/i,
+				/\btoo\s*many\s*tokens?\b/i,
+			] as const
+			if (ZAI_CONTEXT_PATTERNS.some((pattern) => pattern.test(message))) {
+				return true
+			}
+		}
+
+		return false
 	} catch {
 		return false
 	}

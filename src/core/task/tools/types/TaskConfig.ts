@@ -16,6 +16,7 @@ import type { DiracAskResponse } from "@shared/WebviewMessage"
 import { WorkspaceRootManager } from "@/core/workspace"
 import type { ContextManager } from "../../../context/context-management/ContextManager"
 import type { StateManager } from "../../../storage/StateManager"
+import type { OutputManager } from "@/shared/services/OutputManager"
 import type { StructuredLogger } from "@/shared/services/StructuredLogger"
 import type { MessageStateHandler } from "../../message-state"
 import type { TaskState } from "../../TaskState"
@@ -79,6 +80,7 @@ export interface TaskServices {
 	contextManager: ContextManager
 	stateManager: StateManager
 	structuredLogger: StructuredLogger
+	outputManager: OutputManager
 }
 
 /**

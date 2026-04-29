@@ -237,6 +237,7 @@ export interface DiracSayTool {
 	| "expand_symbol"
 	| "search_symbols"
 	| "repo_map"
+	| "compact"
 
 	script?: string;
 	language?: string;

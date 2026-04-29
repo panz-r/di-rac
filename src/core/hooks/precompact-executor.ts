@@ -2,6 +2,7 @@ import { findLastIndex } from "@shared/array"
 import type { DiracMessage } from "@shared/ExtensionMessage"
 import type { DiracStorageMessage } from "@shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
+import { Session } from "@/shared/services/Session"
 import type { ContextManager } from "../context/context-management/ContextManager"
 import type { MessageStateHandler } from "../task/message-state"
 import type { HookModelInputContext } from "./hook-factory"
@@ -122,6 +123,8 @@ export interface PreCompactHookParams {
 	ulid: string
 	/** Active hook model context */
 	modelContext: HookModelInputContext
+	/** Workspace root for saving snapshots */
+	workspaceRoot?: string
 
 	// Conversation state
 	/** API conversation history */
@@ -167,6 +170,58 @@ export interface PreCompactHookParams {
 }
 
 /**
+ * Persist a recoverable snapshot before any compaction event.
+ * Written to .dirac-state/session-snapshot.json in the workspace root.
+ */
+export async function saveCompactionSnapshot(params: {
+	taskId: string
+	workspaceRoot: string
+	apiConversationHistory: DiracStorageMessage[]
+	conversationHistoryDeletedRange?: [number, number]
+	diracMessages: DiracMessage[]
+	compactionStrategy: string
+	deletedRange?: [number, number]
+}): Promise<void> {
+	try {
+		const fs = await import("fs/promises")
+		const path = await import("path")
+
+		const diracStateDir = path.join(params.workspaceRoot, ".dirac-state")
+		await fs.mkdir(diracStateDir, { recursive: true })
+
+		const previousApiReqIndex = findLastIndex(params.diracMessages, (m) => m.say === "api_req_started")
+		const previousRequest = previousApiReqIndex !== -1 ? params.diracMessages[previousApiReqIndex] : undefined
+		const { tokensIn, tokensOut, tokensInCache, tokensOutCache } = extractTokenUsageFromMessage(previousRequest)
+
+		let deletedRangeStart = 0
+		let deletedRangeEnd = 0
+		if (params.deletedRange) {
+			;[deletedRangeStart, deletedRangeEnd] = params.deletedRange
+		} else if (params.conversationHistoryDeletedRange) {
+			;[deletedRangeStart, deletedRangeEnd] = params.conversationHistoryDeletedRange
+		}
+
+		const snapshot = {
+			taskId: params.taskId,
+			sessionId: Session.get().getSessionId(),
+			timestamp: new Date().toISOString(),
+			conversationLength: params.apiConversationHistory.length,
+			estimatedTokens: tokensIn + tokensOut + tokensInCache + tokensOutCache,
+			deletedRange: [deletedRangeStart, deletedRangeEnd],
+			compactionStrategy: params.compactionStrategy,
+			conversationHistory: params.apiConversationHistory,
+		}
+
+		const snapshotPath = path.join(diracStateDir, "session-snapshot.json")
+		await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2), "utf8")
+
+		Logger.info(`[Compaction] Snapshot saved to ${snapshotPath} (${params.apiConversationHistory.length} messages, ~${snapshot.estimatedTokens} tokens)`)
+	} catch (error) {
+		Logger.error("[Compaction] Failed to save snapshot:", error)
+	}
+}
+
+/**
  * Result from executing the PreCompact hook
  */
 export interface PreCompactHookResult {
@@ -190,6 +245,19 @@ export async function executePreCompactHookWithCleanup(params: PreCompactHookPar
 
 	let contextJsonPath: string | undefined
 	let contextRawPath: string | undefined
+
+	// Save persistent snapshot before any compaction
+	if (params.workspaceRoot) {
+		await saveCompactionSnapshot({
+			taskId: params.taskId,
+			workspaceRoot: params.workspaceRoot,
+			apiConversationHistory: params.apiConversationHistory,
+			conversationHistoryDeletedRange: params.conversationHistoryDeletedRange,
+			diracMessages: params.diracMessages,
+			compactionStrategy: params.compactionStrategy,
+			deletedRange: params.deletedRange,
+		})
+	}
 
 	try {
 		// Get current active context (respects previous compactions)

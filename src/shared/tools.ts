@@ -39,6 +39,7 @@ export enum DiracDefaultTool {
 	EXPAND_SYMBOL = "expand_symbol",
 	SEARCH_SYMBOLS = "search_symbols",
 	REPO_MAP = "repo_map",
+	COMPACT = "compact",
 }
 
 // Array of all tool names for compatibility

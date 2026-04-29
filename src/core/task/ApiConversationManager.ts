@@ -39,6 +39,7 @@ export class ApiConversationManager {
 					taskId: this.dependencies.taskId,
 					ulid: this.dependencies.ulid,
 					modelContext: getHookModelContext(this.dependencies.api, this.dependencies.stateManager),
+					workspaceRoot: this.dependencies.cwd,
 					apiConversationHistory,
 					conversationHistoryDeletedRange: this.dependencies.taskState.conversationHistoryDeletedRange,
 					contextManager: this.dependencies.contextManager,
@@ -123,6 +124,19 @@ export class ApiConversationManager {
 					if (activeMessageCount <= 2) {
 						shouldCompact = false
 					}
+				}
+
+				// Save snapshot before auto-condense triggers
+				if (shouldCompact) {
+					const { saveCompactionSnapshot } = await import("@/core/hooks/precompact-executor")
+					await saveCompactionSnapshot({
+						taskId: this.dependencies.taskId,
+						workspaceRoot: this.dependencies.cwd,
+						apiConversationHistory: this.dependencies.messageStateHandler.getApiConversationHistory(),
+						conversationHistoryDeletedRange: this.dependencies.taskState.conversationHistoryDeletedRange,
+						diracMessages: this.dependencies.messageStateHandler.getDiracMessages(),
+						compactionStrategy: "auto-condense",
+					})
 				}
 			}
 		}

@@ -9,9 +9,15 @@ import { ApiHandler } from "@core/api"
 export function getContextWindowInfo(api: ApiHandler) {
 	const HARD_LIMIT = 250_000
 
-	let contextWindow = api.getModel().info.contextWindow || 128_000
+	const model = api.getModel()
+	let contextWindow = model.info.contextWindow || 128_000
+	const maxTokens = model.info.maxTokens || 0
 
-	const maxAllowedSize = Math.min(HARD_LIMIT, Math.max(contextWindow - 40_000, contextWindow * 0.8))
+	// Effective input budget: contextWindow minus the output reservation (maxTokens).
+	// Floor at 20% of contextWindow so models with very large maxTokens still have input space.
+	const inputBudget = maxTokens > 0 ? Math.max(contextWindow - maxTokens, contextWindow * 0.2) : contextWindow
+
+	const maxAllowedSize = Math.min(HARD_LIMIT, Math.max(inputBudget - 40_000, inputBudget * 0.8))
 
 	return { contextWindow, maxAllowedSize }
 }

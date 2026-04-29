@@ -65,3 +65,4 @@ tmp_*.txt
 .dirac-symbol-index*
 .dirac-logs/
 .dirac-state/
+.dirac/outputs/
