@@ -52,8 +52,10 @@ export class BashToolHandler implements IFullyManagedTool {
 		const config = uiHelpers.getConfig()
 		if (config.isSubagentExecution) return
 
+		const bashAutoApproveAll = config.services.stateManager.getGlobalSettingsKey("bashAutoApproveAll")
+		if (bashAutoApproveAll) return
+
 		const command = (block.params.command as string) || ""
-		// Always show as 'ask' because we always require approval
 		await uiHelpers.removeLastPartialMessageIfExistsWithType("say", "tool")
 		await uiHelpers.ask("tool", command, block.partial, {
 			commands: [{ command, status: "pending" }]
@@ -150,22 +152,26 @@ export class BashToolHandler implements IFullyManagedTool {
 			))
 		}
 
-		// 5. Approval: Always require for bash tool
-		showNotificationForApproval(
-			`Dirac wants to execute: ${finalCommand}`,
-			config.autoApprovalSettings.enableNotifications
-		)
+		// 5. Approval: check bashAutoApproveAll before requiring manual approval
+		const bashAutoApproveAll = config.services.stateManager.getGlobalSettingsKey("bashAutoApproveAll")
 
-		const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback(
-			"command",
-			finalCommand,
-			config,
-			false,
-			{ commands: [{ command: finalCommand, status: "pending" }] }
-		)
+		if (!bashAutoApproveAll) {
+			showNotificationForApproval(
+				`Dirac wants to execute: ${finalCommand}`,
+				config.autoApprovalSettings.enableNotifications
+			)
 
-		if (!didApprove) {
-			return formatResponse.toolResult("Command denied by user.")
+			const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback(
+				"command",
+				finalCommand,
+				config,
+				false,
+				{ commands: [{ command: finalCommand, status: "pending" }] }
+			)
+
+			if (!didApprove) {
+				return formatResponse.toolResult("Command denied by user.")
+			}
 		}
 
 		// 6. Execution

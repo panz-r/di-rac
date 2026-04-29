@@ -5,6 +5,13 @@ import { Logger } from "@/shared/services/Logger"
 const execAsync = promisify(exec)
 const GIT_OUTPUT_LINE_LIMIT = 500
 
+// Short-lived caches to avoid spawning redundant child processes per agent turn.
+// These reset naturally when the process restarts (new session).
+const _gitInstalledCache = new Map<string, boolean>()
+const _gitRepoCache = new Map<string, boolean>()
+const _gitRepoHasCommitsCache = new Map<string, boolean>()
+const _gitCommitHashCache = new Map<string, string | null>()
+
 export interface GitCommit {
 	hash: string
 	shortHash: string
@@ -14,28 +21,40 @@ export interface GitCommit {
 }
 
 async function checkGitRepo(cwd: string): Promise<boolean> {
+	const cached = _gitRepoCache.get(cwd)
+	if (cached !== undefined) return cached
 	try {
 		await execAsync("git rev-parse --git-dir", { cwd })
+		_gitRepoCache.set(cwd, true)
 		return true
 	} catch (_error) {
+		_gitRepoCache.set(cwd, false)
 		return false
 	}
 }
 
 async function checkGitInstalled(): Promise<boolean> {
+	const cached = _gitInstalledCache.get("")
+	if (cached !== undefined) return cached
 	try {
 		await execAsync("git --version")
+		_gitInstalledCache.set("", true)
 		return true
 	} catch (_error) {
+		_gitInstalledCache.set("", false)
 		return false
 	}
 }
 
 async function checkGitRepoHasCommits(cwd: string): Promise<boolean> {
+	const cached = _gitRepoHasCommitsCache.get(cwd)
+	if (cached !== undefined) return cached
 	try {
 		await execAsync("git rev-parse HEAD", { cwd })
+		_gitRepoHasCommitsCache.set(cwd, true)
 		return true
 	} catch (_error) {
+		_gitRepoHasCommitsCache.set(cwd, false)
 		return false
 	}
 }
@@ -259,6 +278,9 @@ export async function getGitRemoteUrls(cwd: string): Promise<string[]> {
 }
 
 export async function getLatestGitCommitHash(cwd: string): Promise<string | null> {
+	const cached = _gitCommitHashCache.get(cwd)
+	if (cached !== undefined) return cached
+
 	try {
 		const isInstalled = await checkGitInstalled()
 		if (!isInstalled) {
@@ -271,9 +293,12 @@ export async function getLatestGitCommitHash(cwd: string): Promise<string | null
 		}
 
 		const { stdout } = await execAsync("git rev-parse HEAD", { cwd })
-		return stdout.trim() || null
+		const result = stdout.trim() || null
+		_gitCommitHashCache.set(cwd, result)
+		return result
 	} catch (error) {
 		Logger.error("Error getting latest git commit hash:", error)
+		_gitCommitHashCache.set(cwd, null)
 		return null
 	}
 }

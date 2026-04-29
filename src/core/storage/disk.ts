@@ -67,7 +67,14 @@ export const GlobalFileNames = {
 	remoteConfig: (orgId: string) => `remote_config_${orgId}.json`,
 }
 
+let _cachedDocumentsPath: string | undefined
+
 export async function getDocumentsPath(): Promise<string> {
+	if (_cachedDocumentsPath) {
+		return _cachedDocumentsPath
+	}
+
+	let result: string
 	if (process.platform === "win32") {
 		try {
 			const { stdout: docsPath } = await execa("powershell", [
@@ -77,30 +84,32 @@ export async function getDocumentsPath(): Promise<string> {
 			])
 			const trimmedPath = docsPath.trim()
 			if (trimmedPath) {
-				return trimmedPath
+				result = trimmedPath
+			} else {
+				result = path.join(os.homedir(), "Documents")
 			}
 		} catch (_err) {
-			// Logger.error("Failed to retrieve Windows Documents path. Falling back to homedir/Documents.")
+			result = path.join(os.homedir(), "Documents")
 		}
 	} else if (process.platform === "linux") {
 		try {
-			// First check if xdg-user-dir exists
 			await execa("which", ["xdg-user-dir"])
-
-			// If it exists, try to get XDG documents path
 			const { stdout } = await execa("xdg-user-dir", ["DOCUMENTS"])
 			const trimmedPath = stdout.trim()
 			if (trimmedPath) {
-				return trimmedPath
+				result = trimmedPath
+			} else {
+				result = path.join(os.homedir(), "Documents")
 			}
 		} catch {
-			// Log error but continue to fallback
-			// Logger.error("Failed to retrieve XDG Documents path. Falling back to homedir/Documents.")
+			result = path.join(os.homedir(), "Documents")
 		}
+	} else {
+		result = path.join(os.homedir(), "Documents")
 	}
 
-	// Default fallback for all platforms
-	return path.join(os.homedir(), "Documents")
+	_cachedDocumentsPath = result
+	return result
 }
 
 /**
