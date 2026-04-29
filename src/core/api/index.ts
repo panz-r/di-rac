@@ -41,6 +41,7 @@ import { VertexHandler } from "./providers/vertex"
 import { WandbHandler } from "./providers/wandb"
 import { XAIHandler } from "./providers/xai"
 import { ZAiHandler } from "./providers/zai"
+import { NvidiaNimHandler } from "./providers/nvidia-nim"
 import { ApiStream, ApiStreamUsageChunk } from "./transform/stream"
 
 export type CommonApiHandlerOptions = {
@@ -440,6 +441,13 @@ function createHandlerForProvider(
 				onRetryAttempt: options.onRetryAttempt,
 				wandbApiKey: options.wandbApiKey,
 				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+			})
+		case "nvidia-nim":
+			return new NvidiaNimHandler({
+				onRetryAttempt: options.onRetryAttempt,
+				nvidiaNimApiKey: options.nvidiaNimApiKey,
+				nvidiaNimBaseUrl: options.nvidiaNimBaseUrl,
+				apiModelId: mode === "plan" ? options.planModeNvidiaNimModelId : options.actModeNvidiaNimModelId,
 			})
 		default:
 			return new AnthropicHandler({

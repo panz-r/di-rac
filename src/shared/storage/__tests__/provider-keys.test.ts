@@ -1,7 +1,7 @@
 import { moonshotDefaultModelId } from "@shared/api"
 import { expect } from "chai"
 import { describe, it } from "mocha"
-import { getProviderDefaultModelId, getProviderModelIdKey } from "../provider-keys"
+import { getProviderDefaultModelId, getProviderModelIdKey } from "@/shared/providers/provider-registry"
 
 describe("Provider key mapping", () => {
 	it("returns Moonshot default model ID", () => {

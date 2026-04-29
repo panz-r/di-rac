@@ -37,7 +37,7 @@ import {
 } from "@shared/api"
 import type { DiracAsk, DiracMessage as DiracMessageType } from "@shared/ExtensionMessage"
 import { CLI_ONLY_COMMANDS, VSCODE_ONLY_COMMANDS } from "@shared/slashCommands"
-import { getProviderModelIdKey } from "@shared/storage/provider-keys"
+import { getProviderModelIdKey } from "@/shared/providers/provider-registry"
 import { DiracEndpoint } from "@/config.js"
 import { Controller } from "@/core/controller"
 import { getAvailableSlashCommands } from "@/core/controller/slash/getAvailableSlashCommands"

@@ -1,7 +1,7 @@
 import type { ApiHandler } from "@core/api"
 import type { StateManager } from "@core/storage/StateManager"
 import type { ApiProvider } from "@shared/api"
-import { getProviderModelIdKey } from "@shared/storage/provider-keys"
+import { getProviderModelIdKey } from "@/shared/providers/provider-registry"
 import type { HookModelInputContext } from "./hook-factory"
 
 export type ResolvedHookModelContext = Required<HookModelInputContext>

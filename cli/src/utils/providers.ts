@@ -4,15 +4,15 @@
  */
 
 import { useMemo } from "react"
-import providersData from "@/shared/providers/providers.json"
+import { PROVIDER_LIST } from "@/shared/providers/provider-registry"
 
 // Create a lookup map from provider value to display label
 const providerLabels: Record<string, string> = Object.fromEntries(
-	providersData.list.map((p: { value: string; label: string }) => [p.value, p.label]),
+	PROVIDER_LIST.map((p) => [p.value, p.label]),
 )
 
-// Get provider order from providers.json (same order as webview)
-const providerOrder: string[] = providersData.list.map((p: { value: string }) => p.value)
+// Get provider order from registry (same order as webview)
+const providerOrder: string[] = PROVIDER_LIST.map((p) => p.value)
 
 /**
  * Providers that are not supported in CLI.
@@ -28,7 +28,7 @@ export function getProviderLabel(providerId: string): string {
 }
 
 /**
- * Get the ordered list of all provider IDs (from providers.json)
+ * Get the ordered list of all provider IDs (from registry)
  */
 function getProviderOrder(): string[] {
 	return providerOrder

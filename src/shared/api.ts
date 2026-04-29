@@ -43,6 +43,7 @@ export type ApiProvider =
 	| "hicap"
 	| "nousResearch"
 	| "wandb"
+	| "nvidia-nim"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
 	"anthropic",
@@ -86,6 +87,7 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"hicap",
 	"nousResearch",
 	"wandb",
+	"nvidia-nim",
 ]
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider

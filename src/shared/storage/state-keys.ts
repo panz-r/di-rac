@@ -152,6 +152,8 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	planModeHicapModelId: { default: undefined as string | undefined },
 	planModeHicapModelInfo: { default: undefined as ModelInfo | undefined },
 	planModeNousResearchModelId: { default: undefined as string | undefined },
+	planModeNvidiaNimModelId: { default: undefined as string | undefined },
+	nvidiaNimBaseUrl: { default: "https://integrate.api.nvidia.com/v1" as string },
 	planModeVercelAiGatewayModelId: { default: undefined as string | undefined },
 	planModeVercelAiGatewayModelInfo: { default: undefined as ModelInfo | undefined },
 
@@ -194,6 +196,7 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	actModeHicapModelId: { default: undefined as string | undefined },
 	actModeHicapModelInfo: { default: undefined as ModelInfo | undefined },
 	actModeNousResearchModelId: { default: undefined as string | undefined },
+	actModeNvidiaNimModelId: { default: undefined as string | undefined },
 	actModeVercelAiGatewayModelId: { default: undefined as string | undefined },
 	actModeVercelAiGatewayModelInfo: { default: undefined as ModelInfo | undefined },
 
@@ -316,6 +319,7 @@ const SECRETS_KEYS = [
 	"nousResearchApiKey",
 	"openai-codex-oauth-credentials", // JSON blob containing OAuth tokens for OpenAI Codex (ChatGPT subscription)
 	"wandbApiKey",
+	"nvidiaNimApiKey",
 ] as const
 
 // WARNING, these are not ALL of the local state keys in practice. For example, FileContextTracker

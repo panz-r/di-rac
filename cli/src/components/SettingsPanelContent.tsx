@@ -990,6 +990,10 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 					if (actKey) stateManager.setGlobalState(actKey, editValue || undefined)
 					if (planKey) stateManager.setGlobalState(planKey, editValue || undefined)
 				}
+
+				stateManager.flushPendingState()
+				refreshModelIds()
+				rebuildTaskApi()
 				break
 			}
 			case "language":
@@ -998,7 +1002,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				break
 		}
 		setIsEditing(false)
-	}, [items, selectedIndex, editValue, separateModels, stateManager])
+	}, [items, selectedIndex, editValue, separateModels, stateManager, refreshModelIds, rebuildTaskApi])
 
 	// Navigate to next/prev item, skipping non-interactive items
 	const navigateItems = useCallback(

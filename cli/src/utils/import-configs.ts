@@ -6,7 +6,7 @@ import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
 import { anthropicDefaultModelId, geminiDefaultModelId, openAiNativeDefaultModelId } from "@/shared/api"
-import providersData from "@/shared/providers/providers.json"
+import { PROVIDER_LIST } from "@/shared/providers/provider-registry"
 
 // Import source types
 export type ImportSource = "codex" | "opencode"
@@ -31,9 +31,9 @@ export interface DetectedSources {
 	opencode: boolean
 }
 
-// Build provider labels map from providers.json (single source of truth)
+// Build provider labels map from registry
 const providerLabels: Record<string, string> = Object.fromEntries(
-	providersData.list.map((p: { value: string; label: string }) => [p.value, p.label]),
+	PROVIDER_LIST.map((p) => [p.value, p.label]),
 )
 
 /**
@@ -241,7 +241,7 @@ export function getSourceDisplayName(source: ImportSource): string {
 }
 
 /**
- * Get provider display name from providers.json
+ * Get provider display name from registry
  */
 export function getProviderDisplayName(provider: string): string {
 	return providerLabels[provider] || provider

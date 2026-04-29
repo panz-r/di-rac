@@ -163,6 +163,10 @@
 		{
 			"value": "wandb",
 			"label": "W&B Inference by CoreWeave"
+		},
+		{
+			"value": "nvidia-nim",
+			"label": "NVIDIA NIM"
 		}
 	]
 }
