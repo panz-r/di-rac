@@ -232,6 +232,7 @@ export class RecoveryEngine {
 
 	public resetTurnBudget() {
 		this.currentTurnRetries = 0
+		this.stagnationHintCount = 0 // Phase 15 Hardening: Reset hints on new turn
 	}
 
 	public getTelemetry() {
@@ -1275,36 +1276,40 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 
 	private detectStagnation(toolName: string, args: unknown, taskState?: any): StagnationResult | null {
 		const fingerprint = this.fingerprintToolCall(toolName, args)
+		const currentFP = `${toolName}:${fingerprint}`
 		
 		// 1. Cycle Detection (L2 Backtracking)
-		// We track the last 9 calls to detect patterns up to length 3 (A-B-C-A-B-C)
-		const historyLength = this.callHistory.length
-		if (historyLength >= 6) {
-			const recent = this.callHistory.slice(-9)
-			const fps = recent.map(c => `${c.tool}:${c.fingerprint}`)
-			const len = fps.length
+		// We include the CURRENT call in the check to see if it completes a cycle
+		const recent = this.callHistory.slice(-8) // Last 8 calls
+		const fps = [...recent.map(c => `${c.tool}:${c.fingerprint}`), currentFP]
+		const len = fps.length
 
-			// Check for exact triple repeat (A, A, A)
-			if (len >= 3 && fps[len-1] === fps[len-2] && fps[len-2] === fps[len-3]) {
+		if (len >= 3) {
+			// Pattern: A, A, A
+			if (fps[len - 1] === fps[len - 2] && fps[len - 2] === fps[len - 3]) {
 				return {
 					stagnationDetected: true,
 					summary: `Repeated identical semantic call to ${toolName} (3x). Loop broken.`
 				}
 			}
+		}
 
-			// Check for alternating loop (A, B, A, B)
-			if (len >= 4 && fps[len-1] === fps[len-3] && fps[len-2] === fps[len-4]) {
+		if (len >= 4) {
+			// Pattern: A, B, A, B (Phase 13: Alternating Loop)
+			if (fps[len - 1] === fps[len - 3] && fps[len - 2] === fps[len - 4]) {
 				return {
 					stagnationDetected: true,
-					summary: `Alternating loop detected between ${recent[len-1].tool} and ${recent[len-2].tool}.`
+					summary: `Alternating loop detected between ${toolName} and ${recent[recent.length - 1].tool}. Strategy thrashing.`
 				}
 			}
+		}
 
-			// Check for circular loop (A, B, C, A, B, C)
-			if (len >= 6 && fps[len-1] === fps[len-4] && fps[len-2] === fps[len-5] && fps[len-3] === fps[len-6]) {
+		if (len >= 6) {
+			// Pattern: A, B, C, A, B, C (Phase 14: Circular Loop)
+			if (fps[len - 1] === fps[len - 4] && fps[len - 2] === fps[len - 5] && fps[len - 3] === fps[len - 6]) {
 				return {
 					stagnationDetected: true,
-					summary: `Circular strategy loop detected (${recent[len-1].tool} -> ${recent[len-2].tool} -> ${recent[len-3].tool}).`
+					summary: `Circular strategy loop detected (${toolName} -> ${recent[recent.length - 1].tool} -> ${recent[recent.length - 2].tool}).`
 				}
 			}
 		}
@@ -1318,7 +1323,8 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 				const recentReadOnlyCount = this.callHistory.slice(-5).filter(c => readOnlyTools.includes(c.tool as any)).length
 				
 				// Phase 5: Phase Tracking Nudge
-				if (recentReadOnlyCount >= 5 && taskState.currentTaskPhase === "exploration") {
+				// We check if history + current call would hit the threshold
+				if (recentReadOnlyCount + 1 >= 5 && taskState.currentTaskPhase === "exploration") {
 					const touchedFiles = Array.from(taskState.filesTouchedInCurrentTurn)
 					
 					// Phase 11: Specification Drift Detection (Turn Threshold)
@@ -1331,7 +1337,7 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 
 					return {
 						stagnationDetected: true,
-						summary: `Extended exploration phase detected (${recentReadOnlyCount} calls, ${touchedFiles.length} files). If you have enough context, please proceed to editing.`
+						summary: `Extended exploration phase detected (${recentReadOnlyCount + 1} calls, ${touchedFiles.length} files). If you have enough context, please proceed to editing.`
 					}
 				}
 
