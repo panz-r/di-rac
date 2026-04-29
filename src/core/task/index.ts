@@ -799,7 +799,6 @@ export class Task {
 
 			await fs.mkdir(artifactDir, { recursive: true })
 
-			const ts = new Date().toISOString()
 			const debugPath = path.join(artifactDir, `task-${this.taskId}-debug.md`)
 
 			let markdown = `## System Prompt\n\n${params.systemPrompt}\n\n`
@@ -875,7 +874,7 @@ export class Task {
 		const providerInfo = this.getCurrentProviderInfo()
 		const host = await HostProvider.env.getHostVersion({})
 		const ide = host?.platform || "Unknown"
-		const isCliEnvironment = host.diracType === DiracClient.Cli
+		const isCliEnvironment = host?.diracType === DiracClient.Cli
 		const browserSettings = this.stateManager.getGlobalSettingsKey("browserSettings")
 		const disableBrowserTool = browserSettings.disableToolUse ?? false
 		// dirac browser tool uses image recognition for navigation (requires model image support).
@@ -1090,12 +1089,12 @@ ${notice}`
 				const streamingFailedMessage = diracError.serialize()
 
 				// Update the 'api_req_started' message to reflect final failure before asking user to manually retry
+				const diracMessages = this.messageStateHandler.getDiracMessages()
 				const lastApiReqStartedIndex = findLastIndex(
-					this.messageStateHandler.getDiracMessages(),
+					diracMessages,
 					(m) => m.say === "api_req_started",
 				)
 				if (lastApiReqStartedIndex !== -1) {
-					const diracMessages = this.messageStateHandler.getDiracMessages()
 					const currentApiReqInfo: DiracApiReqInfo = JSON.parse(diracMessages[lastApiReqStartedIndex].text || "{}")
 					delete currentApiReqInfo.retryStatus
 
@@ -1162,12 +1161,12 @@ ${notice}`
 
 					// Clear streamingFailedMessage now that error_retry contains it
 					// This prevents showing the error in both ErrorRow and error_retry
+					const diracMessages = this.messageStateHandler.getDiracMessages()
 					const autoRetryApiReqIndex = findLastIndex(
-						this.messageStateHandler.getDiracMessages(),
+						diracMessages,
 						(m) => m.say === "api_req_started",
 					)
 					if (autoRetryApiReqIndex !== -1) {
-						const diracMessages = this.messageStateHandler.getDiracMessages()
 						const currentApiReqInfo: DiracApiReqInfo = JSON.parse(diracMessages[autoRetryApiReqIndex].text || "{}")
 						delete currentApiReqInfo.streamingFailedMessage
 						await this.messageStateHandler.updateDiracMessage(autoRetryApiReqIndex, {
@@ -1203,13 +1202,13 @@ ${notice}`
 				}
 
 				// Clear streamingFailedMessage when user manually retries
+				const retryDiracMessages = this.messageStateHandler.getDiracMessages()
 				const manualRetryApiReqIndex = findLastIndex(
-					this.messageStateHandler.getDiracMessages(),
+					retryDiracMessages,
 					(m) => m.say === "api_req_started",
 				)
 				if (manualRetryApiReqIndex !== -1) {
-					const diracMessages = this.messageStateHandler.getDiracMessages()
-					const currentApiReqInfo: DiracApiReqInfo = JSON.parse(diracMessages[manualRetryApiReqIndex].text || "{}")
+					const currentApiReqInfo: DiracApiReqInfo = JSON.parse(retryDiracMessages[manualRetryApiReqIndex].text || "{}")
 					delete currentApiReqInfo.streamingFailedMessage
 					await this.messageStateHandler.updateDiracMessage(manualRetryApiReqIndex, {
 						text: JSON.stringify(currentApiReqInfo),
@@ -1264,8 +1263,10 @@ ${notice}`
 		}
 		userContent = mistakeResult.userContent
 
-		const previousApiReqIndex = findLastIndex(this.messageStateHandler.getDiracMessages(), (m) => m.say === "api_req_started")
-		const isFirstRequest = this.messageStateHandler.getDiracMessages().filter((m) => m.say === "api_req_started").length === 0
+		// Snapshot for read-only pre-loop checks; do not use after any await
+		const diracMessagesSnapshot = this.messageStateHandler.getDiracMessages()
+		const previousApiReqIndex = findLastIndex(diracMessagesSnapshot, (m) => m.say === "api_req_started")
+		const isFirstRequest = diracMessagesSnapshot.filter((m) => m.say === "api_req_started").length === 0
 		await this.initializeCheckpoints(isFirstRequest)
 
 		const useCompactPrompt = customPrompt === "compact" && isLocalModel(this.getCurrentProviderInfo())
@@ -1371,7 +1372,7 @@ ${notice}`
 				diracMessages.forEach((msg) => {
 					if (msg.partial) {
 						msg.partial = false
-						Logger.log("updating partial message", msg)
+						Logger.debug("updating partial message", msg)
 					}
 				})
 				await finalizeApiReqMsg(cancelReason, streamingFailedMessage)
@@ -1493,8 +1494,6 @@ ${notice}`
 
 				while (true) {
 					const chunk = await streamCoordinator.nextChunk()
-					if (chunk) {
-					}
 					if (!chunk) {
 						break
 					}
@@ -1642,9 +1641,9 @@ ${notice}`
 						)
 					}
 
-					this.abortTask()
 					await abortStream("streaming_failed", errorMessage)
 					await this.reinitExistingTaskFromId(this.taskId)
+					this.abortTask()
 				}
 			} finally {
 				this.taskState.isStreaming = false
@@ -1765,7 +1764,7 @@ ${notice}`
 			showSystemNotification({
 				subtitle: "Error",
 				message: "Dirac is having trouble. Would you like to continue the task?",
-			})
+			}).catch(() => {})  // notifications are non-critical
 		}
 
 		const { response, text, images, files } = await this.ask(

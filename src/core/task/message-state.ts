@@ -64,6 +64,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 	// Debounce disk saves to reduce I/O overhead during rapid updates
 	private diskSaveTimer: NodeJS.Timeout | null = null
+	private savingInProgress = false
 	private lastDiskSaveTs = 0
 	private readonly DISK_SAVE_DEBOUNCE_MS = 1000
 
@@ -117,6 +118,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		return this.diracMessages
 	}
 
+	// Unprotected by mutex intentionally - only called during task initialization
+	// when no concurrent modifications are possible. For active sessions use overwriteDiracMessages().
 	setDiracMessages(newMessages: DiracMessage[]) {
 		const previousMessages = this.diracMessages
 		this.diracMessages = newMessages
@@ -144,22 +147,30 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	}
 
 	private debouncedSaveDiracMessages(): void {
-		const now = Date.now()
-
-		if (this.diskSaveTimer) {
+		if (this.savingInProgress || this.diskSaveTimer) {
 			return
 		}
 
+		const doSave = async () => {
+			this.savingInProgress = true
+			try {
+				await this.saveDiracMessagesInternal()
+			} finally {
+				this.savingInProgress = false
+			}
+		}
+
+		const now = Date.now()
 		if (now - this.lastDiskSaveTs > this.DISK_SAVE_DEBOUNCE_MS) {
 			this.lastDiskSaveTs = now
-			if (!this.disposed) this.saveDiracMessagesInternal().catch((err) => Logger.error("Failed to save messages:", err))
+			if (!this.disposed) doSave().catch((err) => Logger.error("Failed to save messages:", err))
 			return
 		}
 
 		this.diskSaveTimer = setTimeout(() => {
 			this.diskSaveTimer = null
 			this.lastDiskSaveTs = Date.now()
-			if (!this.disposed) this.saveDiracMessagesInternal().catch((err) => Logger.error("Failed to save messages:", err))
+			if (!this.disposed) doSave().catch((err) => Logger.error("Failed to save messages:", err))
 		}, this.DISK_SAVE_DEBOUNCE_MS)
 	}
 
@@ -298,6 +309,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		await this.withStateLock(async () => {
 			// these values allow us to reconstruct the conversation history at the time this dirac message was created
 			// it's important that apiConversationHistory is initialized before we add dirac messages
+			// -1 signals "no prior conversation history" — safety fallback if history is empty
 			message.conversationHistoryIndex = this.apiConversationHistory.length - 1
 			message.conversationHistoryDeletedRange = this.taskState.conversationHistoryDeletedRange
 			const index = this.diracMessages.length
@@ -358,9 +370,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			// Save changes
 			this.debouncedSaveDiracMessages()
 		})
-		// History update can happen outside the lock and doesn't need to be awaited
-		// if we want maximum performance, but for now we await it to be safe.
-		// The key is that getFolderSize is now outside the stateMutex lock.
+		// History update is fire-and-forget; debouncedUpdateTaskHistory runs asynchronously
 		this.debouncedUpdateTaskHistory()
 	}
 

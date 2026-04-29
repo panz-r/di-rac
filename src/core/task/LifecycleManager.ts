@@ -50,12 +50,7 @@ export class LifecycleManager {
 			)
 			if (lastCheckpointMessageIndex !== -1) {
 				const commitPromise = this.dependencies.checkpointManager!.commit()
-				// Store the initial commit promise in Task for unsafe tools to wait on
-				// We'll need to expose this or handle it differently.
-				// In Task, it was: this.initialCheckpointCommitPromise = commitPromise
-				// I'll add a way to set it in Task or just keep it here if it's only used for tools.
-				// Wait, ToolExecutor needs it. I'll add it to TaskState or pass it back.
-				// Let's add it to TaskState for simplicity as it's a transient state.
+				// Store initial commit promise in TaskState so unsafe tools can await it
 				this.dependencies.taskState.initialCheckpointCommitPromise = commitPromise
 
 				commitPromise
@@ -215,12 +210,11 @@ export class LifecycleManager {
 		}
 
 		await this.dependencies.messageStateHandler.overwriteDiracMessages(savedDiracMessages)
-		this.dependencies.messageStateHandler.setDiracMessages(await getSavedDiracMessages(this.dependencies.taskId))
 
 		const savedApiConversationHistory = await getSavedApiConversationHistory(this.dependencies.taskId)
 		this.dependencies.messageStateHandler.setApiConversationHistory(savedApiConversationHistory as any)
 
-		const taskDir = await ensureTaskDirectoryExists(this.dependencies.taskId)
+		await ensureTaskDirectoryExists(this.dependencies.taskId)
 
 		const lastDiracMessage = this.dependencies.messageStateHandler
 			.getDiracMessages()
@@ -477,6 +471,9 @@ export class LifecycleManager {
 						askType = "resume_task"
 					}
 
+					// Fire-and-forget: the ask may resume the task but abortTask's finally block
+					// will run immediately. This is acceptable because the resumed task will
+					// re-acquire the lock and start fresh.
 					this.dependencies.ask(askType).catch((error) => {
 						Logger.log("[TaskCancel] Resume ask failed (task may have been cleared):", error)
 					})
