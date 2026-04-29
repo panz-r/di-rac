@@ -5,17 +5,17 @@
 
 import * as path from "path"
 import * as os from "os"
-import { EventEmitter } from "events"
+import { createStorageContext, type StorageContext } from "@/shared/storage/storage-context"
 
-// Re-export EventEmitter for convenience
-export { EventEmitter }
+// Re-export StorageContext for consumers
+export type { StorageContext }
 
 /**
  * CLI-specific context result that mirrors VS Code extension context
  */
 export interface CliContextResult {
 	extensionContext: any
-	storageContext: any
+	storageContext: StorageContext
 	DATA_DIR: string
 	EXTENSION_DIR: string
 }
@@ -55,23 +55,11 @@ export function initializeCliContext(options: CliContextOptions = {}): CliContex
 		subscriptions: [],
 	}
 
-	// Create storage context for state persistence
-	const storageContext = {
-		// Storage paths for CLI
-		globalStoragePath: path.join(DATA_DIR, "globalStorage"),
-		workspaceStoragePath: path.join(DATA_DIR, "workspaceStorage"),
-		// Extension URI for storage
-		extensionUri: `file://${DATA_DIR}`,
-		workspace: {
-			// Minimal workspace info
-			name: path.basename(options.workspaceDir || process.cwd()),
-			uri: `file://${options.workspaceDir || process.cwd()}`,
-		},
-		// Environment
-		environmentVariableCollection: {
-			persistent: false,
-		},
-	}
+	// Create proper file-backed storage context with globalState, secrets, workspaceState
+	const storageContext = createStorageContext({
+		diracDir,
+		workspacePath: options.workspaceDir || process.cwd(),
+	})
 
 	return {
 		extensionContext,
