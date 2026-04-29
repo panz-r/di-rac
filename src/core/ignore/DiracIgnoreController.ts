@@ -35,17 +35,8 @@ export const DEFAULT_IGNORE_PATTERNS = [
 	".env",
 	".yarn",
 
-	// Build & Output
-	"dist",
-	"build",
+	// Build & Output (Removed common names to allow reading logs/artifacts)
 	"builddir",
-	"out",
-	"output",
-	"target",
-	"bin",
-	"obj",
-	"generated",
-	"gen",
 	"CMakeFiles",
 	"meson-*",
 	"cmake-build-*",
@@ -276,6 +267,11 @@ export class DiracIgnoreController {
 			// Normalize path to be relative to cwd and use forward slashes
 			const absolutePath = path.resolve(this.cwd, filePath)
 			const relativePath = path.relative(this.cwd, absolutePath).toPosix()
+
+			// Pragmatic allowance: Always allow access to log files for debugging
+			if (relativePath.endsWith(".log")) {
+				return true
+			}
 
 			// Ignore expects paths to be path.relative()'d
 			return !this.ignoreInstance.ignores(relativePath)

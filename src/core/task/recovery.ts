@@ -627,12 +627,46 @@ Some line numbers may have shifted. Please locate your target function in the ne
 							this.updateAuditChain(toolName, "PATH_REWRITTEN", "SILENT_FIX")
 							return await execute(toolName as any, newInput)
 						}
+
+						// Phase 15 Hardening: Provide specific hints for common absolute paths like /tmp
+						if (rawPath.startsWith("/tmp")) {
+							return this.formatStructuredEscalation(
+								toolName,
+								input,
+								"PATH_ESCAPE",
+								`You attempted to access '${rawPath}', which is outside the workspace.`,
+								"Please use a project-relative path like '.dirac-tmp/' or '.tmp/' instead. Absolute paths are forbidden."
+							)
+						}
 					} catch (e) {
 						// Fall through to escalation
 					}
 
-					return null // Escalate to LLM
+					// Provide a strong general hint for any other escape
+					return this.formatStructuredEscalation(
+						toolName,
+						input,
+						"PATH_ESCAPE",
+						`Path escape detected: '${rawPath}' is outside the workspace root.`,
+						"Always use project-relative paths (e.g. 'src/main.ts') instead of absolute paths."
+					)
 				},
+			},
+			DIRAC_IGNORE_BLOCK: {
+				domain: ErrorDomain.ACTION,
+				category: ErrorCategory.PERMANENT,
+				tier: "input_error",
+				maxRetries: 0,
+				handler: async (toolName, input: any, _error, _attempt, _execute) => {
+					const rawPath = input.path || input.file_path || input.absolutePath
+					return this.formatStructuredEscalation(
+						toolName,
+						input,
+						"DIRAC_IGNORE_BLOCK",
+						`Access to '${rawPath}' is blocked by the .diracignore file settings.`,
+						"If you MUST access this file, ask the user to update the .diracignore file. Otherwise, please find another way to proceed without using this file."
+					)
+				}
 			},
 			EISDIR: {
 				domain: ErrorDomain.MEMORY,
@@ -1171,6 +1205,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				if (text.includes("EADDRINUSE")) return "EADDRINUSE"
 				if (text.includes("maximum context") || text.includes("too many tokens") || text.includes("context length")) return "CONTEXT_OVERFLOW"
 				if (text.includes("No files found") || text.includes("0 symbols found")) return "EMPTY_SEARCH_RESULTS"
+				if (text.includes("blocked by the .diracignore file")) return "DIRAC_IGNORE_BLOCK"
 				
 				return "GENERIC_ERROR" // Fallback if it looks like an error but no code is found
 			}

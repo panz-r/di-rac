@@ -83,7 +83,7 @@ SYSTEM INFO
 }
 - Current Working Directory: ${currentCwd} (this is where all the tools will be executed from)
 - Workspace Root: ${currentCwd}
-- PROJECT-RELATIVE PATHS: All file paths you provide MUST be project-relative (e.g., 'src/main.ts', not '/absolute/path/src/main.ts'). The system will automatically translate absolute paths if you make a mistake, but you should always strive to use relative paths.
+- PROJECT-RELATIVE PATHS: All file paths you provide MUST be project-relative (e.g., 'src/main.ts', not '/absolute/path/src/main.ts'). Absolute paths are strictly forbidden and will be blocked by the system.
 ${context.rewritePaths ? "- Path Rewriting: The system is configured to automatically normalize paths and resolve symlinks.\n" : ""}
 - Available CPU Cores: {{AVAILABLE_CORES}} (Use this value for parallel jobs like 'make -j' instead of 'nproc')
 ${yoloModeToggled ? "- You are running in fully autonomous mode.\n" : ""}
