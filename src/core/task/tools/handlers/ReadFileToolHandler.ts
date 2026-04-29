@@ -308,8 +308,8 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 				const fileSizeKB = stats.size / 1024
 
 				// Auto-Expansion: increment read count
-				const currentReadCount = (config.taskState.readCounts.get(relPath) || 0) + 1
-				config.taskState.readCounts.set(relPath, currentReadCount)
+				const currentReadCount = (config.taskState.readCounts.get(absolutePath) || 0) + 1
+				config.taskState.readCounts.set(absolutePath, currentReadCount)
 
 				let effectivePreviewLines = OVERSIZED_FILE_PREVIEW_LINES
 				if (currentReadCount >= 3 && !startLineNum && !endLineNum && !rangesRaw && !page) {

@@ -81,17 +81,25 @@ export class TaskState {
 	// Exploration state
 	fileCursors: Map<string, number> = new Map() // maps absolute path to start line (1-based)
 	symbolIndex: Map<string, SymbolIndexEntry[]> = new Map() // maps relative path to symbols
-	readCounts: Map<string, number> = new Map() // maps relative path to number of times read
+	readCounts: Map<string, number> = new Map() // maps absolute path to number of times read
 	contentHashCache: Map<string, string> = new Map() // maps cache key to content hash
 
 	// Advanced recovery state
 	fileLastAccessToolIndex: Map<string, number> = new Map() // maps absolute path to tool call index
 	filesTouchedInCurrentTurn: Set<string> = new Set()
 	filesEditedInCurrentTurn: Set<string> = new Set()
-	symbolIndexMtimes: Map<string, number> = new Map() // maps relative path to last indexed mtime
+	symbolIndexMtimes: Map<string, number> = new Map() // maps absolute path to last indexed mtime
 	currentTaskPhase: "exploration" | "editing" | "verification" = "exploration"
 	turnTokenEstimates: number = 0
 	didExecuteCommand: boolean = false
+	currentTurnNumber = 0
+
+	resetTurnState(): void {
+		this.filesTouchedInCurrentTurn.clear()
+		this.filesEditedInCurrentTurn.clear()
+		this.turnTokenEstimates = 0
+		this.currentTurnNumber++
+	}
 }
 
 export interface SymbolIndexEntry {
