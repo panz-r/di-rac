@@ -1,6 +1,7 @@
 import { HostProvider } from "@/hosts/host-provider"
 import CheckpointTracker from "@/integrations/checkpoints/CheckpointTracker"
 import { findLast } from "@/shared/array"
+import { DiracMessage } from "@/shared/ExtensionMessage"
 import { ShowMessageType } from "@/shared/proto/index.host"
 import { Logger } from "@/shared/services/Logger"
 import { MessageStateHandler } from "./message-state"
@@ -11,37 +12,45 @@ export async function showChangedFilesDiff(
 	messageTs: number,
 	seeNewChangesSinceLastTaskCompletion: boolean,
 ) {
-	Logger.log("presentMultifileDiff", messageTs)
-	const diracMessages = messageStateHandler.getDiracMessages()
-	const messageIndex = diracMessages.findIndex((m) => m.ts === messageTs)
-	const message = diracMessages[messageIndex]
-	if (!message) {
-		Logger.error("Message not found")
-		return
-	}
-	const lastCheckpointHash = message.lastCheckpointHash
-	if (!lastCheckpointHash) {
-		Logger.error("No checkpoint hash found")
-		return
-	}
+	try {
+		Logger.info("presentMultifileDiff", { messageTs })
+		const diracMessages = messageStateHandler.getDiracMessages()
+		const messageIndex = diracMessages.findIndex((m) => m.ts === messageTs)
+		const message = diracMessages[messageIndex]
+		if (!message) {
+			Logger.error("Message not found")
+			return
+		}
+		const lastCheckpointHash = message.lastCheckpointHash
+		if (!lastCheckpointHash) {
+			Logger.error("No checkpoint hash found")
+			return
+		}
 
-	const changedFiles = await getChangedFiles(
-		messageStateHandler,
-		checkpointTracker,
-		seeNewChangesSinceLastTaskCompletion,
-		messageIndex,
-		lastCheckpointHash,
-	)
-	if (!changedFiles.length) {
-		return
+		const changedFiles = await getChangedFiles(
+			diracMessages,
+			checkpointTracker,
+			seeNewChangesSinceLastTaskCompletion,
+			messageIndex,
+			lastCheckpointHash,
+		)
+		if (!changedFiles.length) {
+			return
+		}
+		const title = seeNewChangesSinceLastTaskCompletion ? "New changes" : "Changes since snapshot"
+		const diffs = changedFiles.map((file) => ({
+			filePath: file.absolutePath,
+			leftContent: file.before,
+			rightContent: file.after,
+		}))
+		HostProvider.diff.openMultiFileDiff({ title, diffs })
+	} catch (error) {
+		Logger.error("presentMultifileDiff failed", error)
+		HostProvider.window.showMessage({
+			type: ShowMessageType.ERROR,
+			message: "Failed to show diff: " + (error instanceof Error ? error.message : "Unknown error"),
+		})
 	}
-	const title = seeNewChangesSinceLastTaskCompletion ? "New changes" : "Changes since snapshot"
-	const diffs = changedFiles.map((file) => ({
-		filePath: file.absolutePath,
-		leftContent: file.before,
-		rightContent: file.after,
-	}))
-	HostProvider.diff.openMultiFileDiff({ title, diffs })
 }
 
 type ChangedFile = {
@@ -52,21 +61,24 @@ type ChangedFile = {
 }
 
 async function getChangedFiles(
-	messageStateHandler: MessageStateHandler,
+	diracMessages: DiracMessage[],
 	checkpointTracker: CheckpointTracker,
 	changesSinceLastTaskCompletion: boolean,
 	messageIndex: number,
 	lastCheckpointHash: string,
 ): Promise<ChangedFile[]> {
 	try {
-		let changedFiles
+		let changedFiles: ChangedFile[] | null
 		if (changesSinceLastTaskCompletion) {
 			changedFiles = await getChangesSinceLastTaskCompletion(
-				messageStateHandler,
+				diracMessages,
 				checkpointTracker,
 				messageIndex,
 				lastCheckpointHash,
 			)
+			if (changedFiles === null) {
+				return []
+			}
 		} else {
 			// Get changed files between current state and commit
 			changedFiles = await checkpointTracker.getDiffSet(lastCheckpointHash)
@@ -89,20 +101,19 @@ async function getChangedFiles(
 }
 
 async function getChangesSinceLastTaskCompletion(
-	messageStateHandler: MessageStateHandler,
+	diracMessages: DiracMessage[],
 	checkpointTracker: CheckpointTracker,
 	messageIndex: number,
 	lastCheckpointHash: string,
-): Promise<ChangedFile[]> {
+): Promise<ChangedFile[] | null> {
 	// Get last task completed
 	const lastTaskCompletedMessageCheckpointHash = findLast(
-		messageStateHandler.getDiracMessages().slice(0, messageIndex),
+		diracMessages.slice(0, messageIndex),
 		(m) => m.say === "completion_result",
-	)?.lastCheckpointHash // ask is only used to relinquish control, its the last say we care about
+	)?.lastCheckpointHash
 
 	// This value *should* always exist
-	const firstCheckpointMessageCheckpointHash = messageStateHandler
-		.getDiracMessages()
+	const firstCheckpointMessageCheckpointHash = diracMessages
 		.find((m) => m.say === "checkpoint_created")?.lastCheckpointHash
 
 	// either use the diff between the first checkpoint and the task completion, or the diff
@@ -114,7 +125,15 @@ async function getChangesSinceLastTaskCompletion(
 			type: ShowMessageType.ERROR,
 			message: "Unexpected error: No checkpoint hash found",
 		})
-		return []
+		return null
+	}
+
+	if (previousCheckpointHash === lastCheckpointHash) {
+		HostProvider.window.showMessage({
+			type: ShowMessageType.INFORMATION,
+			message: "No new changes since the last checkpoint.",
+		})
+		return null
 	}
 
 	// Get changed files between current state and commit

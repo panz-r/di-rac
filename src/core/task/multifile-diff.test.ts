@@ -7,6 +7,7 @@ import { HostProvider } from "@/hosts/host-provider"
 import CheckpointTracker from "@/integrations/checkpoints/CheckpointTracker"
 import { DiracMessage } from "@/shared/ExtensionMessage"
 import { ShowMessageType } from "@/shared/proto/index.host"
+import { Logger } from "@/shared/services/Logger"
 import { setVscodeHostProviderMock } from "@/test/host-provider-test-utils"
 
 describe("multifile-diff", () => {
@@ -35,6 +36,10 @@ describe("multifile-diff", () => {
 		// Create stubs for dependencies
 		messageStateHandlerStub = sandbox.createStubInstance(MessageStateHandler)
 		checkpointTrackerStub = sandbox.createStubInstance(CheckpointTracker)
+
+		// Stub Logger to silence console output during tests
+		sandbox.stub(Logger, "info")
+		sandbox.stub(Logger, "error")
 	})
 
 	afterEach(() => {
@@ -278,6 +283,39 @@ describe("multifile-diff", () => {
 				}),
 			).to.be.true
 			expect(checkpointTrackerStub.getDiffSet.called).to.be.false
+		})
+
+		it("should show information message when checkpoint hashes are identical", async () => {
+			// Arrange
+			const messagesWithSameHash: DiracMessage[] = [
+				{ ts: 1234567000, type: "say", say: "completion_result", lastCheckpointHash: "same-hash" },
+				{ ts: mockMessageTs, type: "say", say: "text", lastCheckpointHash: "same-hash" },
+			]
+			messageStateHandlerStub.getDiracMessages.returns(messagesWithSameHash)
+
+			// Act
+			await showChangedFilesDiff(
+				messageStateHandlerStub as any,
+				checkpointTrackerStub as any,
+				mockMessageTs,
+				true, // seeNewChangesSinceLastTaskCompletion
+			)
+
+			// Assert
+			expect(
+				(HostProvider.window.showMessage as sinon.SinonStub).calledWith({
+					type: ShowMessageType.INFORMATION,
+					message: "No new changes since the last checkpoint.",
+				}),
+			).to.be.true
+			expect(checkpointTrackerStub.getDiffSet.called).to.be.false
+			// Verify the generic "No changes found" message is NOT also shown
+			expect(
+				(HostProvider.window.showMessage as sinon.SinonStub).calledWith({
+					type: ShowMessageType.INFORMATION,
+					message: "No changes found",
+				}),
+			).to.be.false
 		})
 
 		it("should handle large number of changed files", async () => {
