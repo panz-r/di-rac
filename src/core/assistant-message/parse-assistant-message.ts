@@ -21,9 +21,16 @@ export function parseAssistantMessageV2(assistantMessage: string): AssistantMess
 		if (openingTagMatch) {
 			const tagName = openingTagMatch[1]
 			const openingTag = openingTagMatch[0]
-			const closingTag = `</${tagName}>`
-
-			const closingTagIndex = remaining.toLowerCase().indexOf(closingTag.toLowerCase(), openingTag.length)
+			
+			// Phase 15 Hardening: Search for both possible closing tags to handle mismatches
+			const closingTag1 = `</${tagName}>`
+			const closingTag2 = tagName.toLowerCase() === "thinking" ? "</think>" : "</thinking>"
+			
+			const idx1 = remaining.toLowerCase().indexOf(closingTag1.toLowerCase(), openingTag.length)
+			const idx2 = remaining.toLowerCase().indexOf(closingTag2.toLowerCase(), openingTag.length)
+			
+			const closingTagIndex = idx1 === -1 ? idx2 : idx2 === -1 ? idx1 : Math.min(idx1, idx2)
+			const finalClosingTag = closingTagIndex === idx1 ? closingTag1 : closingTag2
 
 			if (closingTagIndex !== -1) {
 				// Found complete reasoning block
@@ -35,7 +42,7 @@ export function parseAssistantMessageV2(assistantMessage: string): AssistantMess
 						partial: false,
 					})
 				}
-				i += closingTagIndex + closingTag.length
+				i += closingTagIndex + finalClosingTag.length
 				continue
 			}
 			// Partial reasoning block (tag not closed)

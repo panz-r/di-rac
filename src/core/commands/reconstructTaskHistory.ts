@@ -214,10 +214,12 @@ interface TaskInfo {
 
 function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): TaskInfo {
 	// Find the first user message (task description)
-	const firstUserMessage = diracMessages.find((msg) => msg.type === "say" && msg.say === "text" && msg.text)
+	const firstUserMessage = diracMessages.find(
+		(msg) => msg.type === "say" && (msg.say === "task" || msg.say === "text") && msg.text,
+	)
 
-	// Extract timestamp from first message or use task ID as fallback
-	const timestamp = diracMessages.length > 0 ? diracMessages[0].ts : Date.now()
+	// Extract timestamp from first task or user message or use first message in array
+	const timestamp = firstUserMessage?.ts ?? (diracMessages.length > 0 ? diracMessages[0].ts : Date.now())
 
 	// Extract task description
 	let taskDescription = "Untitled Task"
@@ -240,6 +242,7 @@ function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): T
 	let cacheWrites = 0
 	let cacheReads = 0
 	let totalCost = 0
+	let parseFailures = 0
 
 	// Look for usage-carrying messages with token info
 	const apiReqMessages = diracMessages.filter(
@@ -267,13 +270,19 @@ function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): T
 				if (typeof usage.cacheReads === "number" && Number.isFinite(usage.cacheReads)) {
 					cacheReads += usage.cacheReads
 				}
-				if (typeof usage.cost === "number" && Number.isFinite(usage.cost)) {
-					totalCost += usage.cost
+				
+				const cost = typeof usage.cost === "number" ? usage.cost : typeof usage.totalCost === "number" ? usage.totalCost : undefined
+				if (cost !== undefined && Number.isFinite(cost)) {
+					totalCost += cost
 				}
 			}
 		} catch {
-			// Ignore parsing errors
+			parseFailures++
 		}
+	}
+
+	if (parseFailures > 0) {
+		Logger.debug(`Skipped ${parseFailures} unparseable API messages for task history reconstruction`)
 	}
 
 	// Use metadata if available and no tokens found in messages
@@ -287,11 +296,15 @@ function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): T
 		}
 	}
 
+	// Extract ULID if available
+	const ulid = metadata?.ulid || undefined
+
 	// Calculate approximate size (rough estimate)
 	const messageSize = JSON.stringify(diracMessages).length
 	const size = Math.floor(messageSize / 1024) // KB
 
 	return {
+		ulid,
 		timestamp,
 		taskDescription,
 		tokensIn,
