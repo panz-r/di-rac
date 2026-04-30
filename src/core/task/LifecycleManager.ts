@@ -14,6 +14,7 @@ import { Logger } from "@shared/services/Logger"
 import { releaseTaskLock } from "./TaskLockUtils"
 import { LifecycleManagerDependencies } from "./types/lifecycle-manager"
 import { buildUserFeedbackContent } from "./utils/buildUserFeedbackContent"
+import { printSessionSummary } from "./utils"
 
 export class LifecycleManager {
 	constructor(private dependencies: LifecycleManagerDependencies) {}
@@ -489,6 +490,21 @@ export class LifecycleManager {
 				Logger.error("Failed to post state after setting abort flag", error)
 			}
 
+			// Print session summary before disposing resources
+			try {
+				const summaryData = this.dependencies.getSessionSummaryData?.()
+				if (summaryData) {
+					printSessionSummary({
+						taskId: this.dependencies.taskId,
+						messages: this.dependencies.messageStateHandler.getDiracMessages(),
+						totalToolCallCount: this.dependencies.taskState.totalToolCallCount,
+						taskStartTimeMs: this.dependencies.taskState.taskStartTimeMs,
+						recoveryEngine: summaryData.recoveryEngine,
+					})
+				}
+			} catch {
+				// non-fatal
+			}
 
 			this.dependencies.terminalManager.disposeAll()
 			this.dependencies.urlContentFetcher.closeBrowser()

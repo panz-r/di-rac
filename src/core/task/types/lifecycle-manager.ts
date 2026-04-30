@@ -14,6 +14,7 @@ import { HookManager } from "../HookManager"
 import { MessageStateHandler } from "../message-state"
 import { TaskMessenger } from "../TaskMessenger"
 import { TaskState } from "../TaskState"
+import { RecoveryEngine } from "../recovery"
 
 export interface LifecycleManagerDependencies {
 	taskState: TaskState
@@ -39,4 +40,5 @@ export interface LifecycleManagerDependencies {
 	hookManager: HookManager
 	initiateTaskLoop: (userContent: DiracContent[]) => Promise<void>
 	recordEnvironment: () => Promise<void>
+	getSessionSummaryData?: () => { recoveryEngine?: RecoveryEngine }
 }

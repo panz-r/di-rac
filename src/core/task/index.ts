@@ -100,7 +100,7 @@ import { StreamResponseHandler } from "./StreamResponseHandler"
 import { TaskMessenger } from "./TaskMessenger"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
-import { extractProviderDomainFromUrl, updateApiReqMsg } from "./utils"
+import { extractProviderDomainFromUrl, printSessionSummary, updateApiReqMsg } from "./utils"
 
 export type ToolResponse = DiracToolResponseContent
 
@@ -582,6 +582,7 @@ export class Task {
 			hookManager: this.hookManager,
 			initiateTaskLoop: this.initiateTaskLoop.bind(this),
 			recordEnvironment: () => this.environmentContextTracker.recordEnvironment(),
+			getSessionSummaryData: () => ({ recoveryEngine: this.toolExecutor.recoveryEngine }),
 		})
 
 		this.apiConversationManager = new ApiConversationManager({
@@ -728,6 +729,14 @@ export class Task {
 			]
 			this.taskState.consecutiveMistakeCount++
 		}
+
+		printSessionSummary({
+			taskId: this.taskId,
+			messages: this.messageStateHandler.getDiracMessages(),
+			totalToolCallCount: this.taskState.totalToolCallCount,
+			taskStartTimeMs: this.taskState.taskStartTimeMs,
+			recoveryEngine: this.toolExecutor.recoveryEngine,
+		})
 	}
 
 	private async shouldRunTaskCancelHook(): Promise<boolean> {

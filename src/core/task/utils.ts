@@ -1,7 +1,9 @@
 import { ApiHandler } from "@core/api"
 import { execSync } from "child_process"
 import { showSystemNotification } from "@/integrations/notifications"
-import { DiracApiReqCancelReason, DiracApiReqInfo } from "@/shared/ExtensionMessage"
+import { DiracApiReqCancelReason, DiracApiReqInfo, DiracMessage } from "@/shared/ExtensionMessage"
+import { getApiMetrics } from "@/shared/getApiMetrics"
+import { Logger } from "@/shared/services/Logger"
 import { calculateApiCostAnthropic } from "@/utils/cost"
 import { calculateApiCostOpenAI, calculateApiCostQwen } from "@/utils/cost"
 import { MessageStateHandler } from "./message-state"
@@ -179,4 +181,47 @@ export function extractProviderDomainFromUrl(url: string | undefined): string | 
 	} catch {
 		return undefined
 	}
+}
+
+type SessionSummaryDeps = {
+	taskId: string
+	messages: DiracMessage[]
+	totalToolCallCount: number
+	taskStartTimeMs: number
+	recoveryEngine?: { getTelemetry(): Record<string, unknown> }
+}
+
+export function printSessionSummary(deps: SessionSummaryDeps): void {
+	const metrics = getApiMetrics(deps.messages)
+	const durationMs = Date.now() - deps.taskStartTimeMs
+	const durationStr = formatDuration(durationMs)
+	const taskPrefix = deps.taskId.slice(0, 8)
+
+	const tokensIn = metrics.totalTokensIn
+	const tokensOut = metrics.totalTokensOut
+	const cost = metrics.totalCost
+	const hasMetrics = tokensIn > 0 || tokensOut > 0
+
+	const recoveryTelemetry = deps.recoveryEngine?.getTelemetry()
+	const hasRecovery = recoveryTelemetry && (recoveryTelemetry.interceptedCount as number) > 0
+
+	Logger.info(
+		'[Session Summary] task=' + taskPrefix + ' | duration=' + durationStr + ' | tools=' + deps.totalToolCallCount +
+		(hasMetrics ? ' | tokens=' + tokensIn + ' in / ' + tokensOut + ' out' : ' | tokens=n/a') +
+		(hasMetrics && cost > 0 ? ' | cost=$' + cost.toFixed(4) : '') +
+		(hasRecovery
+			? ' | recovery: ' + (recoveryTelemetry!.interceptedCount as number) + ' intercepted (saved ~' + (recoveryTelemetry!.totalTurnSavings as number).toFixed(1) + ' turns), ' + (recoveryTelemetry!.escalatedCount as number) + ' escalated, rate=' + recoveryTelemetry!.recoveryRate
+			: ''),
+	)
+}
+
+function formatDuration(ms: number): string {
+	const seconds = Math.floor(ms / 1000)
+	if (seconds < 60) return seconds + 's'
+	const minutes = Math.floor(seconds / 60)
+	const remainingSeconds = seconds % 60
+	if (minutes < 60) return minutes + 'm ' + remainingSeconds + 's'
+	const hours = Math.floor(minutes / 60)
+	const remainingMinutes = minutes % 60
+	return hours + 'h ' + remainingMinutes + 'm'
 }
