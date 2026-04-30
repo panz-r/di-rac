@@ -6,38 +6,31 @@ const id = DiracDefaultTool.REPLACE_SYMBOL
 export const replace_symbol: DiracToolSpec = {
 	id,
 	name: "replace_symbol",
-	description:
-		"Replaces one or more symbols (functions, methods, or classes) in one or more files with new code. This is more robust and token-efficient than edit_file because it targets specific AST nodes directly. IMPORTANT: You MUST provide the complete and correct replacement for each symbol, including all its associated JSDoc, comments, decorators, and export keywords. The tool will replace the entire original range of the symbol and its metadata with your provided text.",
+	description: `Replaces a symbol (function, method, or class) in a file with new code. Targets specific AST nodes directly — more robust and token-efficient than edit_file. You MUST provide the complete replacement including JSDoc, comments, decorators, and export keywords. The tool replaces the entire original range.
+
+Single replacement per call. Use ; to chain multiple replacements in one turn:
+  replace_symbol src/auth.py --symbol login --text "def login(x): ..."; replace_symbol src/db.py --symbol connect --text "..."
+
+Usage: replace_symbol <path> --symbol <name> --text <content> [options]
+
+Positional:
+  path                Source file path
+
+Options:
+  --symbol NAME       (required) Dot-separated path to symbol (e.g. ClassName.methodName).
+  --text CONTENT      (required) Complete new code for the symbol.
+  --type KIND         Optional symbol type for disambiguation (function, method, class).
+
+Examples:
+  replace_symbol src/auth.ts --symbol AuthService.login --text "async login(user: string) { ... }"
+  replace_symbol src/db.ts --symbol connect --type function --text "function connect() { ... }"`,
 	parameters: [
 		{
-			name: "replacements",
-			type: "array",
+			name: "command",
 			required: true,
-			instruction: "An array of replacement objects.",
-			items: {
-				type: "object",
-				properties: {
-					path: {
-						type: "string",
-						description: "Relative path to the source file.",
-					},
-					symbol: {
-						type: "string",
-						description:
-							"The dot-separated path to the symbol to replace (e.g., 'ClassName.methodName' or just 'functionName').",
-					},
-					text: {
-						type: "string",
-						description:
-							"The complete new code for the symbol, including any associated JSDoc, comments, decorators, and export keywords.",
-					},
-					type: {
-						type: "string",
-						description: "Optional type of the symbol to help with disambiguation (e.g., 'function', 'method', 'class').",
-					},
-				},
-				required: ["path", "symbol", "text"],
-			},
+			type: "string",
+			instruction: "CLI arguments for replace_symbol.",
+			usage: 'src/auth.ts --symbol AuthService.login --text "async login(user: string) { ... }"',
 		},
 	],
 }

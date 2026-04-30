@@ -38,7 +38,7 @@ import { AgentConfigLoader } from "./subagent/AgentConfigLoader"
 import { ToolValidator } from "./ToolValidator"
 import { TOOL_SCHEMAS } from "./schemas"
 import { validateArgs } from "./validateArgs"
-import { parseCliCommand, splitCommandChain, hasCliSchema } from "./cli-parser"
+import { parseCliCommand, splitCommandChain, hasCliSchema, shouldChainSplit } from "./cli-parser"
 import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
 
@@ -181,17 +181,16 @@ export class ToolExecutorCoordinator {
 		// Check if this is a CLI-migrated tool with a command string
 		const commandStr = block.params?.command
 		if (typeof commandStr === "string" && hasCliSchema(block.name)) {
-			const segments = splitCommandChain(commandStr)
-
-			// Single command — no chain operators
-			if (segments.length <= 1) {
-				const parsed = parseCliCommand(block.name, commandStr)
-				if (parsed) block = { ...block, params: parsed }
-				return this.executeSingle(config, block, handler)
+			// Tools like execute_command handle shell operators internally — no chain splitting
+			if (shouldChainSplit(block.name)) {
+				const segments = splitCommandChain(commandStr)
+				if (segments.length > 1) {
+					return this.executeChain(config, block, handler, segments)
+				}
 			}
-
-			// Multi-segment chain: ;, &&, ||
-			return this.executeChain(config, block, handler, segments)
+			const parsed = parseCliCommand(block.name, commandStr)
+			if (parsed) block = { ...block, params: parsed }
+			return this.executeSingle(config, block, handler)
 		}
 
 		return this.executeSingle(config, block, handler)

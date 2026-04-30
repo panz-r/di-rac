@@ -6,16 +6,23 @@ const id = DiracDefaultTool.DIAGNOSTICS_SCAN
 export const diagnostics_scan: DiracToolSpec = {
 	id,
 	name: "diagnostics_scan",
-	description:
-		"Runs diagnostics (linter and syntax checks) on the specified files and returns the results. This is useful for checking if recent changes introduced any errors or for getting a summary of existing problems in specific files.",
+	description: `Runs diagnostics (linter and syntax checks) on the specified files and returns the results. Useful for checking if recent changes introduced errors or for getting a summary of existing problems.
+
+Usage: diagnostics_scan <path>...
+
+Positional:
+  path            One or more file paths to scan
+
+Examples:
+  diagnostics_scan src/utils/math.ts
+  diagnostics_scan src/auth.ts src/db.ts`,
 	parameters: [
 		{
-			name: "paths",
+			name: "command",
 			required: true,
-			type: "array",
-			items: { type: "string" },
-			instruction: "An array of relative paths to the files to scan.",
-			usage: '["src/utils/math.ts", "src/utils/string.ts"]',
+			type: "string",
+			instruction: "CLI arguments for diagnostics_scan.",
+			usage: 'src/utils/math.ts src/utils/string.ts',
 		},
 	],
 }

@@ -6,32 +6,27 @@ const id = DiracDefaultTool.FIND_SYMBOL_REFERENCES
 export const find_symbol_references: DiracToolSpec = {
 	id,
 	name: "find_symbol_references",
-	description:
-		"Finds all exact AST references and invocations of one or more functions, classes, or variables across specified files or directories. Returns precise file paths.",
+	description: `Finds all exact AST references and invocations of one or more functions, classes, or variables across specified files or directories. Returns precise file paths.
+
+Usage: find_symbol_references <path>... --symbol <name>... [options]
+
+Positional:
+  path                    Files or directories to search in
+
+Options:
+  --symbol NAME           (required, repeatable) Exact symbol names to find references for.
+  --find-type TYPE        Filter: definition, reference, or both (default both).
+
+Examples:
+  find_symbol_references src/ --symbol login --symbol AuthService
+  find_symbol_references src/ tests/ --symbol calculateTotal --find-type reference`,
 	parameters: [
 		{
-			name: "paths",
+			name: "command",
 			required: true,
-			type: "array",
-			items: { type: "string" },
-			instruction: "An array of relative paths to the directories or files to search.",
-			usage: '["src/", "tests/"]',
-		},
-		{
-			name: "symbols",
-			required: true,
-			type: "array",
-			items: { type: "string" },
-			instruction: "An array of exact symbol names to find references for.",
-			usage: '["calculateTotal", "UserAccount"]',
-		},
-		{
-			name: "find_type",
-			required: false,
 			type: "string",
-			enum: ["definition", "reference", "both"],
-			instruction:
-				'Specifies the type of references to find. "definition" returns only definitions, "reference" returns only references, and "both" (default) returns both.',
+			instruction: "CLI arguments for find_symbol_references.",
+			usage: 'src/ --symbol calculateTotal --symbol UserAccount',
 		},
 	],
 }

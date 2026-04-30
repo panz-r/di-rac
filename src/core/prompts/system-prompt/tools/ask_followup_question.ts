@@ -6,19 +6,26 @@ const id = DiracDefaultTool.ASK
 export const ask_followup_question: DiracToolSpec = {
 	id,
 	name: "ask_followup_question",
-	description: "Asks the user a clarifying question when you encounter ambiguities or need more details.",
+	description: `Asks the user a clarifying question when you encounter ambiguities or need more details.
+
+Usage: ask_followup_question <question> [--options JSON]
+
+Positional:
+  question            The question to ask the user.
+
+Options:
+  --options JSON      Optional JSON array of 2-5 predefined answer options. DO NOT include options to toggle Act mode.
+
+Examples:
+  ask_followup_question "Should we use JWT or session-based auth?" --options '["JWT", "Session-based", "OAuth"]'
+  ask_followup_question "Which database should we target?"`,
 	parameters: [
 		{
-			name: "question",
+			name: "command",
 			required: true,
-			instruction: "The question to ask the user.",
-			usage: "Your question here",
-		},
-		{
-			name: "options",
-			required: false,
-			instruction: "Optional array of 2-5 predefined answer options. DO NOT include options to toggle Act mode.",
-			usage: '["Option 1", "Option 2"]',
+			type: "string",
+			instruction: "CLI arguments for ask_followup_question.",
+			usage: '"Should we use X or Y?" --options \'["Option 1", "Option 2"]\'',
 		},
 	],
 }
