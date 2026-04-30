@@ -6,24 +6,26 @@ const id = DiracDefaultTool.LIST_FILES
 export const list_files: DiracToolSpec = {
 	id,
 	name: "list_files",
-	description:
-		"List files and directories within the specified paths (one or more), or provide information about a specific file if a file path is provided. If recursive is true, it will list all files and directories recursively. Skips non-useful content (.git, node_modules, build artifacts, etc.). Files are sorted by most recently modified first within each directory. The output includes the line count for each file. Do not use this tool to confirm the existence of files you've just created.",
+	description: `List files and directories within the specified paths. Skips non-useful content (.git, node_modules, build artifacts, etc.). Files sorted by most recently modified. Output includes line count per file. Do not use this to confirm files you just created.
+
+Usage: list_files <path>... [options]
+
+Positional:
+  path            One or more directory or file paths (relative to CWD){{MULTI_ROOT_HINT}}
+
+Options:
+  --recursive     List files recursively.
+
+Examples:
+  list_files src/components src/utils
+  list_files src/ --recursive`,
 	parameters: [
 		{
-			name: "paths",
+			name: "command",
 			required: true,
-			type: "array",
-			items: { type: "string" },
-			instruction:
-				"The paths of the directory to list contents for (relative to the current working directory {{CWD}}){{MULTI_ROOT_HINT}}",
-			usage: '["src/components", "src/utils"]',
-		},
-		{
-			name: "recursive",
-			required: false,
-			instruction: "Whether to list files recursively. Use true for recursive listing, false or omit for top-level only.",
-			usage: "true or false (optional)",
-			type: "boolean",
+			type: "string",
+			instruction: "CLI arguments for list_files.",
+			usage: 'src/components --recursive',
 		},
 	],
 }

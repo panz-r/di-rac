@@ -6,29 +6,28 @@ const id = DiracDefaultTool.SEARCH_SYMBOLS
 export const search_symbols: DiracToolSpec = {
 	id,
 	name: "search_symbols",
-	description:
-		"Searches for symbols (functions, classes, interfaces) by name pattern across the entire project using structural indexing. Returns handles and signatures. This is more precise than grep for finding definitions.",
+	description: `Search for symbols (functions, classes, interfaces) by name pattern across the project using structural indexing. Returns handles and signatures. More precise than grep for finding definitions.
+
+Usage: search_symbols <query> [options]
+
+Positional:
+  query               Name pattern to search for (case-insensitive)
+
+Options:
+  --kind TYPE         Filter by symbol kind: function, class, interface, method, etc.
+  --max-results N     Maximum results to return (default 20).
+
+Examples:
+  search_symbols AuthService
+  search_symbols login --kind function
+  search_symbols "handle.*" --max-results 10`,
 	parameters: [
 		{
-			name: "query",
+			name: "command",
 			required: true,
 			type: "string",
-			instruction: "The name pattern to search for (case-insensitive).",
-			usage: '"AuthService"',
-		},
-		{
-			name: "kind",
-			required: false,
-			type: "string",
-			instruction: "Optional filter for symbol kind: 'function', 'class', 'interface', 'method', etc.",
-			usage: '"function"',
-		},
-		{
-			name: "max_results",
-			required: false,
-			type: "integer",
-			instruction: "Maximum number of results to return (default: 20).",
-			usage: "10",
+			instruction: "CLI arguments for search_symbols.",
+			usage: '"AuthService" --kind function',
 		},
 	],
 }

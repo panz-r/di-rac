@@ -6,72 +6,39 @@ const id = DiracDefaultTool.FILE_READ
 export const read_file: DiracToolSpec = {
 	id,
 	name: "read_file",
-	description:
-		'Reads file contents with structured detail levels. For large files (>50KB), it defaults to a preview. Use detail="outline" or detail="skeleton" to explore structure without full body tokens. Supports page-based navigation and jump-to-section. Returns hash-anchored lines for edit_file.',
+	description: `Reads file contents with structured detail levels. For large files (>50KB), defaults to a preview.
+
+Usage: read_file <path>... [options]
+
+Positional:
+  path            One or more file paths to read (relative to CWD)
+
+Options:
+  --detail LEVEL  Detail level: preview, skeleton, outline, full.
+                  Defaults to "full" for small files, "preview" for large.
+  --start-line N  Start reading from line N (1-based). Overrides pagination.
+  --end-line N    Stop reading at line N.
+  --max-tokens N  Token budget. If set, detail level auto-degrades to fit.
+  --page DIR      Navigation: next (next 200 lines), prev (previous 200 lines),
+                  or section (jump to structural handle).
+  --section ID    Structural handle to jump to when page=section (e.g. fn:myFunc).
+  --ranges JSON   Non-contiguous line ranges. Takes precedence over start/end-line.
+
+Examples:
+  read_file src/auth.py --detail outline
+  read_file src/auth.py src/db.py --start-line 10 --end-line 50
+  read_file src/auth.py --ranges '[{"start":1,"end":50},{"start":100,"end":150}]'
+  read_file src/auth.py --page next
+  read_file src/auth.py --section fn:AuthService.login
+
+Returns hash-anchored lines for edit_file.`,
 	parameters: [
 		{
-			name: "paths",
+			name: "command",
 			required: true,
-			type: "array",
-			items: { type: "string" },
-			instruction: "An array of relative paths to the source files. Supports reading multiple files in one call.",
-			usage: '["src/main.ts", "package.json"]',
-		},
-		{
-			name: "ranges",
-			required: false,
-			type: "array",
-			items: {
-				type: "object",
-				properties: {
-					start: { type: "integer" },
-					end: { type: "integer" },
-				},
-			},
-			instruction: "Optional array of non-contiguous line ranges to read. Takes precedence over start_line/end_line.",
-			usage: "[{start: 1, end: 50}, {start: 100, end: 150}]",
-		},
-		{
-			name: "detail",
-			required: false,
 			type: "string",
-			instruction: 'Detail level: "preview" (200 lines + symbols), "skeleton" (stripped bodies), "outline" (symbols only), or "full". Defaults to "full" for small files, "preview" for large.',
-			usage: '"outline"',
-		},
-		{
-			name: "max_tokens",
-			required: false,
-			type: "integer",
-			instruction: "Optional budget. If set, detail level auto-degrades to stay within token limit.",
-			usage: "1000",
-		},
-		{
-			name: "page",
-			required: false,
-			type: "string",
-			instruction: 'Navigation: "next" (next 200 lines), "prev" (previous 200 lines), or "section" (jump to structural handle).',
-			usage: '"next"',
-		},
-		{
-			name: "section",
-			required: false,
-			type: "string",
-			instruction: 'Structural handle (e.g., "fn:myFunc") to jump to when page="section".',
-			usage: '"fn:AuthService.login"',
-		},
-		{
-			name: "start_line",
-			required: false,
-			type: "integer",
-			instruction: "Optional. Line range start (1-based). Overrides pagination.",
-			usage: "10",
-		},
-		{
-			name: "end_line",
-			required: false,
-			type: "integer",
-			instruction: "Optional. Line range end.",
-			usage: "50",
+			instruction: "CLI arguments for read_file.",
+			usage: 'src/auth.py --detail outline --start-line 10 --end-line 50',
 		},
 	],
 }

@@ -38,6 +38,7 @@ import { AgentConfigLoader } from "./subagent/AgentConfigLoader"
 import { ToolValidator } from "./ToolValidator"
 import { TOOL_SCHEMAS } from "./schemas"
 import { validateArgs } from "./validateArgs"
+import { parseCliCommand, splitCommandChain, hasCliSchema } from "./cli-parser"
 import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
 
@@ -177,7 +178,30 @@ export class ToolExecutorCoordinator {
 			throw new Error(`No handler registered for tool: ${block.name}`)
 		}
 
-		// Pre-execution argument validation via Zod schema
+		// Check if this is a CLI-migrated tool with a command string
+		const commandStr = block.params?.command
+		if (typeof commandStr === "string" && hasCliSchema(block.name)) {
+			const segments = splitCommandChain(commandStr)
+
+			// Single command — no chain operators
+			if (segments.length <= 1) {
+				const parsed = parseCliCommand(block.name, commandStr)
+				if (parsed) block = { ...block, params: parsed }
+				return this.executeSingle(config, block, handler)
+			}
+
+			// Multi-segment chain: ;, &&, ||
+			return this.executeChain(config, block, handler, segments)
+		}
+
+		return this.executeSingle(config, block, handler)
+	}
+
+	private async executeSingle(
+		config: TaskConfig,
+		block: ToolUse,
+		handler: IToolHandler,
+	): Promise<ToolResponse> {
 		const schema = TOOL_SCHEMAS[block.name as DiracDefaultTool]
 		if (schema) {
 			const validation = validateArgs(schema, block.params, block.name)
@@ -185,7 +209,49 @@ export class ToolExecutorCoordinator {
 				return formatResponse.formatToolErrorForLLM(validation.error)
 			}
 		}
-
 		return handler.execute(config, block)
+	}
+
+	private async executeChain(
+		config: TaskConfig,
+		originalBlock: ToolUse,
+		handler: IToolHandler,
+		segments: { command: string; operator: string | null }[],
+	): Promise<ToolResponse> {
+		const results: string[] = []
+		let lastSuccess = true
+
+		for (let i = 0; i < segments.length; i++) {
+			const seg = segments[i]
+			const op = i === 0 ? null : (segments[i - 1]?.operator ?? null)
+
+			// Conditional execution
+			if (op === "&&" && !lastSuccess) break
+			if (op === "||" && lastSuccess) break
+
+			const parsed = parseCliCommand(originalBlock.name, seg.command)
+			const block: ToolUse = { ...originalBlock, params: parsed ?? {} }
+
+			const schema = TOOL_SCHEMAS[block.name as DiracDefaultTool]
+			if (schema) {
+				const validation = validateArgs(schema, block.params, block.name)
+				if (!validation.success) {
+					lastSuccess = false
+					results.push(formatResponse.formatToolErrorForLLM(validation.error) as string)
+					continue
+				}
+			}
+
+			const result = await handler.execute(config, block)
+			if (typeof result === "string") {
+				lastSuccess = true
+				results.push(result)
+			} else {
+				lastSuccess = false
+				results.push(JSON.stringify(result))
+			}
+		}
+
+		return results.join("\n\n")
 	}
 }

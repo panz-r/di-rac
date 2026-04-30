@@ -6,34 +6,28 @@ const id = DiracDefaultTool.SEARCH
 export const search_files: DiracToolSpec = {
 	id,
 	name: "search_files",
-	description:
-		"Regex search across files in the specified paths (files or directories). Skips non-useful content (.git, node_modules, build artifacts, etc. and all files and directories starting with a dot). Prefer AST tools over this when reasonable.",
+	description: `Regex search across files in the specified paths (files or directories). Skips non-useful content (.git, node_modules, build artifacts, etc.). Prefer AST tools over this when reasonable.
+
+Usage: search_files <path>... --regex PATTERN [options]
+
+Positional:
+  path                Files or directories to search in
+
+Options:
+  --regex PATTERN     (required) Rust regex pattern to search for.
+  --file-pattern GLOB Glob pattern to filter files (e.g. "*.ts").
+  --context-lines N   Context lines before/after each match (0-10, default 0).
+
+Examples:
+  search_files src/ --regex "function.*login"
+  search_files src/core src/services --regex "export.*class" --file-pattern "*.ts" --context-lines 2`,
 	parameters: [
 		{
-			name: "paths",
+			name: "command",
 			required: true,
-			type: "array",
-			items: { type: "string" },
-			instruction: "The paths of the files or directories to search in.",
-			usage: '["src/core", "src/services"]',
-		},
-		{
-			name: "regex",
-			required: true,
-			instruction: "The regular expression pattern to search for (Rust regex syntax).",
-			usage: "Regex pattern here",
-		},
-		{
-			name: "file_pattern",
-			required: false,
-			instruction: "Glob pattern to filter files (e.g., '*.ts').",
-			usage: "*.ts",
-		},
-		{
-			name: "context_lines",
-			required: false,
-			instruction: "Optional number of context lines to show before and after each match (0-10, default 0).",
-			usage: "2",
+			type: "string",
+			instruction: "CLI arguments for search_files.",
+			usage: 'src/ --regex "function.*login" --file-pattern "*.ts"',
 		},
 	],
 }
