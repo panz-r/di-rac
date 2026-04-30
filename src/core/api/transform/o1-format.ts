@@ -321,23 +321,43 @@ function parseToolCall(toolName: string, content: string): ToolCall | null {
 }
 
 function validateToolInput(toolName: string, tool_input: Record<string, string>): boolean {
-	switch (toolName) {
-		case "execute_command":
-			return "command" in tool_input
-		case "read_file":
-		case "list_files":
-			return "path" in tool_input
-		case "search_files":
-			return "path" in tool_input && "regex" in tool_input
-		case "write_to_file":
-			return "path" in tool_input && "content" in tool_input
-		case "ask_followup_question":
-			return "question" in tool_input
-		case "attempt_completion":
-			return "result" in tool_input
-		default:
-			return false
+	// All CLI-migrated tools use a single "command" string parameter.
+	// The o1-format XML parser extracts <command>...</command> tags.
+	const CLI_TOOLS = new Set([
+		"execute_command",
+		"read_file",
+		"list_files",
+		"search_files",
+		"write_to_file",
+		"edit_file",
+		"ask_followup_question",
+		"attempt_completion",
+		"search_symbols",
+		"get_function",
+		"get_file_skeleton",
+		"diagnostics_scan",
+		"expand_symbol",
+		"find_symbol_references",
+		"rename_symbol",
+		"replace_symbol",
+		"browser_action",
+		"use_subagents",
+		"web_fetch",
+		"web_search",
+		"plan_mode_respond",
+		"new_task",
+		"summarize_task",
+		"condense",
+		"compact",
+		"generate_explanation",
+		"use_skill",
+	])
+
+	if (CLI_TOOLS.has(toolName)) {
+		return "command" in tool_input
 	}
+
+	return true
 }
 
 // Example usage:
@@ -348,8 +368,7 @@ function validateToolInput(toolName: string, tool_input: Record<string, string>)
 // </execute_command>
 
 // <write_to_file>
-//   <path>./example.txt</path>
-//   <content>Hello, World!</content>
+//   <command>./example.txt --content "Hello, World!"</command>
 // </write_to_file>`;
 //
 // const { normalText, toolCalls } = parseAIResponse(aiResponse);

@@ -62,11 +62,16 @@ const stringToBool = z.preprocess((val) => {
 // Per-tool schemas
 // ---------------------------------------------------------------------------
 
-/** read_file: reads one or more files with optional line ranges */
+/** read_file: reads one or more files with optional detail level, line ranges, and pagination */
 export const ReadFileArgs = z.object({
 	paths: stringToArray(z.string()),
+	detail: z.string().optional(),
 	start_line: z.union([z.string(), z.number()]).transform((v) => Number(v)).pipe(z.number().int().positive().optional()).optional(),
 	end_line: z.union([z.string(), z.number()]).transform((v) => Number(v)).pipe(z.number().int().positive().optional()).optional(),
+	max_tokens: z.union([z.string(), z.number()]).transform((v) => Number(v)).pipe(z.number().int().positive().optional()).optional(),
+	page: z.string().optional(),
+	section: z.string().optional(),
+	ranges: z.string().optional(),
 }).strict();
 
 /** write_to_file / new_rule: creates or overwrites a file */
@@ -242,7 +247,24 @@ export const ListSkillsArgs = z.object({}).strict();
 
 /** use_subagents: delegate to subagent */
 export const UseSubagentsArgs = z.object({
-	context: z.string(),
+	context: z.string().optional(),
+	prompt: z.string().optional(),
+	prompt_1: z.string().optional(),
+	prompt_2: z.string().optional(),
+	prompt_3: z.string().optional(),
+	prompt_4: z.string().optional(),
+	prompt_5: z.string().optional(),
+	include_history: z.union([z.boolean(), z.string()]).optional(),
+	timeout: z.union([z.string(), z.number()]).transform((v) => {
+		if (v === undefined || v === "") return undefined;
+		const n = Number(v);
+		return isNaN(n) ? undefined : n;
+	}).optional(),
+	max_turns: z.union([z.string(), z.number()]).transform((v) => {
+		if (v === undefined || v === "") return undefined;
+		const n = Number(v);
+		return isNaN(n) ? undefined : n;
+	}).optional(),
 }).strict();
 
 /** generate_explanation: generate diff explanation */
