@@ -64,6 +64,8 @@ export const GlobalFileNames = {
 	windsurfRules: ".windsurfrules",
 	agentsRulesFile: "AGENTS.md",
 	taskMetadata: "task_metadata.json",
+	sessionMeta: "session_meta.json",
+	fileManifest: "file_manifest.json",
 	remoteConfig: (orgId: string) => `remote_config_${orgId}.json`,
 }
 
@@ -335,6 +337,106 @@ export async function saveTaskMetadata(taskId: string, metadata: TaskMetadata) {
 	} catch (error) {
 		Logger.error("Failed to save task metadata:", error)
 	}
+}
+
+export interface SessionMeta {
+	options: Record<string, unknown>
+	cmdline: string
+	savedAt: string
+}
+
+export async function writeSessionMeta(taskId: string, meta: SessionMeta): Promise<void> {
+	try {
+		const taskDir = await ensureTaskDirectoryExists(taskId)
+		const filePath = path.join(taskDir, GlobalFileNames.sessionMeta)
+		await atomicWriteFile(filePath, JSON.stringify(meta, null, 2))
+	} catch (error) {
+		Logger.error("Failed to write session meta:", error)
+	}
+}
+
+export async function readSessionMeta(taskId: string): Promise<SessionMeta | null> {
+	try {
+		const filePath = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.sessionMeta)
+		if (await fileExistsAtPath(filePath)) {
+			return JSON.parse(await fs.readFile(filePath, "utf8"))
+		}
+	} catch (error) {
+		Logger.error("Failed to read session meta:", error)
+	}
+	return null
+}
+
+export interface FileManifestEntry {
+	hash: string
+	mtimeMs: number
+}
+
+export interface FileManifest {
+	savedAt: string
+	files: Record<string, FileManifestEntry>
+}
+
+export async function writeFileManifest(taskId: string, manifest: FileManifest): Promise<void> {
+	try {
+		const taskDir = await ensureTaskDirectoryExists(taskId)
+		const filePath = path.join(taskDir, GlobalFileNames.fileManifest)
+		await atomicWriteFile(filePath, JSON.stringify(manifest, null, 2))
+	} catch (error) {
+		Logger.error("Failed to write file manifest:", error)
+	}
+}
+
+export async function readFileManifest(taskId: string): Promise<FileManifest | null> {
+	try {
+		const filePath = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.fileManifest)
+		if (await fileExistsAtPath(filePath)) {
+			return JSON.parse(await fs.readFile(filePath, "utf8"))
+		}
+	} catch (error) {
+		Logger.error("Failed to read file manifest:", error)
+	}
+	return null
+}
+
+export interface FileChangeResult {
+	changed: string[]
+	deleted: string[]
+	unchanged: number
+}
+
+export async function detectFileChanges(taskId: string, cwd: string): Promise<FileChangeResult> {
+	const manifest = await readFileManifest(taskId)
+	if (!manifest || Object.keys(manifest.files).length === 0) {
+		return { changed: [], deleted: [], unchanged: 0 }
+	}
+
+	const changed: string[] = []
+	const deleted: string[] = []
+	let unchanged = 0
+
+	for (const [relPath, entry] of Object.entries(manifest.files)) {
+		const absPath = path.resolve(cwd, relPath)
+		try {
+			const stats = await fs.stat(absPath)
+			if (stats.mtimeMs === entry.mtimeMs) {
+				unchanged++
+				continue
+			}
+			const content = await fs.readFile(absPath, "utf8")
+			const { contentHash } = await import("@/utils/line-hashing")
+			const hash = contentHash(content)
+			if (hash === entry.hash) {
+				unchanged++
+			} else {
+				changed.push(relPath)
+			}
+		} catch {
+			deleted.push(relPath)
+		}
+	}
+
+	return { changed, deleted, unchanged }
 }
 
 export async function ensureStateDirectoryExists(): Promise<string> {

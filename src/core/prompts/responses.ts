@@ -337,6 +337,19 @@ Otherwise, if you have not completed the task and do not need additional informa
 			`Failure to re-read before editing will result in edit_file errors, requiring subsequent attempts and wasting tokens. You DO NOT need to re-read these files after subsequent edits, unless instructed to do so.\n</explicit_instructions>`
 		)
 	},
+		filesystemStateNotice: (changedFiles: string[], deletedFiles: string[]): string => {
+			const parts = ["[SYSTEM: Filesystem updated since session save]"]
+			if (changedFiles.length > 0) {
+				parts.push("The following files have been modified since this session was saved:")
+				parts.push(...changedFiles.map((f) => `  ${f}`))
+			}
+			if (deletedFiles.length > 0) {
+				parts.push("The following files have been deleted since this session was saved:")
+				parts.push(...deletedFiles.map((f) => `  ${f}`))
+			}
+			parts.push("Any edits described in the conversation above may not reflect the current filesystem state. Re-read files before editing.")
+			return parts.join("\n")
+		},
 }
 
 // ── Structured ToolError → LLM Guidance ────────────────────────────────────

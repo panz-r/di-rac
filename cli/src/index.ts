@@ -84,6 +84,8 @@ async function disposeCliContext(ctx: CliContext): Promise<void> {
 	await DiracTempManager.clearProjectTempDir(process.cwd())
 	await AgentConfigLoader.getInstance().dispose()
 	await disposeTelemetryServices()
+	currentSessionOptions = null
+	currentResumeCmdline = null
 }
 
 async function setModeScopedState(currentMode: "act" | "plan", setter: (mode: "act" | "plan") => void): Promise<void> {
@@ -146,6 +148,91 @@ async function normalizeMaxConsecutiveMistakes(value?: string): Promise<number |
 	}
 
 	return parsed
+}
+
+
+const RESUME_FLAG_MAP = [
+	{ cliFlag: "--act", key: "act", hasValue: false },
+	{ cliFlag: "--plan", key: "plan", hasValue: false },
+	{ cliFlag: "--yolo", key: "yolo", hasValue: false },
+	{ cliFlag: "--auto-approve-all", key: "autoApproveAll", hasValue: false },
+	{ cliFlag: "--double-check-completion", key: "doubleCheckCompletion", hasValue: false },
+	{ cliFlag: "--thinking", key: "thinking", hasValue: true },
+	{ cliFlag: "--reasoning-effort", key: "reasoningEffort", hasValue: true },
+	{ cliFlag: "--max-consecutive-mistakes", key: "maxConsecutiveMistakes", hasValue: true },
+	{ cliFlag: "--auto-condense", key: "autoCondense", hasValue: false },
+	{ cliFlag: "--subagents", key: "subagents", hasValue: false },
+	{ cliFlag: "--rewrite-paths", key: "rewritePaths", hasValue: false },
+	{ cliFlag: "--bash-tool", key: "bashTool", hasValue: false },
+	{ cliFlag: "--bash-auto-approve", key: "bashAutoApprove", hasValue: false },
+	{ cliFlag: "--tool-recovery", key: "toolRecovery", hasValue: false },
+	{ cliFlag: "--redirect-tmp", key: "redirectTmp", hasValue: false },
+	{ cliFlag: "--model", key: "model", hasValue: true },
+	{ cliFlag: "--provider", key: "provider", hasValue: true },
+	{ cliFlag: "--timeout", key: "timeout", hasValue: true },
+	{ cliFlag: "--hooks-dir", key: "hooksDir", hasValue: true },
+] as const
+
+const EXCLUDED_RESUME_KEYS = new Set(["verbose", "json", "cwd", "config", "continue", "stdinWasPiped", "kanban"])
+
+function buildResumeCommandLine(taskId: string, options: TaskOptions): string {
+	const parts = [`dirac -T ${taskId}`]
+	for (const { cliFlag, key, hasValue } of RESUME_FLAG_MAP) {
+		const value = (options as any)[key]
+		if (value === undefined || value === false || value === null) continue
+		if (EXCLUDED_RESUME_KEYS.has(key)) continue
+		if (hasValue) {
+			const escaped = String(value).includes(" ") ? `"${String(value)}"` : String(value)
+			parts.push(`${cliFlag} ${escaped}`)
+		} else {
+			parts.push(cliFlag)
+		}
+	}
+	return parts.join(" ")
+}
+
+function filterOptionsForPersistence(options: TaskOptions): Record<string, unknown> {
+	const result: Record<string, unknown> = {}
+	for (const [key, value] of Object.entries(options)) {
+		if (EXCLUDED_RESUME_KEYS.has(key) || value === undefined) continue
+		result[key] = value
+	}
+	return result
+}
+
+export function printResumeCommand(): void {
+	if (!currentResumeCmdline) return
+	process.stderr.write(`\nSession saved. Resume with:\n  ${currentResumeCmdline}\n`)
+}
+
+async function saveFileManifest(taskId: string): Promise<void> {
+	try {
+		const { getTaskMetadata } = await import("@/core/storage/disk")
+		const { writeFileManifest } = await import("@/core/storage/disk")
+		const metadata = await getTaskMetadata(taskId)
+		const activeFiles = metadata.files_in_context.filter(
+			(f: any) => f.record_state === "active" && f.dirac_read_date !== null,
+		)
+		if (activeFiles.length === 0) return
+
+		const fs = await import("fs/promises")
+		const { contentHash } = await import("@/utils/line-hashing")
+		const files: Record<string, { hash: string; mtimeMs: number }> = {}
+
+		for (const entry of activeFiles) {
+			try {
+				const stats = await fs.stat(entry.path)
+				const content = await fs.readFile(entry.path, "utf8")
+				files[entry.path] = { hash: contentHash(content), mtimeMs: stats.mtimeMs }
+			} catch {
+				// File no longer exists — skip
+			}
+		}
+
+		await writeFileManifest(taskId, { savedAt: new Date().toISOString(), files })
+	} catch (error) {
+		// Best effort — don't block exit
+	}
 }
 
 async function applyTaskOptions(options: TaskOptions): Promise<void> {
@@ -408,7 +495,13 @@ async function runTaskInPlainTextMode(
 	})
 
 	// Cleanup
+	const plainResumeCmdline = currentResumeCmdline
+	const plainTaskId = ctx.controller.task?.taskId
+	if (plainTaskId) await saveFileManifest(plainTaskId)
 	await disposeCliContext(ctx)
+	if (plainResumeCmdline) {
+		process.stderr.write("\nSession saved. Resume with:\n  " + plainResumeCmdline + "\n")
+	}
 
 	// Ensure stdout is fully drained before exiting - critical for piping
 	await drainStdout()
@@ -420,7 +513,13 @@ async function runTaskInPlainTextMode(
  */
 function createInkCleanup(ctx: CliContext, onTaskError?: () => boolean): () => Promise<void> {
 	return async () => {
+		const inkResumeCmdline = currentResumeCmdline
+		const inkTaskId = ctx.controller.task?.taskId
+		if (inkTaskId) await saveFileManifest(inkTaskId)
 		await disposeCliContext(ctx)
+		if (inkResumeCmdline) {
+			process.stderr.write("\nSession saved. Resume with:\n  " + inkResumeCmdline + "\n")
+		}
 		if (onTaskError?.()) {
 			const { printWarning } = await import("./utils/display")
 			printWarning("Task ended with errors.")
@@ -432,6 +531,8 @@ function createInkCleanup(ctx: CliContext, onTaskError?: () => boolean): () => P
 
 // Track active context for graceful shutdown
 let activeContext: CliContext | null = null
+let currentSessionOptions: TaskOptions | null = null
+let currentResumeCmdline: string | null = null
 let isShuttingDown = false
 // Track if we're in plain text mode (no Ink UI) - set by runTask when piped stdin detected
 let isPlainTextMode = false
@@ -527,6 +628,9 @@ function setupSignalHandlers() {
 				if (task) {
 					task.abortTask()
 				}
+				printResumeCommand()
+				const signalTaskId = activeContext.controller.task?.taskId
+				if (signalTaskId) await saveFileManifest(signalTaskId)
 				await disposeCliContext(activeContext)
 			} else {
 				// Best-effort flush of restored yolo state when no active context
@@ -693,6 +797,23 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 	const webview = HostProvider.get().createDiracWebviewProvider() as any
 	const controller = webview.controller as Controller
 
+	// Wrap initTask to save session metadata when a new task is created
+	const origInitTask = controller.initTask.bind(controller)
+	controller.initTask = async (...args: any[]) => {
+		const taskId = await origInitTask(...args)
+		if (currentSessionOptions && taskId) {
+			const cmdline = buildResumeCommandLine(taskId, currentSessionOptions)
+			currentResumeCmdline = cmdline
+			const { writeSessionMeta } = await import("@/core/storage/disk")
+			await writeSessionMeta(taskId, {
+				options: filterOptionsForPersistence(currentSessionOptions),
+				cmdline,
+				savedAt: new Date().toISOString(),
+			})
+		}
+		return taskId
+	}
+
 	await telemetryService.captureExtensionActivated()
 	await telemetryService.captureHostEvent("dirac_cli", "initialized")
 
@@ -772,6 +893,7 @@ async function runTask(prompt: string, options: TaskOptions & { images?: string[
 	}
 
 	// Apply shared task options (mode, model, thinking, yolo)
+	currentSessionOptions = options
 	await applyTaskOptions(options)
 	await StateManager.get().flushPendingState()
 
@@ -1190,6 +1312,12 @@ async function resumeTask(taskId: string, options: TaskOptions & { initialPrompt
 	}
 
 	// Apply shared task options (mode, model, thinking, yolo)
+	// Read saved session meta for resume command printing
+	const { readSessionMeta } = await import("@/core/storage/disk")
+	const savedMeta = await readSessionMeta(taskId)
+	if (savedMeta?.cmdline) {
+		currentResumeCmdline = savedMeta.cmdline
+	}
 	await applyTaskOptions(options)
 	await StateManager.get().flushPendingState()
 
@@ -1259,6 +1387,7 @@ async function showWelcome(options: TaskOptions) {
 
 	// Apply CLI task options in interactive startup too, so flags like
 	// --auto-approve-all and --yolo affect the initial TUI state.
+	currentSessionOptions = options
 	await applyTaskOptions(options)
 	await StateManager.get().flushPendingState()
 

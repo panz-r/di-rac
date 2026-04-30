@@ -2,7 +2,8 @@ import { executeHook } from "@core/hooks/hook-executor"
 import { getHookModelContext } from "@core/hooks/hook-model-context"
 import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
 import { formatResponse } from "@core/prompts/responses"
-import { ensureTaskDirectoryExists, getSavedApiConversationHistory, getSavedDiracMessages } from "@core/storage/disk"
+import { generateOutlinesForChangedFiles } from "./resume-outline-refresh"
+import { detectFileChanges, ensureTaskDirectoryExists, getSavedApiConversationHistory, getSavedDiracMessages } from "@core/storage/disk"
 import { HostProvider } from "@hosts/host-provider"
 import { ensureCheckpointInitialized } from "@integrations/checkpoints/initializer"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
@@ -358,6 +359,27 @@ export class LifecycleManager {
 			newUserContent.push({
 				type: "text",
 				text: userResponseMessage,
+			})
+		}
+
+		// Detect filesystem changes since last save
+		const fileChanges = await detectFileChanges(this.dependencies.taskId, this.dependencies.cwd)
+		if (fileChanges.changed.length > 0 || fileChanges.deleted.length > 0) {
+			const notice = formatResponse.filesystemStateNotice(fileChanges.changed, fileChanges.deleted)
+			newUserContent.push({ type: "text", text: notice })
+
+			// Pre-refresh outlines for changed files
+			if (fileChanges.changed.length > 0) {
+				const outlineText = await generateOutlinesForChangedFiles(fileChanges.changed, this.dependencies.cwd)
+				if (outlineText) {
+					newUserContent.push({ type: "text", text: outlineText })
+				}
+			}
+		} else if (!wasRecent) {
+			// Lightweight disclaimer when no manifest changes detected
+			newUserContent.push({
+				type: "text",
+				text: "[SYSTEM: This session was restored from a previous savepoint. The filesystem may have been modified independently since then.]",
 			})
 		}
 
