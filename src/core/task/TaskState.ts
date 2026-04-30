@@ -84,6 +84,9 @@ export class TaskState {
 	readCounts: Map<string, number> = new Map() // maps absolute path to number of times read
 	contentHashCache: Map<string, string> = new Map() // maps cache key to content hash
 
+	// Queued user messages (injected during streaming, drained at next turn)
+	queuedUserMessages: Array<{ text: string; images?: string[] }> = []
+
 	// Advanced recovery state
 	fileLastAccessToolIndex: Map<string, number> = new Map() // maps absolute path to tool call index
 	filesTouchedInCurrentTurn: Set<string> = new Set()
@@ -99,6 +102,12 @@ export class TaskState {
 		this.filesEditedInCurrentTurn.clear()
 		this.turnTokenEstimates = 0
 		this.currentTurnNumber++
+		this.queuedUserMessages = []
+	}
+
+	drainQueuedUserMessages(): Array<{ text: string; images?: string[] }> {
+		const messages = this.queuedUserMessages.splice(0)
+		return messages
 	}
 }
 

@@ -348,6 +348,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
 	const { controller: taskController, clearState } = useTaskContext()
 	const { isActive: isSpinnerActive, startTime: spinnerStartTime } = useIsSpinnerActive()
 
+	// Reset queued count when streaming ends (drained messages consumed by next turn)
+	const prevSpinnerRef = useRef(false)
+	useEffect(() => {
+		if (prevSpinnerRef.current && !isSpinnerActive) {
+			setQueuedCount(0)
+		}
+		prevSpinnerRef.current = isSpinnerActive
+	}, [isSpinnerActive])
+
 	// Prefer prop controller over context controller (memoized for stable reference in callbacks)
 	const ctrl = useMemo(() => controller || taskController, [controller, taskController])
 
@@ -479,6 +488,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 	const [autoApproveAll, setAutoApproveAll] = useState<boolean>(
 		() => StateManager.get().getGlobalSettingsKey("autoApproveAllToggled") ?? false,
 	)
+	const [queuedCount, setQueuedCount] = useState(0)
 
 	// Sync mode from core state updates (e.g. yolo auto-switching plan to act)
 	useEffect(() => {
@@ -1393,7 +1403,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 			toggleMode()
 			return
 		}
-		if (key.return && !mentionInfo.inMentionMode && !slashInfo.inSlashMode && !pendingAsk && !isSpinnerActive) {
+		if (key.return && !mentionInfo.inMentionMode && !slashInfo.inSlashMode && !pendingAsk) {
 			if (prompt.trim() || imagePaths.length > 0) {
 				handleSubmit(prompt.trim(), imagePaths)
 			}
@@ -1503,6 +1513,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
 				{/* Thinking indicator when processing */}
 				{isSpinnerActive && <ThinkingIndicator mode={mode} onCancel={handleCancel} startTime={spinnerStartTime} />}
+
+				{/* Queued message indicator */}
+				{queuedCount > 0 && !activePanel && (
+					<Box paddingLeft={1} paddingRight={1}>
+						<Text color="yellow">{queuedCount} message{queuedCount > 1 ? "s" : ""} queued for next turn</Text>
+					</Box>
+				)}
 
 				{/* Input field with border - hidden when panel is open or exiting */}
 				{!activePanel && !isExiting && (

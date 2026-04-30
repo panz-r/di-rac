@@ -641,6 +641,10 @@ export class Task {
 		return this.taskMessenger.handleWebviewAskResponse(askResponse, text, images, files)
 	}
 
+	enqueueUserMessage(text: string, images?: string[]): void {
+		this.taskState.queuedUserMessages.push({ text, images })
+	}
+
 	async say(
 		type: DiracSay,
 		text?: string,
@@ -1431,6 +1435,15 @@ ${notice}`
 			this.taskState.didCompleteReadingStream = false
 			this.taskState.userMessageContent = []
 			this.taskState.userMessageContentReady = false
+
+			// Drain queued user messages into this turn
+			const queued = this.taskState.drainQueuedUserMessages()
+			for (const msg of queued) {
+				this.taskState.userMessageContent.push({
+					type: "text",
+					text: `[Queued user message]: ${msg.text}`,
+				})
+			}
 			this.taskState.didRejectTool = false
 			this.taskState.didAlreadyUseTool = false
 			this.taskState.presentAssistantMessageLocked = false
