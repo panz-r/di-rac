@@ -240,44 +240,6 @@ async function main() {
 		await ctx.watch()
 		console.log("[cli] Watching for changes...")
 	} else {
-		// Build dirac-analyzer (Rust)
-		const analyzerDir = path.join(__dirname, "treesitter-daemon")
-		const analyzerBin = path.join(analyzerDir, "target", "release", "dirac-analyzer")
-		if (fs.existsSync(path.join(analyzerDir, "Cargo.toml"))) {
-			console.log("[dirac-analyzer] Building Rust analyzer...")
-			const { execSync } = await import("child_process")
-			try {
-				execSync("cargo build --release", { cwd: analyzerDir, stdio: "inherit" })
-				if (fs.existsSync(analyzerBin)) {
-					if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true })
-					fs.copyFileSync(analyzerBin, path.join(distDir, "dirac-analyzer"))
-					fs.chmodSync(path.join(distDir, "dirac-analyzer"), "755")
-					console.log("[dirac-analyzer] Copied to dist/")
-				}
-			} catch {
-				console.error("[dirac-analyzer] Rust build failed, skipping analyzer binary")
-			}
-		}
-
-		// Build Go API Gateway
-		const apiGatewayDir = path.join(__dirname, "api-gateway")
-		const apiGatewayBin = path.join(apiGatewayDir, "api-gateway")
-		if (fs.existsSync(path.join(apiGatewayDir, "go.mod"))) {
-			console.log("[api-gateway] Building Go API gateway...")
-			const { execSync } = await import("child_process")
-			try {
-				execSync("go build -o api-gateway", { cwd: apiGatewayDir, stdio: "inherit" })
-				if (fs.existsSync(apiGatewayBin)) {
-					if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true })
-					fs.copyFileSync(apiGatewayBin, path.join(distDir, "api-gateway"))
-					fs.chmodSync(path.join(distDir, "api-gateway"), "755")
-					console.log("[api-gateway] Copied to dist/")
-				}
-			} catch {
-				console.error("[api-gateway] Go build failed, skipping API gateway binary")
-			}
-		}
-
 		// Build CLI executable
 		console.log("[cli esbuild] Building CLI executable...")
 		const cliCtx = await esbuild.context(cliConfig)
