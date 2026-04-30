@@ -274,10 +274,12 @@ Examples of reference combinations:
 
 ## 4. Call generate_explanation
 
-Use the generate_explanation tool with:
-- **title**: A descriptive title for the diff view (e.g., "Changes in commit abc123", "PR #42: Add user authentication")
-- **from_ref**: The git reference for the "before" state
-- **to_ref**: The git reference for the "after" state (optional)
+Use the generate_explanation tool with CLI syntax:
+- **title** (positional): A descriptive title for the diff view (e.g., "Changes in commit abc123")
+- **--from-ref**: The git reference for the "before" state
+- **--to-ref**: The git reference for the "after" state (optional)
+
+Example: generate_explanation "Changes in last commit" --from-ref HEAD~1
 Below is the user's input describing what changes they want explained. If no input is provided, default to analyzing uncommitted changes in the working directory (may or may not be staged).
 </explicit_instructions>\n
 `

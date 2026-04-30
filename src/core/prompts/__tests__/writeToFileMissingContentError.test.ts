@@ -11,7 +11,7 @@ describe("formatResponse.writeToFileMissingContentError", () => {
 
 		it("should include the base error explanation", () => {
 			const result = formatResponse.writeToFileMissingContentError("src/index.ts", 1)
-			result.should.containEql("'content' parameter was empty")
+			result.should.containEql("--content value was empty")
 			result.should.containEql("output token limits")
 		})
 

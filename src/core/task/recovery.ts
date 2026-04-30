@@ -1296,13 +1296,13 @@ Some line numbers may have shifted. Please locate your target function in the ne
 			} else if (isAlternating) {
 				nextSteps = "Alternating between tools without progress. Pick one approach and commit to it, or summarize your findings so far."
 			} else if (toolName === DiracDefaultTool.BASH || toolName === DiracDefaultTool.BASH_RESTRICTED) {
-				nextSteps = "Shell commands are looping. Try search_symbols or read_file with detail=outline to gather information without the shell."
+				nextSteps = "Shell commands are looping. Try search_symbols or read_file --detail outline to gather information without the shell."
 			} else if (toolName === DiracDefaultTool.FILE_READ) {
-				nextSteps = "Repeated reads of the same region. Try read_file with detail=skeleton for signatures, or use --page next to advance."
+				nextSteps = "Repeated reads of the same region. Try read_file --detail skeleton for signatures, or use --page next to advance."
 			} else if (toolName === DiracDefaultTool.SEARCH || toolName === DiracDefaultTool.LIST_FILES) {
 				nextSteps = "Repeated searching without progress. Use repo_map for a structural overview, or expand a known symbol directly."
 			} else if (toolName === DiracDefaultTool.EDIT_FILE) {
-				nextSteps = "Edits keep failing. Read the file with detail=outline to refresh anchors before editing again."
+				nextSteps = "Edits keep failing. Read the file with read_file --detail outline to refresh anchors before editing again."
 			} else if (!isExactRepeat) {
 				nextSteps = "Exploration without progress. Switch to editing if you have enough context, or refine your search target."
 			} else {

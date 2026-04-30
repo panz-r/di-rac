@@ -35,7 +35,7 @@ export const formatResponse = {
 	) => {
 		const sizeInfo = `File '${relPath.toPosix()}' is ${Math.round(fileSizeKB)} KB`
 		const lineInfo = totalLines !== undefined ? ` (~${totalLines.toLocaleString()} lines)` : ""
-		return `\n\nNOTE: ${sizeInfo}${lineInfo}. Showing first ${previewLines} lines. To view other sections, add 'start_line' and 'end_line' parameters (e.g. start_line=${previewLines + 1}, end_line=${previewLines + 200}).`
+		return `\n\nNOTE: ${sizeInfo}${lineInfo}. Showing first ${previewLines} lines. To view other sections, use read_file --start-line ${previewLines + 1} --end-line ${previewLines + 200}.`
 	},
 
 	diracIgnoreError: (path: string) =>
@@ -67,7 +67,7 @@ Otherwise, if you have not completed the task and do not need additional informa
 	 * and includes token budget awareness to help the model understand output constraints.
 	 */
 	writeToFileMissingContentError: (relPath: string, consecutiveFailures: number, contextUsagePercent?: number): string => {
-		const baseError = `Failed to write to '${relPath}': The 'content' parameter was empty. This typically happens when the file content is too large to generate in a single response, or when output token limits are reached before the content parameter is fully written.`
+		const baseError = `Failed to write to '${relPath}': The --content value was empty. This typically happens when the file content is too large to generate in a single response, or when output token limits are reached before the content is fully written.`
 
 		const contextWarning =
 			contextUsagePercent !== undefined && contextUsagePercent > CONTEXT_WINDOW_WARNING_THRESHOLD_PERCENT
@@ -104,7 +104,7 @@ Otherwise, if you have not completed the task and do not need additional informa
 			`Suggestions:\n` +
 			`- If the file is large, try breaking down the task into smaller steps. Write a skeleton first, then fill in sections using edit_file.\n` +
 			`- If the file already exists, prefer edit_file to make targeted edits instead of rewriting the entire file.\n` +
-			`- Ensure the 'content' parameter contains the complete file content before closing the tool tag.\n\n`
+			`- Ensure the --content value contains the complete file content before closing the tool tag.\n\n`
 		)
 	},
 

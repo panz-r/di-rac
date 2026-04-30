@@ -191,7 +191,7 @@ export class EditFormatter {
 		const summary = `Applied ${resolvedEdits.length} edit(s) successfully${lineChanges}. NOTE the UPDATED anchors below.${failedEdits.length > 0 ? ` ${failedEdits.length} edit(s) failed.` : ""
 			}`
 		if (wasStringified) {
-			results.push(`Note: You provided the 'files' parameter as a stringified JSON array. While this was successfully parsed and applied, you should provide it as a native JSON array in the future.`)
+			results.push(`Note: Your edit arguments were auto-corrected. Use CLI syntax: edit_file <path> --anchor <id> --content <text>.`)
 		}
 
 		return formatResponse.toolResult(`${summary}\n\n${results.join("\n\n---\n\n")}`)

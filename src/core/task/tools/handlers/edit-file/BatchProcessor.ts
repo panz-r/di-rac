@@ -273,14 +273,14 @@ export class BatchProcessor {
                 }
                 if (!Array.isArray(files)) {
                     config.taskState.consecutiveMistakeCount++
-                    return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "The 'files' parameter must be a valid JSON array of objects. If you provided a string, ensure it is valid JSON.", "recoverable")) }
+                    return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Invalid edit_file arguments. Use: edit_file <path> --anchor <id> --content <text> [--end-anchor <id>] [--edit-type TYPE]", "recoverable")) }
                 }
             }
 
             const edits = block.params.edits
             if (!Array.isArray(edits)) {
                 config.taskState.consecutiveMistakeCount++
-                return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "The 'edits' parameter must be a valid JSON array of objects. If you provided a string, ensure it is valid JSON.", "recoverable")) }
+                return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Invalid edit_file arguments. Each edit requires --anchor and --content.", "recoverable")) }
             }
 
             for (const edit of edits) {

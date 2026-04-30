@@ -116,7 +116,7 @@ export class RepoMapToolHandler implements IFullyManagedTool {
 			telemetryService.captureToolUsage(config.ulid, this.name, config.api.getModel().id, provider, true, true, undefined, block.isNativeToolCall)
 			
 			config.taskState.consecutiveMistakeCount = 0
-			return `Repository Structure Summary:\n\n${output}\n\nUse read_file(detail="outline") to see full symbol tables for specific files.`
+			return `Repository Structure Summary:\n\n${output}\n\nUse read_file --detail outline to see full symbol tables for specific files.`
 
 		} catch (error) {
 			config.taskState.consecutiveMistakeCount++

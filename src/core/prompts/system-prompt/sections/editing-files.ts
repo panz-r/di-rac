@@ -4,10 +4,10 @@ export const getEditingFilesInstructions = () => {
 	const delimiter = getDelimiter()
 	return `## EDITING FILES INSTRUCTIONS
 
-You have 4 file editing tools: 
+You have 4 file editing tools:
 
-1. \`write_to_file\` (for new files or complete overwrites) 
-2. \`edit_file\` (for targeted edits) 
+1. \`write_to_file\` (for new files or complete overwrites)
+2. \`edit_file\` (for targeted edits)
 3. \`replace_symbol\` (for direct AST manipulation such as replacing a function or a symbol). updates AST precisely.
 4. \`execute_command\` with commands like grep/awk/sed/find etc for bulk updates. CHEAPEST to execute and very useful for updating files in bulk. You can update the files without necessarily reading them. You can also write scripts that do the work for you (to avoid tedious multi round edits).
 
@@ -31,22 +31,25 @@ Example read output:
 ### CRITICAL RULES FOR EDITING
 1. INDENTATION: You are strictly responsible for indentation. \`replace\` destroys the original lines, so your \`text\` parameter MUST include the correct leading spaces for every single line you insert.
 2. NO ANCHORS IN TEXT: The \`text\` parameter represents the raw, final code. NEVER include anchor hashes or delimiters inside \`text\`.
-3. THE MOST COMMON error type is not balancing braces/indents. You edits must make sure the you neither omit a closing brace not emit an extra closing brace. 
+3. THE MOST COMMON error type is not balancing braces/indents. You edits must make sure the you neither omit a closing brace not emit an extra closing brace.
 4. NON-OVERLAPPING: Multiple edits in the same file MUST NOT overlap.
 
 ### edit_file OPERATIONS
-The \`edit_file\` tool supports three operations via the \`edit_type\` parameter:
-- \`replace\`: Replaces an inclusive range of lines from \`anchor\` to \`end_anchor\`.
-  * MULTI-LINE: You can replace a large block of code with a new multi-line block by using \`\\n\` in your \`text\` parameter.
-  * SINGLE LINE: To replace or delete a single line, use that exact same line for BOTH \`anchor\` and \`end_anchor\`.
-  * DELETE: To delete the range cleanly without leaving blank lines, use \`text: ""\`.
-- \`insert_after\`: Inserts \`text\` as new line(s) immediately after \`anchor\`.
-- \`insert_before\`: Inserts \`text\` as new line(s) immediately before \`anchor\`.
+The \`edit_file\` tool supports three operations via the \`--edit-type\` flag:
+- \`replace\` (default): Replaces an inclusive range of lines from \`--anchor\` to \`--end-anchor\`.
+  * MULTI-LINE: You can replace a large block of code with a new multi-line block by using \`\\n\` in your \`--content\` text.
+  * SINGLE LINE: To replace or delete a single line, use that exact same line for BOTH \`--anchor\` and \`--end-anchor\`.
+  * DELETE: To delete the range cleanly without leaving blank lines, use \`--content ""\`.
+- \`insert_after\`: Inserts \`--content\` text as new line(s) immediately after \`--anchor\`.
+- \`insert_before\`: Inserts \`--content\` text as new line(s) immediately before \`--anchor\`.
+
+Chain multiple edits with \`;\`:
+  edit_file src/calculator.py --anchor "..." --content "..." --edit-type insert_before; edit_file src/calculator.py --anchor "..." --end-anchor "..." --content "..."
 
 ### EXAMPLES
 
-#### Batched Multi-File Edit
-To add imports, simplify logic, or refactor across multiple files, use the \`files\` parameter. 
+#### Multi-File Edit with Chain Operators
+To add imports, simplify logic, or refactor across multiple files, chain edit_file calls with \`;\`.
 
 Original Code (src/calculator.py):
 \`\`\`
@@ -75,50 +78,9 @@ River${delimiter}  return user.name;
 Snake${delimiter}}
 \`\`\`
 
-Invoke edit_file with:
-\`\`\`json
-{
-  "files": [
-    {
-      "path": "src/calculator.py",
-      "edits":[
-        {
-          "edit_type": "insert_before",
-          "anchor": "Apple${delimiter}def calculate_total(items):",
-          "text": "from typing import List\\n"
-        },
-        {
-          "edit_type": "replace",
-          "anchor": "Brave${delimiter}    total = 0",
-          "end_anchor": "Eagle${delimiter}            total += item.price",
-          "text": "    total = sum(item.price for item in items if item.price > 0)"
-        }
-      ]
-    },
-    {
-      "path": "src/user.ts",
-      "edits":[
-        {
-          "edit_type": "replace",
-          "anchor": "Karma${delimiter}  age: number;",
-          "end_anchor": "Karma${delimiter}  age: number;",
-          "text": ""
-        },
-        {
-          "edit_type": "replace",
-          "anchor": "Ocean${delimiter}  if (!user.name) {",
-          "end_anchor": "River${delimiter}  return user.name;",
-          "text": "  return user.name ? user.name : \\"Anonymous\\";"
-        },
-        {
-          "edit_type": "insert_after",
-          "anchor": "Snake${delimiter}}",
-          "text": "\\nexport function isAnonymous(user: User): boolean {\\n  return !user.name;\\n}"
-        }
-      ]
-    }
-  ]
-}
+Invoke edit_file:
+\`\`\`
+edit_file src/calculator.py --anchor "Apple${delimiter}def calculate_total(items):" --content "from typing import List\\n" --edit-type insert_before; edit_file src/calculator.py --anchor "Brave${delimiter}    total = 0" --end-anchor "Eagle${delimiter}            total += item.price" --content "    total = sum(item.price for item in items if item.price > 0)"; edit_file src/user.ts --anchor "Karma${delimiter}  age: number;" --end-anchor "Karma${delimiter}  age: number;" --content ""; edit_file src/user.ts --anchor "Ocean${delimiter}  if (!user.name) {" --end-anchor "River${delimiter}  return user.name;" --content "  return user.name ? user.name : \\"Anonymous\\";"; edit_file src/user.ts --anchor "Snake${delimiter}}" --content "\\nexport function isAnonymous(user: User): boolean {\\n  return !user.name;\\n}" --edit-type insert_after
 \`\`\`
 
 Transformed Code (src/calculator.py):
@@ -138,7 +100,7 @@ Grape${delimiter}interface User {
 Hazel${delimiter}  id: string;
 Index${delimiter}  name: string;
 Joker${delimiter}  email: string;
-// ---> CONSEQUENCE: Karma was deleted cleanly because \`text\` was "". No blank line remains.
+// ---> CONSEQUENCE: Karma was deleted cleanly because \`content\` was "". No blank line remains.
 Lemon${delimiter}}
 Mango${delimiter}
 Nacho${delimiter}export function getUserDisplayName(user: User): string {

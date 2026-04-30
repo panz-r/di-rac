@@ -193,7 +193,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 
 		if ((block.params.start_line && isNaN(startLineNum!)) || (block.params.end_line && isNaN(endLineNum!))) {
 			config.taskState.consecutiveMistakeCount++
-			const error = "Invalid line numbers. Please provide valid integers for start_line and end_line."
+			const error = "Invalid line numbers. Please provide valid integers for --start-line and --end-line."
 
 			// Ensure UI is updated to mark the tool call as complete (avoiding "stuck" state)
 			const sharedMessageProps = {
@@ -369,7 +369,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 											.map(d => `  - [${d.id}] ${d.name} (lines ${d.fullBodyRange?.startLine || d.lineIndex + 1}-${d.fullBodyRange?.endLine || d.lineIndex + 1})`)
 											.join("\n")
 										if (filtered.length > 50) {
-											chunkMap += `\n  ... and ${filtered.length - 50} more symbols. Use detail="outline" to see all.`
+											chunkMap += `\n  ... and ${filtered.length - 50} more symbols. Use read_file --detail outline to see all.`
 										}
 									}
 								} catch (e) {

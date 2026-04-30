@@ -141,7 +141,7 @@ describe("ReadFileToolHandler.execute – large file preview", () => {
 		assert.ok((result as string).includes("[File Hash:"))
 		assert.ok((result as string).includes("NOTE: File 'large-file.txt' is"))
 		assert.ok((result as string).includes("(~2,000 lines). Showing first 200 lines."))
-		assert.ok((result as string).includes("To view other sections, add 'start_line' and 'end_line' parameters (e.g. start_line=201, end_line=400)."))
+		assert.ok((result as string).includes("use read_file --start-line 201 --end-line 400"))
 		
 		// Verify content: should have 200 lines
 		const lines = (result as string).split("\n").filter(l => l.includes("|Line "))
