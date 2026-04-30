@@ -107,6 +107,8 @@ export class RecoveryEngine {
 	private callHistory: CallRecord[] = []
 	private editSnapshotPaths: Map<string, string> = new Map()
 	private preEditSymbolCounts: Map<string, number> = new Map()
+	private preEditSymbols: Map<string, string[]> = new Map()
+	private dryRunPaths: Map<string, string> = new Map() // temp path -> original path
 	private perTurnTokenBudget: number = 5 // max 5 recovery retries per turn
 	private currentTurnRetries: number = 0
 
@@ -300,6 +302,8 @@ export class RecoveryEngine {
 			this._proactiveCondensedThisTurn = false
 		this.editSnapshotPaths.clear()
 		this.preEditSymbolCounts.clear()
+		this.preEditSymbols.clear()
+		this.dryRunPaths.clear()
 			// Purge stale nudge outcomes older than 5 turns
 			for (const [key, outcome] of this.nudgeOutcomes) {
 				if (this.currentTurnNumber - outcome.turnWhenNudged > 5) {
@@ -539,6 +543,89 @@ export class RecoveryEngine {
 			} catch { /* file read failed, skip check */ }
 		}
 
+		// 5b. Protected-file locking
+		if (MUTATION_TOOLS.includes(toolName as any) && typeof filePath === "string") {
+			const protectedPatterns = [
+				"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock",
+				".gitignore", ".gitmodules",
+			]
+			const protectedExts = [".generated.", ".min.", ".bundle."]
+			const basename = filePath.split("/").pop() || filePath.split("\\").pop() || ""
+			const isProtected = protectedPatterns.includes(basename) ||
+				protectedExts.some((ext) => basename.includes(ext)) ||
+				filePath.includes("/vendor/") || filePath.includes("\\vendor\\")
+			if (isProtected) {
+				this.updateAuditChain(toolName, "PROTECTED_FILE", "BLOCKED")
+				return this.formatStructuredEscalation(
+					toolName, block.params, "PROTECTED_FILE",
+					`${filePath} is protected against AI modifications.`,
+					"If changes are required, update the protected files list or ask the user."
+				)
+			}
+		}
+
+		// 5c. Per-file edit streak breaker
+		if ((toolName === DiracDefaultTool.EDIT_FILE || toolName === DiracDefaultTool.REPLACE_SYMBOL) && typeof filePath === "string" && taskState) {
+			// Reset streak for other files
+			const currentStreak = (taskState.editStreakCount.get(filePath) || 0) + 1
+			taskState.editStreakCount.set(filePath, currentStreak)
+			// Clear streak for other files
+			for (const [key] of taskState.editStreakCount) {
+				if (key !== filePath) taskState.editStreakCount.set(key, 0)
+			}
+			if (currentStreak === 3) {
+				this.updateAuditChain(toolName, "STREAK_WARNING", "NUDGE")
+				// Soft warning: inject nudge but allow through
+				await dispatch(DiracDefaultTool.FILE_READ, {
+					path: filePath,
+					detail: "outline"
+				})
+			}
+			if (currentStreak >= 5) {
+				this.updateAuditChain(toolName, "STREAK_LIMIT", "BLOCKED")
+				return this.formatStructuredEscalation(
+					toolName, block.params, "STREAK_LIMIT",
+					`You have edited ${filePath} ${currentStreak} times consecutively. Repeatedly patching the same file suggests a root cause elsewhere.`,
+					"Stop editing this file. Review all edits made. Identify the common root cause."
+				)
+			}
+		}
+
+		// 5d. Completion gate — block attempt_completion without verification
+		if (toolName === DiracDefaultTool.ATTEMPT && taskState) {
+			if (taskState.didEditFile && !taskState.didExecuteCommand) {
+				this.updateAuditChain(toolName, "VERIFICATION_REQUIRED", "BLOCKED")
+				return this.formatStructuredEscalation(
+					toolName, block.params, "VERIFICATION_REQUIRED",
+					"You have made edits but have not run any tests, lint, or type checks to verify them.",
+					"Run verification commands (e.g., type check, lint, tests) before attempting completion."
+				)
+			}
+		}
+
+		// 5e. Net-change budget check
+		if (MUTATION_TOOLS.includes(toolName as any) && typeof filePath === "string" && taskState && !forceFlag) {
+			try {
+				const fs = await import("fs/promises")
+				const oldContent = await fs.readFile(filePath, "utf8")
+				const oldLines = oldContent.split("\n").length
+				const newText = extractReplacementText(toolName, params)
+				if (newText) {
+					const newLines = newText.split("\n").length
+					const netChange = Math.abs(taskState.sessionLinesAdded - taskState.sessionLinesDeleted + (newLines - oldLines))
+					const MAX_NET_CHANGE = 500
+					if (netChange > MAX_NET_CHANGE) {
+						this.updateAuditChain(toolName, "NET_CHANGE_LIMIT", "BLOCKED")
+						return this.formatStructuredEscalation(
+							toolName, block.params, "NET_CHANGE_LIMIT",
+							`This edit would bring the session net change to ${netChange} lines (limit: ${MAX_NET_CHANGE}).`,
+							"Consider consolidating changes, refactoring instead of adding, or adjust the limit."
+						)
+					}
+				}
+			} catch { /* skip */ }
+		}
+
 		// Phase 12: Heuristic Edit Repair
 		if (toolName === DiracDefaultTool.EDIT_FILE && params?.edits) {
 			const edits = params.edits as any[]
@@ -634,8 +721,47 @@ export class RecoveryEngine {
 				const defs = await parseFile(filePath, languageParsers)
 				if (defs) {
 					this.preEditSymbolCounts.set(filePath, defs.length)
+					this.preEditSymbols.set(filePath, defs.map((d: any) => d.name || ""))
 				}
 			} catch { /* ignore */ }
+		}
+
+		// 7. Dry-run mode: redirect to temp file
+		const dryRunFlag = params?.["dry_run"] || params?.["dry-run"] || params?.["--dry-run"]
+		if (dryRunFlag && MUTATION_TOOLS.includes(toolName as any) && typeof filePath === "string") {
+			try {
+				const fs = await import("fs/promises")
+				const path = await import("path")
+				const dryRunDir = path.join(this.workspaceRoot || process.cwd(), ".dirac-state", "dry-run")
+				await fs.mkdir(dryRunDir, { recursive: true })
+				const tempPath = path.join(dryRunDir, `${path.basename(filePath)}.${Date.now()}.dry`)
+				// For file_new (original may not exist), create empty temp file
+				try {
+					await fs.copyFile(filePath, tempPath)
+				} catch {
+					await fs.writeFile(tempPath, "")
+				}
+				this.dryRunPaths.set(tempPath, filePath)
+				// Redirect all path params to temp file
+				if (params.path) params.path = tempPath
+				if (params.file_path) params.file_path = tempPath
+				if (params.absolutePath) params.absolutePath = tempPath
+				// Handle edit_file multi-file batch: params.files[].path
+				if (params.files && Array.isArray(params.files)) {
+					for (const f of params.files) {
+						if (f.path === filePath || f.path === rawPath) f.path = tempPath
+					}
+				}
+				// Handle replace_symbol multi-replacement: params.replacements[].path
+				if (params.replacements && Array.isArray(params.replacements)) {
+					for (const r of params.replacements) {
+						if (r.path === filePath || r.path === rawPath) r.path = tempPath
+					}
+				}
+				this.updateAuditChain(toolName, "DRY_RUN_REDIRECT", "SILENT_FIX")
+			} catch (e) {
+				// If dry-run redirect fails, fall through to normal execution
+			}
 		}
 
 		return null // Pass through to execution
@@ -1233,6 +1359,21 @@ Some line numbers may have shifted. Please locate your target function in the ne
 					this.consecutiveProgressCount = 0
 					this.updateAuditChain("SYSTEM", "STAGNATION_HEALED", "PROGRESS")
 				}
+				// Dry-run interception: if tool ran on temp file, return diff summary
+				if (MUTATION_TOOLS.includes(toolName as any)) {
+					const dryRunPath = (args as any)?.path || (args as any)?.file_path || (args as any)?.absolutePath
+					const originalPath = this.dryRunPaths.get(dryRunPath)
+					if (originalPath && typeof dryRunPath === "string") {
+						const dryRunSummary = await this.buildDryRunSummary(toolName, originalPath, dryRunPath)
+						// Clean up temp file
+						try {
+							const fs = await import("fs/promises")
+							await fs.unlink(dryRunPath)
+						} catch { /* ignore cleanup failure */ }
+						this.dryRunPaths.delete(dryRunPath)
+						return dryRunSummary
+					}
+				}
 				// Post-edit syntax verification and structural change detection
 				if (MUTATION_TOOLS.includes(toolName as any)) {
 					const postFilePath = (args as any)?.path || (args as any)?.file_path || (args as any)?.absolutePath
@@ -1280,20 +1421,104 @@ Some line numbers may have shifted. Please locate your target function in the ne
 										"If this was intentional, split into targeted edits. Otherwise, verify your edit targets the correct range."
 									)
 								}
+								// Structural symbol-diff reporting (informational)
+								const preSymbols = this.preEditSymbols.get(postFilePath)
+								if (preSymbols && preSymbols.length > 0 && postDefs) {
+									const postSymbolNames = postDefs.map((d: any) => d.name || "")
+									const addedSyms = postSymbolNames.filter((s: string) => s && !preSymbols.includes(s))
+									const removedSyms = preSymbols.filter((s: string) => s && !postSymbolNames.includes(s))
+									if (addedSyms.length > 0 || removedSyms.length > 0) {
+										const parts: string[] = []
+										if (addedSyms.length > 0) parts.push("+" + addedSyms.join(", "))
+										if (removedSyms.length > 0) parts.push("-" + removedSyms.join(", "))
+										const summary = `[STRUCTURAL_DIFF] ${postFilePath}: ${parts.join(" ")}`
+										if (Array.isArray(result)) {
+											const textBlock = (result as any[]).find((b: any) => b.type === "text")
+											if (textBlock && (textBlock as any).text) {
+												(textBlock as any).text += "\n" + summary
+											}
+										}
+									}
+								}
 							} catch { /* ignore parse failure */ }
 							this.preEditSymbolCounts.delete(postFilePath)
+							this.preEditSymbols.delete(postFilePath)
 						}
+						// On-disk write verification
+						const expectedText = extractReplacementText(toolName, args as any)
+						if (expectedText && expectedText.length > 20) {
+							try {
+								const fs = await import("fs/promises")
+								const onDiskContent = await fs.readFile(postFilePath, "utf8")
+								const expectedLines = expectedText.split("\n").filter((l: string) => l.trim().length > 0)
+								const sampleLines = expectedLines.slice(0, Math.min(3, expectedLines.length))
+								if (sampleLines.length > 0) {
+									const sample = sampleLines.join("\n")
+									if (!onDiskContent.includes(sample)) {
+										const snapPath = this.editSnapshotPaths.get(postFilePath)
+										if (snapPath) {
+											try {
+												await fs.copyFile(snapPath, postFilePath)
+											} catch { /* rollback failed */ }
+										}
+										this.updateAuditChain(toolName, "WRITE_VERIFICATION_FAILED", "ROLLED_BACK")
+										return this.formatStructuredEscalation(
+											toolName, args, "WRITE_VERIFICATION_FAILED",
+											`On-disk verification failed for ${postFilePath}: expected replacement text not found in file. Original restored.`,
+											"The write may have been interrupted or corrupted. Retry the edit."
+										)
+									}
+								}
+							} catch { /* skip if read fails */ }
+						}
+					}
+				}
+				// Update session line counters for mutation tools
+				if (MUTATION_TOOLS.includes(toolName as any) && taskState) {
+					const mutPath = (args as any)?.path || (args as any)?.file_path || (args as any)?.absolutePath
+					if (typeof mutPath === "string") {
+						try {
+							const fs = await import("fs/promises")
+							const postContent = await fs.readFile(mutPath, "utf8")
+							const postLineCount = postContent.split("\n").length
+							const snapPath = this.editSnapshotPaths.get(mutPath)
+							if (snapPath) {
+								try {
+									const preContent = await fs.readFile(snapPath, "utf8")
+									const preLineCount = preContent.split("\n").length
+									const delta = postLineCount - preLineCount
+									if (delta > 0) taskState.sessionLinesAdded += delta
+									else if (delta < 0) taskState.sessionLinesDeleted += Math.abs(delta)
+								} catch { /* snapshot not available */ }
+							}
+						} catch { /* file read failed */ }
 					}
 				}
 				return result // Success
 			}
 
+			// Dry-run cleanup on error path
+			if (MUTATION_TOOLS.includes(toolName as any)) {
+				const errDryPath = (args as any)?.path || (args as any)?.file_path || (args as any)?.absolutePath
+				if (this.dryRunPaths.has(errDryPath) && typeof errDryPath === "string") {
+					try { await (await import("fs/promises")).unlink(errDryPath) } catch { /* ignore */ }
+					this.dryRunPaths.delete(errDryPath)
+				}
+			}
 			// Tool returned a structured error
 			return await this.handleErrorRecovery(toolName, args, errorCode, result, dispatch, taskState)
 
 		} catch (error: any) {
 			// Tool threw an exception
 			const errorCode = error.code || error.name || "UNKNOWN_ERROR"
+			// Dry-run cleanup on exception path
+			if (MUTATION_TOOLS.includes(toolName as any)) {
+				const excDryPath = (args as any)?.path || (args as any)?.file_path || (args as any)?.absolutePath
+				if (this.dryRunPaths.has(excDryPath) && typeof excDryPath === "string") {
+					try { await (await import("fs/promises")).unlink(excDryPath) } catch { /* ignore */ }
+					this.dryRunPaths.delete(excDryPath)
+				}
+			}
 			return await this.handleErrorRecovery(toolName, args, errorCode, error, dispatch, taskState)
 		}
 	}
@@ -1648,6 +1873,70 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		} catch {
 			return true // on error, assume valid (don't block)
 		}
+	}
+
+	/** Build a dry-run summary by comparing original file against temp edit result. */
+	private async buildDryRunSummary(toolName: string, originalPath: string, tempPath: string): Promise<ToolResponse> {
+		const fs = await import("fs/promises")
+		const lines: string[] = []
+		lines.push("[DRY RUN] Proposed changes to " + originalPath + ":")
+		try {
+			let originalContent = ""
+			try { originalContent = await fs.readFile(originalPath, "utf8") } catch { /* new file */ }
+			const isNewFile = originalContent === ""
+			const tempContent = await fs.readFile(tempPath, "utf8")
+			const origLines = originalContent.split("\n")
+			const tempLines = tempContent.split("\n")
+			const addedLines = tempLines.length - origLines.length
+			if (isNewFile) lines.push("  New file: " + tempLines.length + " lines would be created")
+			else if (addedLines > 0) lines.push("  +" + addedLines + " lines (net) would be added")
+			else if (addedLines < 0) lines.push("  -" + Math.abs(addedLines) + " lines (net) would be removed")
+			else lines.push("  No net line count change")
+			const parseOk = await this.isFileParseValid(tempPath)
+			if (parseOk) {
+				lines.push("  No syntax errors detected.")
+			} else {
+				lines.push("  WARNING: Syntax errors detected in the proposed edit.")
+			}
+			try {
+				const { parseFile } = await import("@/services/tree-sitter")
+				const { loadRequiredLanguageParsers } = await import("@/services/tree-sitter/languageParser")
+				const languageParsers = await loadRequiredLanguageParsers([tempPath])
+				const origDefs = (await parseFile(originalPath, languageParsers)) || []
+				const tempDefs = await parseFile(tempPath, languageParsers)
+				if (tempDefs) {
+					const origNames = new Map(origDefs.map((d: any) => [d.name, d] as [string, any]))
+					const tempNames = new Map(tempDefs.map((d: any) => [d.name, d] as [string, any]))
+					const changes: string[] = []
+					for (const [name, def] of tempNames) {
+						if (!origNames.has(name)) {
+							changes.push("  + " + def.kind + ":" + name + " (L" + ((def.lineIndex || 0) + 1) + ") -- added")
+						} else {
+							const oldDef = origNames.get(name)
+							if (oldDef.lineCount !== def.lineCount || oldDef.signature !== def.signature) {
+								changes.push("  ~ " + def.kind + ":" + name + " (L" + ((oldDef.lineIndex || 0) + 1) + "->L" + ((def.lineIndex || 0) + 1) + ") -- modified")
+							}
+						}
+					}
+					for (const [name, def] of origNames) {
+						if (!tempNames.has(name)) {
+							changes.push("  - " + def.kind + ":" + name + " (L" + ((def.lineIndex || 0) + 1) + ") -- deleted")
+						}
+					}
+					if (changes.length > 0) {
+						lines.push("  Symbols:")
+						lines.push(...changes)
+					} else {
+						lines.push("  No structural symbol changes.")
+					}
+				}
+			} catch { /* skip symbol diff if tree-sitter unavailable */ }
+		} catch {
+			lines.push("  Could not read files for comparison.")
+		}
+		lines.push("To apply, re-issue the command without --dry-run.")
+		this.updateAuditChain(toolName, "DRY_RUN", "PREVIEW")
+		return [{ type: "text", text: lines.join("\n") }] as any
 	}
 
 	private formatStructuredEscalation(toolName: string, args: unknown, errorCode: string, message: string, nextSteps?: string): ToolResponse {

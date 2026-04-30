@@ -100,6 +100,11 @@ export class TaskState {
 	didExecuteCommand: boolean = false
 	currentTurnNumber = 0
 
+	// Round 2 safeguard state
+	editStreakCount: Map<string, number> = new Map()
+	sessionLinesAdded = 0
+	sessionLinesDeleted = 0
+
 	resetTurnState(): void {
 		this.filesTouchedInCurrentTurn.clear()
 		this.filesEditedInCurrentTurn.clear()
