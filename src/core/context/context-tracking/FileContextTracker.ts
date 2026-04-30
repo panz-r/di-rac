@@ -30,6 +30,7 @@ export class FileContextTracker {
 	private fileWatchers = new Map<string, FSWatcher>()
 	private recentlyModifiedFiles = new Set<string>()
 	private recentlyEditedByDirac = new Set<string>()
+	private pendingTrackOperations = new Map<string, Promise<void>>()
 
 	constructor(controller: Controller, taskId: string) {
 		this.controller = controller
@@ -64,14 +65,22 @@ export class FileContextTracker {
 			},
 		})
 
-		// Track file changes
+		// Track file changes - serialize per-file to prevent concurrent read-modify-write races
 		watcher.on("change", () => {
-			if (this.recentlyEditedByDirac.has(filePath)) {
-				this.recentlyEditedByDirac.delete(filePath) // This was an edit by Dirac, no need to inform Dirac
-			} else {
-				this.recentlyModifiedFiles.add(filePath) // This was a user edit, we will inform Dirac
-				this.trackFileContext(filePath, "user_edited") // Update the task metadata with file tracking
-			}
+			const previous = this.pendingTrackOperations.get(filePath) ?? Promise.resolve()
+			const current = previous.then(async () => {
+				if (this.recentlyEditedByDirac.has(filePath)) {
+					this.recentlyEditedByDirac.delete(filePath)
+				} else {
+					this.recentlyModifiedFiles.add(filePath)
+					await this.trackFileContext(filePath, "user_edited")
+				}
+			}).finally(() => {
+				if (this.pendingTrackOperations.get(filePath) === current) {
+					this.pendingTrackOperations.delete(filePath)
+				}
+			})
+			this.pendingTrackOperations.set(filePath, current)
 		})
 
 		// Store the watcher so we can dispose it later
@@ -167,6 +176,10 @@ export class FileContextTracker {
 					latestEntries.set(entry.path, idx)
 				})
 				const latestIndices = new Set(latestEntries.values())
+
+				if (latestEntries.size > 5000) {
+					Logger.warn(`[FileContextTracker] Tracking ${latestEntries.size} unique files - consider a shorter task scope`)
+				}
 
 				// 2. Prune old entries that are NOT the latest for their file
 				const prunedList: FileMetadataEntry[] = []
@@ -331,7 +344,8 @@ export class FileContextTracker {
 		try {
 			const taskHistory = await readTaskHistoryFromState()
 			const existingTaskIds = new Set(taskHistory.map((task) => task.id))
-			const allStateKeys = Object.keys(stateManager.getAllWorkspaceStateEntries())
+			const allStateEntries = stateManager.getAllWorkspaceStateEntries() ?? {}
+			const allStateKeys = Object.keys(allStateEntries)
 			const pendingWarningKeys = allStateKeys.filter((key) => key.startsWith("pendingFileContextWarning_"))
 
 			const orphanedPendingContextTasks: string[] = []
@@ -343,15 +357,15 @@ export class FileContextTracker {
 			}
 
 			if (orphanedPendingContextTasks.length > 0) {
-				for (const key of orphanedPendingContextTasks) {
+				await Promise.all(orphanedPendingContextTasks.map((key) =>
 					// NOTE: Using 'as any' because dynamic keys like pendingFileContextWarning_${taskId}
 					// are legitimate workspace state keys but don't fit the strict LocalStateKey type system
-					await stateManager.setWorkspaceState(key as any, undefined)
-				}
+					stateManager.setWorkspaceState(key as any, undefined),
+				))
 			}
 
 			const duration = Date.now() - startTime
-			Logger.log(
+			Logger.info(
 				`FileContextTracker: Processed ${existingTaskIds.size} tasks, found ${pendingWarningKeys.length} pending warnings, ${orphanedPendingContextTasks.length} orphaned, deleted ${orphanedPendingContextTasks.length}, took ${duration}ms`,
 			)
 		} catch (error) {
