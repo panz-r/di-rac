@@ -2,7 +2,6 @@ import { getHookModelContext } from "@core/hooks/hook-model-context"
 import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
 import { executePreCompactHookWithCleanup, HookCancellationError } from "@core/hooks/precompact-executor"
 import { summarizeTask } from "@core/prompts/contextManagement"
-import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import { formatContentBlockToMarkdown } from "@integrations/misc/export-markdown"
 import { telemetryService } from "@services/telemetry"
 import { findLastIndex } from "@shared/array"
@@ -194,10 +193,7 @@ export class ApiConversationManager {
 		if (params.shouldCompact) {
 			userContent.push({
 				type: "text",
-				text: summarizeTask(
-					this.dependencies.cwd,
-					isMultiRootEnabled(this.dependencies.stateManager),
-				),
+				text: summarizeTask(),
 			})
 		}
 

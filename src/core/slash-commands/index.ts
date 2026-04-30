@@ -10,7 +10,6 @@ import {
 	newTaskToolResponse,
 	reportBugToolResponse,
 } from "../prompts/commands"
-import { StateManager } from "../storage/StateManager"
 import { getSkillContent } from "../context/instructions/user-instructions/skills"
 import { SkillMetadata } from "@/shared/skills"
 
@@ -20,14 +19,10 @@ type FileBasedWorkflow = {
 	isRemote: false
 }
 
-type RemoteWorkflow = {
-	fullPath: string
-	fileName: string
-	isRemote: true
-	contents: string
-}
-
-type Workflow = FileBasedWorkflow | RemoteWorkflow
+// TODO: Remote workflows are not yet wired to a config source.
+// When remote workflow loading is implemented, add an `isRemote: true`
+// variant here and populate from the remote config loader.
+type Workflow = FileBasedWorkflow
 
 /**
  * Processes text for slash commands and transforms them with appropriate instructions
@@ -39,11 +34,10 @@ export async function parseSlashCommands(
 	globalWorkflowToggles: DiracRulesToggles,
 	ulid: string,
 	providerInfo?: ApiProviderInfo,
-	availableSkills: SkillMetadata[] = []
+	availableSkills: SkillMetadata[] = [],
+	remoteWorkflowToggles: Record<string, boolean> = {},
 ): Promise<{ processedText: string; needsDiracrulesFileCheck: boolean }> {
 	const SUPPORTED_DEFAULT_COMMANDS = ["newtask", "smol", "compact", "newrule", "reportbug", "explain-changes"]
-
-	const willUseNativeTools = true
 
 	const commandReplacements: Record<string, string> = {
 		newtask: newTaskToolResponse(),
@@ -82,25 +76,23 @@ export async function parseSlashCommands(
 	// Helper function to calculate positions and remove slash command from text
 	const removeSlashCommand = (
 		fullText: string,
-		_tagContent: string, // kept for clarity about the context
+		_tagContent: string,
 		contentStartIndex: number,
 		slashMatch: RegExpExecArray,
 	): string => {
-		// slashMatch.index is where the match starts (could include whitespace before /)
 		// slashMatch[1] is the whitespace or empty string before the slash
-		// slashMatch[2] is the command name
-		const slashPositionInContent = slashMatch.index + slashMatch[1].length
-		const slashPositionInFullText = contentStartIndex + slashPositionInContent
+		// Remove the preceding whitespace along with the command, unless at string start
+		const removeStart = slashMatch.index + (slashMatch[1] ? slashMatch[1].length : 0)
+		const slashPositionInFullText = contentStartIndex + removeStart
 		const commandText = "/" + slashMatch[2]
 		const commandEndPosition = slashPositionInFullText + commandText.length
 
-		return fullText.substring(0, slashPositionInFullText) + fullText.substring(commandEndPosition)
+		return fullText.substring(0, contentStartIndex + slashMatch.index) + fullText.substring(commandEndPosition)
 	}
 
 	// if we find a valid match, we will return inside that block
 	for (const { regex } of tagPatterns) {
-		const regexObj = new RegExp(regex.source, regex.flags)
-		const tagMatch = regexObj.exec(text)
+		const tagMatch = regex.exec(text)
 
 		if (tagMatch) {
 			const tagContent = tagMatch[1]
@@ -146,38 +138,16 @@ export async function parseSlashCommands(
 					isRemote: false,
 				}))
 
-			// Get remote workflows from remote config
-			const stateManager = StateManager.get()
-			const remoteWorkflows: any[] = []
-			const remoteWorkflowToggles = stateManager.getGlobalStateKey("remoteWorkflowToggles") || {}
-
-			const enabledRemoteWorkflows: Workflow[] = remoteWorkflows
-				.filter((workflow) => {
-					// If alwaysEnabled, always include; otherwise check toggle
-					return workflow.alwaysEnabled || remoteWorkflowToggles[workflow.name] !== false
-				})
-				.map((workflow) => ({
-					fullPath: "",
-					fileName: workflow.name,
-					isRemote: true,
-					contents: workflow.contents,
-				}))
-
-			// local workflows have precedence over global workflows, which have precedence over remote workflows
-			const enabledWorkflows: Workflow[] = [...localWorkflows, ...globalWorkflows, ...enabledRemoteWorkflows]
+			// local workflows have precedence over global workflows
+			// TODO: Add remote workflows once the remote config loader is implemented
+			const enabledWorkflows: Workflow[] = [...localWorkflows, ...globalWorkflows]
 
 			// Then check if the command matches any enabled workflow filename
 			const matchingWorkflow = enabledWorkflows.find((workflow) => workflow.fileName === commandName)
 
 			if (matchingWorkflow) {
 				try {
-					// Get workflow content - either from file or from remote config
-					let workflowContent: string
-					if (matchingWorkflow.isRemote) {
-						workflowContent = matchingWorkflow.contents.trim()
-					} else {
-						workflowContent = (await fs.readFile(matchingWorkflow.fullPath, "utf8")).trim()
-					}
+					const workflowContent = (await fs.readFile(matchingWorkflow.fullPath, "utf8")).trim()
 
 					// remove the slash command and add custom instructions at the top of this message
 					const textWithoutSlashCommand = removeSlashCommand(text, tagContent, contentStartIndex, slashMatch)
@@ -205,7 +175,7 @@ export async function parseSlashCommands(
 						let processedText = `<explicit_instructions type="skill" name="${skillContent.name}">\n${skillContent.instructions}\n</explicit_instructions>\n`
 
 						// Check if the content of the tag we matched is now empty
-						const newTagContentMatch = regexObj.exec(textWithoutSlashCommand)
+						const newTagContentMatch = regex.exec(textWithoutSlashCommand)
 						const newTagContent = newTagContentMatch ? newTagContentMatch[1].trim() : ""
 
 						if (!newTagContent) {

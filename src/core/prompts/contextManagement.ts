@@ -1,4 +1,4 @@
-export const summarizeTask = (cwd?: string, isMultiRootEnabled?: boolean) => {
+export const summarizeTask = () => {
 	return `The conversation is nearing its context limit. To continue effectively, you must now call the summarize_task tool to create a comprehensive, high-fidelity summary of the task's progress. 
 
 Your summary must be exhaustive, capturing the "whole nine yards":

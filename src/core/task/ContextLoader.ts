@@ -461,7 +461,8 @@ export class ContextLoader {
             globalWorkflowToggles,
             ulid,
             providerInfo,
-            availableSkills
+            availableSkills,
+            this.dependencies.stateManager.getGlobalStateKey("remoteWorkflowToggles") ?? {},
         )
 
         // Skip automatic path and symbol detection for subsequent turns
