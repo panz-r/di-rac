@@ -142,16 +142,6 @@ export class BashToolHandler implements IFullyManagedTool {
 			return formatResponse.toolResult(JSON.stringify(resultObj, null, 2))
 		}
 
-		// 4. Validation: Diracignore (basic check on the whole command string)
-		const ignoredFile = config.services.diracIgnoreController.validateCommand(finalCommand)
-		if (ignoredFile) {
-			return formatResponse.formatToolErrorForLLM(createToolError(
-				"tool.internalError",
-				`Diracignore error: ${ignoredFile}`,
-				"recoverable"
-			))
-		}
-
 		// 5. Approval: check bashAutoApproveAll before requiring manual approval
 		const bashAutoApproveAll = config.services.stateManager.getGlobalSettingsKey("bashAutoApproveAll")
 

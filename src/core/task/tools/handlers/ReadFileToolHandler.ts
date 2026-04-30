@@ -252,31 +252,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			const header = relPaths.length > 1 ? `--- ${relPath} ---\n` : ""
 
 			try {
-				// 1. Check diracignore access
-				const accessValidation = this.validator.checkDiracIgnorePath(relPath)
-				if (!accessValidation.ok) {
-					if (!config.isSubagentExecution) {
-						await config.callbacks.say("diracignore_error", relPath)
-					}
-					results.push(`${header}${formatResponse.diracIgnoreError(relPath)}`)
-					readFileResults.push({
-						path: relPath,
-						status: "error",
-						label: "Diracignore prevented file read",
-					})
-					anyFailed = true
-
-					// Fill telemetry/UI fallbacks
-					absolutePaths.push("")
-					displayPaths.push(relPath)
-					workspaceContexts.push({
-						isMultiRootEnabled: !!config.isMultiRootEnabled,
-						resolutionMethod: "ignored",
-					})
-					continue
-				}
-
-				// 2. Resolve the absolute path
+				// Resolve the absolute path
 				const pathResult = resolveWorkspacePath(config, relPath, "ReadFileToolHandler.execute")
 				const { absolutePath, displayPath } =
 					typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relPath } : pathResult
