@@ -17,12 +17,12 @@ interface TaskReconstructionResult {
 
 /**
  * Reconstructs task history from existing task folders
- * @param showNotifications Whether to show user-facing notifications and dialogs
+ * @param showProgress Whether to show user-facing progress notifications
  * @returns Reconstruction result or null if cancelled
  */
-export async function reconstructTaskHistory(showNotifications = true): Promise<TaskReconstructionResult | null> {
+export async function reconstructTaskHistory(showProgress = true): Promise<TaskReconstructionResult | null> {
 	try {
-		// Show confirmation dialog using HostProvider
+		// Show confirmation dialog using HostProvider (always shown for user consent)
 		const proceed = await HostProvider.window.showMessage({
 			type: ShowMessageType.WARNING,
 			message:
@@ -36,7 +36,7 @@ export async function reconstructTaskHistory(showNotifications = true): Promise<
 			return null
 		}
 
-		if (showNotifications) {
+		if (showProgress) {
 			// Show initial progress message
 			HostProvider.window.showMessage({
 				type: ShowMessageType.INFORMATION,
@@ -47,7 +47,7 @@ export async function reconstructTaskHistory(showNotifications = true): Promise<
 		const result = await performTaskHistoryReconstruction()
 
 		// Show results
-		if (showNotifications) {
+		if (showProgress) {
 			if (result.errors.length > 0) {
 				const errorMessage = `Reconstruction completed with warnings:\n- Reconstructed: ${result.reconstructedTasks} tasks\n- Skipped: ${result.skippedTasks} tasks\n- Errors: ${result.errors.length}\n\nFirst few errors:\n${result.errors.slice(0, 3).join("\n")}`
 
@@ -66,7 +66,7 @@ export async function reconstructTaskHistory(showNotifications = true): Promise<
 		return result
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : String(error)
-		if (showNotifications) {
+		if (showProgress) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.ERROR,
 				message: `Failed to reconstruct task history: ${errorMessage}`,
@@ -122,8 +122,13 @@ async function performTaskHistoryReconstruction(): Promise<TaskReconstructionRes
 		}
 	}
 
-	// Sort by timestamp (newest first)
-	reconstructedItems.sort((a, b) => b.ts - a.ts)
+	// Sort by timestamp (newest first), with ID as tiebreaker for stability
+	reconstructedItems.sort((a, b) => {
+		if (b.ts !== a.ts) {
+			return b.ts - a.ts
+		}
+		return b.id.localeCompare(a.id)
+	})
 
 	// Write reconstructed history
 	await writeTaskHistoryToState(reconstructedItems)
@@ -156,7 +161,7 @@ async function scanTaskDirectories(tasksDir: string): Promise<string[]> {
 		return entries
 			.filter((entry) => entry.isDirectory())
 			.map((entry) => entry.name)
-			.filter((name) => /^\d+$/.test(name)) // Only numeric task IDs
+			.filter((name) => /^[^.]+$/.test(name)) // Accept any non-dot directory
 	} catch (error) {
 		throw new Error(`Failed to scan tasks directory: ${error}`)
 	}
@@ -258,20 +263,21 @@ function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): T
 				}
 
 				const usage = apiInfo as Record<string, unknown>
-				if (typeof usage.tokensIn === "number" && Number.isFinite(usage.tokensIn)) {
-					tokensIn += usage.tokensIn
+				const getVal = (keys: string[]) => {
+					for (const key of keys) {
+						if (typeof usage[key] === "number" && Number.isFinite(usage[key])) {
+							return usage[key] as number
+						}
+					}
+					return 0
 				}
-				if (typeof usage.tokensOut === "number" && Number.isFinite(usage.tokensOut)) {
-					tokensOut += usage.tokensOut
-				}
-				if (typeof usage.cacheWrites === "number" && Number.isFinite(usage.cacheWrites)) {
-					cacheWrites += usage.cacheWrites
-				}
-				if (typeof usage.cacheReads === "number" && Number.isFinite(usage.cacheReads)) {
-					cacheReads += usage.cacheReads
-				}
+
+				tokensIn += getVal(["tokensIn", "inputTokens", "input_tokens"])
+				tokensOut += getVal(["tokensOut", "outputTokens", "output_tokens"])
+				cacheWrites += getVal(["cacheWrites", "cacheCreationInputTokens", "cache_creation_input_tokens"])
+				cacheReads += getVal(["cacheReads", "cacheReadInputTokens", "cache_read_input_tokens"])
 				
-				const cost = typeof usage.cost === "number" ? usage.cost : typeof usage.totalCost === "number" ? usage.totalCost : undefined
+				const cost = typeof usage.cost === "number" ? usage.cost : typeof usage.totalCost === "number" ? usage.totalCost : typeof usage.total_cost === "number" ? usage.total_cost : undefined
 				if (cost !== undefined && Number.isFinite(cost)) {
 					totalCost += cost
 				}
@@ -286,7 +292,7 @@ function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): T
 	}
 
 	// Use metadata if available and no tokens found in messages
-	if (tokensIn === 0 && tokensOut === 0 && metadata.model_usage) {
+	if (tokensIn === 0 && tokensOut === 0 && metadata.model_usage && Array.isArray(metadata.model_usage)) {
 		for (const usage of metadata.model_usage) {
 			tokensIn += usage.tokensIn || 0
 			tokensOut += usage.tokensOut || 0
