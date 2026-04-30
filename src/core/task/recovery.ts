@@ -3,6 +3,40 @@ import type { ToolResponse } from "./index"
 import { DiracDefaultTool } from "@/shared/tools"
 import { Logger } from "@/shared/services/Logger"
 
+// --- Edit Safeguard Utilities ---
+
+const TRUNCATION_PATTERNS = [
+	/\/\/\s*\.\.\.\s*rest/i,
+	/\/\/\s*\.\.\.\s*remaining/i,
+	/#\s*\.\.\.\s*rest/i,
+	/#\s*\.\.\.\s*everything above/i,
+	/\/\*\s*\.\.\.\s*\*\//,
+	/\/\*\s*\.\.\.\s*rest/i,
+	/\/\/\s*\.\.\.\s*\(no changes\)/i,
+	/\/\/\s*\.\.\.\s*same as above/i,
+]
+
+function hasTruncationPlaceholder(text: string): boolean {
+	return TRUNCATION_PATTERNS.some((p) => p.test(text))
+}
+
+function extractReplacementText(toolName: string, params: any): string | null {
+	if (toolName === DiracDefaultTool.EDIT_FILE && params?.edits) {
+		return params.edits.map((e: any) => e.text || "").join("\n")
+	}
+	if (toolName === DiracDefaultTool.REPLACE_SYMBOL && params?.replacements) {
+		return params.replacements.map((r: any) => r.text || "").join("\n")
+	}
+	if (toolName === DiracDefaultTool.FILE_NEW) {
+		return params?.content || null
+	}
+	return null
+}
+
+const MAX_ABSOLUTE_DELETION = 150
+
+const MUTATION_TOOLS = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.REPLACE_SYMBOL]
+
 // --- Taxonomy ---
 
 export enum ErrorDomain {
@@ -71,6 +105,8 @@ export class RecoveryEngine {
 	private globalFailureMemory = new Map<string, FailureRecord>() // Phase 15: Global Playbook
 	private circuitBreakers = new Map<string, CircuitState>()
 	private callHistory: CallRecord[] = []
+	private editSnapshotPaths: Map<string, string> = new Map()
+	private preEditSymbolCounts: Map<string, number> = new Map()
 	private perTurnTokenBudget: number = 5 // max 5 recovery retries per turn
 	private currentTurnRetries: number = 0
 
@@ -262,6 +298,8 @@ export class RecoveryEngine {
 			this.nudgedThisTurn.clear()
 			this.currentTurnNumber++
 			this._proactiveCondensedThisTurn = false
+		this.editSnapshotPaths.clear()
+		this.preEditSymbolCounts.clear()
 			// Purge stale nudge outcomes older than 5 turns
 			for (const [key, outcome] of this.nudgeOutcomes) {
 				if (this.currentTurnNumber - outcome.turnWhenNudged > 5) {
@@ -461,6 +499,46 @@ export class RecoveryEngine {
 			}
 		}
 
+		// 4. Truncation placeholder guard (mutation tools)
+		const forceFlag = params?.force || params?.["--force"]
+		if (!forceFlag && MUTATION_TOOLS.includes(toolName as any) && typeof filePath === "string") {
+			const newText = extractReplacementText(toolName, params)
+			if (newText && hasTruncationPlaceholder(newText)) {
+				this.updateAuditChain(toolName, "TRUNCATION_PLACEHOLDER", "BLOCKED")
+				return this.formatStructuredEscalation(
+					toolName,
+					block.params,
+					"TRUNCATION_DETECTED",
+					"Your edit contains a comment like '// ... rest' which suggests incomplete output.",
+					"Please provide the full replacement content without abbreviating."
+				)
+			}
+		}
+
+		// 5. Diff-size guard (edit_file only)
+		if (!forceFlag && toolName === DiracDefaultTool.EDIT_FILE && typeof filePath === "string" && params?.edits) {
+			try {
+				const fs = await import("fs/promises")
+				const fileContent = await fs.readFile(filePath, "utf8")
+				const fileLineCount = fileContent.split("\n").length
+				const totalNewLines = params.edits.reduce(
+					(sum: number, e: any) => sum + ((e.text || "").split("\n").length),
+					0
+				)
+				const editCount = params.edits.length
+				if (editCount > 0 && totalNewLines < editCount && fileLineCount > MAX_ABSOLUTE_DELETION) {
+					this.updateAuditChain(toolName, "DIFF_TOO_LARGE", "BLOCKED")
+					return this.formatStructuredEscalation(
+						toolName,
+						block.params,
+						"DIFF_TOO_LARGE",
+						`This edit replaces ${editCount} block(s) with only ${totalNewLines} lines in a ${fileLineCount}-line file.`,
+						"Split into smaller edits or re-issue with --force if intentional mass deletion is correct."
+					)
+				}
+			} catch { /* file read failed, skip check */ }
+		}
+
 		// Phase 12: Heuristic Edit Repair
 		if (toolName === DiracDefaultTool.EDIT_FILE && params?.edits) {
 			const edits = params.edits as any[]
@@ -536,6 +614,28 @@ export class RecoveryEngine {
 					taskState.symbolIndexMtimes.set(filePath, Date.now())
 				}
 			}
+		}
+
+		// 6. Pre-edit snapshot and symbol count capture
+		if (MUTATION_TOOLS.includes(toolName as any) && typeof filePath === "string") {
+			try {
+				const fs = await import("fs/promises")
+				const path = await import("path")
+				const snapDir = path.join(this.workspaceRoot || process.cwd(), ".dirac-state", "edit-snapshots")
+				await fs.mkdir(snapDir, { recursive: true })
+				const snapFile = path.join(snapDir, `${path.basename(filePath)}.${Date.now()}.bak`)
+				await fs.copyFile(filePath, snapFile)
+				this.editSnapshotPaths.set(filePath, snapFile)
+			} catch { /* non-critical */ }
+			try {
+				const { parseFile } = await import("@/services/tree-sitter")
+				const { loadRequiredLanguageParsers } = await import("@/services/tree-sitter/languageParser")
+				const languageParsers = await loadRequiredLanguageParsers([filePath])
+				const defs = await parseFile(filePath, languageParsers)
+				if (defs) {
+					this.preEditSymbolCounts.set(filePath, defs.length)
+				}
+			} catch { /* ignore */ }
 		}
 
 		return null // Pass through to execution
@@ -1133,6 +1233,58 @@ Some line numbers may have shifted. Please locate your target function in the ne
 					this.consecutiveProgressCount = 0
 					this.updateAuditChain("SYSTEM", "STAGNATION_HEALED", "PROGRESS")
 				}
+				// Post-edit syntax verification and structural change detection
+				if (MUTATION_TOOLS.includes(toolName as any)) {
+					const postFilePath = (args as any)?.path || (args as any)?.file_path || (args as any)?.absolutePath
+					if (typeof postFilePath === "string") {
+						// Syntax check
+						const parseOk = await this.isFileParseValid(postFilePath)
+						if (!parseOk) {
+							const snapPath = this.editSnapshotPaths.get(postFilePath)
+							if (snapPath) {
+								try {
+									const fs = await import("fs/promises")
+									await fs.copyFile(snapPath, postFilePath)
+								} catch { /* rollback failed */ }
+							}
+							this.updateAuditChain(toolName, "POST_EDIT_SYNTAX_ERROR", "ROLLED_BACK")
+							return this.formatStructuredEscalation(
+								toolName, args, "POST_EDIT_SYNTAX_ERROR",
+								`The edit introduced a syntax error in ${postFilePath}. The original file has been restored.`,
+								"Check your edit for accidental deletions or stray characters and try again."
+							)
+						}
+						// Structural change detection
+						const confirmMajorChange = (args as any)?.confirm_major_change || (args as any)?.["confirm-major-change"]
+						const preCount = this.preEditSymbolCounts.get(postFilePath)
+						if (!confirmMajorChange && typeof preCount === "number" && preCount > 0) {
+							try {
+								const { parseFile } = await import("@/services/tree-sitter")
+								const { loadRequiredLanguageParsers } = await import("@/services/tree-sitter/languageParser")
+								const languageParsers = await loadRequiredLanguageParsers([postFilePath])
+								const postDefs = await parseFile(postFilePath, languageParsers)
+								const postCount = postDefs?.length ?? 0
+								const removedCount = preCount - postCount
+								if (removedCount >= 3) {
+									const snapPath = this.editSnapshotPaths.get(postFilePath)
+									if (snapPath) {
+										try {
+											const fs = await import("fs/promises")
+											await fs.copyFile(snapPath, postFilePath)
+										} catch { /* rollback failed */ }
+									}
+									this.updateAuditChain(toolName, "MAJOR_STRUCTURAL_CHANGE", "ROLLED_BACK")
+									return this.formatStructuredEscalation(
+										toolName, args, "MAJOR_STRUCTURAL_CHANGE",
+										`Your edit removed ${removedCount} definitions from ${postFilePath} (had ${preCount}, now ${postCount}). This appears to be an accidental mass deletion.`,
+										"If this was intentional, split into targeted edits. Otherwise, verify your edit targets the correct range."
+									)
+								}
+							} catch { /* ignore parse failure */ }
+							this.preEditSymbolCounts.delete(postFilePath)
+						}
+					}
+				}
 				return result // Success
 			}
 
@@ -1481,6 +1633,23 @@ Some line numbers may have shifted. Please locate your target function in the ne
 	/**
 	 * L-ICL Principle: Inject structured contextual messages instead of raw error blobs.
 	 */
+	private async isFileParseValid(filePath: string): Promise<boolean> {
+		try {
+			const fs = await import("fs/promises")
+			const path = await import("path")
+			const content = await fs.readFile(filePath, "utf8")
+			const ext = path.extname(filePath).toLowerCase().slice(1)
+			const { loadRequiredLanguageParsers } = await import("@/services/tree-sitter/languageParser")
+			const languageParsers = await loadRequiredLanguageParsers([filePath])
+			const parser = languageParsers[ext]?.parser
+			if (!parser) return true // no parser available, assume valid
+			const tree = parser.parse(content)
+			return tree ? !tree.rootNode.hasError : true
+		} catch {
+			return true // on error, assume valid (don't block)
+		}
+	}
+
 	private formatStructuredEscalation(toolName: string, args: unknown, errorCode: string, message: string, nextSteps?: string): ToolResponse {
 		let argsStr = ""
 		try {
