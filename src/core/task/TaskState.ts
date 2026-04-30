@@ -87,6 +87,9 @@ export class TaskState {
 	// Queued user messages (injected during streaming, drained at next turn)
 	queuedUserMessages: Array<{ text: string; images?: string[] }> = []
 
+	// Deferred user messages (injected after task completion, one per completion)
+	deferredUserMessages: Array<{ text: string; images?: string[] }> = []
+
 	// Advanced recovery state
 	fileLastAccessToolIndex: Map<string, number> = new Map() // maps absolute path to tool call index
 	filesTouchedInCurrentTurn: Set<string> = new Set()
@@ -108,6 +111,18 @@ export class TaskState {
 	drainQueuedUserMessages(): Array<{ text: string; images?: string[] }> {
 		const messages = this.queuedUserMessages.splice(0)
 		return messages
+	}
+
+	clearQueuedUserMessages(): void {
+		this.queuedUserMessages = []
+	}
+
+	drainDeferredMessage(): { text: string; images?: string[] } | undefined {
+		return this.deferredUserMessages.shift()
+	}
+
+	clearDeferredUserMessages(): void {
+		this.deferredUserMessages = []
 	}
 }
 

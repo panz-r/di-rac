@@ -489,6 +489,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 		() => StateManager.get().getGlobalSettingsKey("autoApproveAllToggled") ?? false,
 	)
 	const [queuedCount, setQueuedCount] = useState(0)
+	const [deferredCount, setDeferredCount] = useState(0)
 
 	// Sync mode from core state updates (e.g. yolo auto-switching plan to act)
 	useEffect(() => {
@@ -805,6 +806,25 @@ export const ChatView: React.FC<ChatViewProps> = ({
 		lastMessage?.type === "ask" && !lastMessage.partial && respondedToAsk !== lastMessage.ts ? lastMessage : null
 	const askType = pendingAsk ? getAskPromptType(pendingAsk.ask as DiracAsk, pendingAsk.text || "") : "none"
 	const askOptions = pendingAsk && askType === "options" ? parseAskOptions(pendingAsk.text || "") : []
+
+	// Auto-respond to completion_result with next deferred message
+	const deferredCountRef = useRef(0)
+	deferredCountRef.current = deferredCount
+	useEffect(() => {
+		if (
+			pendingAsk?.ask === "completion_result" &&
+			!pendingAsk.partial &&
+			deferredCountRef.current > 0 &&
+			ctrl?.task
+		) {
+			const msg = ctrl.task.drainDeferredMessage()
+			if (msg) {
+				setDeferredCount((c) => c - 1)
+				setRespondedToAsk(pendingAsk.ts)
+				ctrl.task.handleWebviewAskResponse("messageResponse", msg.text)
+			}
+		}
+	}, [pendingAsk?.ts, pendingAsk?.ask, ctrl?.task])
 
 	// Send response to ask message
 	const sendAskResponse = useCallback(
@@ -1185,6 +1205,24 @@ export const ChatView: React.FC<ChatViewProps> = ({
 						handleExit()
 						return
 					}
+					if (cmd.name === "steer/clear") {
+						ctrl?.task?.clearQueuedUserMessages()
+						setQueuedCount(0)
+						setTextInput("")
+						setCursorPos(0)
+						setSelectedSlashIndex(0)
+						setSlashMenuDismissed(true)
+						return
+					}
+					if (cmd.name === "defer/clear") {
+						ctrl?.task?.clearDeferredUserMessages()
+						setDeferredCount(0)
+						setTextInput("")
+						setCursorPos(0)
+						setSelectedSlashIndex(0)
+						setSlashMenuDismissed(true)
+						return
+					}
 					const newText = insertSlashCommand(textInput, slashInfo.slashIndex, cmd.name)
 					setTextInput(newText)
 					setCursorPos(newText.length)
@@ -1404,6 +1442,43 @@ export const ChatView: React.FC<ChatViewProps> = ({
 			return
 		}
 		if (key.return && !mentionInfo.inMentionMode && !slashInfo.inSlashMode && !pendingAsk) {
+			// Intercept /steer/msg, /defer/msg, /steer/clear, /defer/clear
+			const steerMsgMatch = textInput.match(/^\/steer\/msg\s+([\s\S]+)$/)
+			const deferMsgMatch = textInput.match(/^\/defer\/msg\s+([\s\S]+)$/)
+			const steerClearMatch = textInput.match(/^\/steer\/clear$/)
+			const deferClearMatch = textInput.match(/^\/defer\/clear$/)
+
+			if (steerMsgMatch && ctrl?.task) {
+				ctrl.task.enqueueUserMessage(steerMsgMatch[1].trim())
+				setQueuedCount((c) => c + 1)
+				setTextInput("")
+				setCursorPos(0)
+				inputStateStorage.delete(storageKey)
+				return
+			}
+			if (deferMsgMatch && ctrl?.task) {
+				ctrl.task.enqueueDeferredMessage(deferMsgMatch[1].trim())
+				setDeferredCount((c) => c + 1)
+				setTextInput("")
+				setCursorPos(0)
+				inputStateStorage.delete(storageKey)
+				return
+			}
+			if (steerClearMatch && ctrl?.task) {
+				ctrl.task.clearQueuedUserMessages()
+				setQueuedCount(0)
+				setTextInput("")
+				setCursorPos(0)
+				return
+			}
+			if (deferClearMatch && ctrl?.task) {
+				ctrl.task.clearDeferredUserMessages()
+				setDeferredCount(0)
+				setTextInput("")
+				setCursorPos(0)
+				return
+			}
+
 			if (prompt.trim() || imagePaths.length > 0) {
 				handleSubmit(prompt.trim(), imagePaths)
 			}
@@ -1515,9 +1590,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
 				{isSpinnerActive && <ThinkingIndicator mode={mode} onCancel={handleCancel} startTime={spinnerStartTime} />}
 
 				{/* Queued message indicator */}
-				{queuedCount > 0 && !activePanel && (
+				{(queuedCount > 0 || deferredCount > 0) && !activePanel && (
 					<Box paddingLeft={1} paddingRight={1}>
-						<Text color="yellow">{queuedCount} message{queuedCount > 1 ? "s" : ""} queued for next turn</Text>
+						{queuedCount > 0 && <Text color="yellow">{queuedCount} steer{queuedCount > 1 ? "s" : ""} queued</Text>}
+						{queuedCount > 0 && deferredCount > 0 && <Text color="gray"> · </Text>}
+						{deferredCount > 0 && <Text color="yellow">{deferredCount} deferred</Text>}
 					</Box>
 				)}
 

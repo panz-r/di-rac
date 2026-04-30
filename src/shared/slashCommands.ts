@@ -91,4 +91,28 @@ export const CLI_ONLY_COMMANDS: SlashCommand[] = [
 		section: "default",
 		cliCompatible: true,
 	},
+	{
+		name: "steer/msg",
+		description: "Queue a message for the next agent turn",
+		section: "default",
+		cliCompatible: true,
+	},
+	{
+		name: "steer/clear",
+		description: "Clear queued steer messages",
+		section: "default",
+		cliCompatible: true,
+	},
+	{
+		name: "defer/msg",
+		description: "Queue a message for after task completion",
+		section: "default",
+		cliCompatible: true,
+	},
+	{
+		name: "defer/clear",
+		description: "Clear deferred messages",
+		section: "default",
+		cliCompatible: true,
+	},
 ]

@@ -645,6 +645,22 @@ export class Task {
 		this.taskState.queuedUserMessages.push({ text, images })
 	}
 
+	enqueueDeferredMessage(text: string, images?: string[]): void {
+		this.taskState.deferredUserMessages.push({ text, images })
+	}
+
+	drainDeferredMessage(): { text: string; images?: string[] } | undefined {
+		return this.taskState.drainDeferredMessage()
+	}
+
+	clearQueuedUserMessages(): void {
+		this.taskState.clearQueuedUserMessages()
+	}
+
+	clearDeferredUserMessages(): void {
+		this.taskState.clearDeferredUserMessages()
+	}
+
 	async say(
 		type: DiracSay,
 		text?: string,
