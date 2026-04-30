@@ -1464,10 +1464,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
 							<Box flexDirection="column" key="header">
 								<StaticRobotFrame />
 								<Text> </Text>
-								<Text bold color="white">
-									{centerText("What can I do for you?")}
-								</Text>
-								<Text> </Text>
 							</Box>
 						)
 					}
@@ -1488,15 +1484,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
 					<Box flexDirection="column" marginBottom={1}>
 						<AsciiMotionCli onInteraction={() => setUserScrolled(true)} />
 						<Text> </Text>
-						<Text bold color="white">
-							{centerText("What can I do for you?")}
-						</Text>
-
-						<Box marginTop={1}>
-							<Text color="cyan" italic>
-								{centerText(`“${quote}”`)}
-							</Text>
-						</Box>
 					</Box>
 				)}
 

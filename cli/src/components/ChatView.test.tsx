@@ -299,7 +299,7 @@ describe("ChatView UI State During Exit", () => {
 
 		// Footer contains auto-approve toggle
 		expect(lastFrame()).toContain("Auto-approve")
-		expect(lastFrame()).toContain("What can I do for you?")
+		expect(lastFrame()).toContain("di-rac rea-dy")
 		expect(lastFrame()).toContain("Input:")
 
 		// Fire shutdown event
@@ -309,7 +309,7 @@ describe("ChatView UI State During Exit", () => {
 		const frameAfter = lastFrame()
 
 		// Static content should still be present
-		expect(frameAfter).toContain("What can I do for you?")
+		expect(frameAfter).toContain("di-rac rea-dy")
 		// Footer should still be present (only input is hidden)
 		expect(frameAfter).toContain("Auto-approve")
 		// Input should be hidden

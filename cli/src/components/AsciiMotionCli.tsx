@@ -16,41 +16,18 @@ export type AsciiMotionCliProps = {
 	onInteraction?: () => void;
 };
 
-const _DIRAC_COLORS = {
-	delta: '#E4E4E7',
-	dot: '#F59E0B',
-	line: '#F59E0B',
-	underline: '#3F3F46',
-};
-
-// ASCII art Dirac logo
-const DIRAC_LOGO = [
-	"        █████████████        ",
-	"      ███          ▀▀██      ",
-	"    ██▀                      ",
-	"    ██▄                      ",
-	"      ▀██▄                   ",
-	"         ▀██▄                ",
-	"           ▀██▄              ",
-	"         ▄██▀ ▀██▄           ",
-	"      ▄██▀      ▀██▄         ",
-    "    ▄██▀          ▀██▄       ",
-	"  ▄██▀              ▀██▄     ",
-	"▄██▀                  ▀██▄   ",
-	"▀██▄                  ▄██▀   ",
-	"  ▀██▄              ▄██▀     ",
-	"    ▀██▄          ▄██▀       ",
-	"       ▀▀▀▀▀▀▀▀▀▀▀▀          "
-];
+const NOISE_CHARS = "!@#$%^&*()-_=+[]{}|;:,./<>?~0123456789"
+export const NOISE_LINES = Array.from({ length: 3 }, () =>
+	Array.from({ length: 28 }, () => NOISE_CHARS[Math.floor(Math.random() * NOISE_CHARS.length)]).join("")
+)
 
 export const StaticRobotFrame: React.FC<{ hasDarkBackground?: boolean }> = () => {
 	return (
 		<Box flexDirection="column" marginBottom={1} marginTop={1}>
-			{DIRAC_LOGO.map((line, idx) => (
-				<Text color="#F59E0B" key={idx}>
-					{centerText(line)}
-				</Text>
+			{NOISE_LINES.map((line, idx) => (
+				<Text color="gray" key={idx}>{centerText(line)}</Text>
 			))}
+			<Text color="#F59E0B">{centerText("di-rac rea-dy")}</Text>
 		</Box>
 	);
 };

@@ -23,32 +23,13 @@ import { isMouseEscapeSequence } from "../utils/input"
 import { parseImagesFromInput } from "../utils/parser"
 import { getRandomQuote } from "@/shared/quotes"
 import { FileMentionMenu } from "./FileMentionMenu"
+import { NOISE_LINES } from "./AsciiMotionCli"
 
 interface WelcomeViewProps {
 	onSubmit: (prompt: string, imagePaths: string[]) => void
 	onExit?: () => void
 	controller?: any
 }
-
-// ASCII art Dirac logo
-const DIRAC_LOGO = [
-	"        █████████████        ",
-	"      ███          ▀▀██      ",
-	"    ██▀                      ",
-	"    ██▄                      ",
-	"      ▀██▄                   ",
-	"         ▀██▄                ",
-	"           ▀██▄              ",
-	"         ▄██▀ ▀██▄           ",
-	"      ▄██▀      ▀██▄         ",
-	"    ▄██▀          ▀██▄       ",
-	"  ▄██▀              ▀██▄     ",
-	"▄██▀                  ▀██▄   ",
-	"▀██▄                  ▄██▀   ",
-	"  ▀██▄              ▄██▀     ",
-	"    ▀██▄          ▄██▀       ",
-	"       ▀▀▀▀▀▀▀▀▀▀▀▀          "
-];
 
 
 const SEARCH_DEBOUNCE_MS = 150
@@ -241,27 +222,11 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onSubmit, onExit, cont
 
 	return (
 		<Box flexDirection="column" width="100%">
-			{/* Dirac logo - centered */}
-			<Box flexDirection="column">
-				{DIRAC_LOGO.map((line, idx) => (
-					// biome-ignore lint/suspicious/noArrayIndexKey: static array that never changes
-					<Text color="#F59E0B" key={idx}>
-						{centerText(line)}
-					</Text>
+			<Box flexDirection="column" marginTop={1}>
+				{NOISE_LINES.map((line, idx) => (
+					<Text color="gray" key={idx}>{centerText(line)}</Text>
 				))}
-			</Box>
-
-			{/* Main prompt - centered, bold */}
-			<Box alignItems="center" flexDirection="column" marginTop={1}>
-				<Text bold color="white">
-					{centerText("What can I do for you?")}
-				</Text>
-
-				<Box marginTop={1}>
-					<Text color="cyan" italic>
-						{centerText(`“${quote}”`)}
-					</Text>
-				</Box>
+				<Text color="#F59E0B">{centerText("di-rac rea-dy")}</Text>
 			</Box>
 
 			{/* Ripgrep warning if needed */}
