@@ -6,16 +6,8 @@
 		"dist",
 		"man"
 	],
-	"main": "dist/lib.mjs",
-	"types": "dist/lib.d.ts",
 	"bin": {
 		"dirac": "./dist/cli.mjs"
-	},
-	"exports": {
-		".": {
-			"import": "./dist/lib.mjs",
-			"types": "./dist/lib.d.ts"
-		}
 	},
 	"os": [
 		"darwin",
@@ -37,9 +29,8 @@
 		"package:brew": "npx tsx ./scripts/update-brew-formula.mts",
 		"package": "npm pack --pack-destination ./dist",
 		"prepare": "npm run build",
-		"build": "npm run typecheck && npx tsx esbuild.mts && npm run build:types",
-		"build:production": "npm run typecheck && npx tsx esbuild.mts --production && npm run build:types",
-		"build:types": "(tsc -p tsconfig.lib.json || true) && cp dist/types/cli/src/exports.d.ts dist/lib.d.ts && mkdir -p dist/agent && cp dist/types/cli/src/agent/DiracAgent.d.ts dist/types/cli/src/agent/DiracSessionEmitter.d.ts dist/types/cli/src/agent/public-types.d.ts dist/agent/ && rm -rf dist/types",
+		"build": "npm run typecheck && npx tsx esbuild.mts",
+		"build:production": "npm run typecheck && npx tsx esbuild.mts --production",
 		"watch": "npx tsx esbuild.mts --watch",
 		"dev": "IS_DEV=true && npm run link && npm run watch ; npm run unlink",
 		"clean": "rimraf dist",
@@ -88,7 +79,6 @@
 		"vitest": "^4.0.17"
 	},
 	"dependencies": {
-		"@agentclientprotocol/sdk": "^0.13.1",
 		"@vscode/ripgrep": "^1.15.9",
 		"aws4fetch": "^1.0.20",
 		"chalk": "^5.3.0",

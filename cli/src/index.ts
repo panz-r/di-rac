@@ -608,7 +608,6 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 	const { DiracEndpoint } = await import("@/config")
 	const { autoUpdateOnStartup } = await import("./utils/update")
 	const { Session } = await import("@/shared/services/Session")
-	const { AuthHandler } = await import("@/hosts/external/AuthHandler")
 	const { HostProvider } = await import("@/hosts/host-provider")
 	const { CliWebviewProvider } = await import("./controllers/CliWebviewProvider")
 	const { FileEditProvider } = await import("@/integrations/editor/FileEditProvider")
@@ -655,7 +654,7 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 	}
 
 	if (options.enableAuth) {
-		AuthHandler.getInstance().setEnabled(true)
+		// Auth handler only available in standalone/extension mode
 	}
 
 	outputChannel.appendLine(
@@ -670,7 +669,7 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 		() => new StandaloneTerminalManager(),
 		createCliHostBridgeProvider(workspacePath),
 		logToChannel,
-		async (path: string) => (options.enableAuth ? AuthHandler.getInstance().getCallbackUrl(path) : ""),
+		async (_path: string) => "",
 		getCliBinaryPath,
 		EXTENSION_DIR,
 		DATA_DIR,
@@ -1313,7 +1312,6 @@ program
 	.option("--tool-recovery", "Enable deterministic error recovery engine")
 	.option("--redirect-tmp", "Silently redirect /tmp access to project-local .dirac-tmp")
 	.option("--hooks-dir <path>", "Path to additional hooks directory for runtime hook injection")
-	.option("--acp", "Run in ACP (Agent Client Protocol) mode for editor integration")
 	.option("--kanban", "Run npx kanban --agent dirac")
 	.option("-T, --taskId <id>", "Resume an existing task by ID")
 	.option("--continue", "Resume the most recent task from the current working directory")
@@ -1326,18 +1324,6 @@ program
 			}
 
 			await runKanbanAlias()
-			return
-		}
-
-		// Check for ACP mode first - this takes precedence over everything else
-		if (options.acp) {
-			const { runAcpMode } = await import("./acp/index.js")
-			await runAcpMode({
-				config: options.config,
-				cwd: options.cwd,
-				hooksDir: options.hooksDir,
-				verbose: options.verbose,
-			})
 			return
 		}
 

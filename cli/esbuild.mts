@@ -293,22 +293,6 @@ const __dirname = _dirname(__filename);`,
 	},
 }
 
-// Library configuration for programmatic use
-const libConfig: esbuild.BuildOptions = {
-	...sharedOptions,
-	entryPoints: [path.join(__dirname, "src", "exports.ts")],
-	outfile: path.join(__dirname, "dist", "lib.mjs"),
-	banner: {
-		js: `// Dirac Library - Programmatic API
-import { createRequire as _createRequire } from 'module';
-import { fileURLToPath as _fileURLToPath } from 'url';
-import { dirname as _dirname } from 'path';
-const require = _createRequire(import.meta.url);
-const __filename = _fileURLToPath(import.meta.url);
-const __dirname = _dirname(__filename);`,
-	},
-}
-
 async function main() {
 	if (watch) {
 		// In watch mode, only watch the CLI (primary use case for development)
@@ -316,16 +300,11 @@ async function main() {
 		await ctx.watch()
 		console.log("[cli] Watching for changes...")
 	} else {
-		// Build both CLI and library
+		// Build CLI executable
 		console.log("[cli esbuild] Building CLI executable...")
 		const cliCtx = await esbuild.context(cliConfig)
 		await cliCtx.rebuild()
 		await cliCtx.dispose()
-
-		console.log("[cli esbuild] Building library bundle...")
-		const libCtx = await esbuild.context(libConfig)
-		await libCtx.rebuild()
-		await libCtx.dispose()
 
 		// Make the CLI output executable
 		const cliOutfile = path.join(__dirname, "dist", "cli.mjs")

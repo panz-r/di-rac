@@ -27,13 +27,7 @@ export const DEFAULT_RETRY_CONFIG: FolderLockRetryConfig = {
  * Get the lock manager instance for standalone mode.
  */
 export async function getStandaloneLockManager(): Promise<SqliteLockManager | undefined> {
-	try {
-		const { getLockManager } = await import("../../standalone/lock-manager")
-		return getLockManager()
-	} catch (_importError) {
-		Logger.debug("Lock manager not available")
-		return undefined
-	}
+	return undefined
 }
 
 /**
