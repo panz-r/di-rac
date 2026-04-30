@@ -413,7 +413,9 @@ export class RecoveryEngine {
 		if (toolName === DiracDefaultTool.EDIT_FILE && typeof filePath === "string") {
 			const lastAccess = taskState.fileLastAccessToolIndex.get(filePath)
 			const currentCount = taskState.totalToolCallCount
-			let needsRefresh = lastAccess !== undefined && (currentCount - lastAccess) > 15
+			let needsRefresh = lastAccess === undefined ||
+				(lastAccess !== undefined && (currentCount - lastAccess) > 15) ||
+				!taskState.symbolIndexMtimes.has(filePath)
 
 			// Also check if file changed on disk since last read
 			if (!needsRefresh && typeof filePath === "string") {
@@ -429,12 +431,18 @@ export class RecoveryEngine {
 
 			if (needsRefresh) {
 				// Stage III Policy: Silent Context Refresh
-				this.updateAuditChain(toolName, "STALE_CONTEXT", "SILENT_REFRESH")
+				this.updateAuditChain(toolName, "ANCHOR_PREFRESH", "SILENT_REFRESH")
 				await dispatch(DiracDefaultTool.FILE_READ, {
 					path: filePath,
 					detail: "outline"
 				})
-				// Success! Context refreshed. Proceeding to execution.
+				// Mark as freshly read so subsequent edits in this turn don't re-refresh
+				taskState.fileLastAccessToolIndex.set(filePath, taskState.totalToolCallCount)
+				try {
+					const fsStat = await import("fs/promises")
+					const stats = await fsStat.stat(filePath)
+					taskState.symbolIndexMtimes.set(filePath, stats.mtimeMs)
+				} catch { /* ignore */ }
 			}
 		}
 
