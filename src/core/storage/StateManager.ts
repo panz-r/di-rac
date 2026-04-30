@@ -683,9 +683,11 @@ export class StateManager {
 			this.taskHistoryWatcher = null
 		}
 
+		// Flush any pending writes before clearing the timer
 		if (this.persistenceTimeout) {
 			clearTimeout(this.persistenceTimeout)
 			this.persistenceTimeout = null
+			await this.persistPendingState()
 		}
 
 		this.isInitialized = false
@@ -779,7 +781,7 @@ export class StateManager {
 
 		// Batch write all regular keys in a single disk operation
 		if (Object.keys(regularEntries).length > 0) {
-			this.storage.globalStateBackingStore.setBatch(regularEntries)
+			this.storage.globalState.setBatch(regularEntries)
 		}
 	}
 

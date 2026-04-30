@@ -402,7 +402,7 @@ export async function writeTaskHistoryToState(items: HistoryItem[]): Promise<voi
 	}
 }
 
-export async function readTaskSettingsFromStorage(taskId: string): Promise<Partial<GlobalState>> {
+export async function readTaskSettingsFromStorage(taskId: string): Promise<Partial<Settings>> {
 	try {
 		const taskDirectoryFilePath = await ensureTaskDirectoryExists(taskId)
 		const settingsFilePath = path.join(taskDirectoryFilePath, "settings.json")
