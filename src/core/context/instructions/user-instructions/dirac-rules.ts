@@ -55,6 +55,7 @@ export const getGlobalDiracRules = async (
 
 	// 2. Append remote config rules
 	const stateManager = StateManager.get()
+	// TODO: populate from remote config storage/endpoint
 	const remoteRules: any[] = []
 	const remoteToggles = stateManager.getGlobalStateKey("remoteRulesToggles") || {}
 	const remoteResult = getRemoteRulesTotalContentWithMetadata(remoteRules, remoteToggles, {

@@ -81,7 +81,7 @@ export class RuleContextBuilder {
 			try {
 				const tool = JSON.parse(msg.text) as { tool?: string; path?: string }
 				if (
-					(tool.tool === "editedExistingFile" || tool.tool === "newFileCreated" || tool.tool === "fileDeleted") &&
+					(tool.tool === "editedExistingFile" || tool.tool === "newFileCreated" || tool.tool === "editFile") &&
 					tool.path
 				) {
 					candidates.push(tool.path)

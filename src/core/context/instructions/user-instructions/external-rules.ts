@@ -177,8 +177,11 @@ export const getLocalAgentsRules = async (cwd: string, toggles: DiracRulesToggle
 		// Read and combine all agents.md files
 		const combinedContent = await Promise.all(
 			agentsMdFiles.map(async (filePath) => {
+				const fullPath = path.resolve(cwd, filePath)
+				if (fullPath in toggles && toggles[fullPath] === false) {
+					return null
+				}
 				try {
-					const fullPath = path.resolve(cwd, filePath)
 					const content = (await fs.readFile(fullPath, "utf8")).trim()
 					if (content) {
 						const relativePath = path.relative(cwd, fullPath)

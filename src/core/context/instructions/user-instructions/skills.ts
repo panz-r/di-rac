@@ -120,10 +120,11 @@ export function getAvailableSkills(skills: SkillMetadata[]): SkillMetadata[] {
 		const skill = skills[i]
 		if (!seen.has(skill.name)) {
 			seen.add(skill.name)
-			result.unshift(skill)
+			result.push(skill)
 		}
 	}
 
+	result.reverse()
 	return result
 }
 

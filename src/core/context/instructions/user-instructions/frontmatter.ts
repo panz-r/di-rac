@@ -36,7 +36,8 @@ export type FrontmatterParseResult = {
  */
 export function parseYamlFrontmatter(markdown: string): FrontmatterParseResult {
 	const frontmatterRegex = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/
-	const match = markdown.match(frontmatterRegex)
+	const trimmed = markdown.trimStart()
+	const match = trimmed.match(frontmatterRegex)
 
 	if (!match) {
 		return { data: {}, body: markdown, hadFrontmatter: false }
