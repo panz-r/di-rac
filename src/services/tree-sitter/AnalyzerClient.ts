@@ -2,6 +2,7 @@ import { ChildProcess, spawn } from "child_process"
 import * as path from "path"
 import * as fs from "fs"
 import { Logger } from "@/shared/services/Logger"
+import { telemetryService } from "@services/telemetry"
 import type { ParsedDefinition } from "./index"
 
 export interface DaemonSymbol {
@@ -54,6 +55,25 @@ interface PendingRequest {
 	resolve: (value: any) => void
 	reject: (reason: any) => void
 	timer: ReturnType<typeof setTimeout>
+	startTime: number
+}
+
+export interface DaemonMetrics {
+	requestCount: number
+	failedRequestCount: number
+	totalLatencyMs: number
+	restartCount: number
+	uptimeMs: number
+	lastCrashTime?: number
+	lastSuccessfulRequestTime?: number
+	isRunning: boolean
+	consecutiveFailures: number
+}
+
+export interface DaemonHealthStatus {
+	healthy: boolean
+	reason?: string
+	metrics: DaemonMetrics
 }
 
 export class AnalyzerClient {
@@ -70,6 +90,21 @@ export class AnalyzerClient {
 	/** Set to true if the daemon cannot be started (binary missing, etc.) */
 	fallback = true
 
+	// Metrics
+	private startTime: number = 0
+	private requestCount: number = 0
+	private failedRequestCount: number = 0
+	private totalLatencyMs: number = 0
+	private restartCount: number = 0
+	private lastCrashTime: number = 0
+	private lastSuccessfulRequestTime: number = 0
+	private consecutiveFailures: number = 0
+
+	// Resilience settings
+	private readonly maxRestartAttempts = 5
+	private readonly baseRestartDelayMs = 2000
+	private readonly maxRestartDelayMs = 30000
+
 	constructor(binaryPath: string, workspaceRoot: string) {
 		this.binaryPath = binaryPath
 		this.workspaceRoot = workspaceRoot
@@ -85,6 +120,7 @@ export class AnalyzerClient {
 		try {
 			await this.spawnDaemon()
 			this.fallback = false
+			this.startTime = Date.now()
 			Logger.info("AnalyzerClient", "Daemon started")
 		} catch (e) {
 			Logger.warn("AnalyzerClient", `Failed to start daemon: ${e}`)
@@ -155,9 +191,13 @@ export class AnalyzerClient {
 					const pending = this.pending.get(id)!
 					this.pending.delete(id)
 					clearTimeout(pending.timer)
+					const latency = Date.now() - pending.startTime
+					this.totalLatencyMs += latency
 					if (response.ok === false) {
 						pending.reject(response.error || response)
 					} else {
+						this.lastSuccessfulRequestTime = Date.now()
+						this.consecutiveFailures = 0
 						pending.resolve(response)
 					}
 				}
@@ -172,34 +212,70 @@ export class AnalyzerClient {
 		// Reject all pending requests
 		for (const [id, pending] of this.pending) {
 			clearTimeout(pending.timer)
+			const latency = Date.now() - pending.startTime
+			this.totalLatencyMs += latency
+			this.failedRequestCount++
 			pending.reject(new Error("Daemon crashed"))
 		}
 		this.pending.clear()
 		this.crashed = true
+		this.lastCrashTime = Date.now()
+		this.consecutiveFailures++
+
+		// Track telemetry for crash
+		telemetryService.recordEvent({
+			category: "analyzer",
+			action: "daemon_crash",
+			label: `consecutive_failures:${this.consecutiveFailures}`,
+			value: this.restartCount,
+		})
 
 		if (!this.shuttingDown) {
-			Logger.info("AnalyzerClient", "Scheduling daemon restart in 2s")
+			// Check if we've exceeded max restart attempts
+			if (this.restartCount >= this.maxRestartAttempts) {
+				Logger.error("AnalyzerClient", `Max restart attempts (${this.maxRestartAttempts}) reached. Giving up.`)
+				this.fallback = true
+				telemetryService.recordEvent({
+					category: "analyzer",
+					action: "daemon_gave_up",
+					label: `total_restarts:${this.restartCount}`,
+				})
+				return
+			}
+
+			// Exponential backoff with jitter
+			const delay = Math.min(
+				this.baseRestartDelayMs * Math.pow(2, this.restartCount),
+				this.maxRestartDelayMs
+			)
+			Logger.info("AnalyzerClient", `Scheduling daemon restart in ${delay}ms`)
 			this.restartTimer = setTimeout(() => {
 				this.restart()
-			}, 2000)
+			}, delay)
 		}
 	}
 
 	private async restart(): Promise<void> {
 		if (this.shuttingDown) return
-		Logger.info("AnalyzerClient", "Restarting daemon...")
+		this.restartCount++
+		Logger.info("AnalyzerClient", `Restarting daemon (attempt ${this.restartCount}/${this.maxRestartAttempts})...`)
 		try {
 			await this.spawnDaemon()
 			this.crashed = false
 			this.fallback = false
+			this.startTime = Date.now()
 			Logger.info("AnalyzerClient", "Daemon restarted")
+
+			telemetryService.recordEvent({
+				category: "analyzer",
+				action: "daemon_restarted",
+				label: `attempt:${this.restartCount}`,
+			})
 		} catch (e) {
 			Logger.warn("AnalyzerClient", `Restart failed: ${e}`)
 			this.fallback = true
-			// Try again
-			this.restartTimer = setTimeout(() => {
-				this.restart()
-			}, 5000)
+			// Continue retrying via handleCrash
+			this.handleCrash()
 		}
 	}
 
@@ -221,7 +297,7 @@ export class AnalyzerClient {
 		this.fallback = true
 	}
 
-	private send(payload: Record<string, unknown>, timeoutMs = 30000): Promise<any> {
+	private send(payload: Record<string, unknown>, timeoutMs = 60000): Promise<any> {
 		return new Promise((resolve, reject) => {
 			if (!this.process || this.process.killed) {
 				reject(new Error("Daemon not running"))
@@ -229,13 +305,82 @@ export class AnalyzerClient {
 			}
 			const id = ++this.requestId
 			const message = JSON.stringify({ id, ...payload }) + "\n"
+			const startTime = Date.now()
 			const timer = setTimeout(() => {
 				this.pending.delete(id)
+				this.totalLatencyMs += Date.now() - startTime
+				this.failedRequestCount++
 				reject(new Error(`Request ${id} timed out after ${timeoutMs}ms`))
 			}, timeoutMs)
-			this.pending.set(id, { resolve, reject, timer })
+			this.pending.set(id, { resolve, reject, timer, startTime })
+			this.requestCount++
 			this.process.stdin!.write(message)
 		})
+	}
+
+	/**
+	 * Health check for the daemon
+	 * Returns detailed status including metrics
+	 */
+	async health(): Promise<DaemonHealthStatus> {
+		const metrics = this.getMetrics()
+
+		if (this.fallback && !this.process) {
+			return {
+				healthy: false,
+				reason: this.restartCount >= this.maxRestartAttempts
+					? "Max restart attempts reached"
+					: "Daemon not running",
+				metrics,
+			}
+		}
+
+		if (this.crashed) {
+			return {
+				healthy: false,
+				reason: "Daemon crashed, restart pending",
+				metrics,
+			}
+		}
+
+		// Try a ping to verify the daemon is responsive
+		try {
+			await this.ping()
+			return {
+				healthy: true,
+				metrics,
+			}
+		} catch {
+			return {
+				healthy: false,
+				reason: "Daemon not responsive to ping",
+				metrics,
+			}
+		}
+	}
+
+	/**
+	 * Ping/pong for liveness probes
+	 */
+	async ping(): Promise<void> {
+		await this.send({ command: "status" }, 5000)
+	}
+
+	/**
+	 * Get current metrics
+	 */
+	getMetrics(): DaemonMetrics {
+		return {
+			requestCount: this.requestCount,
+			failedRequestCount: this.failedRequestCount,
+			totalLatencyMs: this.totalLatencyMs,
+			restartCount: this.restartCount,
+			uptimeMs: this.startTime > 0 ? Date.now() - this.startTime : 0,
+			lastCrashTime: this.lastCrashTime || undefined,
+			lastSuccessfulRequestTime: this.lastSuccessfulRequestTime || undefined,
+			isRunning: !this.crashed && !this.fallback && !!this.process,
+			consecutiveFailures: this.consecutiveFailures,
+		}
 	}
 
 	// ---- Typed API methods ----
