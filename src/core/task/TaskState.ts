@@ -118,8 +118,17 @@ export class TaskState {
 	// Round 3 turn snapshot state
 	previousTurnFiles: Set<string> = new Set()
 
+	// Round 4 output truncation state
+	lastResponseWasTruncated: boolean = false
+	truncatedOutputTokens: number = 0
+
+	// Round 4 strengthened completion gate
+	verificationTrivialCount: number = 0
+
 	resetTurnState(): void {
 		this.previousTurnFiles = new Set(this.filesEditedInCurrentTurn)
+		this.lastResponseWasTruncated = false
+		this.truncatedOutputTokens = 0
 		this.filesTouchedInCurrentTurn.clear()
 		this.filesEditedInCurrentTurn.clear()
 		this.turnTokenEstimates = 0

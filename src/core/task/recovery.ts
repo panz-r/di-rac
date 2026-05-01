@@ -37,6 +37,16 @@ const MAX_ABSOLUTE_DELETION = 150
 
 const MUTATION_TOOLS = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.REPLACE_SYMBOL]
 
+const MUTATION_BASH_PATTERNS = [
+	/\bsed\s+.*-i/, /\brm\s+-/, /\bmv\s+/, /\bcp\s+/,
+	/\bmkdir\s+/, /\btouch\s+/, /\bchmod\s+/, /\bchown\s+/,
+	/\bnpm\s+(install|uninstall|update|add|remove)/,
+	/\bpip\s+(install|uninstall)/,
+	/\bcargo\s+(add|remove|install)/,
+	/\bgo\s+(get|install|mod\s+tidy)/,
+	/\bmake\b/, />/, />>/, /\|\s*tee\b/
+]
+
 type EntityDiffKind = "MODIFY" | "INSERT" | "DELETE"
 interface EntityDiff { kind: EntityDiffKind; id: string; oldDef?: any; newDef?: any }
 
@@ -313,8 +323,9 @@ export class RecoveryEngine {
 					this.nudgeOutcomes.delete(key)
 				}
 			}
-		// Snapshot files edited in the previous turn
-		if (taskState?.previousTurnFiles?.size > 0) {
+		// Smart checkpoint dedup: only snapshot on mutation turns
+		const isMutationTurn = taskState?.previousTurnFiles?.size > 0 || this.hasMutationBash(taskState)
+		if (isMutationTurn && taskState?.previousTurnFiles?.size > 0) {
 			await this.snapshotTurnFiles(taskState.previousTurnFiles, taskState.currentTurnNumber - 1)
 		}
 	}
@@ -478,15 +489,34 @@ export class RecoveryEngine {
 						"Run your verification command again after the edits."
 					)
 				}
-				const trivialPattern = /^(echo|true|false|cat|ls|pwd|whoami|date|printf|sleep|clear|reset|env|type|which|uname|id|hostname|:)\b/i
-				if (trivialPattern.test(match.command)) {
+				const trivialPattern = /^(echo|true|false|cat|ls|pwd|whoami|date|printf|sleep|clear|reset|env|type|which|uname|id|hostname|basename|dirname|tee|wc|head|tail|sort|uniq|cut|tr|more|less|od|xxd|file|stat|du|df|free|uptime|nproc|:)\b/i
+				const devNullPattern = />\s*\/dev\/null|2>\s*\/dev\/null/
+				const isTrivial = trivialPattern.test(match.command) || devNullPattern.test(match.command)
+				// Output-pattern scan for false-positive exit codes
+				const outputText = (match as any).output || ""
+				const failurePatterns = /FAILED|\bFAIL\b|Error:|error:|0 passed|0 tests|No such file|not found|Aborted|Segmentation fault|Killed/i
+				const hasFailureInOutput = failurePatterns.test(outputText)
+				if (isTrivial) {
+					taskState.verificationTrivialCount++
 					this.updateAuditChain(toolName, "TRIVIAL_PROOF", "WARNING")
+					const repeatMsg = taskState.verificationTrivialCount >= 3
+						? ` You have used trivial verification commands ${taskState.verificationTrivialCount} times. Consider running your project test suite.` : ""
 					if (this.completionAttemptCount === 0) {
 						this.completionAttemptCount++
 						return this.formatStructuredEscalation(
 							toolName, block.params, "TRIVIAL_PROOF",
-							`The proof "${proofOfExecution}" corresponds to a trivial command: "${match.command}". This does not constitute meaningful verification.`,
+							`Proof "${proofOfExecution}" corresponds to a trivial command: "${match.command}".${repeatMsg} This does not constitute meaningful verification.`,
 							"Run your project test suite or linter, then provide that execution_id."
+						)
+					}
+				} else if (hasFailureInOutput) {
+					this.updateAuditChain(toolName, "SUSPECT_PROOF", "WARNING")
+					if (this.completionAttemptCount === 0) {
+						this.completionAttemptCount++
+						return this.formatStructuredEscalation(
+							toolName, block.params, "SUSPECT_PROOF",
+							"The verification command returned exit code 0 but its output suggests failures. Please verify manually.",
+							"Re-run your verification and check for errors in the output."
 						)
 					}
 				}
@@ -554,6 +584,16 @@ export class RecoveryEngine {
 					`To prevent conflicting changes and line-number drift, please consolidate your edits into a single tool call or wait for the previous edit to apply.`
 				)
 			}
+		}
+
+		// 3b. Output truncation detection (mutation tools)
+		if (MUTATION_TOOLS.includes(toolName as any) && taskState && taskState.lastResponseWasTruncated) {
+			this.updateAuditChain(toolName, "OUTPUT_TRUNCATED", "BLOCKED")
+			return this.formatStructuredEscalation(
+				toolName, block.params, "OUTPUT_TRUNCATED",
+				"Your previous response was truncated at the output token limit (" + taskState.truncatedOutputTokens + " tokens). Tool arguments may be incomplete.",
+				"Acknowledge the truncation and re-issue the tool call with complete parameters."
+			)
 		}
 
 		// 4. Truncation placeholder guard (mutation tools)
@@ -1475,7 +1515,8 @@ Some line numbers may have shifted. Please locate your target function in the ne
 										}
 									}
 									const unexplainedDeletes = entityDiffs.filter(d => d.kind === "DELETE" && !crossFileIds.has(d.id))
-									if (unexplainedDeletes.length >= 2 && !confirmMajorChange) {
+									const deleteThreshold = taskState.lastResponseWasTruncated ? 1 : 2
+									if (unexplainedDeletes.length >= deleteThreshold && !confirmMajorChange) {
 										const snapPath = this.editSnapshotPaths.get(postFilePath)
 										if (snapPath) {
 											try {
@@ -2028,6 +2069,16 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		lines.push("To apply, re-issue the command without --dry-run.")
 		this.updateAuditChain(toolName, "DRY_RUN", "PREVIEW")
 		return [{ type: "text", text: lines.join("\n") }] as any
+	}
+
+	private hasMutationBash(taskState?: any): boolean {
+		if (!taskState?.bashExecutionHistory) return false
+		for (const entry of taskState.bashExecutionHistory) {
+			for (const pattern of MUTATION_BASH_PATTERNS) {
+				if (pattern.test(entry.command)) return true
+			}
+		}
+		return false
 	}
 
 	private async snapshotTurnFiles(files: Set<string>, turnNumber: number): Promise<void> {

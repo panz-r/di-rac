@@ -1735,6 +1735,9 @@ ${notice}`
 
 				const didToolUse = this.taskState.assistantMessageContent.some((block) => block.type === "tool_use")
 				const hitTokenLimit = stopReason === "MAX_TOKENS" || stopReason === "max_tokens" || stopReason === "length"
+				if (hitTokenLimit) {
+					this.taskState.lastResponseWasTruncated = true
+				}
 
 				if (!didToolUse) {
 					this.taskState.userMessageContent.push({
