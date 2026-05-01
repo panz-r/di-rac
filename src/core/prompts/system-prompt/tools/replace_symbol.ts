@@ -33,4 +33,15 @@ Examples:
 			usage: 'src/auth.ts --symbol AuthService.login --text "async login(user: string) { ... }"',
 		},
 	],
+	metadata: {
+		tags: ["code", "replace", "symbol"],
+		category: "code-intel",
+		concurrency: "sequential",
+		safety: ["write"],
+		supportsDryRun: true,
+		supportsForce: true,
+		outputSize: "small",
+		llmsBrief: "Replace symbol bodies with new content",
+		compactionSafety: "essential",
+	},
 }

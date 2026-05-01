@@ -28,6 +28,8 @@ import { search_symbols } from "./search_symbols"
 import { repo_map } from "./repo_map"
 import { bash } from "./bash"
 import { compact } from "./compact"
+import { tool_search } from "./tool_search"
+import { dirac_outputs } from "./dirac_outputs"
 
 /**
  * Registers all tools with the DiracToolSet provider.
@@ -65,6 +67,8 @@ export function registerDiracToolSets(): void {
 		web_search,
 		write_to_file,
 		compact,
+		tool_search,
+		dirac_outputs,
 	]
 
 	allTools.forEach((tool) => {

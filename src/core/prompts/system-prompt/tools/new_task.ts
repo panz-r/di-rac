@@ -24,4 +24,13 @@ Examples:
 			usage: '"Detailed conversation summary here"',
 		},
 	],
+	metadata: {
+		tags: ["task", "new", "delegate"],
+		category: "interaction",
+		concurrency: "sequential",
+		safety: ["interactive"],
+		outputSize: "small",
+		llmsBrief: "Create a new subtask with context",
+		compactionSafety: "discardable",
+	},
 }

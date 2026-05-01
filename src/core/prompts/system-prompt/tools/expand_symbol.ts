@@ -28,4 +28,13 @@ Examples:
 			usage: 'src/auth.ts --symbol fn:AuthService.login',
 		},
 	],
+	metadata: {
+		tags: ["code", "expand", "symbol"],
+		category: "code-intel",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "medium",
+		llmsBrief: "Expand collapsed symbol to show full content",
+		compactionSafety: "summarizable",
+	},
 }

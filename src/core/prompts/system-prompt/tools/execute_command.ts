@@ -30,4 +30,14 @@ Examples:
 			usage: '"npm test && npm run build"',
 		},
 	],
+	metadata: {
+		tags: ["shell", "run", "command"],
+		category: "execution",
+		concurrency: "sequential",
+		safety: ["destructive", "network"],
+		supportsForce: true,
+		outputSize: "large",
+		llmsBrief: "Execute shell commands with script support",
+		compactionSafety: "discardable",
+	},
 }

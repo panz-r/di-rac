@@ -6,6 +6,26 @@ import type { DiracDefaultTool } from "@/shared/tools"
 import { MULTI_ROOT_HINT } from "./constants"
 import type { SystemPromptContext } from "./types"
 
+export type ConcurrencyClass = "parallel-safe" | "sequential"
+
+export type SafetyRisk = "read" | "write" | "destructive" | "network" | "interactive"
+
+export type CompactionClass = "essential" | "summarizable" | "discardable"
+
+export interface DiracToolMetadata {
+	tags?: string[]
+	category?: string
+	concurrency?: ConcurrencyClass
+	safety?: SafetyRisk[]
+	compactionSafety?: CompactionClass
+	supportsJsonOutput?: boolean
+	supportsDryRun?: boolean
+	supportsForce?: boolean
+	exitCodes?: Record<number, string>
+	outputSize?: "small" | "medium" | "large"
+	llmsBrief?: string
+}
+
 export interface DiracToolSpec {
 	id: DiracDefaultTool
 	name: string
@@ -13,6 +33,7 @@ export interface DiracToolSpec {
 	instruction?: string
 	contextRequirements?: (context: SystemPromptContext) => boolean
 	parameters?: Array<DiracToolSpecParameter>
+	metadata?: DiracToolMetadata
 }
 
 interface DiracToolSpecParameter {

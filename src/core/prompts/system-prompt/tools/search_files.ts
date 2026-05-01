@@ -30,4 +30,13 @@ Examples:
 			usage: 'src/ --regex "function.*login" --file-pattern "*.ts"',
 		},
 	],
+	metadata: {
+		tags: ["file", "search", "regex"],
+		category: "file-io",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "medium",
+		llmsBrief: "Search files by regex pattern with context lines",
+		compactionSafety: "summarizable",
+	},
 }

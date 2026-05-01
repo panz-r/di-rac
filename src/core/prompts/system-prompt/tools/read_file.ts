@@ -41,4 +41,13 @@ Returns hash-anchored lines for edit_file.`,
 			usage: 'src/auth.py --detail outline --start-line 10 --end-line 50',
 		},
 	],
+	metadata: {
+		tags: ["file", "read"],
+		category: "file-io",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "large",
+		llmsBrief: "Read file contents with line numbers and range support",
+		compactionSafety: "summarizable",
+	},
 }

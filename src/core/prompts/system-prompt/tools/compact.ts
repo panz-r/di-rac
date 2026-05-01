@@ -29,4 +29,13 @@ Examples:
 			usage: '"Summary here" --required-files src/auth.ts',
 		},
 	],
+	metadata: {
+		tags: ["compact", "context", "summarize"],
+		category: "context",
+		concurrency: "sequential",
+		safety: ["read"],
+		outputSize: "small",
+		llmsBrief: "Compact conversation context",
+		compactionSafety: "discardable",
+	},
 }

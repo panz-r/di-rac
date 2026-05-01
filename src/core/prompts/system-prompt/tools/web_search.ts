@@ -36,4 +36,13 @@ Examples:
 			usage: '"latest developments in AI" --allowed-domains \'["example.com"]\'',
 		},
 	],
+	metadata: {
+		tags: ["web", "search", "query"],
+		category: "web",
+		concurrency: "parallel-safe",
+		safety: ["network"],
+		outputSize: "medium",
+		llmsBrief: "Search the web for information",
+		compactionSafety: "summarizable",
+	},
 }

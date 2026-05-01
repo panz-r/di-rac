@@ -30,4 +30,13 @@ Examples:
 			usage: '"AuthService" --kind function',
 		},
 	],
+	metadata: {
+		tags: ["code", "search", "symbol"],
+		category: "code-intel",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "small",
+		llmsBrief: "Search workspace symbols by query",
+		compactionSafety: "summarizable",
+	},
 }

@@ -4,9 +4,25 @@ import { DiracApiReqInfo, DiracMessage } from "@shared/ExtensionMessage"
 import cloneDeep from "clone-deep"
 import { Logger } from "@/shared/services/Logger"
 import { getContextWindowInfo } from "./context-window-utils"
+import type { CompactionClass } from "@core/prompts/system-prompt/spec"
 
 
 export class ContextManager {
+	private static readonly COMPACTION_CLASS: Record<string, CompactionClass> = {
+		edit_file: "essential", write_to_file: "essential", replace_symbol: "essential",
+		rename_symbol: "essential", attempt_completion: "essential", ask_followup_question: "essential",
+		read_file: "summarizable", list_files: "summarizable", search_files: "summarizable",
+		repo_map: "summarizable", search_symbols: "summarizable", expand_symbol: "summarizable",
+		get_file_skeleton: "summarizable", get_function: "summarizable",
+		find_symbol_references: "summarizable", diagnostics_scan: "summarizable",
+		generate_explanation: "summarizable", web_fetch: "summarizable", web_search: "summarizable",
+		execute_command: "discardable", bash: "discardable", browser_action: "discardable",
+		use_subagents: "discardable", use_skill: "discardable", compact: "discardable",
+		summarize_task: "discardable", tool_search: "discardable", dirac_outputs: "discardable",
+		list_skills: "discardable", plan_mode_respond: "discardable", new_task: "discardable",
+		report_bug: "discardable", generate_explanation: "discardable",
+	}
+
 	// mapping from the apiMessages outer index to the inner message index to a list of actual changes, ordered by timestamp
 	// there is also a number stored for each (EditType) which defines which message type it is, for custom handling
 

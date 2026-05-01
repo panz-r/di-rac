@@ -28,4 +28,15 @@ Examples:
 			usage: 'src/new-module.ts --content "export function hello() { ... }"',
 		},
 	],
+	metadata: {
+		tags: ["file", "write", "create"],
+		category: "file-io",
+		concurrency: "sequential",
+		safety: ["write"],
+		supportsDryRun: true,
+		supportsForce: true,
+		outputSize: "small",
+		llmsBrief: "Write or create files with full content replacement",
+		compactionSafety: "essential",
+	},
 }

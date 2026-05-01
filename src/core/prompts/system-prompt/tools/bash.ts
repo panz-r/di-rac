@@ -17,4 +17,13 @@ export const bash: DiracToolSpec = {
 			usage: '"grep -r \'function login\' src/ | head -n 20"',
 		},
 	],
+	metadata: {
+		tags: ["shell", "restricted", "sandboxed"],
+		category: "execution",
+		concurrency: "sequential",
+		safety: ["read", "write"],
+		outputSize: "medium",
+		llmsBrief: "Execute restricted/sandboxed bash commands",
+		compactionSafety: "discardable",
+	},
 }

@@ -28,4 +28,13 @@ Examples:
 			usage: '"Your plan here" --needs-more-exploration',
 		},
 	],
+	metadata: {
+		tags: ["plan", "mode", "interactive"],
+		category: "interaction",
+		concurrency: "sequential",
+		safety: ["interactive"],
+		outputSize: "small",
+		llmsBrief: "Respond during plan mode interaction",
+		compactionSafety: "discardable",
+	},
 }

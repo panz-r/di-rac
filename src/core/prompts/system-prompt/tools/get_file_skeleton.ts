@@ -25,4 +25,13 @@ Examples:
 			usage: 'src/utils/math.ts src/utils/string.py',
 		},
 	],
+	metadata: {
+		tags: ["code", "structure", "skeleton"],
+		category: "code-intel",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "medium",
+		llmsBrief: "Get structural skeleton of source files",
+		compactionSafety: "summarizable",
+	},
 }

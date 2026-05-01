@@ -29,4 +29,13 @@ Examples:
 			usage: 'src/utils/math.ts --fn calculateSum --fn findMax',
 		},
 	],
+	metadata: {
+		tags: ["code", "function", "read"],
+		category: "code-intel",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "medium",
+		llmsBrief: "Extract function bodies by name from source files",
+		compactionSafety: "summarizable",
+	},
 }

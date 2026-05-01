@@ -19,4 +19,13 @@ No arguments required.`,
 			instruction: "No arguments needed. Pass empty string or omit.",
 		},
 	],
+	metadata: {
+		tags: ["code", "map", "overview"],
+		category: "code-intel",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "medium",
+		llmsBrief: "Generate repository structure map",
+		compactionSafety: "summarizable",
+	},
 }

@@ -35,7 +35,7 @@ function extractReplacementText(toolName: string, params: any): string | null {
 
 const MAX_ABSOLUTE_DELETION = 150
 
-const MUTATION_TOOLS = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.REPLACE_SYMBOL]
+const MUTATION_TOOLS = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.REPLACE_SYMBOL, DiracDefaultTool.RENAME_SYMBOL]
 
 const MUTATION_BASH_PATTERNS = [
 	/\bsed\s+.*-i/, /\brm\s+-/, /\bmv\s+/, /\bcp\s+/,
@@ -602,7 +602,7 @@ export class RecoveryEngine {
 		}
 
 		// 4. Truncation placeholder guard (mutation tools)
-		const forceFlag = params?.force || params?.["--force"]
+		const forceFlag = params?.force || params?.["--force"] || params?._force
 		if (!forceFlag && MUTATION_TOOLS.includes(toolName as any) && typeof filePath === "string") {
 			const newText = extractReplacementText(toolName, params)
 			if (newText && hasTruncationPlaceholder(newText)) {
@@ -814,7 +814,7 @@ export class RecoveryEngine {
 		}
 
 		// 7. Dry-run mode: redirect to temp file
-		const dryRunFlag = params?.["dry_run"] || params?.["dry-run"] || params?.["--dry-run"]
+		const dryRunFlag = params?.["dry_run"] || params?.["dry-run"] || params?.["--dry-run"] || params?._dry_run
 		if (dryRunFlag && MUTATION_TOOLS.includes(toolName as any) && typeof filePath === "string") {
 			try {
 				const fs = await import("fs/promises")

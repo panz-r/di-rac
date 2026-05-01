@@ -38,4 +38,13 @@ Examples:
 			usage: "launch --url http://localhost:3000",
 		},
 	],
+	metadata: {
+		tags: ["browser", "web", "automation"],
+		category: "browser",
+		concurrency: "sequential",
+		safety: ["network", "interactive"],
+		outputSize: "medium",
+		llmsBrief: "Perform browser automation actions",
+		compactionSafety: "discardable",
+	},
 }

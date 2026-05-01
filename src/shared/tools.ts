@@ -40,6 +40,9 @@ export enum DiracDefaultTool {
 	REPO_MAP = "repo_map",
 	COMPACT = "compact",
 	DIRAC_UNDO = "dirac_undo",
+
+	TOOL_SEARCH = "tool_search",
+	DIRAC_OUTPUTS = "dirac_outputs",
 }
 
 // Array of all tool names for compatibility
@@ -81,3 +84,4 @@ export const READ_ONLY_TOOLS = [
 	DiracDefaultTool.REPO_MAP,
 	DiracDefaultTool.BASH_RESTRICTED,
 ] as const
+

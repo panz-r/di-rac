@@ -25,4 +25,13 @@ Examples:
 			usage: 'src/utils/math.ts src/utils/string.ts',
 		},
 	],
+	metadata: {
+		tags: ["diagnostics", "errors", "lsp"],
+		category: "code-intel",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "small",
+		llmsBrief: "Scan for diagnostics, errors, and warnings",
+		compactionSafety: "summarizable",
+	},
 }

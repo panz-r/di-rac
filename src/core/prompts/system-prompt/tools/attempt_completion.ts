@@ -35,6 +35,15 @@ Examples:
 			usage: "npm test",
 		},
 	],
+	metadata: {
+		tags: ["completion", "done", "result"],
+		category: "interaction",
+		concurrency: "sequential",
+		safety: ["interactive"],
+		outputSize: "small",
+		llmsBrief: "Present task completion result to user",
+		compactionSafety: "essential",
+	},
 }
 
 export const attempt_completion_variants = [attempt_completion]

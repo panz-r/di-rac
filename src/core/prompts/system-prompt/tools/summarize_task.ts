@@ -29,4 +29,13 @@ Examples:
 			usage: '"Summary here" --required-files src/auth.ts --required-files src/db.ts',
 		},
 	],
+	metadata: {
+		tags: ["summarize", "task", "context"],
+		category: "context",
+		concurrency: "sequential",
+		safety: ["read"],
+		outputSize: "small",
+		llmsBrief: "Summarize current task state",
+		compactionSafety: "discardable",
+	},
 }

@@ -6,7 +6,7 @@
  * pointer + preview for the conversation context.
  */
 
-import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 const DEFAULT_THRESHOLD = 4 * 1024 // 4KB
@@ -70,6 +70,64 @@ export class OutputManager {
 			return `${result.reference}\n\n${result.preview}\n\n--- [Output truncated. Read full output with: head/tail/cat .dirac/outputs/${toolName}_*.txt] ---`
 		}
 		return content
+	}
+
+	/**
+	 * List all saved output files.
+	 */
+	listOutputs(): { filename: string; sizeKB: string; modified: string }[] {
+		try {
+			const files = readdirSync(this.outputsDir)
+			return files
+				.filter((f) => f.endsWith(".txt"))
+				.map((f) => {
+					const filePath = join(this.outputsDir, f)
+					try {
+						const stats = statSync(filePath)
+						return {
+							filename: f,
+							sizeKB: (stats.size / 1024).toFixed(1),
+							modified: stats.mtime.toISOString(),
+						}
+					} catch {
+						return null
+					}
+			})
+				.filter(Boolean) as { filename: string; sizeKB: string; modified: string }[]
+		} catch {
+			return []
+		}
+	}
+
+	/**
+	 * Read a saved output file by filename.
+	 */
+	readOutput(filename: string): string | null {
+		try {
+			const filePath = join(this.outputsDir, filename)
+			return readFileSync(filePath, "utf8")
+		} catch {
+			return null
+		}
+	}
+
+	/**
+	 * Delete all saved output files.
+	 */
+	clearOutputs(): number {
+		let count = 0
+		try {
+			const files = readdirSync(this.outputsDir)
+			for (const f of files) {
+				if (f.endsWith(".txt")) {
+					rmSync(join(this.outputsDir, f))
+					count++
+				}
+			}
+		} catch {
+			// Directory may not exist
+		}
+		return count
 	}
 
 	/**

@@ -357,19 +357,36 @@ Otherwise, if you have not completed the task and do not need additional informa
 function formatToolErrorGuidance(error: ToolError): string {
 	switch (error.code) {
 		case "io.file.notFound":
-			return `The specified file could not be found. Double-check the file path and try again.`
+			return `The specified file could not be found. Double-check the file path and try again.
+
+Suggested next steps:
+1. list_files ${error.details?.dir ?? "<parent-dir>"} — Check what files exist in the parent directory
+2. search_files <path> --regex <pattern> — Search for a file matching the pattern`
 		case "io.file.permissionDenied":
 			return `Permission denied when accessing the file. You do not have rights to read or write this file.`
 		case "io.file.locked":
 			return `The file is locked by another process. Wait a moment and retry the operation.`
 		case "anchor.notFound":
-			return `One or more line anchors could not be found in the current file content. The file may have been modified externally — re-read the file to obtain current anchors, then retry the edit with updated anchors.`
+			return `One or more line anchors could not be found in the current file content. The file may have been modified externally.
+
+Suggested next steps:
+1. get_file_skeleton ${error.details?.path ?? "<path>"} — See the current symbol list for this file
+2. read_file ${error.details?.path ?? "<path>"} --detail outline — Refresh collapsed view with current anchors
+3. search_symbols <symbol> — Search across the repo for this symbol`
 		case "anchor.contentMismatch":
-			return `The content at an anchor line has changed since you last read the file. Re-read the file to get the current state and anchors, then retry the edit.`
+			return `The content at an anchor line has changed since you last read the file.
+
+Suggested next steps:
+1. read_file ${error.details?.path ?? "<path>"} — Re-read the file to get current content
+2. get_file_skeleton ${error.details?.path ?? "<path>"} — See current symbols before retrying`
 		case "anchor.invalidFormat":
 			return `An anchor was incorrectly formatted. Anchors must follow the format "content" (e.g., "code"). Check your edit parameters and retry.`
 		case "edit.multiFileConflict":
-			return `Conflicting edits were detected across multiple files. Ensure your edits do not overlap and retry each conflicting file separately.`
+			return `Conflicting edits were detected across multiple files.
+
+Suggested next steps:
+1. Retry each file separately with individual edit_file calls
+2. read_file <path> — Re-read each conflicting file before retrying`
 		case "lsp.timeout":
 			return `A language server operation timed out. Retry the operation — if it persists, try a different approach.`
 		case "lsp.connectionLost":
@@ -385,11 +402,23 @@ function formatToolErrorGuidance(error: ToolError): string {
 		case "speculative.verify.failed":
 			return `Speculative verification failed. The proposed changes may have issues — review and adjust before retrying.`
 		case "arg.invalidArgument":
-			return `One or more arguments you provided were of the wrong type or format. ${error.message ? error.message + " " : ""}Check the parameter types and try again with corrected values.`
+			return `One or more arguments you provided were of the wrong type or format. ${error.message ? error.message + " " : ""}Check the parameter types and try again with corrected values.
+
+Suggested next steps:
+1. Review the tool description for correct parameter names and types
+2. tool_search <tool-name> — Check the tool's usage examples`
 		case "tool.unknownError":
-			return `An unexpected error occurred during tool execution. ${error.message ? error.message + " " : ""}Try a different approach or re-read relevant files to ensure your context is up to date.`
+			return `An unexpected error occurred during tool execution. ${error.message ? error.message + " " : ""}Try a different approach or re-read relevant files to ensure your context is up to date.
+
+Suggested next steps:
+1. read_file <relevant-path> — Re-read files to ensure your context is current
+2. search_files <path> --regex <pattern> — Search for the content you expected`
 		case "tool.internalError":
-			return `An internal error occurred in the tool infrastructure. ${error.message ? error.message + " " : ""}This is not caused by your action — retry the operation, or try a different approach to accomplish the same goal.`
+			return `An internal error occurred in the tool infrastructure. ${error.message ? error.message + " " : ""}This is not caused by your action — retry the operation, or try a different approach to accomplish the same goal.
+
+Suggested next steps:
+1. Retry the same operation once
+2. Try an alternative tool to accomplish the same goal`
 		default:
 			return `Tool execution failed${error.message ? ": " + error.message : ""}. Try a different approach or check your inputs.`
 	}

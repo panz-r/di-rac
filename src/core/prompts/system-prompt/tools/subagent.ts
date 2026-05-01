@@ -29,4 +29,13 @@ Examples:
 			usage: '--prompt "Research auth patterns" --prompt "Check test coverage"',
 		},
 	],
+	metadata: {
+		tags: ["subagent", "delegate", "parallel"],
+		category: "execution",
+		concurrency: "sequential",
+		safety: ["read", "write", "destructive", "network"],
+		outputSize: "large",
+		llmsBrief: "Delegate work to subagent instances",
+		compactionSafety: "discardable",
+	},
 }

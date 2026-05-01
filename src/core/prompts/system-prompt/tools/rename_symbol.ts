@@ -29,4 +29,15 @@ Examples:
 			usage: 'src/ tests/ --old calculateTotal --new calculateGrandTotal',
 		},
 	],
+	metadata: {
+		tags: ["code", "rename", "refactor"],
+		category: "code-intel",
+		concurrency: "sequential",
+		safety: ["write"],
+		supportsDryRun: true,
+		supportsForce: true,
+		outputSize: "small",
+		llmsBrief: "Rename symbols across files",
+		compactionSafety: "essential",
+	},
 }

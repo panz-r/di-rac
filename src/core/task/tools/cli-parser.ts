@@ -32,6 +32,11 @@ export interface CliSchema {
 	noChainSplit?: boolean
 }
 
+// ---------------------------------------------------------------------------
+// Universal flags — available on every CLI-migrated tool
+// These use _-prefixed param keys so they never collide with tool-specific params.
+// ---------------------------------------------------------------------------
+
 export type ChainOperator = ";" | "&&" | "||"
 
 export interface CommandSegment {
@@ -167,10 +172,10 @@ export function parseCliCommand(toolName: string, input: string): Record<string,
 	// Custom parser override
 	if (schema.parse) return schema.parse(input)
 
-	// Build lookup maps
+	// Build lookup maps — tool flags + universal flags
 	const longFlags = new Map<string, CliFlag>()
 	const shortFlags = new Map<string, CliFlag>()
-	for (const flag of schema.flags ?? []) {
+	for (const flag of (schema.flags ?? [])) {
 		longFlags.set(flag.name, flag)
 		if (flag.short) shortFlags.set(flag.short, flag)
 	}
@@ -254,6 +259,10 @@ export function parseCliCommand(toolName: string, input: string): Record<string,
  */
 export function hasCliSchema(toolName: string): boolean {
 	return toolName in CLI_SCHEMAS
+}
+
+export function getCliSchema(toolName: string): CliSchema | undefined {
+	return CLI_SCHEMAS[toolName as DiracDefaultTool]
 }
 
 /**
@@ -578,5 +587,16 @@ const CLI_SCHEMAS: Partial<Record<DiracDefaultTool, CliSchema>> = {
 	// use_skill <skill_name>
 	use_skill: {
 		positionals: [{ name: "skill_name", param: "skill_name", required: true }],
+	},
+
+	// tool_search [query] [--capabilities] [--llms-brief]
+	tool_search: {
+		positionals: [{ name: "query", param: "query", required: false }],
+	},
+
+	// dirac_outputs [file] [--clear]
+	dirac_outputs: {
+		positionals: [{ name: "file", param: "file", required: false }],
+		flags: [{ name: "--clear", param: "clear", type: "boolean" }],
 	},
 }

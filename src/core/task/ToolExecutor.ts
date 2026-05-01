@@ -705,8 +705,8 @@ export class ToolExecutor {
 			toolResult = this.maybeAppendToolCallWarning(count, toolResult)
 
 			// Enforce per-message budget on large string outputs
-			if (typeof toolResult === "string" && toolResult.length > 16 * 1024) {
-				toolResult = config.services.outputManager.enforceBudget(toolResult, 16 * 1024, block.name)
+			if (typeof toolResult === "string" && toolResult.length > 8 * 1024) {
+				toolResult = config.services.outputManager.enforceBudget(toolResult, 8 * 1024, block.name)
 			}
 			this.pushToolResult(toolResult, block)
 

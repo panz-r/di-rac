@@ -26,4 +26,13 @@ Examples:
 			usage: "skill_name",
 		},
 	],
+	metadata: {
+		tags: ["skill", "invoke", "plugin"],
+		category: "meta",
+		concurrency: "sequential",
+		safety: ["read", "write", "destructive"],
+		outputSize: "medium",
+		llmsBrief: "Invoke a named skill",
+		compactionSafety: "discardable",
+	},
 }

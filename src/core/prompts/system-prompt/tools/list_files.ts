@@ -28,4 +28,13 @@ Examples:
 			usage: 'src/components --recursive',
 		},
 	],
+	metadata: {
+		tags: ["file", "directory", "list"],
+		category: "file-io",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "small",
+		llmsBrief: "List files and directories with optional recursion",
+		compactionSafety: "summarizable",
+	},
 }

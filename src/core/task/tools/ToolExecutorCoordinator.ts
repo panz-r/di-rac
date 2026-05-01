@@ -1,5 +1,4 @@
 import type { ToolUse } from "@core/assistant-message"
-import { formatResponse } from "@core/prompts/responses"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../index"
 import { AskFollowupQuestionToolHandler } from "./handlers/AskFollowupQuestionToolHandler"
@@ -32,12 +31,12 @@ import { RepoMapToolHandler } from "./handlers/RepoMapToolHandler"
 import { BashToolHandler } from "./handlers/BashToolHandler"
 import { CompactHandler } from "./handlers/CompactHandler"
 import { DiracUndoToolHandler } from "./handlers/DiracUndoToolHandler"
+import { ToolSearchToolHandler } from "./handlers/ToolSearchToolHandler"
+import { DiracOutputsToolHandler } from "./handlers/DiracOutputsToolHandler"
 
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
 import { AgentConfigLoader } from "./subagent/AgentConfigLoader"
 import { ToolValidator } from "./ToolValidator"
-import { TOOL_SCHEMAS } from "./schemas"
-import { validateArgs } from "./validateArgs"
 import { parseCliCommand, splitCommandChain, hasCliSchema, shouldChainSplit } from "./cli-parser"
 import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
@@ -124,6 +123,8 @@ export class ToolExecutorCoordinator {
 		[DiracDefaultTool.COMPACT]: (v: ToolValidator) => new CompactHandler(v),
 		[DiracDefaultTool.BASH_RESTRICTED]: (v: ToolValidator) => new BashToolHandler(v),
 		[DiracDefaultTool.DIRAC_UNDO]: (_v: ToolValidator) => new DiracUndoToolHandler(),
+		[DiracDefaultTool.TOOL_SEARCH]: (_v: ToolValidator) => new ToolSearchToolHandler(),
+		[DiracDefaultTool.DIRAC_OUTPUTS]: (_v: ToolValidator) => new DiracOutputsToolHandler(),
 	}
 
 	/**
@@ -201,14 +202,30 @@ export class ToolExecutorCoordinator {
 		block: ToolUse,
 		handler: IToolHandler,
 	): Promise<ToolResponse> {
-		const schema = TOOL_SCHEMAS[block.name as DiracDefaultTool]
-		if (schema) {
-			const validation = validateArgs(schema, block.params, block.name)
-			if (!validation.success) {
-				return formatResponse.formatToolErrorForLLM(validation.error)
-			}
+		const result = await handler.execute(config, block)
+		if (typeof result === "string") {
+			const hint = this.buildExplorationHint(block.name, block.params)
+			if (hint) return result + hint
 		}
-		return handler.execute(config, block)
+		return result
+	}
+
+	private buildExplorationHint(tool: string, params: Record<string, any>): string | undefined {
+		const path = params.path ?? (Array.isArray(params.paths) ? params.paths[0] : undefined)
+		switch (tool) {
+			case "read_file":
+				return path
+					? "\n---\nFollow-up: expand_symbol " + path + " --symbol <handle> | get_function " + path + " --fn <name>"
+					: undefined
+			case "search_files":
+				return "\n---\nFollow-up: read_file <matched-path> | get_file_skeleton <matched-path>"
+			case "repo_map":
+				return "\n---\nFollow-up: read_file <path> | search_symbols <query> | search_files <path> --regex <pattern>"
+			case "search_symbols":
+				return "\n---\nFollow-up: expand_symbol <path> --symbol <handle> | find_symbol_references <path> --symbol <name>"
+			default:
+				return undefined
+		}
 	}
 
 	private async executeChain(
@@ -229,17 +246,7 @@ export class ToolExecutorCoordinator {
 			if (op === "||" && lastSuccess) break
 
 			const parsed = parseCliCommand(originalBlock.name, seg.command)
-			const block: ToolUse = { ...originalBlock, params: parsed ?? {} }
-
-			const schema = TOOL_SCHEMAS[block.name as DiracDefaultTool]
-			if (schema) {
-				const validation = validateArgs(schema, block.params, block.name)
-				if (!validation.success) {
-					lastSuccess = false
-					results.push(formatResponse.formatToolErrorForLLM(validation.error) as string)
-					continue
-				}
-			}
+			let block: ToolUse = { ...originalBlock, params: parsed ?? {} }
 
 			const result = await handler.execute(config, block)
 			if (typeof result === "string") {

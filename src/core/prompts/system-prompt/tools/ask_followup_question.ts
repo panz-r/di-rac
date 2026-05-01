@@ -28,6 +28,15 @@ Examples:
 			usage: '"Should we use X or Y?" --options \'["Option 1", "Option 2"]\'',
 		},
 	],
+	metadata: {
+		tags: ["interactive", "question", "user"],
+		category: "interaction",
+		concurrency: "sequential",
+		safety: ["interactive"],
+		outputSize: "small",
+		llmsBrief: "Ask user a followup question with options",
+		compactionSafety: "essential",
+	},
 }
 
 export const ask_followup_question_variants = [ask_followup_question]

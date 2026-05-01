@@ -29,4 +29,13 @@ Examples:
 			usage: 'src/ --symbol calculateTotal --symbol UserAccount',
 		},
 	],
+	metadata: {
+		tags: ["code", "references", "symbol"],
+		category: "code-intel",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "medium",
+		llmsBrief: "Find all references to symbols across files",
+		compactionSafety: "summarizable",
+	},
 }

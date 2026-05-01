@@ -20,4 +20,13 @@ No arguments required.`,
 		},
 	],
 	contextRequirements: (context) => context.skills !== undefined && context.skills.length > 0,
+	metadata: {
+		tags: ["skill", "list", "discovery"],
+		category: "meta",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "small",
+		llmsBrief: "List available skills",
+		compactionSafety: "discardable",
+	},
 }

@@ -34,4 +34,13 @@ Examples:
 			usage: "https://example.com/docs --prompt \"Summarize the main points\"",
 		},
 	],
+	metadata: {
+		tags: ["web", "fetch", "url"],
+		category: "web",
+		concurrency: "parallel-safe",
+		safety: ["network"],
+		outputSize: "large",
+		llmsBrief: "Fetch and read content from URLs",
+		compactionSafety: "summarizable",
+	},
 }

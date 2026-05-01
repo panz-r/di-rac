@@ -45,4 +45,15 @@ Examples:
 			usage: 'src/auth.py --anchor "a3|def login():" --content "def login(x): ..."',
 		},
 	],
+	metadata: {
+		tags: ["file", "edit", "anchor"],
+		category: "file-io",
+		concurrency: "sequential",
+		safety: ["write"],
+		supportsDryRun: true,
+		supportsForce: true,
+		outputSize: "small",
+		llmsBrief: "Edit files using anchor-based diff operations",
+		compactionSafety: "essential",
+	},
 }
