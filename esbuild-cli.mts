@@ -297,6 +297,25 @@ async function main() {
 		await ctx.watch()
 		console.log("[cli] Watching for changes...")
 	} else {
+		// Build dirac-analyzer (Rust)
+		const analyzerDir = path.join(__dirname, "treesitter-daemon")
+		const analyzerBin = path.join(analyzerDir, "target", "release", "dirac-analyzer")
+		if (fs.existsSync(path.join(analyzerDir, "Cargo.toml"))) {
+			console.log("[dirac-analyzer] Building Rust analyzer...")
+			const { execSync } = await import("child_process")
+			try {
+				execSync("cargo build --release", { cwd: analyzerDir, stdio: "inherit" })
+				if (fs.existsSync(analyzerBin)) {
+					if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true })
+					fs.copyFileSync(analyzerBin, path.join(distDir, "dirac-analyzer"))
+					fs.chmodSync(path.join(distDir, "dirac-analyzer"), "755")
+					console.log("[dirac-analyzer] Copied to dist/")
+				}
+			} catch {
+				console.error("[dirac-analyzer] Rust build failed, skipping analyzer binary")
+			}
+		}
+
 		// Build CLI executable
 		console.log("[cli esbuild] Building CLI executable...")
 		const cliCtx = await esbuild.context(cliConfig)

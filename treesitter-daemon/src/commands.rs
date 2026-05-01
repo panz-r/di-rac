@@ -32,6 +32,10 @@ pub struct CommandOutput {
     // --- status / warm-cache fields ---
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<usize>,
 }
 
 impl CommandOutput {
@@ -52,30 +56,79 @@ fn make_output(
         ok: true, id, symbols, imports, skeleton,
         body: None, start_line: None, end_line: None,
         results: None, files: None, status: None,
+        truncated: None, total_count: None,
     }
 }
 
-pub fn outline(parsed: &ParsedSource, id: Option<serde_json::Value>) -> CommandOutput {
-    let symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
+pub fn outline(parsed: &ParsedSource, id: Option<serde_json::Value>, max_results: Option<usize>) -> CommandOutput {
+    let mut symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
     let imports = extractor::extract_imports(&parsed.source, &parsed.tree, parsed.language);
-    make_output(id, Some(symbols), Some(imports), None)
+    let total_count = symbols.len();
+    let truncated = if let Some(max) = max_results {
+        if total_count > max {
+            symbols.truncate(max);
+            true
+        } else { false }
+    } else { false };
+    let mut out = make_output(id, Some(symbols), Some(imports), None);
+    if truncated {
+        out.truncated = Some(true);
+        out.total_count = Some(total_count);
+    }
+    out
 }
 
-pub fn symbols(parsed: &ParsedSource, id: Option<serde_json::Value>) -> CommandOutput {
-    let symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
+pub fn symbols(parsed: &ParsedSource, id: Option<serde_json::Value>, max_results: Option<usize>) -> CommandOutput {
+    let mut symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
     let imports = extractor::extract_imports(&parsed.source, &parsed.tree, parsed.language);
-    make_output(id, Some(symbols), Some(imports), None)
+    let total_count = symbols.len();
+    let truncated = if let Some(max) = max_results {
+        if total_count > max {
+            symbols.truncate(max);
+            true
+        } else { false }
+    } else { false };
+    let mut out = make_output(id, Some(symbols), Some(imports), None);
+    if truncated {
+        out.truncated = Some(true);
+        out.total_count = Some(total_count);
+    }
+    out
 }
 
-pub fn handles(parsed: &ParsedSource, id: Option<serde_json::Value>) -> CommandOutput {
-    let symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
-    make_output(id, Some(symbols), None, None)
+pub fn handles(parsed: &ParsedSource, id: Option<serde_json::Value>, max_results: Option<usize>) -> CommandOutput {
+    let mut symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
+    let total_count = symbols.len();
+    let truncated = if let Some(max) = max_results {
+        if total_count > max {
+            symbols.truncate(max);
+            true
+        } else { false }
+    } else { false };
+    let mut out = make_output(id, Some(symbols), None, None);
+    if truncated {
+        out.truncated = Some(true);
+        out.total_count = Some(total_count);
+    }
+    out
 }
 
-pub fn skeleton_cmd(parsed: &ParsedSource, id: Option<serde_json::Value>) -> CommandOutput {
-    let symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
+pub fn skeleton_cmd(parsed: &ParsedSource, id: Option<serde_json::Value>, max_results: Option<usize>) -> CommandOutput {
+    let mut symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
     let skel = skeleton::generate_skeleton(&parsed.source, &parsed.tree, parsed.language);
-    make_output(id, Some(symbols), None, Some(skel))
+    let total_count = symbols.len();
+    let truncated = if let Some(max) = max_results {
+        if total_count > max {
+            symbols.truncate(max);
+            true
+        } else { false }
+    } else { false };
+    let mut out = make_output(id, Some(symbols), None, Some(skel));
+    if truncated {
+        out.truncated = Some(true);
+        out.total_count = Some(total_count);
+    }
+    out
 }
 
 // ── New command handlers ─────────────────────────────────────────
@@ -105,6 +158,8 @@ pub fn expand_symbol_cmd(
                 results: None,
                 files: None,
                 status: None,
+                truncated: None,
+                total_count: None,
             }
         }
         None => error_output(id, "SYMBOL_NOT_FOUND", format!("Symbol not found: {}", handle)),
@@ -127,6 +182,7 @@ pub fn batch_cmd(
     subcommand: String,
     id: Option<serde_json::Value>,
     workspace_root: Option<&std::path::Path>,
+    max_results: Option<usize>,
 ) -> CommandOutput {
     let mut results: Vec<serde_json::Value> = Vec::new();
 
@@ -143,12 +199,13 @@ pub fn batch_cmd(
                 continue;
             }
         };
-        match dispatch(&parsed, &subcommand, None) {
+        match dispatch(&parsed, &subcommand, None, max_results) {
             Ok(output) => {
-                let mut val = serde_json::to_value(&output).unwrap_or(serde_json::Value::Null);
-                if let Some(obj) = val.as_object_mut() {
-                    obj.insert("file".to_string(), serde_json::json!(file_path_str));
-                }
+                let val = serde_json::json!({
+                    "file": file_path_str,
+                    "ok": true,
+                    "data": output
+                });
                 results.push(val);
             }
             Err(e) => {
@@ -173,6 +230,8 @@ pub fn batch_cmd(
         results: Some(results),
         files: None,
         status: None,
+        truncated: None,
+        total_count: None,
     }
 }
 
@@ -224,6 +283,8 @@ pub fn search_symbols_cmd(
         results: Some(results),
         files: None,
         status: None,
+        truncated: None,
+        total_count: None,
     }
 }
 
@@ -259,6 +320,8 @@ pub fn repo_map_cmd(
         results: None,
         files: Some(file_results),
         status: None,
+        truncated: None,
+        total_count: None,
     }
 }
 
@@ -356,6 +419,8 @@ pub fn warm_cache_cmd(
             "errors": errors,
             "total_entries": cache.len()
         })),
+        truncated: None,
+        total_count: None,
     }
 }
 
@@ -390,6 +455,8 @@ pub fn reparse_cmd(
                 results: None,
                 files: None,
                 status: Some(serde_json::json!({"cached": true, "total_entries": cache.len()})),
+                truncated: None,
+                total_count: None,
             }
         }
         Err(e) => error_output(id, e.code.to_string().as_str(), e.message),
@@ -411,6 +478,8 @@ pub fn clear_cache_cmd(cache: &mut crate::cache::ParseCache, id: Option<serde_js
         results: None,
         files: None,
         status: Some(serde_json::json!({"entries": 0})),
+        truncated: None,
+        total_count: None,
     }
 }
 
@@ -429,6 +498,8 @@ pub fn status_cmd(cache: &crate::cache::ParseCache, id: Option<serde_json::Value
         results: None,
         files: None,
         status: Some(serde_json::to_value(&s).unwrap_or(serde_json::Value::Null)),
+        truncated: None,
+        total_count: None,
     }
 }
 
@@ -449,6 +520,43 @@ fn error_output(
         results: None,
         files: None,
         status: Some(serde_json::json!({"error": {"code": code, "message": message}})),
+        truncated: None,
+        total_count: None,
+    }
+}
+
+/// Invalidate cached entry for a single file path.
+pub fn file_changed_cmd(
+    cache: &mut crate::cache::ParseCache,
+    file_path_str: &str,
+    id: Option<serde_json::Value>,
+    workspace_root: Option<&std::path::Path>,
+) -> CommandOutput {
+    let path = std::path::PathBuf::from(file_path_str);
+    let key = if let Ok(canonical) = path.canonicalize() {
+        canonical
+    } else if path.is_absolute() {
+        path
+    } else if let Some(ws) = workspace_root {
+        ws.join(&path)
+    } else {
+        path
+    };
+    let existed = cache.remove(&key).is_some();
+    CommandOutput {
+        ok: true,
+        id,
+        symbols: None,
+        imports: None,
+        skeleton: None,
+        body: None,
+        start_line: None,
+        end_line: None,
+        results: None,
+        files: None,
+        status: Some(serde_json::json!({"removed": existed, "path": key.display().to_string()})),
+        truncated: None,
+        total_count: None,
     }
 }
 
@@ -456,12 +564,13 @@ pub fn dispatch(
     parsed: &ParsedSource,
     command: &str,
     id: Option<serde_json::Value>,
+    max_results: Option<usize>,
 ) -> Result<CommandOutput, AnalyzerError> {
     match command {
-        "outline" => Ok(outline(parsed, id)),
-        "symbols" => Ok(symbols(parsed, id)),
-        "handles" => Ok(handles(parsed, id)),
-        "skeleton" => Ok(skeleton_cmd(parsed, id)),
+        "outline" => Ok(outline(parsed, id, max_results)),
+        "symbols" => Ok(symbols(parsed, id, max_results)),
+        "handles" => Ok(handles(parsed, id, max_results)),
+        "skeleton" => Ok(skeleton_cmd(parsed, id, max_results)),
         other => Err(AnalyzerError::invalid_command(other)),
     }
 }

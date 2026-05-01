@@ -183,6 +183,7 @@ fn run_daemon(workspace_root: Option<&PathBuf>) {
     let stdin = io::stdin();
     let reader = stdin.lock();
 
+
     for line_result in reader.lines() {
         let line = match line_result {
             Ok(l) => l,
@@ -193,6 +194,7 @@ fn run_daemon(workspace_root: Option<&PathBuf>) {
         if trimmed.is_empty() {
             continue; // skip blank lines
         }
+
 
         let request: JsonRequest = match serde_json::from_str(trimmed) {
             Ok(req) => req,
@@ -206,6 +208,9 @@ fn run_daemon(workspace_root: Option<&PathBuf>) {
                 continue;
             }
         };
+
+        // Check for shutdown *before* processing
+        let is_shutdown = request.command == "shutdown";
 
         let response = process_request(
             &request.command,
@@ -226,9 +231,13 @@ fn run_daemon(workspace_root: Option<&PathBuf>) {
 
         writeln!(io::stdout(), "{}", response).ok();
         io::stdout().flush().ok();
+
+        if is_shutdown {
+            break;
+        }
     }
 
-    eprintln!("dirac-analyzer: stdin closed, shutting down");
+    eprintln!("dirac-analyzer: shutting down");
 }
 
 /// Core processing: parse, dispatch, return JSON string.
@@ -269,7 +278,7 @@ fn process_request(
             let file_list: Vec<String> = files.cloned().unwrap_or_default();
             let sub = subcommand.unwrap_or("outline");
             let ws_root = workspace_root.map(|p| p.as_path());
-            return commands::batch_cmd(file_list, sub.to_string(), id, ws_root).to_json();
+            return commands::batch_cmd(file_list, sub.to_string(), id, ws_root, max_results).to_json();
         }
         "warm-cache" => {
             let file_list: Vec<String> = files.cloned().unwrap_or_default();
@@ -279,6 +288,14 @@ fn process_request(
         "reparse" => {
             let ws_root = workspace_root.map(|p| p.as_path());
             return commands::reparse_cmd(cache, file, content, language_override, ws_root, id).to_json();
+        }
+        "file-changed" => {
+            let file_path = file.unwrap_or("");
+            let ws_root = workspace_root.map(|p| p.as_path());
+            return commands::file_changed_cmd(cache, file_path, id, ws_root).to_json();
+        }
+        "shutdown" => {
+            return serde_json::json!({"ok": true, "id": id, "status": "shutting_down"}).to_string();
         }
         _ => {}
     }
@@ -356,7 +373,7 @@ fn process_request(
         };
     }
 
-    match commands::dispatch(&parsed, command, id.clone()) {
+    match commands::dispatch(&parsed, command, id.clone(), max_results) {
         Ok(output) => output.to_json(),
         Err(e) => e.to_json_response(id.as_ref()),
     }
