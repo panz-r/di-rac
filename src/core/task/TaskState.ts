@@ -105,7 +105,21 @@ export class TaskState {
 	sessionLinesAdded = 0
 	sessionLinesDeleted = 0
 
+	// Round 3 proof-of-execution state
+	bashExecutionHistory: Array<{
+		executionId: string
+		command: string
+		exitCode: number | null
+		timestamp: number
+	}> = []
+	bashExecutionCounter: number = 0
+	lastEditTimestamp: number = 0
+
+	// Round 3 turn snapshot state
+	previousTurnFiles: Set<string> = new Set()
+
 	resetTurnState(): void {
+		this.previousTurnFiles = new Set(this.filesEditedInCurrentTurn)
 		this.filesTouchedInCurrentTurn.clear()
 		this.filesEditedInCurrentTurn.clear()
 		this.turnTokenEstimates = 0

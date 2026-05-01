@@ -1269,7 +1269,7 @@ ${notice}`
 			throw new Error("Task instance aborted")
 		}
 		
-		this.toolExecutor.recoveryEngine.resetTurnBudget()
+		await this.toolExecutor.recoveryEngine.resetTurnBudget(this.taskState)
 		this.taskState.resetTurnState()
 
 

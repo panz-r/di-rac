@@ -32,6 +32,7 @@ import { SearchSymbolsToolHandler } from "./handlers/SearchSymbolsToolHandler"
 import { RepoMapToolHandler } from "./handlers/RepoMapToolHandler"
 import { BashToolHandler } from "./handlers/BashToolHandler"
 import { CompactHandler } from "./handlers/CompactHandler"
+import { DiracUndoToolHandler } from "./handlers/DiracUndoToolHandler"
 
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
 import { AgentConfigLoader } from "./subagent/AgentConfigLoader"
@@ -124,6 +125,7 @@ export class ToolExecutorCoordinator {
 		[DiracDefaultTool.REPO_MAP]: (v: ToolValidator) => new RepoMapToolHandler(v),
 		[DiracDefaultTool.COMPACT]: (v: ToolValidator) => new CompactHandler(v),
 		[DiracDefaultTool.BASH_RESTRICTED]: (v: ToolValidator) => new BashToolHandler(v),
+		[DiracDefaultTool.DIRAC_UNDO]: (_v: ToolValidator) => new DiracUndoToolHandler(),
 	}
 
 	/**

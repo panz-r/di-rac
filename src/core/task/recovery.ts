@@ -37,6 +37,9 @@ const MAX_ABSOLUTE_DELETION = 150
 
 const MUTATION_TOOLS = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.REPLACE_SYMBOL]
 
+type EntityDiffKind = "MODIFY" | "INSERT" | "DELETE"
+interface EntityDiff { kind: EntityDiffKind; id: string; oldDef?: any; newDef?: any }
+
 // --- Taxonomy ---
 
 export enum ErrorDomain {
@@ -106,9 +109,9 @@ export class RecoveryEngine {
 	private circuitBreakers = new Map<string, CircuitState>()
 	private callHistory: CallRecord[] = []
 	private editSnapshotPaths: Map<string, string> = new Map()
-	private preEditSymbolCounts: Map<string, number> = new Map()
-	private preEditSymbols: Map<string, string[]> = new Map()
+	private preEditSymbols: Map<string, any[]> = new Map()
 	private dryRunPaths: Map<string, string> = new Map() // temp path -> original path
+	private turnEditLog: Array<{ file: string; oldSymbolIds: Set<string> }> = []
 	private perTurnTokenBudget: number = 5 // max 5 recovery retries per turn
 	private currentTurnRetries: number = 0
 
@@ -294,22 +297,26 @@ export class RecoveryEngine {
 		}
 	}
 
-	public resetTurnBudget() {
+	public async resetTurnBudget(taskState?: any): Promise<void> {
 		this.currentTurnRetries = 0
 		this.stagnationHintCounts.clear()
 			this.nudgedThisTurn.clear()
 			this.currentTurnNumber++
 			this._proactiveCondensedThisTurn = false
 		this.editSnapshotPaths.clear()
-		this.preEditSymbolCounts.clear()
 		this.preEditSymbols.clear()
 		this.dryRunPaths.clear()
+		this.turnEditLog = []
 			// Purge stale nudge outcomes older than 5 turns
 			for (const [key, outcome] of this.nudgeOutcomes) {
 				if (this.currentTurnNumber - outcome.turnWhenNudged > 5) {
 					this.nudgeOutcomes.delete(key)
 				}
 			}
+		// Snapshot files edited in the previous turn
+		if (taskState?.previousTurnFiles?.size > 0) {
+			await this.snapshotTurnFiles(taskState.previousTurnFiles, taskState.currentTurnNumber - 1)
+		}
 	}
 
 	public getTelemetry() {
@@ -396,6 +403,9 @@ export class RecoveryEngine {
 				if (taskState.currentTaskPhase === "exploration") {
 					taskState.currentTaskPhase = "editing"
 				}
+				if (MUTATION_TOOLS.includes(toolName as any)) {
+					taskState.lastEditTimestamp = Date.now()
+				}
 				if (toolName === DiracDefaultTool.BASH) {
 					taskState.didExecuteCommand = true
 				}
@@ -423,22 +433,65 @@ export class RecoveryEngine {
 			taskState.turnTokenEstimates = 0
 		}
 
-		// Phase 11: Premature Success Detection
-		if (toolName === DiracDefaultTool.ATTEMPT) {
-			const hasMadeChanges = taskState.didEditFile || taskState.didExecuteCommand
-			if (!hasMadeChanges && this.completionAttemptCount === 0) {
+		// Phase 11: Proof-of-Execution Completion Gate
+		if (toolName === DiracDefaultTool.ATTEMPT && taskState) {
+			const hasEdits = taskState.lastEditTimestamp > 0
+			const proofOfExecution = params?.proof_of_execution
+			if (!hasEdits) {
+				this.completionAttemptCount = 0
+			} else if (!proofOfExecution) {
 				this.completionAttemptCount++
-				this.updateAuditChain(toolName, "PREMATURE_COMPLETION", "BLOCKED")
-				return this.formatStructuredEscalation(
-					toolName,
-					block.params,
-					"PREMATURE_COMPLETION",
-					"You are attempting to complete the task without having made any modifications or running any verification commands.",
-					"If the task requires changes, please perform them before finishing. If this is intentional, you may proceed by calling attempt_completion again."
+				if (this.completionAttemptCount <= 2) {
+					this.updateAuditChain(toolName, "PROOF_OF_EXECUTION_REQUIRED", "BLOCKED")
+					return this.formatStructuredEscalation(
+						toolName, block.params, "PROOF_OF_EXECUTION_REQUIRED",
+						"Edits were made but no verification proof provided. Include proof_of_execution with an execution_id from a successful command.",
+						"Run a build/test/lint command, then pass its execution_id as proof_of_execution."
+					)
+				}
+				this.completionAttemptCount = 0
+			} else {
+				const match = taskState.bashExecutionHistory.find(
+					(h: any) => h.executionId === proofOfExecution
 				)
+				if (!match) {
+					this.updateAuditChain(toolName, "INVALID_PROOF", "BLOCKED")
+					return this.formatStructuredEscalation(
+						toolName, block.params, "INVALID_PROOF",
+						`execution_id "${proofOfExecution}" not found in this session.`,
+						"Run a verification command and use the returned execution_id."
+					)
+				}
+				if (match.exitCode !== 0 && match.exitCode !== null) {
+					this.updateAuditChain(toolName, "FAILED_PROOF", "BLOCKED")
+					return this.formatStructuredEscalation(
+						toolName, block.params, "FAILED_PROOF",
+						`The referenced command failed (exit code ${match.exitCode}). Fix and re-verify.`,
+						"Run a successful verification command before completing."
+					)
+				}
+				if (match.timestamp < taskState.lastEditTimestamp) {
+					this.updateAuditChain(toolName, "STALE_PROOF", "BLOCKED")
+					return this.formatStructuredEscalation(
+						toolName, block.params, "STALE_PROOF",
+						"That verification ran before the most recent edit. Please re-verify after the latest changes.",
+						"Run your verification command again after the edits."
+					)
+				}
+				const trivialPattern = /^(echo|true|false|cat|ls|pwd|whoami|date|printf|sleep|clear|reset|env|type|which|uname|id|hostname|:)\b/i
+				if (trivialPattern.test(match.command)) {
+					this.updateAuditChain(toolName, "TRIVIAL_PROOF", "WARNING")
+					if (this.completionAttemptCount === 0) {
+						this.completionAttemptCount++
+						return this.formatStructuredEscalation(
+							toolName, block.params, "TRIVIAL_PROOF",
+							`The proof "${proofOfExecution}" corresponds to a trivial command: "${match.command}". This does not constitute meaningful verification.`,
+							"Run your project test suite or linter, then provide that execution_id."
+						)
+					}
+				}
+				this.completionAttemptCount = 0
 			}
-			// Reset or allow if it's the second attempt or changes were made
-			this.completionAttemptCount = 0
 		}
 
 		// 1. Paradoxical Ranges Check
@@ -591,18 +644,6 @@ export class RecoveryEngine {
 			}
 		}
 
-		// 5d. Completion gate — block attempt_completion without verification
-		if (toolName === DiracDefaultTool.ATTEMPT && taskState) {
-			if (taskState.didEditFile && !taskState.didExecuteCommand) {
-				this.updateAuditChain(toolName, "VERIFICATION_REQUIRED", "BLOCKED")
-				return this.formatStructuredEscalation(
-					toolName, block.params, "VERIFICATION_REQUIRED",
-					"You have made edits but have not run any tests, lint, or type checks to verify them.",
-					"Run verification commands (e.g., type check, lint, tests) before attempting completion."
-				)
-			}
-		}
-
 		// 5e. Net-change budget check
 		if (MUTATION_TOOLS.includes(toolName as any) && typeof filePath === "string" && taskState && !forceFlag) {
 			try {
@@ -720,8 +761,8 @@ export class RecoveryEngine {
 				const languageParsers = await loadRequiredLanguageParsers([filePath])
 				const defs = await parseFile(filePath, languageParsers)
 				if (defs) {
-					this.preEditSymbolCounts.set(filePath, defs.length)
-					this.preEditSymbols.set(filePath, defs.map((d: any) => d.name || ""))
+					this.preEditSymbols.set(filePath, defs)
+					this.turnEditLog.push({ file: filePath, oldSymbolIds: new Set(defs.map((d: any) => d.id || d.name)) })
 				}
 			} catch { /* ignore */ }
 		}
@@ -1359,6 +1400,26 @@ Some line numbers may have shifted. Please locate your target function in the ne
 					this.consecutiveProgressCount = 0
 					this.updateAuditChain("SYSTEM", "STAGNATION_HEALED", "PROGRESS")
 				}
+				// Feature 4: Record bash execution
+				if ((toolName === DiracDefaultTool.BASH || toolName === DiracDefaultTool.BASH_RESTRICTED) && taskState) {
+					const execId = "exec-" + (++taskState.bashExecutionCounter)
+					let exitCode: number | null = null
+					const command = (args as any)?.command || ""
+					if (toolName === DiracDefaultTool.BASH_RESTRICTED && Array.isArray(result)) {
+						const tb = (result as any[]).find((b: any) => b.type === "text")
+						if (tb?.text) {
+							try { exitCode = JSON.parse((tb as any).text).exitCode ?? null } catch { /* not JSON */ }
+						}
+					}
+					if (toolName === DiracDefaultTool.BASH) exitCode = 0
+					taskState.bashExecutionHistory.push({ executionId: execId, command, exitCode, timestamp: Date.now() })
+					if (Array.isArray(result)) {
+						const tb = (result as any[]).find((b: any) => b.type === "text")
+						if (tb && (tb as any).text) {
+							(tb as any).text += "\n[execution_id: " + execId + "]"
+						}
+					}
+				}
 				// Dry-run interception: if tool ran on temp file, return diff summary
 				if (MUTATION_TOOLS.includes(toolName as any)) {
 					const dryRunPath = (args as any)?.path || (args as any)?.file_path || (args as any)?.absolutePath
@@ -1395,53 +1456,83 @@ Some line numbers may have shifted. Please locate your target function in the ne
 								"Check your edit for accidental deletions or stray characters and try again."
 							)
 						}
-						// Structural change detection
-						const confirmMajorChange = (args as any)?.confirm_major_change || (args as any)?.["confirm-major-change"]
-						const preCount = this.preEditSymbolCounts.get(postFilePath)
-						if (!confirmMajorChange && typeof preCount === "number" && preCount > 0) {
+						// Entity-level semantic diff
+						const preDefs = this.preEditSymbols.get(postFilePath)
+						if (preDefs && preDefs.length > 0) {
 							try {
 								const { parseFile } = await import("@/services/tree-sitter")
 								const { loadRequiredLanguageParsers } = await import("@/services/tree-sitter/languageParser")
 								const languageParsers = await loadRequiredLanguageParsers([postFilePath])
 								const postDefs = await parseFile(postFilePath, languageParsers)
-								const postCount = postDefs?.length ?? 0
-								const removedCount = preCount - postCount
-								if (removedCount >= 3) {
-									const snapPath = this.editSnapshotPaths.get(postFilePath)
-									if (snapPath) {
-										try {
-											const fs = await import("fs/promises")
-											await fs.copyFile(snapPath, postFilePath)
-										} catch { /* rollback failed */ }
+								if (postDefs) {
+									const entityDiffs = this.computeEntityDiff(preDefs, postDefs, postFilePath)
+									const confirmMajorChange = (args as any)?.confirm_major_change || (args as any)?.["confirm-major-change"]
+									// Count unexplained deletes (not moved to another file in this turn)
+									const crossFileIds = new Set<string>()
+									for (const entry of this.turnEditLog) {
+										if (entry.file !== postFilePath) {
+											for (const id of entry.oldSymbolIds) crossFileIds.add(id)
+										}
 									}
-									this.updateAuditChain(toolName, "MAJOR_STRUCTURAL_CHANGE", "ROLLED_BACK")
-									return this.formatStructuredEscalation(
-										toolName, args, "MAJOR_STRUCTURAL_CHANGE",
-										`Your edit removed ${removedCount} definitions from ${postFilePath} (had ${preCount}, now ${postCount}). This appears to be an accidental mass deletion.`,
-										"If this was intentional, split into targeted edits. Otherwise, verify your edit targets the correct range."
-									)
-								}
-								// Structural symbol-diff reporting (informational)
-								const preSymbols = this.preEditSymbols.get(postFilePath)
-								if (preSymbols && preSymbols.length > 0 && postDefs) {
-									const postSymbolNames = postDefs.map((d: any) => d.name || "")
-									const addedSyms = postSymbolNames.filter((s: string) => s && !preSymbols.includes(s))
-									const removedSyms = preSymbols.filter((s: string) => s && !postSymbolNames.includes(s))
-									if (addedSyms.length > 0 || removedSyms.length > 0) {
+									const unexplainedDeletes = entityDiffs.filter(d => d.kind === "DELETE" && !crossFileIds.has(d.id))
+									if (unexplainedDeletes.length >= 2 && !confirmMajorChange) {
+										const snapPath = this.editSnapshotPaths.get(postFilePath)
+										if (snapPath) {
+											try {
+												const fs = await import("fs/promises")
+												await fs.copyFile(snapPath, postFilePath)
+											} catch { /* rollback failed */ }
+										}
+										const deletedNames = unexplainedDeletes.map(d => d.id).join(", ")
+										this.updateAuditChain(toolName, "MAJOR_STRUCTURAL_CHANGE", "ROLLED_BACK")
+										return this.formatStructuredEscalation(
+											toolName, args, "MAJOR_STRUCTURAL_CHANGE",
+											"Your edit removed " + unexplainedDeletes.length + " definitions from " + postFilePath + " (" + deletedNames + "). This appears to be an accidental mass deletion.",
+											"If this was intentional, split into targeted edits or pass confirm_major_change. Otherwise, verify your edit targets the correct range."
+										)
+									}
+									// Append semantic diff summary to tool response
+									const meaningful = entityDiffs.filter(d => d.kind !== "MODIFY")
+									if (meaningful.length > 0) {
 										const parts: string[] = []
-										if (addedSyms.length > 0) parts.push("+" + addedSyms.join(", "))
-										if (removedSyms.length > 0) parts.push("-" + removedSyms.join(", "))
-										const summary = `[STRUCTURAL_DIFF] ${postFilePath}: ${parts.join(" ")}`
+										for (const d of entityDiffs) {
+											if (d.kind === "INSERT") parts.push("+" + d.id)
+											else if (d.kind === "DELETE") parts.push("-" + d.id)
+											else {
+												const oldSig = (d.oldDef as any)?.signature || ""
+												const newSig = (d.newDef as any)?.signature || ""
+												if (oldSig !== newSig) parts.push("~" + d.id + " (sig changed)")
+											}
+										}
+										if (parts.length > 0) {
+											const summary = "[SYSTEM: SEMANTIC_DIFF] " + postFilePath + ": " + parts.join(", ")
+											if (Array.isArray(result)) {
+												const textBlock = (result as any[]).find((b: any) => b.type === "text")
+												if (textBlock && (textBlock as any).text) {
+													(textBlock as any).text += "\n" + summary
+												}
+											}
+										}
+									}
+									// Cross-file blast-radius analysis
+									const blastResults = this.computeBlastRadius(entityDiffs, postFilePath)
+									if (blastResults.length > 0) {
+										const blastParts: string[] = []
+										for (const br of blastResults) {
+											const prefix = br.isSignatureBreaking ? "[WARNING: BREAKING CHANGE] " : ""
+											const callers = br.callers.map(c => c.path + ":" + c.line).join(", ")
+											blastParts.push(prefix + br.symbolName + " (" + br.changeKind + ") -> " + callers)
+										}
+										const blastSummary = "[SYSTEM: BLAST_RADIUS] " + blastParts.join("; ")
 										if (Array.isArray(result)) {
 											const textBlock = (result as any[]).find((b: any) => b.type === "text")
 											if (textBlock && (textBlock as any).text) {
-												(textBlock as any).text += "\n" + summary
+												(textBlock as any).text += "\n" + blastSummary
 											}
 										}
 									}
 								}
 							} catch { /* ignore parse failure */ }
-							this.preEditSymbolCounts.delete(postFilePath)
 							this.preEditSymbols.delete(postFilePath)
 						}
 						// On-disk write verification
@@ -1937,6 +2028,106 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		lines.push("To apply, re-issue the command without --dry-run.")
 		this.updateAuditChain(toolName, "DRY_RUN", "PREVIEW")
 		return [{ type: "text", text: lines.join("\n") }] as any
+	}
+
+	private async snapshotTurnFiles(files: Set<string>, turnNumber: number): Promise<void> {
+		try {
+			const path = await import("path")
+			const fs = await import("fs/promises")
+			const { createHash } = await import("crypto")
+			const diracState = path.join(this.workspaceRoot || process.cwd(), ".dirac-state", "snapshots", "turn-" + turnNumber)
+			await fs.mkdir(diracState, { recursive: true })
+			const manifest: Array<{ path: string; hash: string }> = []
+			for (const filePath of files) {
+				try {
+					const content = await fs.readFile(filePath)
+					const hash = createHash("sha256").update(content).digest("hex").slice(0, 12)
+					const pathHash = createHash("sha256").update(filePath).digest("hex").slice(0, 8)
+					const snapPath = path.join(diracState, pathHash + "-" + path.basename(filePath))
+					await fs.writeFile(snapPath, content)
+					manifest.push({ path: filePath, hash })
+				} catch { /* file may no longer exist */ }
+			}
+			if (manifest.length > 0) {
+				await fs.writeFile(path.join(diracState, "turn-" + turnNumber + ".json"), JSON.stringify({ files: manifest }, null, 2))
+			}
+			await this.pruneOldSnapshots()
+		} catch { /* snapshot failure is non-critical */ }
+	}
+
+	private async pruneOldSnapshots(maxKeep = 10): Promise<void> {
+		try {
+			const path = await import("path")
+			const fs = await import("fs/promises")
+			const snapshotsDir = path.join(this.workspaceRoot || process.cwd(), ".dirac-state", "snapshots")
+			const entries = await fs.readdir(snapshotsDir)
+			const turnDirs = entries
+				.filter(e => e.startsWith("turn-"))
+				.map(e => ({ name: e, num: parseInt(e.replace("turn-", ""), 10) }))
+				.filter(e => !isNaN(e.num))
+				.sort((a, b) => b.num - a.num)
+			if (turnDirs.length > maxKeep) {
+				for (const d of turnDirs.slice(maxKeep)) {
+					await fs.rm(path.join(snapshotsDir, d.name), { recursive: true })
+				}
+			}
+		} catch { /* ignore */ }
+	}
+
+	private computeEntityDiff(oldDefs: any[], newDefs: any[], editedFilePath: string): EntityDiff[] {
+		const diffs: EntityDiff[] = []
+		const oldById = new Map<string, any>()
+		const newById = new Map<string, any>()
+		for (const d of oldDefs) oldById.set(d.id || d.name, d)
+		for (const d of newDefs) newById.set(d.id || d.name, d)
+		// Cross-file symbol IDs from other edits in this turn
+		const crossFileIds = new Set<string>()
+		for (const entry of this.turnEditLog) {
+			if (entry.file !== editedFilePath) {
+				for (const id of entry.oldSymbolIds) crossFileIds.add(id)
+			}
+		}
+		// Classify each old definition
+		for (const [id, oldDef] of oldById) {
+			if (newById.has(id)) {
+				diffs.push({ kind: "MODIFY", id, oldDef, newDef: newById.get(id) })
+			} else {
+				diffs.push({ kind: "DELETE", id, oldDef })
+			}
+		}
+		// Find inserts
+		for (const [id, newDef] of newById) {
+			if (!oldById.has(id)) {
+				diffs.push({ kind: "INSERT", id, newDef })
+			}
+		}
+		return diffs
+	}
+
+	private computeBlastRadius(entityDiffs: EntityDiff[], editedFilePath: string): Array<{ symbolName: string; changeKind: string; callers: Array<{ path: string; line: number }>; isSignatureBreaking: boolean }> {
+		const results: Array<{ symbolName: string; changeKind: string; callers: Array<{ path: string; line: number }>; isSignatureBreaking: boolean }> = []
+		try {
+			const { SymbolIndexService } = require("@/services/symbol-index/SymbolIndexService")
+			const svc = SymbolIndexService.getInstance()
+			for (const diff of entityDiffs) {
+				if (diff.kind === "DELETE" || (diff.kind === "MODIFY" && (diff.oldDef as any)?.signature !== (diff.newDef as any)?.signature)) {
+					const name = diff.id.split(":").pop() || diff.id
+					const refs = svc.getReferences(name) || []
+					const externalCallers = refs
+						.filter((r: any) => r.path !== editedFilePath)
+						.map((r: any) => ({ path: r.path, line: r.startLine }))
+					if (externalCallers.length > 0) {
+						results.push({
+							symbolName: diff.id,
+							changeKind: diff.kind,
+							callers: externalCallers,
+							isSignatureBreaking: diff.kind === "DELETE" || (diff.oldDef as any)?.signature !== (diff.newDef as any)?.signature,
+						})
+					}
+				}
+			}
+		} catch { /* SymbolIndexService unavailable */ }
+		return results
 	}
 
 	private formatStructuredEscalation(toolName: string, args: unknown, errorCode: string, message: string, nextSteps?: string): ToolResponse {

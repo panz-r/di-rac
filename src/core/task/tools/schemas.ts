@@ -173,6 +173,7 @@ export const DiagnosticsScanArgs = z.object({
 export const AttemptCompletionArgs = z.object({
 	result: z.string(),
 	command: z.string().optional(),
+	proof_of_execution: z.string().optional(),
 }).strict();
 
 /** ask_followup_question: ask the user a question */
@@ -274,6 +275,9 @@ export const GenerateExplanationArgs = z.object({
 	to_ref: z.string().optional(),
 }).strict();
 
+/** dirac_undo: undo last turn's file edits */
+export const DiracUndoArgs = z.object({}).strict();
+
 // ---------------------------------------------------------------------------
 // Schema registry (maps DiracDefaultTool enum values → Zod schemas)
 // ---------------------------------------------------------------------------
@@ -308,4 +312,5 @@ export const TOOL_SCHEMAS: Partial<Record<DiracDefaultTool, z.ZodTypeAny>> = {
 	[DiracDefaultTool.LIST_SKILLS]: ListSkillsArgs,
 	[DiracDefaultTool.USE_SUBAGENTS]: UseSubagentsArgs,
 	[DiracDefaultTool.GENERATE_EXPLANATION]: GenerateExplanationArgs,
+	[DiracDefaultTool.DIRAC_UNDO]: DiracUndoArgs,
 };
