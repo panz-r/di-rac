@@ -6,31 +6,33 @@ import * as esbuild from "esbuild"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const rootDir = path.resolve(__dirname, "..")
 
 // Load .env from repo root
-dotenv.config({ path: path.join(rootDir, ".env") })
+dotenv.config({ path: path.join(__dirname, ".env") })
 
 const production = process.argv.includes("--production")
 const watch = process.argv.includes("--watch")
 
+const cliDir = path.join(__dirname, "cli")
+const distDir = path.join(__dirname, "dist")
+
 /**
- * Plugin to resolve path aliases from the parent project
+ * Plugin to resolve path aliases from the project
  */
 const aliasResolverPlugin: esbuild.Plugin = {
 	name: "alias-resolver",
 	setup(build) {
 		const aliases = {
-			"@": path.resolve(rootDir, "src"),
-			"@core": path.resolve(rootDir, "src/core"),
-			"@integrations": path.resolve(rootDir, "src/integrations"),
-			"@services": path.resolve(rootDir, "src/services"),
-			"@shared": path.resolve(rootDir, "src/shared"),
-			"@utils": path.resolve(rootDir, "src/utils"),
-			"@packages": path.resolve(rootDir, "src/packages"),
-			"@hosts": path.resolve(rootDir, "src/hosts"),
-			"@generated": path.resolve(rootDir, "src/generated"),
-			"@api": path.resolve(rootDir, "src/core/api"),
+			"@": path.resolve(__dirname, "src"),
+			"@core": path.resolve(__dirname, "src/core"),
+			"@integrations": path.resolve(__dirname, "src/integrations"),
+			"@services": path.resolve(__dirname, "src/services"),
+			"@shared": path.resolve(__dirname, "src/shared"),
+			"@utils": path.resolve(__dirname, "src/utils"),
+			"@packages": path.resolve(__dirname, "src/packages"),
+			"@hosts": path.resolve(__dirname, "src/hosts"),
+			"@generated": path.resolve(__dirname, "src/generated"),
+			"@api": path.resolve(__dirname, "src/core/api"),
 		}
 
 		// For each alias entry, create a resolver
@@ -93,7 +95,7 @@ const vscodeStubPlugin: esbuild.Plugin = {
 	setup(build) {
 		// Redirect 'vscode' imports to our shim
 		build.onResolve({ filter: /^vscode$/ }, () => {
-			return { path: path.join(__dirname, "src", "vscode-shim.ts") }
+			return { path: path.join(cliDir, "src", "vscode-shim.ts") }
 		})
 	},
 }
@@ -121,7 +123,7 @@ const stubOptionalModulesPlugin: esbuild.Plugin = {
 	name: "stub-optional-modules",
 	setup(build) {
 		build.onResolve({ filter: /^react-devtools-core$/ }, () => {
-			return { path: path.join(__dirname, "src", "stub-devtools.js"), external: false }
+			return { path: path.join(cliDir, "src", "stub-devtools.js"), external: false }
 		})
 	},
 }
@@ -130,19 +132,17 @@ const copyWasmFiles: esbuild.Plugin = {
 	name: "copy-wasm-files",
 	setup(build) {
 		build.onEnd(() => {
-			const destDir = path.join(__dirname, "dist")
-
 			// Ensure dist directory exists
-			if (!fs.existsSync(destDir)) {
-				fs.mkdirSync(destDir, { recursive: true })
+			if (!fs.existsSync(distDir)) {
+				fs.mkdirSync(distDir, { recursive: true })
 			}
 
 			// tree sitter
-			const sourceDir = path.join(rootDir, "node_modules", "web-tree-sitter")
+			const sourceDir = path.join(__dirname, "node_modules", "web-tree-sitter")
 
 			// Copy web-tree-sitter module to dist/node_modules so it can be loaded at runtime
 			// (web-tree-sitter is externalized from the bundle to avoid Emscripten bundling issues)
-			const webTreeSitterTarget = path.join(destDir, "node_modules", "web-tree-sitter")
+			const webTreeSitterTarget = path.join(distDir, "node_modules", "web-tree-sitter")
 			fs.mkdirSync(webTreeSitterTarget, { recursive: true })
 			if (fs.existsSync(path.join(sourceDir, "tree-sitter.js"))) {
 				fs.copyFileSync(path.join(sourceDir, "tree-sitter.js"), path.join(webTreeSitterTarget, "tree-sitter.js"))
@@ -151,10 +151,7 @@ const copyWasmFiles: esbuild.Plugin = {
 				fs.copyFileSync(path.join(sourceDir, "tree-sitter.wasm"), path.join(webTreeSitterTarget, "tree-sitter.wasm"))
 			}
 			if (fs.existsSync(path.join(sourceDir, "tree-sitter-web.d.ts"))) {
-				fs.copyFileSync(
-					path.join(sourceDir, "tree-sitter-web.d.ts"),
-					path.join(webTreeSitterTarget, "tree-sitter-web.d.ts"),
-				)
+				fs.copyFileSync(path.join(sourceDir, "tree-sitter-web.d.ts"), path.join(webTreeSitterTarget, "tree-sitter-web.d.ts"))
 			}
 			// Write a minimal package.json so require('web-tree-sitter') resolves correctly
 			fs.writeFileSync(
@@ -165,17 +162,17 @@ const copyWasmFiles: esbuild.Plugin = {
 			// Also copy tree-sitter.wasm to dist root for the locateFile callback
 			const treeSitterWasm = path.join(sourceDir, "tree-sitter.wasm")
 			if (fs.existsSync(treeSitterWasm)) {
-				fs.copyFileSync(treeSitterWasm, path.join(destDir, "tree-sitter.wasm"))
+				fs.copyFileSync(treeSitterWasm, path.join(distDir, "tree-sitter.wasm"))
 			}
 
 			// Copy sql-wasm.wasm
-			const sqlJsSource = path.join(rootDir, "node_modules", "sql.js", "dist", "sql-wasm.wasm")
+			const sqlJsSource = path.join(__dirname, "node_modules", "sql.js", "dist", "sql-wasm.wasm")
 			if (fs.existsSync(sqlJsSource)) {
-				fs.copyFileSync(sqlJsSource, path.join(destDir, "sql-wasm.wasm"))
+				fs.copyFileSync(sqlJsSource, path.join(distDir, "sql-wasm.wasm"))
 			}
 
 			// Copy language-specific WASM files
-			const languageWasmDir = path.join(rootDir, "node_modules", "tree-sitter-wasms", "out")
+			const languageWasmDir = path.join(__dirname, "node_modules", "tree-sitter-wasms", "out")
 			const languages = [
 				"typescript",
 				"tsx",
@@ -195,8 +192,8 @@ const copyWasmFiles: esbuild.Plugin = {
 
 			if (fs.existsSync(languageWasmDir)) {
 				// Copy .hash_anchors
-				const dictionarySource = path.join(rootDir, "src", "utils", ".hash_anchors")
-				const dictionaryTarget = path.join(destDir, ".hash_anchors")
+				const dictionarySource = path.join(__dirname, "src", "utils", ".hash_anchors")
+				const dictionaryTarget = path.join(distDir, ".hash_anchors")
 				if (fs.existsSync(dictionarySource)) {
 					fs.copyFileSync(dictionarySource, dictionaryTarget)
 				}
@@ -205,7 +202,7 @@ const copyWasmFiles: esbuild.Plugin = {
 					const filename = `tree-sitter-${lang}.wasm`
 					const sourcePath = path.join(languageWasmDir, filename)
 					if (fs.existsSync(sourcePath)) {
-						fs.copyFileSync(sourcePath, path.join(destDir, filename))
+						fs.copyFileSync(sourcePath, path.join(distDir, filename))
 					}
 				})
 			}
@@ -251,7 +248,7 @@ const sharedOptions: Partial<esbuild.BuildOptions> = {
 	sourcemap: !production,
 	logLevel: "silent",
 	define: buildEnvVars,
-	tsconfig: path.join(__dirname, "tsconfig.json"),
+	tsconfig: "./tsconfig.json",
 	plugins: [copyWasmFiles, aliasResolverPlugin, vscodeStubPlugin, stubOptionalModulesPlugin, esbuildProblemMatcherPlugin],
 	format: "esm",
 	sourcesContent: false,
@@ -278,8 +275,8 @@ const sharedOptions: Partial<esbuild.BuildOptions> = {
 // CLI executable configuration
 const cliConfig: esbuild.BuildOptions = {
 	...sharedOptions,
-	entryPoints: [path.join(__dirname, "src", "index.ts")],
-	outfile: path.join(__dirname, "dist", "cli.mjs"),
+	entryPoints: [path.join(cliDir, "src", "index.ts")],
+	outfile: path.join(distDir, "cli.mjs"),
 	banner: {
 		js: `#!/usr/bin/env node
 // Suppress all Node.js warnings (deprecation, experimental, etc.)
@@ -307,7 +304,7 @@ async function main() {
 		await cliCtx.dispose()
 
 		// Make the CLI output executable
-		const cliOutfile = path.join(__dirname, "dist", "cli.mjs")
+		const cliOutfile = path.join(distDir, "cli.mjs")
 		if (fs.existsSync(cliOutfile)) {
 			fs.chmodSync(cliOutfile, "755")
 		}

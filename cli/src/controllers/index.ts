@@ -13,7 +13,7 @@ import type { HostBridgeClientProvider, StreamingCallbacks } from "@hosts/host-p
 import * as proto from "@shared/proto/index"
 import { StateManager } from "@/core/storage/StateManager"
 import { DiracClient } from "@/shared/dirac"
-import { version as CLI_VERSION } from "../../package.json"
+import { version as CLI_VERSION } from "../../../package.json"
 import { printError, printInfo, printWarning } from "../utils/display"
 
 /**

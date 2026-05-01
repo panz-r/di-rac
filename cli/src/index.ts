@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process"
 import { exit } from "node:process"
 import { Command } from "commander"
-import { version as CLI_VERSION } from "../package.json"
+import { version as CLI_VERSION } from "../../package.json"
 import { suppressConsoleUnlessVerbose } from "./utils/console"
 
 // CLI-only behavior: suppress console output unless verbose mode is enabled.
