@@ -63,6 +63,10 @@ fn walk_collect_classes(
     let is_class = match language {
         Language::C => matches!(kind, "struct_specifier" | "union_specifier"),
         Language::Cpp => matches!(kind, "class_specifier" | "struct_specifier" | "union_specifier"),
+        Language::Java => matches!(kind, "class_declaration" | "interface_declaration" | "enum_declaration"),
+        Language::CSharp => matches!(kind, "class_declaration" | "interface_declaration" | "struct_declaration" | "enum_declaration"),
+        Language::Ruby => matches!(kind, "class" | "module"),
+        Language::Php => matches!(kind, "class_declaration" | "interface_declaration" | "trait_declaration" | "enum_declaration"),
         _ => false,
     };
 
@@ -87,7 +91,15 @@ fn walk_collect_functions(
     class_ranges: &[(usize, usize, String)],
     language: Language,
 ) {
-    if node.kind() == "function_definition" {
+    let is_func = match language {
+        Language::C | Language::Cpp => node.kind() == "function_definition",
+        Language::Java => matches!(node.kind(), "method_declaration" | "constructor_declaration"),
+        Language::CSharp => matches!(node.kind(), "method_declaration" | "constructor_declaration" | "local_function_statement"),
+        Language::Ruby => matches!(node.kind(), "method" | "singleton_method"),
+        Language::Php => matches!(node.kind(), "function_definition" | "method_declaration"),
+        _ => node.kind() == "function_definition",
+    };
+    if is_func {
         if let Some(name) = get_c_function_name(node, source) {
             let class_name = find_parent_class(node, class_ranges);
             let handle = if let Some(ref cn) = class_name {
@@ -130,6 +142,10 @@ fn walk_collect_classes_as_symbols(
     let is_class = match language {
         Language::C => matches!(kind, "struct_specifier" | "union_specifier"),
         Language::Cpp => matches!(kind, "class_specifier" | "struct_specifier" | "union_specifier"),
+        Language::Java => matches!(kind, "class_declaration" | "interface_declaration" | "enum_declaration"),
+        Language::CSharp => matches!(kind, "class_declaration" | "interface_declaration" | "struct_declaration" | "enum_declaration"),
+        Language::Ruby => matches!(kind, "class" | "module"),
+        Language::Php => matches!(kind, "class_declaration" | "interface_declaration" | "trait_declaration" | "enum_declaration"),
         _ => false,
     };
 
@@ -196,6 +212,24 @@ fn walk_collect_includes(node: Node, source: &str, imports: &mut Vec<Import>) {
 
 /// Get the text of the first child node matching one of the given kinds.
 fn get_c_function_name<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
+    // For Java/C#/Ruby/PHP, use the "name" field which is standard.
+    if let Some(name) = child_text_by_field(node, "name", source) {
+        return Some(name);
+    }
+    // For Ruby, sometimes the method name is in a "method" field
+    if let Some(name) = child_text_by_field(node, "method", source) {
+        return Some(name);
+    }
+    // Fallback: look for identifier/constant child
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            let ck = child.kind();
+            if ck == "identifier" || ck == "constant" || ck == "name" {
+                return child.utf8_text(source.as_bytes()).ok();
+            }
+        }
+    }
+    // C-specific logic below
     // Direct function_declarator child
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
@@ -271,7 +305,7 @@ pub fn extract_symbols(
 ) -> Vec<Symbol> {
     // C and C++ use procedural extraction because tree-sitter queries
     // are not reliably supported for these grammars.
-    if matches!(language, Language::C | Language::Cpp) {
+    if matches!(language, Language::C | Language::Cpp | Language::Java | Language::CSharp | Language::Ruby | Language::Php) {
         return extract_symbols_procedural(source, tree, language);
     }
 
@@ -441,7 +475,7 @@ pub fn extract_imports(
     language: Language,
 ) -> Vec<Import> {
     // C and C++ use procedural extraction
-    if matches!(language, Language::C | Language::Cpp) {
+    if matches!(language, Language::C | Language::Cpp | Language::Java | Language::CSharp | Language::Ruby | Language::Php) {
         return extract_imports_procedural(source, tree);
     }
 
@@ -549,7 +583,7 @@ fn node_signature(node: Node, source: &str, language: Language) -> String {
                 full_text.lines().next().unwrap_or("").to_string()
             }
         }
-        Language::TypeScript | Language::JavaScript | Language::C | Language::Cpp | Language::Rust | Language::Go | Language::Bash => {
+        Language::TypeScript | Language::JavaScript | Language::C | Language::Cpp | Language::Rust | Language::Go | Language::Bash | Language::Java | Language::CSharp | Language::Ruby | Language::Php => {
             let full_text = &source[start..end];
             if let Some(brace_pos) = full_text.find('{') {
                 full_text[..brace_pos].trim().to_string()

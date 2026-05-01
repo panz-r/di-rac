@@ -16,6 +16,12 @@ pub enum Language {
     Rust,
     Go,
     Bash,
+    Java,
+    #[serde(rename = "csharp")]
+    CSharp,
+    Ruby,
+    #[serde(rename = "php")]
+    Php,
 }
 
 impl Language {
@@ -29,6 +35,10 @@ impl Language {
             "rs" => Some(Language::Rust),
             "go" => Some(Language::Go),
             "sh" | "bash" | "zsh" | "bats" => Some(Language::Bash),
+            "java" => Some(Language::Java),
+            "cs" | "csx" => Some(Language::CSharp),
+            "rb" | "rake" | "gemspec" => Some(Language::Ruby),
+            "php" | "phtml" | "php3" | "php4" | "php5" | "phps" | "phpt" => Some(Language::Php),
             _ => None,
         }
     }
@@ -49,6 +59,10 @@ impl Language {
             "rust" | "rs" => Some(Language::Rust),
             "go" | "golang" => Some(Language::Go),
             "bash" | "sh" | "shell" => Some(Language::Bash),
+            "java" => Some(Language::Java),
+            "csharp" | "c#" | "cs" => Some(Language::CSharp),
+            "ruby" | "rb" => Some(Language::Ruby),
+            "php" => Some(Language::Php),
             _ => None,
         }
     }
@@ -62,6 +76,15 @@ impl Language {
         parser
     }
 
+    /// Try to create a parser, returning an error on ABI mismatch
+    /// instead of panicking.  Useful for graceful degradation.
+    pub fn try_parser(&self) -> Result<Parser, tree_sitter::LanguageError> {
+        let mut parser = Parser::new();
+        let lang = self.tree_sitter_language();
+        parser.set_language(&lang)?;
+        Ok(parser)
+    }
+
     pub fn tree_sitter_language(&self) -> tree_sitter::Language {
         match self {
             Language::Python => tree_sitter_python::LANGUAGE.into(),
@@ -73,6 +96,10 @@ impl Language {
             Language::Rust => tree_sitter_rust::LANGUAGE.into(),
             Language::Go => tree_sitter_go::LANGUAGE.into(),
             Language::Bash => tree_sitter_bash::LANGUAGE.into(),
+            Language::Java => tree_sitter_java::LANGUAGE.into(),
+            Language::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Language::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+            Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         }
     }
 
@@ -86,6 +113,10 @@ impl Language {
             Language::Rust => "rust",
             Language::Go => "go",
             Language::Bash => "bash",
+            Language::Java => "java",
+            Language::CSharp => "csharp",
+            Language::Ruby => "ruby",
+            Language::Php => "php",
         }
     }
 
@@ -99,6 +130,10 @@ impl Language {
             Language::Rust,
             Language::Go,
             Language::Bash,
+            Language::Java,
+            Language::CSharp,
+            Language::Ruby,
+            Language::Php,
         ]
     }
 }

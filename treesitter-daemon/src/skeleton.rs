@@ -70,6 +70,36 @@ fn is_definition_node(kind: &str, language: Language) -> bool {
                 "function_definition" | "class_specifier" | "struct_specifier"
             )
         }
+        Language::Java => {
+            matches!(
+                kind,
+                "method_declaration" | "constructor_declaration"
+                    | "class_declaration" | "interface_declaration"
+                    | "enum_declaration"
+            )
+        }
+        Language::CSharp => {
+            matches!(
+                kind,
+                "method_declaration" | "constructor_declaration"
+                    | "class_declaration" | "interface_declaration"
+                    | "struct_declaration" | "enum_declaration"
+            )
+        }
+        Language::Ruby => {
+            matches!(
+                kind,
+                "method" | "singleton_method" | "class" | "module"
+            )
+        }
+        Language::Php => {
+            matches!(
+                kind,
+                "function_definition" | "method_declaration"
+                    | "class_declaration" | "interface_declaration"
+                    | "trait_declaration" | "enum_declaration"
+            )
+        }
         Language::Rust => {
             matches!(
                 kind,

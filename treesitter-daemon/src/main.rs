@@ -152,7 +152,13 @@ fn main() {
 /// Pre-load and discard a tree for each grammar to warm the parser.
 fn preload_grammars() {
     for lang in Language::all() {
-        let mut parser = lang.parser();
+        let mut parser = match lang.try_parser() {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("dirac-analyzer: warning: failed to load grammar for {}", lang.as_str());
+                continue;
+            }
+        };
         let dummy = match lang {
             Language::Python => "x = 1",
             Language::TypeScript | Language::JavaScript => "let x = 1;",
@@ -161,6 +167,10 @@ fn preload_grammars() {
             Language::Rust => "let x = 1;",
             Language::Go => "var x = 1",
             Language::Bash => "x=1",
+            Language::Java => "class X { int x = 1; }",
+            Language::CSharp => "class X { int x = 1; }",
+            Language::Ruby => "def x; 1; end",
+            Language::Php => "<?php $x = 1;",
         };
         // Parse-and-discard to ensure grammar is fully loaded into memory
         let _ = parser.parse(dummy, None);

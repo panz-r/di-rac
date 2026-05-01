@@ -5,6 +5,10 @@ pub mod go;
 pub mod python;
 pub mod rust;
 pub mod typescript;
+pub mod java;
+pub mod csharp;
+pub mod ruby;
+pub mod php;
 
 use crate::language::Language;
 
@@ -42,6 +46,22 @@ pub fn get_queries(language: Language) -> LanguageQueries {
         Language::Bash => LanguageQueries {
             symbol_query: bash::SYMBOL_QUERY,
             import_query: bash::IMPORT_QUERY,
+        },
+        Language::Java => LanguageQueries {
+            symbol_query: java::SYMBOL_QUERY,
+            import_query: java::IMPORT_QUERY,
+        },
+        Language::CSharp => LanguageQueries {
+            symbol_query: csharp::SYMBOL_QUERY,
+            import_query: csharp::IMPORT_QUERY,
+        },
+        Language::Ruby => LanguageQueries {
+            symbol_query: ruby::SYMBOL_QUERY,
+            import_query: ruby::IMPORT_QUERY,
+        },
+        Language::Php => LanguageQueries {
+            symbol_query: php::SYMBOL_QUERY,
+            import_query: php::IMPORT_QUERY,
         },
     }
 }
