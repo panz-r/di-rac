@@ -3,7 +3,7 @@ import { getTotalTasksSize as calculateTotalTasksSize } from "../../../utils/sto
 import { Controller } from ".."
 
 /**
- * Gets the total size of all tasks including task data and checkpoints
+ * Gets the total size of all tasks
  * @param controller The controller instance
  * @param _request The empty request
  * @returns The total size as an Int64 value

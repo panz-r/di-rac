@@ -20,7 +20,7 @@ import type { FileMetadataEntry } from "./ContextTrackerTypes"
 This class is responsible for tracking file operations.
 If the full contents of a file are passed to Dirac via a tool, mention, or edit, the file is marked as active.
 If a file is modified outside of Dirac, we detect and track this change to prevent stale context.
-This is used when restoring a task (non-git "checkpoint" restore), and mid-task.
+This is used when resuming a task and mid-task.
 */
 export class FileContextTracker {
 	private controller: Controller
@@ -239,7 +239,7 @@ export class FileContextTracker {
 
 	/**
 	 * Detects files that were edited by Dirac or users after a specific message timestamp
-	 * This is used when restoring checkpoints to warn about potential file content mismatches
+	 * This is used when resuming a task to warn about potential file content mismatches
 	 */
 	async detectFilesEditedAfterMessage(messageTs: number, deletedMessages: DiracMessage[]): Promise<string[]> {
 		const editedFiles: string[] = []

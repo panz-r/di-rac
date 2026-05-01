@@ -5,7 +5,6 @@ import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import {
 	condenseToolResponse,
-	explainChangesToolResponse,
 	newRuleToolResponse,
 	newTaskToolResponse,
 	reportBugToolResponse,
@@ -37,7 +36,7 @@ export async function parseSlashCommands(
 	availableSkills: SkillMetadata[] = [],
 	remoteWorkflowToggles: Record<string, boolean> = {},
 ): Promise<{ processedText: string; needsDiracrulesFileCheck: boolean }> {
-	const SUPPORTED_DEFAULT_COMMANDS = ["newtask", "smol", "compact", "newrule", "reportbug", "explain-changes"]
+	const SUPPORTED_DEFAULT_COMMANDS = ["newtask", "smol", "compact", "newrule", "reportbug"]
 
 	const commandReplacements: Record<string, string> = {
 		newtask: newTaskToolResponse(),
@@ -45,7 +44,6 @@ export async function parseSlashCommands(
 		compact: condenseToolResponse(),
 		newrule: newRuleToolResponse(),
 		reportbug: reportBugToolResponse(),
-		"explain-changes": explainChangesToolResponse(),
 	}
 
 	// Regex patterns to extract content from different XML tags

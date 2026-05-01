@@ -51,7 +51,6 @@ export class TaskState {
 	consecutiveMistakeCount = 0
 	doubleCheckCompletionPending = false
 	didAutomaticallyRetryFailedApiRequest = false
-	checkpointManagerErrorMessage?: string
 
 	// Retry tracking for auto-retry feature
 	autoRetryAttempts = 0
@@ -74,7 +73,6 @@ export class TaskState {
 
 	lastAutoCompactTriggerIndex?: number
 	taskLockAcquired = false
-	initialCheckpointCommitPromise?: Promise<string | undefined>
 	availableSkills: SkillMetadata[] = []
 	discoveredSkillsCache?: SkillMetadata[]
 

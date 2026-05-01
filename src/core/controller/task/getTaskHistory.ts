@@ -36,16 +36,9 @@ export async function getTaskHistory(controller: Controller, request: GetTaskHis
 			if (currentWorkspaceOnly) {
 				let isInWorkspace = false
 
-				// First check the cwdOnTaskInitialization property - Only present on tasks from this change forward
+				// First check the cwdOnTaskInitialization property
 				if (item.cwdOnTaskInitialization) {
 					if (arePathsEqual(item.cwdOnTaskInitialization, workspacePath)) {
-						isInWorkspace = true
-					}
-				}
-
-				// For tasks without cwdOnTaskInitialization, check the older shadowGitConfigWorkTree property
-				if (!isInWorkspace && item.shadowGitConfigWorkTree) {
-					if (arePathsEqual(item.shadowGitConfigWorkTree, workspacePath)) {
 						isInWorkspace = true
 					}
 				}

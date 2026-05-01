@@ -10,7 +10,6 @@ import { EditFileToolHandler } from "./handlers/EditFileToolHandler"
 import { DiagnosticsScanToolHandler } from "./handlers/DiagnosticsScanToolHandler"
 import { ExecuteCommandToolHandler } from "./handlers/ExecuteCommandToolHandler"
 import { FindSymbolReferencesToolHandler } from "./handlers/FindSymbolReferencesToolHandler"
-import { GenerateExplanationToolHandler } from "./handlers/GenerateExplanationToolHandler"
 import { GetFileSkeletonToolHandler } from "./handlers/GetFileSkeletonToolHandler"
 import { GetFunctionToolHandler } from "./handlers/GetFunctionToolHandler"
 import { ListFilesToolHandler } from "./handlers/ListFilesToolHandler"
@@ -115,7 +114,6 @@ export class ToolExecutorCoordinator {
 		[DiracDefaultTool.REPORT_BUG]: (_v: ToolValidator) => new ReportBugHandler(),
 		[DiracDefaultTool.NEW_RULE]: (v: ToolValidator) =>
 			new SharedToolHandler(DiracDefaultTool.NEW_RULE, new WriteToFileToolHandler(v)),
-		[DiracDefaultTool.GENERATE_EXPLANATION]: (_v: ToolValidator) => new GenerateExplanationToolHandler(),
 		[DiracDefaultTool.USE_SKILL]: (_v: ToolValidator) => new UseSkillToolHandler(),
 		[DiracDefaultTool.LIST_SKILLS]: (_v: ToolValidator) => new ListSkillsToolHandler(),
 		[DiracDefaultTool.USE_SUBAGENTS]: (_v: ToolValidator) => new UseSubagentsToolHandler(),

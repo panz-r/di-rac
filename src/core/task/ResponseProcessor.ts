@@ -276,12 +276,6 @@ export class ResponseProcessor {
 					break
 				}
 				case "tool_use":
-					if (this.dependencies.taskState.initialCheckpointCommitPromise) {
-						if (!READ_ONLY_TOOLS.includes(block.name as any)) {
-							await this.dependencies.taskState.initialCheckpointCommitPromise
-							this.dependencies.taskState.initialCheckpointCommitPromise = undefined
-						}
-					}
 					await this.dependencies.toolExecutor.executeTool(block)
 					if (block.call_id) {
 						Session.get().updateToolCall(block.call_id, block.name)

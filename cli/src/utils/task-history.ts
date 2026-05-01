@@ -17,8 +17,7 @@ export function findMostRecentTaskForWorkspace(
 				}
 
 				return Boolean(
-					(item.cwdOnTaskInitialization && arePathsEqual(item.cwdOnTaskInitialization, workspacePath)) ||
-						(item.shadowGitConfigWorkTree && arePathsEqual(item.shadowGitConfigWorkTree, workspacePath)),
+					item.cwdOnTaskInitialization && arePathsEqual(item.cwdOnTaskInitialization, workspacePath),
 				)
 			})
 			.sort((a, b) => b.ts - a.ts)

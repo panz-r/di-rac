@@ -8,8 +8,6 @@ import { getContextWindowInfo } from "./context-window-utils"
 
 export class ContextManager {
 	// mapping from the apiMessages outer index to the inner message index to a list of actual changes, ordered by timestamp
-	// timestamp is required in order to support full checkpointing, where the changes we apply need to be able to be undone when
-	// moving to an earlier conversation history checkpoint - this ordering intuitively allows for binary search on truncation
 	// there is also a number stored for each (EditType) which defines which message type it is, for custom handling
 
 

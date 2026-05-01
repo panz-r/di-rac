@@ -36,8 +36,6 @@ import { ensureRulesDirectoryExists, ensureTaskDirectoryExists } from "@core/sto
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { HostProvider } from "@hosts/host-provider"
-import { buildCheckpointManager, shouldUseMultiRoot } from "@integrations/checkpoints/factory"
-import { ICheckpointManager } from "@integrations/checkpoints/types"
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import { FileEditProvider } from "@integrations/editor/FileEditProvider"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
@@ -170,8 +168,6 @@ export class Task {
 	browserSession: BrowserSession
 	contextManager: ContextManager
 	private diffViewProvider: DiffViewProvider
-	public checkpointManager?: ICheckpointManager
-	private initialCheckpointCommitPromise?: Promise<string | undefined>
 	private diracIgnoreController: DiracIgnoreController
 	private commandPermissionController: CommandPermissionController
 	private toolExecutor: ToolExecutor
@@ -297,9 +293,6 @@ export class Task {
 			this.ulid = historyItem.ulid ?? ulid()
 			this.taskIsFavorited = historyItem.isFavorited
 			this.taskState.conversationHistoryDeletedRange = historyItem.conversationHistoryDeletedRange
-			if (historyItem.checkpointManagerErrorMessage) {
-				this.taskState.checkpointManagerErrorMessage = historyItem.checkpointManagerErrorMessage
-			}
 		} else if (task || images || files) {
 			this.ulid = ulid()
 		} else {
@@ -319,61 +312,6 @@ export class Task {
 		this.fileContextTracker = new FileContextTracker(controller, this.taskId)
 		this.modelContextTracker = new ModelContextTracker(this.taskId)
 		this.environmentContextTracker = new EnvironmentContextTracker(this.taskId)
-
-
-		// Check for multiroot workspace and warn about checkpoints
-		const isMultiRootWorkspace = this.workspaceManager && this.workspaceManager.getRoots().length > 1
-		const checkpointsEnabled = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
-
-		if (isMultiRootWorkspace && checkpointsEnabled) {
-			// Set checkpoint manager error message to display warning in TaskHeader
-			this.taskState.checkpointManagerErrorMessage = "Checkpoints are not currently supported in multi-root workspaces."
-		}
-
-		// Initialize checkpoint manager based on workspace configuration
-		if (!isMultiRootWorkspace) {
-			try {
-				this.checkpointManager = buildCheckpointManager({
-					taskId: this.taskId,
-					messageStateHandler: this.messageStateHandler,
-					fileContextTracker: this.fileContextTracker,
-					diffViewProvider: this.diffViewProvider,
-					taskState: this.taskState,
-					workspaceManager: this.workspaceManager,
-					updateTaskHistory: this.updateTaskHistory,
-					say: this.say.bind(this),
-					cancelTask: this.cancelTask,
-					postStateToWebview: this.postStateToWebview,
-					initialConversationHistoryDeletedRange: this.taskState.conversationHistoryDeletedRange,
-					initialCheckpointManagerErrorMessage: this.taskState.checkpointManagerErrorMessage,
-					stateManager: this.stateManager,
-				})
-
-				// If multi-root, kick off non-blocking initialization
-				// Unreachable for now, leaving in for future multi-root checkpoint support
-				if (
-					shouldUseMultiRoot({
-						workspaceManager: this.workspaceManager,
-						enableCheckpoints: this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting"),
-						stateManager: this.stateManager,
-					})
-				) {
-					this.checkpointManager.initialize?.().catch((error: Error) => {
-						Logger.error("Failed to initialize multi-root checkpoint manager:", error)
-						this.taskState.checkpointManagerErrorMessage = error?.message || String(error)
-					})
-				}
-			} catch (error) {
-				Logger.error("Failed to initialize checkpoint manager:", error)
-				if (this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")) {
-					const errorMessage = error instanceof Error ? error.message : "Unknown error"
-					HostProvider.window.showMessage({
-						type: ShowMessageType.ERROR,
-						message: `Failed to initialize checkpoint manager: ${errorMessage}`,
-					})
-				}
-			}
-		}
 
 		// Prepare effective API configuration
 		const apiConfiguration = this.stateManager.getApiConfiguration()
@@ -496,12 +434,10 @@ export class Task {
 			isMultiRootEnabled(this.stateManager),
 			this.say.bind(this),
 			this.ask.bind(this),
-			this.saveCheckpointCallback.bind(this),
 			this.sayAndCreateMissingParamError.bind(this),
 			this.removeLastPartialMessageIfExistsWithType.bind(this),
 			this.executeCommandTool.bind(this),
 			this.cancelBackgroundCommand.bind(this),
-			() => this.checkpointManager?.doesLatestTaskCompletionHaveNewChanges() ?? Promise.resolve(false),
 			this.switchToActModeCallback.bind(this),
 			this.cancelTask,
 			this.postStateToWebview.bind(this),
@@ -581,7 +517,6 @@ export class Task {
 			ask: this.ask.bind(this),
 			postStateToWebview: this.postStateToWebview,
 			cancelTask: this.cancelTask,
-			checkpointManager: this.checkpointManager,
 			diracIgnoreController: this.diracIgnoreController,
 			terminalManager: this.terminalManager,
 			urlContentFetcher: this.urlContentFetcher,
@@ -690,10 +625,6 @@ export class Task {
 
 	async removeLastPartialMessageIfExistsWithType(type: "ask" | "say", askOrSay: DiracAsk | DiracSay) {
 		return this.taskMessenger.removeLastPartialMessageIfExistsWithType(type, askOrSay)
-	}
-
-	private async saveCheckpointCallback(isAttemptCompletionMessage?: boolean, completionMessageTs?: number): Promise<void> {
-		return this.checkpointManager?.saveCheckpoint(isAttemptCompletionMessage, completionMessageTs) ?? Promise.resolve()
 	}
 
 	/**
@@ -1309,7 +1240,6 @@ ${notice}`
 		const diracMessagesSnapshot = this.messageStateHandler.getDiracMessages()
 		const previousApiReqIndex = findLastIndex(diracMessagesSnapshot, (m) => m.say === "api_req_started")
 		const isFirstRequest = diracMessagesSnapshot.filter((m) => m.say === "api_req_started").length === 0
-		await this.initializeCheckpoints(isFirstRequest)
 
 		const useCompactPrompt = customPrompt === "compact" && isLocalModel(this.getCurrentProviderInfo())
 		const shouldCompact = await this.determineContextCompaction(previousApiReqIndex)
@@ -1744,7 +1674,6 @@ ${notice}`
 			let didEndLoop = false
 			if (assistantHasContent) {
 				await pWaitFor(() => this.taskState.userMessageContentReady)
-				await this.checkpointManager?.saveCheckpoint()
 
 				const didToolUse = this.taskState.assistantMessageContent.some((block) => block.type === "tool_use")
 				const hitTokenLimit = stopReason === "MAX_TOKENS" || stopReason === "max_tokens" || stopReason === "length"
@@ -1860,10 +1789,6 @@ ${notice}`
 		this.taskState.consecutiveMistakeCount = 0
 		this.taskState.autoRetryAttempts = 0 // need to reset this if the user chooses to manually retry after the mistake limit is reached
 		return { didEndLoop: false, userContent }
-	}
-
-	private async initializeCheckpoints(isFirstRequest: boolean): Promise<void> {
-		return this.lifecycleManager.initializeCheckpoints(isFirstRequest)
 	}
 
 	private async determineContextCompaction(previousApiReqIndex: number): Promise<boolean> {

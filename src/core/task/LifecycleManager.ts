@@ -5,7 +5,6 @@ import { formatResponse } from "@core/prompts/responses"
 import { generateOutlinesForChangedFiles } from "./resume-outline-refresh"
 import { detectFileChanges, ensureTaskDirectoryExists, getSavedApiConversationHistory, getSavedDiracMessages } from "@core/storage/disk"
 import { HostProvider } from "@hosts/host-provider"
-import { ensureCheckpointInitialized } from "@integrations/checkpoints/initializer"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { findLastIndex } from "@shared/array"
 import { DiracApiReqInfo, DiracAsk } from "@shared/ExtensionMessage"
@@ -19,59 +18,6 @@ import { printSessionSummary } from "./utils"
 
 export class LifecycleManager {
 	constructor(private dependencies: LifecycleManagerDependencies) {}
-
-	public async initializeCheckpoints(isFirstRequest: boolean): Promise<void> {
-		if (
-			!isFirstRequest ||
-			!this.dependencies.stateManager.getGlobalSettingsKey("enableCheckpointsSetting") ||
-			!this.dependencies.checkpointManager ||
-			this.dependencies.taskState.checkpointManagerErrorMessage
-		) {
-			return
-		}
-
-		try {
-			await ensureCheckpointInitialized({ checkpointManager: this.dependencies.checkpointManager })
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : "Unknown error"
-			Logger.error("Failed to initialize checkpoint manager:", errorMessage)
-			this.dependencies.taskState.checkpointManagerErrorMessage = errorMessage // will be displayed right away since we saveDiracMessages next which posts state to webview
-			HostProvider.window.showMessage({
-				type: ShowMessageType.ERROR,
-				message: `Checkpoint initialization timed out: ${errorMessage}`,
-			})
-		}
-
-		// Now, if checkpoints are enabled AND tracker was successfully initialized,
-		// then say "checkpoint_created" and perform the commit.
-		if (!this.dependencies.taskState.checkpointManagerErrorMessage) {
-			await this.dependencies.say("checkpoint_created") // Now this is conditional
-			const lastCheckpointMessageIndex = findLastIndex(
-				this.dependencies.messageStateHandler.getDiracMessages(),
-				(m) => m.say === "checkpoint_created",
-			)
-			if (lastCheckpointMessageIndex !== -1) {
-				const commitPromise = this.dependencies.checkpointManager!.commit()
-				// Store initial commit promise in TaskState so unsafe tools can await it
-				this.dependencies.taskState.initialCheckpointCommitPromise = commitPromise
-
-				commitPromise
-					?.then(async (commitHash) => {
-						if (commitHash) {
-							await this.dependencies.messageStateHandler.updateDiracMessage(lastCheckpointMessageIndex, {
-								lastCheckpointHash: commitHash,
-							})
-						}
-					})
-					.catch((error) => {
-						Logger.error(
-							`[TaskCheckpointManager] Failed to create checkpoint commit for task ${this.dependencies.taskId}:`,
-							error,
-						)
-					})
-			}
-		}
-	}
 
 	public async startTask(task?: string, images?: string[], files?: string[]): Promise<void> {
 		try {
@@ -300,7 +246,6 @@ export class LifecycleManager {
 		let responseFiles: string[] | undefined
 		if (response === "messageResponse" || text || (images && images.length > 0) || (files && files.length > 0)) {
 			await this.dependencies.say("user_feedback", text, images, files)
-			await this.dependencies.checkpointManager?.saveCheckpoint()
 			responseText = text
 			responseImages = images
 			responseFiles = files

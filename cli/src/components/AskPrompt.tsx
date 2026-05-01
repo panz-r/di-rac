@@ -413,12 +413,8 @@ function getCliMessagePrefixIcon(message: DiracMessage): string {
 		case "api_req_started":
 		case "api_req_finished":
 			return "🔄"
-		case "checkpoint_created":
-			return "💾"
 		case "info":
 			return "ℹ️"
-		case "generate_explanation":
-			return "📝"
 		default:
 			return "  "
 	}

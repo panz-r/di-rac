@@ -115,7 +115,6 @@ export class ToolExecutor {
 			files?: string[]
 			askTs?: number
 		}>,
-		private saveCheckpoint: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>,
 		private sayAndCreateMissingParamError: (toolName: DiracDefaultTool, paramName: string, relPath?: string) => Promise<any>,
 		private removeLastPartialMessageIfExistsWithType: (type: "ask" | "say", askOrSay: DiracAsk | DiracSay) => Promise<void>,
 		private executeCommandTool: (
@@ -124,7 +123,6 @@ export class ToolExecutor {
 			options?: CommandExecutionOptions,
 		) => Promise<[boolean, any]>,
 		private cancelRunningCommandTool: () => Promise<boolean>,
-		private doesLatestTaskCompletionHaveNewChanges: () => Promise<boolean>,
 		private switchToActMode: () => Promise<boolean>,
 		private cancelTask: () => Promise<void>,
 		private postStateToWebview: () => Promise<void>,
@@ -184,14 +182,12 @@ export class ToolExecutor {
 			callbacks: {
 				say: this.say,
 				ask: this.ask,
-				saveCheckpoint: this.saveCheckpoint,
 				postStateToWebview: this.postStateToWebview.bind(this),
 				reinitExistingTaskFromId: this.noopReinit,
 				cancelTask: this.cancelTask,
 				updateTaskHistory: this.noopUpdateHistory,
 				executeCommandTool: this.executeCommandTool,
 				cancelRunningCommandTool: this.cancelRunningCommandTool,
-				doesLatestTaskCompletionHaveNewChanges: this.doesLatestTaskCompletionHaveNewChanges,
 				getDiracMessages: () => this.messageStateHandler.getDiracMessages(),
 				updateDiracMessage: async (index: number, updates: Partial<DiracMessage>) => {
 					await this.messageStateHandler.updateDiracMessage(index, updates)
@@ -330,7 +326,7 @@ export class ToolExecutor {
 	 * - Validating tool execution is allowed (not rejected, not already used, etc.)
 	 * - Enforcing plan mode restrictions on file modification tools
 	 * - Delegating to partial or complete block handlers
-	 * - Error handling and checkpointing
+	 * - Error handling
 	 *
 	 * @param block The tool use block to execute
 	 * @returns true if the tool was handled (even if execution failed), false if not registered

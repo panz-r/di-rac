@@ -134,8 +134,6 @@ async function cleanup() {
 		"src/core/controller/account/methods.ts",
 		"src/core/controller/browser/index.ts",
 		"src/core/controller/browser/methods.ts",
-		"src/core/controller/checkpoints/index.ts",
-		"src/core/controller/checkpoints/methods.ts",
 		"src/core/controller/file/index.ts",
 		"src/core/controller/file/methods.ts",
 		"src/core/controller/models/index.ts",

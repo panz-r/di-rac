@@ -229,7 +229,6 @@ export class ApiConversationManager {
 				this.dependencies.ulid,
 				this.dependencies.taskId,
 				durationMs,
-				this.dependencies.stateManager.getGlobalSettingsKey("enableCheckpointsSetting"),
 			)
 		}
 

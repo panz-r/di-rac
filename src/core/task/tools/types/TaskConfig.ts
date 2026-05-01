@@ -104,8 +104,6 @@ export interface TaskCallbacks {
 		files?: string[]
 	}>
 
-	saveCheckpoint: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
-
 	sayAndCreateMissingParamError: (toolName: DiracDefaultTool, paramName: string, relPath?: string) => Promise<any>
 
 	removeLastPartialMessageIfExistsWithType: (type: "ask" | "say", askOrSay: DiracAsk | DiracSay) => Promise<void>
@@ -116,8 +114,6 @@ export interface TaskCallbacks {
 		options?: CommandExecutionOptions,
 	) => Promise<[boolean, any]>
 	cancelRunningCommandTool?: () => Promise<boolean>
-
-	doesLatestTaskCompletionHaveNewChanges: () => Promise<boolean>
 
 
 	shouldAutoApproveTool: (toolName: DiracDefaultTool) => boolean | [boolean, boolean]

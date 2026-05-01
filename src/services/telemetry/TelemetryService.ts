@@ -16,7 +16,7 @@ import { TelemetryProviderFactory } from "./TelemetryProviderFactory"
  * When adding a new category, add it both here and to the initial values in telemetryCategoryEnabled
  * Ensure `if (!this.isCategoryEnabled('<category_name>')` is added to the capture method
  */
-type TelemetryCategory = "checkpoints" | "browser" | "subagents" | "skills" | "hooks"
+type TelemetryCategory = "browser" | "subagents" | "skills" | "hooks"
 
 /**
  * Terminal type for telemetry differentiation
@@ -116,12 +116,11 @@ const MAX_ERROR_MESSAGE_LENGTH = 500
 export class TelemetryService {
 	// Map to control specific telemetry categories (event types)
 	private telemetryCategoryEnabled: Map<TelemetryCategory, boolean> = new Map([
-		["checkpoints", true], // Checkpoints telemetry enabled
-		["browser", true], // Browser telemetry enabled
-		["subagents", true], // CLI Subagents telemetry enabled
+		["browser", true], // Browser interaction telemetry enabled
+		["subagents", true], // Subagent telemetry enabled
 		["skills", true], // Skills telemetry enabled
 		["hooks", true], // Hooks telemetry enabled
-	])
+		])
 
 	private userId?: string
 	private activeOrg: {
@@ -215,8 +214,6 @@ export class TelemetryService {
 			INIT_ERROR: "workspace.init_error",
 			// Track VCS detection
 			VCS_DETECTED: "workspace.vcs_detected",
-			// Track multi-root checkpoint operations
-			MULTI_ROOT_CHECKPOINT: "workspace.multi_root_checkpoint",
 			// Track workspace resolution
 			PATH_RESOLVED: "workspace.path_resolved",
 		},
@@ -239,8 +236,6 @@ export class TelemetryService {
 			OPTION_SELECTED: "task.option_selected",
 			// Tracks when users type a custom response instead of selecting an option from AI-generated followup questions
 			OPTIONS_IGNORED: "task.options_ignored",
-			// Tracks usage of the git-based checkpoint system (shadow_git_initialized, commit_created, branch_created, branch_deleted_active, branch_deleted_inactive, restored)
-			CHECKPOINT_USED: "task.checkpoint_used",
 			// Tracks when tools (like file operations, commands) are used
 			TOOL_USED: "task.tool_used",
 			// Tracks when a historical task is loaded from storage
@@ -1020,32 +1015,6 @@ export class TelemetryService {
 	}
 
 	/**
-	/**
-	 * Records interactions with the git-based checkpoint system
-	 * @param ulid Unique identifier for the task
-	 * @param action The type of checkpoint action
-	 * @param durationMs Optional duration of the operation in milliseconds
-	 */
-	public captureCheckpointUsage(
-		ulid: string,
-		action: "shadow_git_initialized" | "commit_created" | "restored" | "diff_generated",
-		durationMs?: number,
-	) {
-		if (!this.isCategoryEnabled("checkpoints")) {
-			return
-		}
-
-		this.capture({
-			event: TelemetryService.EVENTS.TASK.CHECKPOINT_USED,
-			properties: {
-				ulid,
-				action,
-				durationMs,
-			},
-		})
-	}
-
-	/**
 	 * Records when a diff edit (replace_in_file) operation fails
 	 * @param ulid Unique identifier for the task
 	 * @param modelId The model ID being used
@@ -1461,16 +1430,14 @@ export class TelemetryService {
 	 * @param ulid Unique identifier for the task
 	 * @param taskId Task ID (timestamp in milliseconds when task was created)
 	 * @param durationMs Duration of initialization in milliseconds
-	 * @param hasCheckpoints Whether checkpoints are enabled for this task
 	 */
-	public captureTaskInitialization(ulid: string, taskId: string, durationMs: number, hasCheckpoints: boolean) {
+	public captureTaskInitialization(ulid: string, taskId: string, durationMs: number) {
 		this.capture({
 			event: TelemetryService.EVENTS.TASK.INITIALIZATION,
 			properties: {
 				ulid,
 				taskId,
 				durationMs,
-				hasCheckpoints,
 			},
 		})
 	}
@@ -1625,37 +1592,6 @@ export class TelemetryService {
 				error_message: error.message.substring(0, MAX_ERROR_MESSAGE_LENGTH),
 				fallback_to_single_root: fallbackMode,
 				workspace_count: workspaceCount ?? 0,
-			},
-		})
-	}
-
-	/**
-	 * Records multi-root checkpoint operations
-	 * @param ulid Task identifier
-	 * @param action Type of checkpoint action
-	 * @param rootCount Number of roots being checkpointed
-	 * @param successCount Number of successful checkpoints
-	 * @param failureCount Number of failed checkpoints
-	 * @param durationMs Total operation duration in milliseconds
-	 */
-	public captureMultiRootCheckpoint(
-		ulid: string,
-		action: "initialized" | "committed" | "restored",
-		rootCount: number,
-		successCount: number,
-		failureCount: number,
-		durationMs?: number,
-	) {
-		this.capture({
-			event: TelemetryService.EVENTS.WORKSPACE.MULTI_ROOT_CHECKPOINT,
-			properties: {
-				ulid,
-				action,
-				root_count: rootCount,
-				success_count: successCount,
-				failure_count: failureCount,
-				success_rate: rootCount > 0 ? successCount / rootCount : 0,
-				duration_ms: durationMs,
 			},
 		})
 	}

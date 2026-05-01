@@ -94,12 +94,6 @@ export async function deleteAllTaskHistory(controller: Controller): Promise<Dele
 			if (await fileExistsAtPath(taskDirPath)) {
 				await fs.rm(taskDirPath, { recursive: true, force: true })
 			}
-
-			// Remove checkpoints directory contents
-			const checkpointsDirPath = path.join(HostProvider.get().globalStorageFsPath, "checkpoints")
-			if (await fileExistsAtPath(checkpointsDirPath)) {
-				await fs.rm(checkpointsDirPath, { recursive: true, force: true })
-			}
 		} catch (error) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.ERROR,

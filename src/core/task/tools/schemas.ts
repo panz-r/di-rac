@@ -268,13 +268,6 @@ export const UseSubagentsArgs = z.object({
 	}).optional(),
 }).strict();
 
-/** generate_explanation: generate diff explanation */
-export const GenerateExplanationArgs = z.object({
-	title: z.string(),
-	from_ref: z.string(),
-	to_ref: z.string().optional(),
-}).strict();
-
 /** dirac_undo: undo last turn's file edits */
 export const DiracUndoArgs = z.object({}).strict();
 
@@ -311,6 +304,5 @@ export const TOOL_SCHEMAS: Partial<Record<DiracDefaultTool, z.ZodTypeAny>> = {
 	[DiracDefaultTool.USE_SKILL]: UseSkillArgs,
 	[DiracDefaultTool.LIST_SKILLS]: ListSkillsArgs,
 	[DiracDefaultTool.USE_SUBAGENTS]: UseSubagentsArgs,
-	[DiracDefaultTool.GENERATE_EXPLANATION]: GenerateExplanationArgs,
 	[DiracDefaultTool.DIRAC_UNDO]: DiracUndoArgs,
 };

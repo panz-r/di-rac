@@ -23,7 +23,6 @@ export enum DiracDefaultTool {
 	SUMMARIZE_TASK = "summarize_task",
 	REPORT_BUG = "report_bug",
 	NEW_RULE = "new_rule",
-	GENERATE_EXPLANATION = "generate_explanation",
 	USE_SKILL = "use_skill",
 	LIST_SKILLS = "list_skills",
 	USE_SUBAGENTS = "use_subagents",
@@ -59,8 +58,7 @@ export function getToolUseNames(): string[] {
 	return Array.from(new Set([...defaults, ...dynamic]))
 }
 
-// Tools that are safe to run in parallel with the initial checkpoint commit
-// These are tools that do not modify the workspace state
+// Tools that do not modify the workspace state
 export const READ_ONLY_TOOLS = [
 	DiracDefaultTool.LIST_FILES,
 	DiracDefaultTool.FILE_READ,

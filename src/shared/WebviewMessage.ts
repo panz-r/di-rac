@@ -18,6 +18,4 @@ export type GrpcCancel = {
 
 export type DiracAskResponse = "yesButtonClicked" | "noButtonClicked" | "messageResponse"
 
-export type DiracCheckpointRestore = "task" | "workspace" | "taskAndWorkspace"
-
 export type TaskFeedbackType = "thumbs_up" | "thumbs_down"

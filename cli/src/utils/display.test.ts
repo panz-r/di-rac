@@ -157,12 +157,6 @@ describe("display", () => {
 				expect(result).toContain("API request started")
 			})
 
-			it("should format checkpoint_created message", () => {
-				const message = createMessage({ say: "checkpoint_created", text: "Saved" })
-				const result = formatMessage(message)
-				expect(result).toContain("Checkpoint created")
-			})
-
 			it("should format info message", () => {
 				const message = createMessage({ say: "info", text: "Information" })
 				const result = formatMessage(message)

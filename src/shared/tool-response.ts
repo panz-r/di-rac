@@ -106,7 +106,6 @@ export function createToolError(
  *
  * The `phase` parameter comes from the session/context:
  *   - 2 = interactive act mode (normal task execution)
- *   - 3 = interactive with checkpointing
  *   - 4 = speculative pre-computation
  *   - 5 = predictive verification
  *

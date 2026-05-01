@@ -773,8 +773,6 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, maxM
 		if (m.say === "subagent_usage") return false
 		// Skip empty text messages
 		if (m.say === "text" && !m.text?.trim()) return false
-		// Skip checkpoint messages
-		if (m.say === "checkpoint_created") return false
 		return true
 	})
 

@@ -62,11 +62,6 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 			controller.stateManager.setGlobalState("planActSeparateModelsSetting", request.planActSeparateModelsSetting)
 		}
 
-		// Update checkpoints setting
-		if (request.enableCheckpointsSetting !== undefined) {
-			controller.stateManager.setGlobalState("enableCheckpointsSetting", request.enableCheckpointsSetting)
-		}
-
 		if (request.mode !== undefined) {
 			const mode = request.mode === PlanActMode.PLAN ? "plan" : "act"
 			controller.stateManager.setGlobalState("mode", mode)

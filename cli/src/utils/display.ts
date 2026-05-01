@@ -146,8 +146,6 @@ function getMessageIcon(message: DiracMessage): string {
 		case "api_req_started":
 		case "api_req_finished":
 			return "🔄"
-		case "checkpoint_created":
-			return "💾"
 		case "info":
 			return "ℹ️ "
 		default:
@@ -289,9 +287,6 @@ function formatSayMessage(message: DiracMessage, prefix: string, verbose: boolea
 
 		case "api_req_finished":
 			return verbose ? `${prefix} ${style.api("API request finished")}` : ""
-
-		case "checkpoint_created":
-			return `${prefix} ${style.success("Checkpoint created")} ${message.text || ""}`
 
 		case "info":
 			return `${prefix} ${style.info(message.text || "")}`

@@ -10,12 +10,10 @@ export type HistoryItem = {
 	totalCost: number
 
 	size?: number
-	shadowGitConfigWorkTree?: string
 	cwdOnTaskInitialization?: string
 	conversationHistoryDeletedRange?: [number, number]
 	isFavorited?: boolean
 	workspaceRootPath?: string
-	checkpointManagerErrorMessage?: string
 
 	modelId?: string
 }

@@ -413,7 +413,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			// Show error and return early (full original behavior)
 			await config.callbacks.say("diracignore_error", resolvedPath)
 
-			// Push tool result and save checkpoint using existing utilities
+			// Push tool result using existing utilities
 			const errorResponse = formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", formatResponse.diracIgnoreError(resolvedPath), "recoverable"))
 			ToolResultUtils.pushToolResult(
 				errorResponse,

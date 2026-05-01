@@ -30,25 +30,6 @@ describe("findMostRecentTaskForWorkspace", () => {
 		expect(result?.id).toBe("newer")
 	})
 
-	it("falls back to shadowGitConfigWorkTree for older tasks", () => {
-		const result = findMostRecentTaskForWorkspace(
-			[
-				{
-					id: "legacy",
-					ts: 200,
-					task: "Legacy task",
-					tokensIn: 0,
-					tokensOut: 0,
-					totalCost: 0,
-					shadowGitConfigWorkTree: "/repo",
-				},
-			],
-			"/repo",
-		)
-
-		expect(result?.id).toBe("legacy")
-	})
-
 	it("returns null when there is no match", () => {
 		const result = findMostRecentTaskForWorkspace(
 			[

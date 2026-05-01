@@ -93,7 +93,6 @@ function convertDiracSayToProtoEnum(say: AppDiracSay | undefined): DiracSay | un
 		deleted_api_reqs: DiracSay.DELETED_API_REQS,
 		diracignore_error: DiracSay.DIRACIGNORE_ERROR,
 		command_permission_denied: DiracSay.COMMAND_PERMISSION_DENIED,
-		checkpoint_created: DiracSay.CHECKPOINT_CREATED,
 		info: DiracSay.INFO,
 		error_retry: DiracSay.ERROR_RETRY,
 		hook_status: DiracSay.HOOK_STATUS,
@@ -102,7 +101,6 @@ function convertDiracSayToProtoEnum(say: AppDiracSay | undefined): DiracSay | un
 		subagent: DiracSay.SUBAGENT_STATUS,
 		use_subagents: DiracSay.USE_SUBAGENTS_SAY,
 		subagent_usage: DiracSay.SUBAGENT_USAGE,
-		generate_explanation: DiracSay.GENERATE_EXPLANATION,
 	}
 
 	const result = mapping[say]
@@ -138,10 +136,8 @@ function convertProtoEnumToDiracSay(say: DiracSay): AppDiracSay | undefined {
 		[DiracSay.DELETED_API_REQS]: "deleted_api_reqs",
 		[DiracSay.DIRACIGNORE_ERROR]: "diracignore_error",
 		[DiracSay.COMMAND_PERMISSION_DENIED]: "command_permission_denied",
-		[DiracSay.CHECKPOINT_CREATED]: "checkpoint_created",
 		[DiracSay.INFO]: "info",
 		[DiracSay.ERROR_RETRY]: "error_retry",
-		[DiracSay.GENERATE_EXPLANATION]: "generate_explanation",
 		[DiracSay.HOOK_STATUS]: "hook_status",
 		[DiracSay.HOOK_OUTPUT_STREAM]: "hook_output_stream",
 		[DiracSay.CONDITIONAL_RULES_APPLIED]: "conditional_rules_applied",
@@ -181,8 +177,6 @@ export function convertDiracMessageToProto(message: AppDiracMessage): ProtoDirac
 		images: message.images ?? [],
 		files: message.files ?? [],
 		partial: message.partial ?? false,
-		lastCheckpointHash: message.lastCheckpointHash ?? "",
-		isCheckpointCheckedOut: message.isCheckpointCheckedOut ?? false,
 		isOperationOutsideWorkspace: message.isOperationOutsideWorkspace ?? false,
 		conversationHistoryIndex: message.conversationHistoryIndex ?? 0,
 		conversationHistoryDeletedRange: message.conversationHistoryDeletedRange
@@ -259,12 +253,6 @@ export function convertProtoToDiracMessage(protoMessage: ProtoDiracMessage): App
 	}
 	if (protoMessage.partial) {
 		message.partial = protoMessage.partial
-	}
-	if (protoMessage.lastCheckpointHash !== "") {
-		message.lastCheckpointHash = protoMessage.lastCheckpointHash
-	}
-	if (protoMessage.isCheckpointCheckedOut) {
-		message.isCheckpointCheckedOut = protoMessage.isCheckpointCheckedOut
 	}
 	if (protoMessage.isOperationOutsideWorkspace) {
 		message.isOperationOutsideWorkspace = protoMessage.isOperationOutsideWorkspace

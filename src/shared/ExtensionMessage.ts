@@ -46,11 +46,9 @@ export interface ExtensionState {
 	remoteBrowserHost?: string
 	preferredLanguage?: string
 	mode: Mode
-	checkpointManagerErrorMessage?: string
 	diracMessages: DiracMessage[]
 	currentTaskItem?: HistoryItem
 	planActSeparateModelsSetting: boolean
-	enableCheckpointsSetting?: boolean
 	platform: Platform
 	environment?: Environment
 	shouldShowAnnouncement: boolean
@@ -123,8 +121,6 @@ export interface DiracMessage {
 	files?: string[]
 	partial?: boolean
 	commandCompleted?: boolean
-	lastCheckpointHash?: string
-	isCheckpointCheckedOut?: boolean
 	isOperationOutsideWorkspace?: boolean
 	conversationHistoryIndex?: number
 	conversationHistoryDeletedRange?: [number, number] // for when conversation history is truncated for API requests
@@ -177,8 +173,6 @@ export type DiracSay =
 	| "deleted_api_reqs"
 	| "diracignore_error"
 	| "command_permission_denied"
-	| "checkpoint_created"
-	| "generate_explanation"
 	| "info" // Added for general informational messages like retry status
 	| "hook_status"
 	| "hook_output_stream"
@@ -335,14 +329,6 @@ export interface DiracSayBrowserAction {
 	action: BrowserAction
 	coordinate?: string
 	text?: string
-}
-
-export interface DiracSayGenerateExplanation {
-	title: string
-	fromRef: string
-	toRef: string
-	status: "generating" | "complete" | "error"
-	error?: string
 }
 
 export type SubagentExecutionStatus = "pending" | "running" | "completed" | "failed"

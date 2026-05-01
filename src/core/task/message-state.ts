@@ -1,4 +1,3 @@
-import CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
 import { EventEmitter } from "events"
 import getFolderSize from "get-folder-size"
 import Mutex from "p-mutex"
@@ -43,7 +42,6 @@ interface MessageStateHandlerParams {
 	workspaceRootPath?: string
 	updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
 	taskState: TaskState
-	checkpointManagerErrorMessage?: string
 }
 
 export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents> {
@@ -51,7 +49,6 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	private apiConversationHistory: DiracStorageMessage[] = []
 	private diracMessages: DiracMessage[] = []
 	private taskIsFavorited: boolean
-	private checkpointTracker: CheckpointTracker | undefined
 	private updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
 	private taskId: string
 	private ulid: string
@@ -91,10 +88,6 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 */
 	private emitDiracMessagesChanged(change: DiracMessageChange): void {
 		this.emit("diracMessagesChanged", change)
-	}
-
-	setCheckpointTracker(tracker: CheckpointTracker | undefined) {
-		this.checkpointTracker = tracker
 	}
 
 	/**
@@ -210,7 +203,6 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			}
 
 			const cwd = await getCwd(getDesktopDir())
-			const shadowGitConfigWorkTree = await this.checkpointTracker?.getShadowGitConfigWorkTree()
 
 			await this.updateTaskHistory({
 				id: this.taskId,
@@ -223,12 +215,10 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 				cacheReads: apiMetrics.totalCacheReads,
 				totalCost: apiMetrics.totalCost,
 				size: taskDirSize,
-				shadowGitConfigWorkTree,
 				cwdOnTaskInitialization: cwd,
 				conversationHistoryDeletedRange: this.taskState.conversationHistoryDeletedRange,
 				isFavorited: this.taskIsFavorited,
 				workspaceRootPath: this.workspaceRootPath,
-				checkpointManagerErrorMessage: this.taskState.checkpointManagerErrorMessage,
 				modelId: lastModelInfo?.modelInfo?.modelId,
 			})
 		} catch (error) {

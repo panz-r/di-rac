@@ -58,11 +58,9 @@ enum DiracSay {
   DIFF_ERROR = 21;
   DELETED_API_REQS = 22;
   DIRACIGNORE_ERROR = 23;
-  CHECKPOINT_CREATED = 24;
   INFO = 26;
-  reserved 27; // was TASK_PROGRESS
+  reserved 24, 27, 29; // was CHECKPOINT_CREATED, TASK_PROGRESS, GENERATE_EXPLANATION
   ERROR_RETRY = 28;
-  GENERATE_EXPLANATION = 29;
   HOOK_STATUS = 30;
   HOOK_OUTPUT_STREAM = 31;
   COMMAND_PERMISSION_DENIED = 32;
@@ -203,11 +201,10 @@ message DiracMessage {
   repeated string images = 7;
   repeated string files = 8;
   bool partial = 9;
-  string last_checkpoint_hash = 10;
-  bool is_checkpoint_checked_out = 11;
   bool is_operation_outside_workspace = 12;
   int32 conversation_history_index = 13;
   ConversationHistoryDeletedRange conversation_history_deleted_range = 14;
+  reserved 10, 11; // was last_checkpoint_hash, is_checkpoint_checked_out
 
   // Additional fields for specific ask/say types
   DiracSayTool say_tool = 15;

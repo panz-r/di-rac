@@ -1,6 +1,5 @@
 import { DiracContent } from "@shared/messages/content"
 import { ApiHandler } from "../../../core/api"
-import { ICheckpointManager } from "../../../integrations/checkpoints/types"
 import { DiffViewProvider } from "../../../integrations/editor/DiffViewProvider"
 import { CommandExecutor } from "../../../integrations/terminal"
 import { ITerminalManager } from "../../../integrations/terminal/types"
@@ -28,7 +27,6 @@ export interface LifecycleManagerDependencies {
 	ask: TaskMessenger["ask"]
 	postStateToWebview: () => Promise<void>
 	cancelTask: () => Promise<void>
-	checkpointManager?: ICheckpointManager
 	diracIgnoreController: DiracIgnoreController
 	terminalManager: ITerminalManager
 	urlContentFetcher: UrlContentFetcher

@@ -111,23 +111,8 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		}
 
 		const addNewChangesFlagToLastCompletionResultMessage = async () => {
-			// Add newchanges flag if there are new changes to the workspace
-			const hasNewChanges = await config.callbacks.doesLatestTaskCompletionHaveNewChanges()
-			const diracMessages = config.messageState.getDiracMessages()
-
-			const lastCompletionResultMessageIndex = findLastIndex(diracMessages, (m: any) => m.say === "completion_result")
-			const lastCompletionResultMessage =
-				lastCompletionResultMessageIndex !== -1 ? diracMessages[lastCompletionResultMessageIndex] : undefined
-			if (
-				lastCompletionResultMessage &&
-				lastCompletionResultMessageIndex !== -1 &&
-				hasNewChanges &&
-				!lastCompletionResultMessage.text?.endsWith(COMPLETION_RESULT_CHANGES_FLAG)
-			) {
-				await config.messageState.updateDiracMessage(lastCompletionResultMessageIndex, {
-					text: lastCompletionResultMessage.text + COMPLETION_RESULT_CHANGES_FLAG,
-				})
-			}
+			// Stub: no longer showing HAS_CHANGES flag after checkpoint removal
+			return
 		}
 
 		// Remove any partial completion_result message that may exist
@@ -150,8 +135,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		if (command) {
 			if (lastMessage && lastMessage.ask !== "command") {
 				// haven't sent a command message yet so first send completion_result then command
-				const completionMessageTs = await config.callbacks.say("completion_result", finalResult, undefined, undefined, false)
-				await config.callbacks.saveCheckpoint(true, completionMessageTs)
+				await config.callbacks.say("completion_result", finalResult, undefined, undefined, false)
 				await addNewChangesFlagToLastCompletionResultMessage()
 				telemetryService.captureTaskCompleted(config.ulid, getTaskCompletionTelemetry(config))
 				const apiConfig = config.services.stateManager.getApiConfiguration()
@@ -168,7 +152,6 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 				)
 			} else {
 				// we already sent a command message, meaning the complete completion message has also been sent
-				await config.callbacks.saveCheckpoint(true)
 			}
 
 			// Check if command should be auto-approved
@@ -206,8 +189,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			commandResult = execCommandResult
 		} else {
 			// Send the complete completion_result message (partial was already removed above)
-			const completionMessageTs = await config.callbacks.say("completion_result", finalResult, undefined, undefined, false)
-			await config.callbacks.saveCheckpoint(true, completionMessageTs)
+			await config.callbacks.say("completion_result", finalResult, undefined, undefined, false)
 			await addNewChangesFlagToLastCompletionResultMessage()
 			telemetryService.captureTaskCompleted(config.ulid, getTaskCompletionTelemetry(config))
 			const apiConfig = config.services.stateManager.getApiConfiguration()
@@ -232,7 +214,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 
 
 		// Run TaskComplete hook BEFORE presenting the "Start New Task" button
-		// At this point we know: task is complete, checkpoint saved, result shown to user
+		// At this point we know: task is complete, result shown to user
 		await this.runTaskCompleteHook(config, block)
 		await this.runNotificationHook(config, {
 			event: "task_complete",

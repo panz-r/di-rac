@@ -5,7 +5,6 @@ import { tryAcquireTaskLockWithRetry } from "@core/task/TaskLockUtils"
 import { detectWorkspaceRoots } from "@core/workspace/detection"
 import { setupWorkspaceManager } from "@core/workspace/setup"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import { cleanupLegacyCheckpoints } from "@integrations/checkpoints/CheckpointMigration"
 import type { ApiProvider, ModelInfo } from "@shared/api"
 import type { ChatContent } from "@shared/ChatContent"
 import type { ExtensionState, Platform } from "@shared/ExtensionMessage"
@@ -96,11 +95,6 @@ export class Controller {
 			},
 		})
 		BannerService.initialize(this)
-
-		// Clean up legacy checkpoints
-		cleanupLegacyCheckpoints().catch((error) => {
-			Logger.error("Failed to cleanup legacy checkpoints:", error)
-		})
 
 		// Check CLI installation status once on startup
 		checkCliInstallation(this)
@@ -572,7 +566,6 @@ export class Controller {
 		const subagentsEnabled = this.stateManager.getGlobalSettingsKey("subagentsEnabled")
 		const telemetrySetting = this.stateManager.getGlobalSettingsKey("telemetrySetting")
 		const planActSeparateModelsSetting = this.stateManager.getGlobalSettingsKey("planActSeparateModelsSetting")
-		const enableCheckpointsSetting = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
 		const globalDiracRulesToggles = this.stateManager.getGlobalSettingsKey("globalDiracRulesToggles")
 		const globalWorkflowToggles = this.stateManager.getGlobalSettingsKey("globalWorkflowToggles")
 		const globalSkillsToggles = this.stateManager.getGlobalSettingsKey("globalSkillsToggles")
@@ -611,7 +604,6 @@ export class Controller {
 		const currentTaskItem = this.task?.taskId ? (taskHistory || []).find((item) => item.id === this.task?.taskId) : undefined
 		// Spread to create new array reference - React needs this to detect changes in useEffect dependencies
 		const diracMessages = [...(this.task?.messageStateHandler.getDiracMessages() || [])]
-		const checkpointManagerErrorMessage = this.task?.taskState.checkpointManagerErrorMessage
 
 		const processedTaskHistory = (taskHistory || [])
 			.filter((item) => {
@@ -642,7 +634,6 @@ export class Controller {
 			apiConfiguration,
 			currentTaskItem,
 			diracMessages,
-			checkpointManagerErrorMessage,
 			autoApprovalSettings,
 			browserSettings,
 			preferredLanguage,
@@ -653,7 +644,6 @@ export class Controller {
 			subagentsEnabled,
 			telemetrySetting,
 			planActSeparateModelsSetting,
-			enableCheckpointsSetting: enableCheckpointsSetting ?? true,
 			platform,
 			environment,
 			distinctId,
