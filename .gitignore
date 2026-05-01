@@ -66,3 +66,4 @@ tmp_*.txt
 .dirac-logs/
 .dirac-state/
 .dirac/outputs/
+treesitter-deamon/target

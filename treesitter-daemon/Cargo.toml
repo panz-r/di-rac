@@ -1,0 +1,31 @@
+[package]
+name = "dirac-analyzer"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone tree-sitter analysis binary for Dirac"
+authors = ["Dirac Team"]
+license = "MIT"
+
+[[bin]]
+name = "dirac-analyzer"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tree-sitter = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-bash = "0.23"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1
