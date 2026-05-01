@@ -6,26 +6,33 @@ const id = DiracDefaultTool.ATTEMPT
 export const attempt_completion: DiracToolSpec = {
 	id,
 	name: "attempt_completion",
-	description: `Presents a brief and informative summary of the final result. Keep it concise while covering important changes.
+	description: `Presents a summary of the final result to the user. Always provide a clear result message explaining what was done.
 
 Usage: attempt_completion <result> [--command CMD]
 
 Positional:
-  result              The final result of the task.
+  result              A clear summary of what was accomplished.
 
 Options:
-  --command CMD       Optional CLI command to demo the result (e.g., 'open index.html'). Do not use 'echo' or 'cat'.
+  --command CMD       Optional CLI command to demo the result (e.g., 'npm test'). Do not use 'echo' or 'cat'.
 
 Examples:
-  attempt_completion "Fixed the login bug by updating the auth middleware"
-  attempt_completion "Added caching layer" --command "npm test"`,
+  attempt_completion "Fixed the login bug by updating the auth middleware to validate session tokens"
+  attempt_completion "Added caching layer with 10min TTL for user queries" --command "npm test"`,
 	parameters: [
 		{
-			name: "command",
+			name: "result",
 			required: true,
 			type: "string",
-			instruction: "CLI arguments for attempt_completion.",
-			usage: '"I have completed the task..." --command "open index.html"',
+			instruction: "A clear summary of what was accomplished.",
+			usage: '"Fixed the login bug by updating the auth middleware"',
+		},
+		{
+			name: "command",
+			required: false,
+			type: "string",
+			instruction: "Optional CLI command to demo the result.",
+			usage: "npm test",
 		},
 	],
 }
