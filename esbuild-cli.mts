@@ -137,74 +137,17 @@ const copyWasmFiles: esbuild.Plugin = {
 				fs.mkdirSync(distDir, { recursive: true })
 			}
 
-			// tree sitter
-			const sourceDir = path.join(__dirname, "node_modules", "web-tree-sitter")
-
-			// Copy web-tree-sitter module to dist/node_modules so it can be loaded at runtime
-			// (web-tree-sitter is externalized from the bundle to avoid Emscripten bundling issues)
-			const webTreeSitterTarget = path.join(distDir, "node_modules", "web-tree-sitter")
-			fs.mkdirSync(webTreeSitterTarget, { recursive: true })
-			if (fs.existsSync(path.join(sourceDir, "tree-sitter.js"))) {
-				fs.copyFileSync(path.join(sourceDir, "tree-sitter.js"), path.join(webTreeSitterTarget, "tree-sitter.js"))
-			}
-			if (fs.existsSync(path.join(sourceDir, "tree-sitter.wasm"))) {
-				fs.copyFileSync(path.join(sourceDir, "tree-sitter.wasm"), path.join(webTreeSitterTarget, "tree-sitter.wasm"))
-			}
-			if (fs.existsSync(path.join(sourceDir, "tree-sitter-web.d.ts"))) {
-				fs.copyFileSync(path.join(sourceDir, "tree-sitter-web.d.ts"), path.join(webTreeSitterTarget, "tree-sitter-web.d.ts"))
-			}
-			// Write a minimal package.json so require('web-tree-sitter') resolves correctly
-			fs.writeFileSync(
-				path.join(webTreeSitterTarget, "package.json"),
-				JSON.stringify({ name: "web-tree-sitter", main: "tree-sitter.js" }),
-			)
-
-			// Also copy tree-sitter.wasm to dist root for the locateFile callback
-			const treeSitterWasm = path.join(sourceDir, "tree-sitter.wasm")
-			if (fs.existsSync(treeSitterWasm)) {
-				fs.copyFileSync(treeSitterWasm, path.join(distDir, "tree-sitter.wasm"))
-			}
-
 			// Copy sql-wasm.wasm
 			const sqlJsSource = path.join(__dirname, "node_modules", "sql.js", "dist", "sql-wasm.wasm")
 			if (fs.existsSync(sqlJsSource)) {
 				fs.copyFileSync(sqlJsSource, path.join(distDir, "sql-wasm.wasm"))
 			}
 
-			// Copy language-specific WASM files
-			const languageWasmDir = path.join(__dirname, "node_modules", "tree-sitter-wasms", "out")
-			const languages = [
-				"typescript",
-				"tsx",
-				"python",
-				"rust",
-				"javascript",
-				"go",
-				"cpp",
-				"c",
-				"c_sharp",
-				"ruby",
-				"java",
-				"php",
-				"swift",
-				"kotlin",
-			]
-
-			if (fs.existsSync(languageWasmDir)) {
-				// Copy .hash_anchors
-				const dictionarySource = path.join(__dirname, "src", "utils", ".hash_anchors")
-				const dictionaryTarget = path.join(distDir, ".hash_anchors")
-				if (fs.existsSync(dictionarySource)) {
-					fs.copyFileSync(dictionarySource, dictionaryTarget)
-				}
-
-				languages.forEach((lang) => {
-					const filename = `tree-sitter-${lang}.wasm`
-					const sourcePath = path.join(languageWasmDir, filename)
-					if (fs.existsSync(sourcePath)) {
-						fs.copyFileSync(sourcePath, path.join(distDir, filename))
-					}
-				})
+			// Copy .hash_anchors
+			const dictionarySource = path.join(__dirname, "src", "utils", ".hash_anchors")
+			const dictionaryTarget = path.join(distDir, ".hash_anchors")
+			if (fs.existsSync(dictionarySource)) {
+				fs.copyFileSync(dictionarySource, dictionaryTarget)
 			}
 		})
 	},

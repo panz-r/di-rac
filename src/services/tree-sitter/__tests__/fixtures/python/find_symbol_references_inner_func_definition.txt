@@ -1,2 +1,0 @@
-sample.py:
-  (inner_func)     def inner_func(y):

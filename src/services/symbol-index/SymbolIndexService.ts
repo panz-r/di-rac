@@ -1,8 +1,7 @@
-import { loadRequiredLanguageParsers } from "@services/tree-sitter/languageParser"
+import type { AnalyzerClient } from "@services/tree-sitter/AnalyzerClient"
 import * as fs from "fs/promises"
 import pLimit from "p-limit"
 import * as path from "path"
-import Parser from "web-tree-sitter"
 import { Logger } from "../../shared/services/Logger"
 import { SymbolIndexDatabase } from "./SymbolIndexDatabase"
 import { CompilationDatabaseLoader } from "@/utils/compilation-db"
@@ -137,6 +136,7 @@ export class SymbolIndexService {
 	private scanQueue: { absolutePath: string; relPath: string }[] = []
 	private isPersistenceEnabled = true
 	private pendingUpdates: Set<string> = new Set()
+	private analyzer: AnalyzerClient | null = null
 
 	private constructor() {}
 
@@ -150,6 +150,10 @@ export class SymbolIndexService {
 
 	public setPersistenceEnabled(enabled: boolean): void {
 		this.isPersistenceEnabled = enabled
+	}
+
+	setAnalyzer(analyzer: AnalyzerClient | null): void {
+		this.analyzer = analyzer
 	}
 
 	async initialize(projectRoot: string): Promise<void> {
@@ -317,15 +321,12 @@ export class SymbolIndexService {
 			if (filesToUpdate.length > 0) {
 				Logger.info(`[SymbolIndexService] Indexing batch of ${filesToUpdate.length} files`)
 				try {
-					const absolutePaths = filesToUpdate.map((f) => f.absolutePath)
-					const languageParsers = await loadRequiredLanguageParsers(absolutePaths)
-
 					const results = await Promise.all(
 						filesToUpdate.map((file) =>
 							limit(async () => {
 								if (this.pendingUpdates.has(file.absolutePath)) return null
 								try {
-									const entry = await this.indexFile(file.absolutePath, file.relPath, languageParsers)
+									const entry = await this.indexFile(file.absolutePath, file.relPath)
 									return entry ? { file, entry } : null
 								} catch (error) {
 									Logger.error(`Error indexing file ${file.absolutePath}:`, error)
@@ -371,87 +372,56 @@ export class SymbolIndexService {
 	private async indexFile(
 		absolutePath: string,
 		relPath: string,
-		languageParsers: Record<string, { parser: Parser; query: Parser.Query }>,
 	): Promise<FileIndexEntry | null> {
 		try {
 			const stats = await fs.stat(absolutePath)
 			if (stats.size > SymbolIndexService.MAX_FILE_SIZE) return null
+			if (!this.analyzer) return null
 
-			const fileContent = await fs.readFile(absolutePath, "utf8")
-			const ext = path.extname(absolutePath).toLowerCase().slice(1)
-			const { parser, query } = languageParsers[ext] || {}
+			const result = await this.analyzer.indexFile(absolutePath)
+			if (!result) return null
 
-			if (!parser || !query) return null
+			const symbols: FileIndexEntry["symbols"] = []
+			const ranges = new Uint32Array(result.symbols.length * 4)
+			let symbolCount = 0
 
-			let tree: Parser.Tree | null = null
-			try {
-				tree = parser.parse(fileContent)
-				if (!tree || !tree.rootNode) return null
+			for (const sym of result.symbols) {
+				const rangeIdx = symbolCount * 4
+				ranges[rangeIdx] = sym.start_line - 1     // convert 1-based to 0-based
+				ranges[rangeIdx + 1] = sym.start_col - 1
+				ranges[rangeIdx + 2] = sym.end_line - 1
+				ranges[rangeIdx + 3] = sym.end_col - 1
 
-				const symbols: FileIndexEntry["symbols"] = []
-				const captures = query.captures(tree.rootNode)
-				const ranges = new Uint32Array(captures.length * 4)
-				let symbolCount = 0
+				symbols.push({
+					n: sym.n,
+					t: sym.t as "d" | "r" | "a" | "i",
+					k: sym.k,
+					ri: rangeIdx,
+				})
+				symbolCount++
+			}
 
-				for (const capture of captures) {
-					const { node, name } = capture
-					if (name === "name.reference" || name.includes("name.definition") || name.includes("name.declaration") || name === "definition.import") {
-						const text = fileContent.slice(node.startIndex, node.endIndex)
-						let type: "d" | "r" | "a" | "i" = "r"
-						if (name.includes("name.definition")) {
-							type = "d"
-						} else if (name.includes("name.declaration")) {
-							type = "a"
-						} else if (name === "definition.import") {
-							type = "i"
-						}
-
-						const rangeIdx = symbolCount * 4
-						ranges[rangeIdx] = node.startPosition.row
-						ranges[rangeIdx + 1] = node.startPosition.column
-						ranges[rangeIdx + 2] = node.endPosition.row
-						ranges[rangeIdx + 3] = node.endPosition.column
-
-						symbols.push({
-							n: text,
-							t: type,
-							k: name.split(".").pop(),
-							ri: rangeIdx,
-						})
-						symbolCount++
+			// Resolve C/C++ include dependencies
+			const imports = symbols.filter((s) => s.t === "i")
+			if (imports.length > 0) {
+				const sourceDir = path.dirname(absolutePath)
+				const compDb = CompilationDatabaseLoader.getInstance()
+				for (const imp of imports) {
+					const includeName = imp.n.replace(/^["']|["']$/g, "")
+					const buddyPath = await compDb.resolveInclude(includeName, sourceDir)
+					if (buddyPath) {
+						const relBuddy = path.relative(this.projectRoot, buddyPath)
+						this.db?.addDependency(relPath, relBuddy)
 					}
 				}
+			}
 
-				// Clean up tree memory
-				tree.delete()
-
-				// Post-process symbols to resolve dependencies (C/C++ specific)
-				const imports = symbols.filter((s) => s.t === "i")
-				if (imports.length > 0) {
-					const sourceDir = path.dirname(absolutePath)
-					const compDb = CompilationDatabaseLoader.getInstance()
-					for (const imp of imports) {
-						// String literals in tree-sitter include quotes
-						const includeName = imp.n.replace(/^["']|["']$/g, "")
-						const buddyPath = await compDb.resolveInclude(includeName, sourceDir)
-						if (buddyPath) {
-							const relBuddy = path.relative(this.projectRoot, buddyPath)
-							this.db?.addDependency(relPath, relBuddy)
-						}
-					}
-				}
-
-				return {
-					mtime: Math.floor(stats.mtimeMs),
-					size: stats.size,
-					hash: "",
-					symbols,
-					ranges: ranges.slice(0, symbolCount * 4),
-				}
-			} finally {
-				if (tree) {
-					try { tree.delete() } catch {}
-				}
+			return {
+				mtime: Math.floor(stats.mtimeMs),
+				size: stats.size,
+				hash: "",
+				symbols,
+				ranges: ranges.slice(0, symbolCount * 4),
 			}
 		} catch (error) {
 			Logger.error(`[SymbolIndexService] Error indexing file ${absolutePath}:`, error)
@@ -487,8 +457,7 @@ export class SymbolIndexService {
 		this.pendingUpdates.add(absolutePath)
 
 		try {
-			const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-			const entry = await this.indexFile(absolutePath, relPath, languageParsers)
+			const entry = await this.indexFile(absolutePath, relPath)
 			if (entry && this.db) {
 				this.db.updateFileSymbols(relPath, entry.mtime, entry.size, entry.symbols.map((s) => ({
 					n: s.n,

@@ -1,3 +1,0 @@
-sample.php:
-  (PhpClass) class PhpClass
-  (PhpClass)     $obj = new PhpClass("example");

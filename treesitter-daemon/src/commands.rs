@@ -3,6 +3,9 @@ use crate::extractor::{self, Import, Symbol};
 use crate::parser;
 use crate::parser::ParsedSource;
 use crate::skeleton;
+use crate::symbol_range;
+use crate::context;
+use crate::indexer;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -36,6 +39,9 @@ pub struct CommandOutput {
     pub truncated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_count: Option<usize>,
+    // --- generic data for new commands ---
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 impl CommandOutput {
@@ -56,7 +62,7 @@ fn make_output(
         ok: true, id, symbols, imports, skeleton,
         body: None, start_line: None, end_line: None,
         results: None, files: None, status: None,
-        truncated: None, total_count: None,
+        truncated: None, total_count: None, data: None,
     }
 }
 
@@ -160,9 +166,164 @@ pub fn expand_symbol_cmd(
                 status: None,
                 truncated: None,
                 total_count: None,
+                data: None,
             }
         }
         None => error_output(id, "SYMBOL_NOT_FOUND", format!("Symbol not found: {}", handle)),
+    }
+}
+
+/// Find a symbol by handle (or plain name) and return its extended byte range.
+pub fn symbol_range_cmd(
+    parsed: &ParsedSource,
+    handle: &str,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    let symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
+
+    // Try exact handle match first, then fall back to plain name match
+    let sym = symbols
+        .iter()
+        .find(|s| s.handle == handle)
+        .or_else(|| symbols.iter().find(|s| s.name == handle));
+
+    let sym = match sym {
+        Some(s) => s,
+        None => return error_output(id, "SYMBOL_NOT_FOUND", format!("Symbol not found: {}", handle)),
+    };
+
+    // Locate the AST node by byte range
+    let root = parsed.tree.root_node();
+    let target_node = root.descendant_for_byte_range(sym.start_byte, sym.end_byte);
+
+    let target_node = match target_node {
+        Some(n) => {
+            // Walk up to the nearest definition-type ancestor to avoid getting
+            // a child node (e.g. just the identifier instead of the full function)
+            let mut candidate = n;
+            while let Some(parent) = candidate.parent() {
+                if parent.start_byte() == sym.start_byte && parent.end_byte() == sym.end_byte {
+                    candidate = parent;
+                } else {
+                    break;
+                }
+            }
+            candidate
+        }
+        None => {
+            // Fallback: return the symbol's stored range
+            return CommandOutput {
+                ok: true,
+                id,
+                symbols: None,
+                imports: None,
+                skeleton: None,
+                body: None,
+                start_line: Some(sym.start_line),
+                end_line: Some(sym.end_line),
+                results: None,
+                files: None,
+                status: None,
+                truncated: None,
+                total_count: None,
+                data: Some(serde_json::json!({
+                    "start_byte": sym.start_byte,
+                    "end_byte": sym.end_byte,
+                    "start_line": sym.start_line,
+                    "end_line": sym.end_line,
+                    "name_text": sym.name,
+                    "handle": sym.handle,
+                })),
+            };
+        }
+    };
+
+    let extended = symbol_range::get_extended_range(target_node);
+    let name_text = sym.name.clone();
+    let handle_out = sym.handle.clone();
+
+    CommandOutput {
+        ok: true,
+        id,
+        symbols: None,
+        imports: None,
+        skeleton: None,
+        body: None,
+        start_line: Some(extended.start_line),
+        end_line: Some(extended.end_line),
+        results: None,
+        files: None,
+        status: None,
+        truncated: None,
+        total_count: None,
+        data: Some(serde_json::json!({
+            "start_byte": extended.start_byte,
+            "end_byte": extended.end_byte,
+            "start_line": extended.start_line,
+            "end_line": extended.end_line,
+            "name_text": name_text,
+            "handle": handle_out,
+        })),
+    }
+}
+
+/// Resolve context (imports, class head, properties) for a symbol.
+pub fn symbol_context_cmd(
+    parsed: &ParsedSource,
+    handle: &str,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    match context::get_symbol_context(&parsed.source, &parsed.tree, parsed.language, handle) {
+        Ok(result) => CommandOutput {
+            ok: true,
+            id,
+            symbols: None,
+            imports: None,
+            skeleton: None,
+            body: None,
+            start_line: None,
+            end_line: None,
+            results: None,
+            files: None,
+            status: None,
+            truncated: None,
+            total_count: None,
+            data: Some(serde_json::json!({
+                "imports": result.imports,
+                "class_head": result.class_head,
+                "properties": result.properties,
+            })),
+        },
+        Err(msg) => error_output(id, "CONTEXT_ERROR", msg),
+    }
+}
+
+/// Index a file: extract definitions, references, and imports.
+pub fn index_file_cmd(
+    parsed: &ParsedSource,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    let symbols = indexer::index_file(&parsed.source, &parsed.tree, parsed.language);
+    let imports = extractor::extract_imports(&parsed.source, &parsed.tree, parsed.language);
+
+    CommandOutput {
+        ok: true,
+        id,
+        symbols: None,
+        imports: None,
+        skeleton: None,
+        body: None,
+        start_line: None,
+        end_line: None,
+        results: None,
+        files: None,
+        status: None,
+        truncated: None,
+        total_count: None,
+        data: Some(serde_json::json!({
+            "symbols": symbols,
+            "imports": imports,
+        })),
     }
 }
 
@@ -232,6 +393,7 @@ pub fn batch_cmd(
         status: None,
         truncated: None,
         total_count: None,
+                data: None,
     }
 }
 
@@ -285,6 +447,7 @@ pub fn search_symbols_cmd(
         status: None,
         truncated: None,
         total_count: None,
+                data: None,
     }
 }
 
@@ -322,6 +485,7 @@ pub fn repo_map_cmd(
         status: None,
         truncated: None,
         total_count: None,
+                data: None,
     }
 }
 
@@ -421,6 +585,7 @@ pub fn warm_cache_cmd(
         })),
         truncated: None,
         total_count: None,
+                data: None,
     }
 }
 
@@ -457,6 +622,7 @@ pub fn reparse_cmd(
                 status: Some(serde_json::json!({"cached": true, "total_entries": cache.len()})),
                 truncated: None,
                 total_count: None,
+                data: None,
             }
         }
         Err(e) => error_output(id, e.code.to_string().as_str(), e.message),
@@ -480,6 +646,7 @@ pub fn clear_cache_cmd(cache: &mut crate::cache::ParseCache, id: Option<serde_js
         status: Some(serde_json::json!({"entries": 0})),
         truncated: None,
         total_count: None,
+                data: None,
     }
 }
 
@@ -500,6 +667,7 @@ pub fn status_cmd(cache: &crate::cache::ParseCache, id: Option<serde_json::Value
         status: Some(serde_json::to_value(&s).unwrap_or(serde_json::Value::Null)),
         truncated: None,
         total_count: None,
+                data: None,
     }
 }
 
@@ -522,6 +690,7 @@ fn error_output(
         status: Some(serde_json::json!({"error": {"code": code, "message": message}})),
         truncated: None,
         total_count: None,
+                data: None,
     }
 }
 
@@ -557,6 +726,7 @@ pub fn file_changed_cmd(
         status: Some(serde_json::json!({"removed": existed, "path": key.display().to_string()})),
         truncated: None,
         total_count: None,
+                data: None,
     }
 }
 
@@ -571,6 +741,86 @@ pub fn dispatch(
         "symbols" => Ok(symbols(parsed, id, max_results)),
         "handles" => Ok(handles(parsed, id, max_results)),
         "skeleton" => Ok(skeleton_cmd(parsed, id, max_results)),
+        "check-syntax" => Ok(check_syntax_cmd(parsed, id)),
+        "index-file" => Ok(index_file_cmd(parsed, id)),
         other => Err(AnalyzerError::invalid_command(other)),
+    }
+}
+
+// ── check-syntax ──────────────────────────────────────────────────────
+
+pub fn check_syntax_cmd(
+    parsed: &ParsedSource,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    let root = parsed.tree.root_node();
+    let has_errors = root.has_error();
+
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    if has_errors {
+        collect_errors(root, &mut errors, 20);
+    }
+
+    CommandOutput {
+        ok: true,
+        id,
+        symbols: None,
+        imports: None,
+        skeleton: None,
+        body: None,
+        start_line: None,
+        end_line: None,
+        results: None,
+        files: None,
+        status: None,
+        truncated: None,
+        total_count: None,
+        data: Some(serde_json::json!({
+            "has_errors": has_errors,
+            "errors": errors,
+        })),
+    }
+}
+
+fn collect_errors(
+    node: tree_sitter::Node,
+    errors: &mut Vec<serde_json::Value>,
+    max: usize,
+) {
+    if errors.len() >= max {
+        return;
+    }
+
+    if node.is_error() {
+        let start = node.start_position();
+        let end = node.end_position();
+        errors.push(serde_json::json!({
+            "start_line": start.row + 1,
+            "start_col": start.column + 1,
+            "end_line": end.row + 1,
+            "end_col": end.column + 1,
+            "message": format!("Syntax error at line {}, column {}", start.row + 1, start.column + 1),
+            "is_missing": false,
+        }));
+    } else if node.is_missing() {
+        let start = node.start_position();
+        let end = node.end_position();
+        errors.push(serde_json::json!({
+            "start_line": start.row + 1,
+            "start_col": start.column + 1,
+            "end_line": end.row + 1,
+            "end_col": end.column + 1,
+            "message": format!("Missing '{}' at line {}, column {}", node.kind(), start.row + 1, start.column + 1),
+            "is_missing": true,
+        }));
+    }
+
+    for i in 0..node.child_count() {
+        if errors.len() >= max {
+            return;
+        }
+        if let Some(child) = node.child(i) {
+            collect_errors(child, errors, max);
+        }
     }
 }

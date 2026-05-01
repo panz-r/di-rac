@@ -1,4 +1,0 @@
-sample.ts:
-  (shadowed) const shadowed = "global"
-  (shadowed) 	const shadowed = "local"
-  (shadowed) 	console.log(shadowed)

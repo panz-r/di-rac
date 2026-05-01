@@ -1,5 +1,0 @@
-sample.java:
-  (JavaClass) public class JavaClass {
-  (JavaClass)     public JavaClass(String name) {
-  (JavaClass)         JavaClass obj = new JavaClass("example");
-  (JavaClass)         JavaClass obj = new JavaClass("top-level");

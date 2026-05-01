@@ -1,5 +1,0 @@
-sample.go:
-  (GoStruct) type GoStruct struct {
-  (GoStruct) func NewGoStruct(name string) *GoStruct {
-  (GoStruct) 	return &GoStruct{Name: name}
-  (GoStruct) func (s *GoStruct) GetName() string {

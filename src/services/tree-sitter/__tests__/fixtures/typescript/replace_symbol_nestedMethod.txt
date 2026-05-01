@@ -1,4 +1,0 @@
-The tool execution failed with the following error:
-<error>
-Symbol 'outerFunction.NestedClass.nestedMethod' not found in sample.ts
-</error>

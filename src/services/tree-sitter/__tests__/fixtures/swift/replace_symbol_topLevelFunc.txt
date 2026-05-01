@@ -1,1 +1,0 @@
-Successfully replaced symbols 'topLevelFunc' in sample.swift. Any existing hash anchors for these symbols are now stale.

@@ -1,3 +1,0 @@
-sample.ts:
-  (getName) 	getName(): string
-  (getName) 	getName(): string {

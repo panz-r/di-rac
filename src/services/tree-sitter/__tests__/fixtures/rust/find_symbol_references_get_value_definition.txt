@@ -1,2 +1,0 @@
-sample.rs:
-  (get_value)     pub fn get_value(&self) -> i32 {

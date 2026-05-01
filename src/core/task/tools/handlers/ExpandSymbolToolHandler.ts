@@ -2,8 +2,7 @@ import path from "node:path"
 import fs from "node:fs/promises"
 import type { ToolUse } from "@core/assistant-message"
 import { resolveWorkspacePath } from "@core/workspace"
-import { loadRequiredLanguageParsers } from "@services/tree-sitter/languageParser"
-import { parseFile } from "@services/tree-sitter"
+import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import { contentHash, hashLines, formatLineWithHash } from "@utils/line-hashing"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { formatResponse } from "@/core/prompts/responses"
@@ -68,9 +67,11 @@ export class ExpandSymbolToolHandler implements IFullyManagedTool {
 			const pathResult = resolveWorkspacePath(config, relPath, "ExpandSymbolToolHandler.execute")
 			const { absolutePath } = typeof pathResult === "string" ? { absolutePath: pathResult } : pathResult
 
-			// 3. Find symbol range using tree-sitter
-			const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-			const definitions = await parseFile(absolutePath, languageParsers, config.services.diracIgnoreController)
+			// 3. Find symbol range using tree-sitter daemon
+			const fileContent = await fs.readFile(absolutePath, "utf8")
+			const sourceLines = fileContent.split("\n")
+			const daemonSymbols = await config.services.analyzer.outline(absolutePath)
+			const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols, sourceLines)
 			
 			const target = definitions?.find(d => d.id === symbolId)
 			if (!target || !target.fullBodyRange) {
@@ -86,9 +87,8 @@ export class ExpandSymbolToolHandler implements IFullyManagedTool {
 				))
 			}
 
-			// 4. Read symbol body
-			const fileContent = await fs.readFile(absolutePath, "utf8")
-			const lines = fileContent.split("\n")
+			// 4. Read symbol body (file content already loaded above)
+			const lines = sourceLines
 			const range = target.fullBodyRange
 			
 			const symbolLines = lines.slice(range.startLine, range.endLine + 1)

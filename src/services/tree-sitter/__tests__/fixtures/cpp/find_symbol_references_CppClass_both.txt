@@ -1,5 +1,0 @@
-sample.cpp:
-  (CppClass) class CppClass {
-  (CppClass)     CppClass(const std::string& name) : m_name(name) {}
-  (CppClass) int CppClass::calculate(int a, int b) {
-  (CppClass)     CppClass obj("test");

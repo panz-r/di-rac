@@ -1,1 +1,0 @@
-Successfully replaced symbols 'say_hello' in sample.c. Any existing hash anchors for these symbols are now stale.

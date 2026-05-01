@@ -11,6 +11,8 @@ pub struct Symbol {
     pub handle: String,
     pub start_line: usize,
     pub end_line: usize,
+    pub start_byte: usize,
+    pub end_byte: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,6 +121,8 @@ fn walk_collect_functions(
                 handle,
                 start_line: node.start_position().row + 1,
                 end_line: node.end_position().row + 1,
+                start_byte: node.start_byte(),
+                end_byte: node.end_byte(),
                 signature: Some(node_signature(node, source, language)),
                 parent,
             });
@@ -157,6 +161,8 @@ fn walk_collect_classes_as_symbols(
                 handle: format!("class:{}", name),
                 start_line: node.start_position().row + 1,
                 end_line: node.end_position().row + 1,
+                start_byte: node.start_byte(),
+                end_byte: node.end_byte(),
                 signature: Some(node_signature(node, source, language)),
                 parent: None,
             });
@@ -375,6 +381,8 @@ pub fn extract_symbols(
                             handle,
                             start_line: node.start_position().row + 1,
                             end_line: node.end_position().row + 1,
+                            start_byte: node.start_byte(),
+                            end_byte: node.end_byte(),
                             signature: Some(node_signature(node, source, language)),
                             parent,
                         });
@@ -402,6 +410,8 @@ pub fn extract_symbols(
                             handle,
                             start_line: node.start_position().row + 1,
                             end_line: node.end_position().row + 1,
+                            start_byte: node.start_byte(),
+                            end_byte: node.end_byte(),
                             signature: Some(node_signature(node, source, language)),
                             parent,
                         });
@@ -423,6 +433,8 @@ pub fn extract_symbols(
                 handle: format!("class:{}", name),
                 start_line: node.start_position().row + 1,
                 end_line: node.end_position().row + 1,
+                start_byte: node.start_byte(),
+                end_byte: node.end_byte(),
                 signature: Some(node_signature(node, source, language)),
                 parent: None,
             });

@@ -1,3 +1,0 @@
-sample.rb:
-  (RubyClass) class RubyClass
-  (RubyClass)   obj = RubyClass.new("example")

@@ -1,9 +1,0 @@
-sample.cpp::CppClass.getName
-[Function Hash: 0da1120b]
-All Hash Anchors provided below are stable and can be used with edit_file directly.
-/**
-     * An inline method.
-     */
-    std::string getName() const {
-        return m_name;
-    }

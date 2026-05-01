@@ -182,6 +182,13 @@ export class LifecycleManager {
 			Logger.error("Failed to record environment metadata:", error)
 		}
 
+		// Start tree-sitter daemon (non-blocking — falls back to WASM if unavailable)
+		try {
+			await this.dependencies.analyzer.start()
+		} catch (error) {
+			Logger.error("Failed to start analyzer daemon:", error)
+		}
+
 		await this.dependencies.initiateTaskLoop(userContent)
 	}
 
@@ -370,7 +377,7 @@ export class LifecycleManager {
 
 			// Pre-refresh outlines for changed files
 			if (fileChanges.changed.length > 0) {
-				const outlineText = await generateOutlinesForChangedFiles(fileChanges.changed, this.dependencies.cwd)
+				const outlineText = await generateOutlinesForChangedFiles(fileChanges.changed, this.dependencies.cwd, this.dependencies.analyzer)
 				if (outlineText) {
 					newUserContent.push({ type: "text", text: outlineText })
 				}
@@ -431,6 +438,14 @@ export class LifecycleManager {
 		}
 
 		await this.dependencies.messageStateHandler.overwriteApiConversationHistory(modifiedApiConversationHistory)
+
+		// Start tree-sitter daemon for resumed tasks
+		try {
+			await this.dependencies.analyzer.start()
+		} catch (error) {
+			Logger.error("Failed to start analyzer daemon on resume:", error)
+		}
+
 		await this.dependencies.initiateTaskLoop(newUserContent)
 	}
 
@@ -524,6 +539,13 @@ export class LifecycleManager {
 						recoveryEngine: summaryData.recoveryEngine,
 					})
 				}
+			} catch {
+				// non-fatal
+			}
+
+			// Shut down tree-sitter daemon
+			try {
+				await this.dependencies.analyzer.shutdown()
 			} catch {
 				// non-fatal
 			}

@@ -1,2 +1,0 @@
-sample.kt:
-  (getName)     fun getName(): String {

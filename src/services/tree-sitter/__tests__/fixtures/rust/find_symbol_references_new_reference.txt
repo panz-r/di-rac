@@ -1,3 +1,0 @@
-sample.rs:
-  (new)     pub fn new(value: i32) -> Self {
-  (new)     let instance = RustStruct::new(42);

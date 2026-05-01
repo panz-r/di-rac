@@ -1,9 +1,0 @@
-sample.java::Main.topLevelFunc
-[Function Hash: acf75a86]
-All Hash Anchors provided below are stable and can be used with edit_file directly.
-class Main {
-...
-public static int topLevelFunc(int x) {
-        JavaClass obj = new JavaClass("top-level");
-        return obj.calculate(x, 10);
-    }

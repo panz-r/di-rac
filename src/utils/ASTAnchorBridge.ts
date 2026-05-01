@@ -1,9 +1,6 @@
 import fs from "fs/promises"
-import * as path from "path"
 import { DiracIgnoreController } from "../core/ignore/DiracIgnoreController"
-import { SymbolContextResolver } from "../core/task/tools/utils/SymbolContextResolver"
-import { parseFile } from "../services/tree-sitter"
-import { loadRequiredLanguageParsers } from "../services/tree-sitter/languageParser"
+import { AnalyzerClient } from "../services/tree-sitter/AnalyzerClient"
 import { FileAnchorIndex } from "../shared/utils/file-anchor-index"
 import { contentHash, formatLineWithHash } from "./line-hashing"
 
@@ -20,47 +17,34 @@ export interface GetFunctionsResult {
 }
 
 export class ASTAnchorBridge {
-	/**
-	 * Gets the file skeleton with canonical anchors.
-	 */
 	public static async getFileSkeleton(
 		absolutePath: string,
 		diracIgnoreController?: DiracIgnoreController,
 		taskId?: string,
-		options?: { showCallGraph?: boolean },
+		_options?: { showCallGraph?: boolean },
+		analyzer?: AnalyzerClient,
 	): Promise<string | null> {
-		const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-		const definitions = await parseFile(absolutePath, languageParsers, diracIgnoreController, options)
-		if (!definitions) {
-			return null
-		}
+		if (!analyzer) return null
+
+		const symbols = await analyzer.outline(absolutePath)
+		if (!symbols || symbols.length === 0) return null
 
 		const fileContent = await fs.readFile(absolutePath, "utf8")
 		const lines = fileContent.split("\n")
 		const anchors = new FileAnchorIndex(lines).getAllHashes()
+		const definitions = AnalyzerClient.toParsedDefinitions(symbols, lines)
 
 		let formattedOutput = ""
 		let lastLineAdded = -1
 
 		for (const def of definitions) {
 			const startLine = def.lineIndex
-
 			if (lastLineAdded !== -1 && startLine > lastLineAdded + 1) {
 				formattedOutput += "|----\n"
 			}
-
 			if (startLine > lastLineAdded) {
 				formattedOutput += `│${formatLineWithHash(def.text, anchors[startLine])}\n`
 				lastLineAdded = startLine
-
-				if (options?.showCallGraph) {
-					if (def.lineCount !== undefined) {
-						formattedOutput += `│${def.indentation}    # Lines: ${def.lineCount}\n`
-					}
-					if (def.calls && def.calls.length > 0) {
-						formattedOutput += `│${def.indentation}    # Calls: [${def.calls.sort().join(", ")}]\n`
-					}
-				}
 			}
 		}
 
@@ -70,125 +54,84 @@ export class ASTAnchorBridge {
 		return null
 	}
 
-	/**
-	 * Gets specific functions with their context and anchors.
-	 */
 	public static async getFunctions(
 		absolutePath: string,
 		relPath: string,
 		functionNames: string[],
 		diracIgnoreController?: DiracIgnoreController,
-		taskId?: string,
+		_taskId?: string,
+		analyzer?: AnalyzerClient,
 	): Promise<GetFunctionsResult | null> {
 		if (diracIgnoreController && !diracIgnoreController.validateAccess(absolutePath)) {
 			return null
 		}
-
-		const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-		const ext = path.extname(absolutePath).toLowerCase().slice(1)
-		const { parser, query } = languageParsers[ext] || {}
-
-		if (!parser || !query) {
+		if (!analyzer) {
 			return {
-				formattedContent: `Unsupported file type: ${relPath}`,
+				formattedContent: `Analyzer not available for ${relPath}`,
 				foundNames: [],
 			}
 		}
 
 		const fileContent = await fs.readFile(absolutePath, "utf8")
-		const tree = parser.parse(fileContent)
-		if (!tree || !tree.rootNode) {
-			return {
-				formattedContent: `Could not parse file: ${relPath}`,
-				foundNames: [],
-			}
-		}
-
 		const allLines = fileContent.split(/\r?\n/)
 		const allAnchors = new FileAnchorIndex(allLines).getAllHashes()
 
-		const matches = query.matches(tree.rootNode)
-		const nodeToMatch = new Map<number, any>()
-		for (const match of matches) {
-			for (const capture of match.captures) {
-				if (capture.name.startsWith("name.")) {
-					nodeToMatch.set(capture.node.id, match)
-				}
-				if (capture.name.startsWith("definition.")) {
-					nodeToMatch.set(capture.node.id, match)
-				}
-			}
-		}
-
+		const symbols = await analyzer.outline(absolutePath)
 		const fileResults: string[] = []
 		const foundNamesInFile = new Set<string>()
 		const seenRanges = new Set<string>()
 
-		for (const match of matches) {
-			const nameCapture = match.captures.find((c: any) => c.name.includes("name.definition"))
-			const defCapture =
-				match.captures.find((c: any) => c.name.startsWith("definition.")) ||
-				match.captures.find((c: any) => !c.name.includes("name"))
+		for (const sym of symbols) {
+			const normalizedHandle = sym.handle.replace(/::/g, ".")
+			const normalizedName = sym.name.replace(/::/g, ".")
+			const matchedReqNames = functionNames.filter((reqName) => {
+				const normalizedReqName = reqName.replace(/::/g, ".")
+				if (normalizedHandle === normalizedReqName || normalizedName === normalizedReqName) return true
+				if (normalizedHandle.endsWith("." + normalizedReqName) || normalizedName.endsWith("." + normalizedReqName)) return true
+				return false
+			})
 
-			if (nameCapture && defCapture) {
-				const nameText = fileContent.slice(nameCapture.node.startIndex, nameCapture.node.endIndex)
+			if (matchedReqNames.length === 0) continue
+			matchedReqNames.forEach((reqName) => foundNamesInFile.add(reqName))
 
-				// Calculate full name by walking up the tree
-				let fullName = nameText
-				let currentNode = defCapture.node
-				const seenMatches = new Set<any>([match])
-				while (currentNode.parent) {
-					currentNode = currentNode.parent
-					const parentMatch = nodeToMatch.get(currentNode.id)
-					if (parentMatch && !seenMatches.has(parentMatch)) {
-						const parentNameCap = parentMatch.captures.find((c: any) => c.name.startsWith("name."))
-						if (parentNameCap) {
-							const parentNameText = fileContent.slice(
-								parentNameCap.node.startIndex,
-								parentNameCap.node.endIndex,
-							)
-							fullName = `${parentNameText}.${fullName}`
-							seenMatches.add(parentMatch)
-						}
-					}
-				}
+			const rangeResult = await analyzer.symbolRange(absolutePath, sym.handle)
+			if (!rangeResult) continue
 
-				const normalizedFullName = fullName.replace(/::/g, ".")
-				const matchedReqNames = functionNames.filter((reqName) => {
-					const normalizedReqName = reqName.replace(/::/g, ".")
-					if (normalizedFullName === normalizedReqName) return true
-					if (normalizedFullName.endsWith("." + normalizedReqName)) return true
-					return false
-				})
+			const rangeKey = `${rangeResult.start_byte}-${rangeResult.end_byte}`
+			if (seenRanges.has(rangeKey)) continue
+			seenRanges.add(rangeKey)
 
-				if (matchedReqNames.length > 0) {
-					matchedReqNames.forEach((reqName) => foundNamesInFile.add(reqName))
+			const startLine = rangeResult.start_line - 1
+			const defText = fileContent.slice(rangeResult.start_byte, rangeResult.end_byte)
+			const defLines = defText.split(/\r?\n/)
+			const defAnchors = allAnchors.slice(startLine, startLine + defLines.length)
 
-					const { startIndex, endIndex, startLine } = ASTAnchorBridge.getExtendedRange(defCapture.node, fileContent)
-					
-					const rangeKey = `${startIndex}-${endIndex}`
-					if (seenRanges.has(rangeKey)) continue
-					seenRanges.add(rangeKey)
-
-					const defText = fileContent.slice(startIndex, endIndex)
-
-					const defLines = defText.split(/\r?\n/)
-					const defAnchors = allAnchors.slice(startLine, startLine + defLines.length)
-
-					const context = await SymbolContextResolver.resolve({
-						node: defCapture.node,
-						fileContent,
-						parser,
-						ext,
-						anchors: allAnchors,
-						rootNode: tree.rootNode,
+			const ctx = await analyzer.symbolContext(absolutePath, sym.handle)
+			let contextStr = ""
+			if (ctx) {
+				const ctxLines: string[] = []
+				for (const imp of ctx.imports) ctxLines.push(imp)
+				if (ctx.class_head) ctxLines.push(ctx.class_head)
+				for (const prop of ctx.properties) ctxLines.push(prop)
+				const sorted = ctxLines
+					.map((text) => {
+						const idx = allLines.indexOf(text)
+						return { text, idx: idx >= 0 ? idx : Number.MAX_SAFE_INTEGER }
 					})
-
-					const formatted = defLines.map((line, i) => formatLineWithHash(line, defAnchors[i])).join("\n")
-					const funcHash = contentHash(defText)
-					fileResults.push(`${relPath}::${fullName}\n[Function Hash: ${funcHash}]\nAll Hash Anchors provided below are stable and can be used with edit_file directly.\n${context}${formatted}`)
+					.sort((a, b) => a.idx - b.idx)
+				let lastIdx = -1
+				for (const item of sorted) {
+					if (lastIdx !== -1 && item.idx > lastIdx + 1) contextStr += "...\n"
+					contextStr += formatLineWithHash(item.text, allAnchors[item.idx]) + "\n"
+					lastIdx = item.idx
 				}
+				if (contextStr) contextStr += "...\n"
 			}
+
+			const formatted = defLines.map((line, i) => formatLineWithHash(line, defAnchors[i])).join("\n")
+			const funcHash = contentHash(defText)
+			const fullName = sym.parent ? sym.parent.replace("class:", "") + "." + sym.name : sym.name
+			fileResults.push(`${relPath}::${fullName}\n[Function Hash: ${funcHash}]\nAll Hash Anchors provided below are stable and can be used with edit_file directly.\n${contextStr}${formatted}`)
 		}
 
 		if (fileResults.length > 0) {
@@ -197,154 +140,47 @@ export class ASTAnchorBridge {
 				foundNames: Array.from(foundNamesInFile),
 			}
 		}
-
 		return {
 			formattedContent: `None of the requested functions (${functionNames.join(", ")}) were found in ${relPath}`,
 			foundNames: [],
 		}
 	}
 
-	/**
-	 * Gets the range of a specific symbol for replacement.
-	 */
 	public static async getSymbolRange(
 		absolutePath: string,
 		symbol: string,
 		type?: string,
 		diracIgnoreController?: DiracIgnoreController,
-		taskId?: string,
+		_taskId?: string,
+		analyzer?: AnalyzerClient,
 	): Promise<SymbolRange | null> {
 		if (diracIgnoreController && !diracIgnoreController.validateAccess(absolutePath)) {
 			return null
 		}
+		if (!analyzer) return null
 
-		const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-		const ext = path.extname(absolutePath).toLowerCase().slice(1)
-		const { parser, query } = languageParsers[ext] || {}
+		const normalizedSymbol = symbol.replace(/::/g, ".")
 
-		if (!parser || !query) {
-			return null
+		const handles: string[] = []
+		if (type === "class") {
+			handles.push("class:" + normalizedSymbol)
+		} else if (type === "function" || type === "method") {
+			handles.push("fn:" + normalizedSymbol)
 		}
+		handles.push(normalizedSymbol)
 
-		const fileContent = await fs.readFile(absolutePath, "utf8")
-		const tree = parser.parse(fileContent)
-		if (!tree || !tree.rootNode) {
-			return null
-		}
-
-		const matches = query.matches(tree.rootNode)
-		const nodeToMatch = new Map<number, any>()
-		for (const match of matches) {
-			for (const capture of match.captures) {
-				if (capture.name.startsWith("name.")) {
-					nodeToMatch.set(capture.node.id, match)
-				}
-				if (capture.name.startsWith("definition.")) {
-					nodeToMatch.set(capture.node.id, match)
-				}
-			}
-		}
-
-		const normalizedRequestedSymbol = symbol.replace(/::/g, ".")
-
-		for (const match of matches) {
-			const nameCapture = match.captures.find((c: any) => c.name.startsWith("name.definition"))
-			const defCapture =
-				match.captures.find((c: any) => c.name.startsWith("definition.")) ||
-				match.captures.find((c: any) => !c.name.startsWith("name."))
-
-			if (nameCapture && defCapture) {
-				const nameText = fileContent.slice(nameCapture.node.startIndex, nameCapture.node.endIndex)
-				const defType = defCapture.name.split(".").pop() || ""
-
-				let fullName = nameText
-				let currentNode = defCapture.node
-				const seenMatches = new Set<any>([match])
-				while (currentNode.parent) {
-					currentNode = currentNode.parent
-					const parentMatch = nodeToMatch.get(currentNode.id)
-					if (parentMatch && !seenMatches.has(parentMatch)) {
-						const parentNameCap = parentMatch.captures.find((c: any) => c.name.startsWith("name."))
-						if (parentNameCap) {
-							const parentNameText = fileContent.slice(parentNameCap.node.startIndex, parentNameCap.node.endIndex)
-							fullName = `${parentNameText}.${fullName}`
-							seenMatches.add(parentMatch)
-						}
-					}
-				}
-
-				const normalizedFullName = fullName.replace(/::/g, ".")
-				if (
-					(normalizedFullName === normalizedRequestedSymbol ||
-						normalizedFullName.endsWith("." + normalizedRequestedSymbol)) &&
-					ASTAnchorBridge.areTypesCompatible(defType, type)
-				) {
-					const range = ASTAnchorBridge.getExtendedRange(defCapture.node, fileContent)
-					return {
-						...range,
-						nameText,
-					}
+		for (const handle of handles) {
+			const result = await analyzer.symbolRange(absolutePath, handle)
+			if (result) {
+				return {
+					startIndex: result.start_byte,
+					endIndex: result.end_byte,
+					startLine: result.start_line - 1,
+					nameText: result.name_text,
 				}
 			}
 		}
 
 		return null
-	}
-
-	private static areTypesCompatible(defType: string, reqType?: string): boolean {
-		if (!reqType) {
-			return true
-		}
-		if (defType === reqType) {
-			return true
-		}
-		const synonyms = ["function", "method"]
-		if (synonyms.includes(defType) && synonyms.includes(reqType)) {
-			return true
-		}
-		return false
-	}
-
-	private static getExtendedRange(
-		targetNode: any,
-		fileContent: string,
-	): { startIndex: number; endIndex: number; startLine: number } {
-		let startIndex = targetNode.startIndex
-		let endIndex = targetNode.endIndex
-		let startLine = targetNode.startPosition.row
-
-		let currentNode = targetNode
-		const wrapperTypes = [
-			"export_statement",
-			"export_declaration",
-			"ambient_declaration",
-			"decorated_definition",
-			"internal_module",
-		]
-
-		while (currentNode.parent && wrapperTypes.includes(currentNode.parent.type)) {
-			currentNode = currentNode.parent
-			startIndex = currentNode.startIndex
-			endIndex = currentNode.endIndex
-			startLine = currentNode.startPosition.row
-		}
-
-		while (currentNode.previousNamedSibling) {
-			const prev = currentNode.previousNamedSibling
-			if (
-				prev.type === "comment" ||
-				prev.type === "decorator" ||
-				prev.type === "attribute" ||
-				prev.type.includes("comment")
-			) {
-				startIndex = prev.startIndex
-				startLine = prev.startPosition.row
-				currentNode = prev
-			} else {
-				break
-			}
-		}
-
-		return { startIndex, endIndex, startLine }
 	}
 }

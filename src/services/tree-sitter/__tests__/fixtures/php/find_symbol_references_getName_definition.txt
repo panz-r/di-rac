@@ -1,2 +1,0 @@
-sample.php:
-  (getName)     public function getName(): string

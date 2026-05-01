@@ -1,3 +1,0 @@
-sample.c:
-  (say_hello) void say_hello(const char* name) {
-  (say_hello)     say_hello("World");

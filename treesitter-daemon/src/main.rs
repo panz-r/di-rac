@@ -1,11 +1,14 @@
 mod commands;
+mod context;
 mod error;
 mod extractor;
+mod indexer;
 mod language;
 mod parser;
 mod queries;
 mod skeleton;
 mod cache;
+mod symbol_range;
 
 use clap::Parser;
 use error::AnalyzerError;
@@ -368,6 +371,28 @@ fn process_request(
             Some(h) => commands::expand_symbol_cmd(&parsed, h, id).to_json(),
             None => {
                 let err = AnalyzerError::invalid_command("expand-symbol requires 'handle' field");
+                err.to_json_response(id.as_ref())
+            }
+        };
+    }
+
+    // symbol-range needs the handle too.
+    if command == "symbol-range" {
+        return match handle {
+            Some(h) => commands::symbol_range_cmd(&parsed, h, id).to_json(),
+            None => {
+                let err = AnalyzerError::invalid_command("symbol-range requires 'handle' field");
+                err.to_json_response(id.as_ref())
+            }
+        };
+    }
+
+    // symbol-context needs a handle.
+    if command == "symbol-context" {
+        return match handle {
+            Some(h) => commands::symbol_context_cmd(&parsed, h, id).to_json(),
+            None => {
+                let err = AnalyzerError::invalid_command("symbol-context requires 'handle' field");
                 err.to_json_response(id.as_ref())
             }
         };

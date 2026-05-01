@@ -6,6 +6,7 @@ import { CommandExecutor } from "../../../integrations/terminal"
 import { ITerminalManager } from "../../../integrations/terminal/types"
 import { BrowserSession } from "../../../services/browser/BrowserSession"
 import { UrlContentFetcher } from "../../../services/browser/UrlContentFetcher"
+import { AnalyzerClient } from "../../../services/tree-sitter/AnalyzerClient"
 import { ContextManager } from "../../context/context-management/ContextManager"
 import { FileContextTracker } from "../../context/context-tracking/FileContextTracker"
 import { DiracIgnoreController } from "../../ignore/DiracIgnoreController"
@@ -36,6 +37,7 @@ export interface LifecycleManagerDependencies {
 	fileContextTracker: FileContextTracker
 	contextManager: ContextManager
 	commandExecutor: CommandExecutor
+	analyzer: AnalyzerClient
 	cwd: string
 	hookManager: HookManager
 	initiateTaskLoop: (userContent: DiracContent[]) => Promise<void>

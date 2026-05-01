@@ -1,5 +1,0 @@
-sample.cs:
-  (CSharpClass)     public class CSharpClass
-  (CSharpClass)         public CSharpClass(string name)
-  (CSharpClass)             var obj = new CSharpClass("example");
-  (CSharpClass)             var obj = new CSharpClass("top-level");

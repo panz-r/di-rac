@@ -1,2 +1,0 @@
-sample.java:
-  (getName)     public String getName() {

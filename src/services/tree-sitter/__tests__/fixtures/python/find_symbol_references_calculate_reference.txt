@@ -1,3 +1,0 @@
-sample.py:
-  (calculate)     def calculate(self, a: int, b: int) -> int:
-  (calculate)     return obj.calculate(x, 10)

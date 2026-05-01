@@ -149,6 +149,7 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 						r.type,
 						config.services.diracIgnoreController,
 						config.ulid,
+						config.services.analyzer,
 					)
 
 					if (!symbolRange) {
@@ -263,6 +264,7 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 				this.useLinterOnlyForSyntax,
 				this.diagnosticsTimeoutMs,
 				this.diagnosticsDelayMs,
+				config.services.analyzer,
 			)
 			const preDiagnostics = (await Promise.all(providers.map((p) => p.capturePreSaveState()))).flat()
 

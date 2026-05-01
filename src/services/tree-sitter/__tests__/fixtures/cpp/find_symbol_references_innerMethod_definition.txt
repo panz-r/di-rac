@@ -1,2 +1,0 @@
-sample.cpp:
-  (innerMethod)             int innerMethod(int val) {

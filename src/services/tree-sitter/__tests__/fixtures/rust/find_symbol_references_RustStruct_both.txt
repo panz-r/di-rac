@@ -1,6 +1,0 @@
-sample.rs:
-  (RustStruct) pub struct RustStruct {
-  (RustStruct) impl RustStruct {
-  (RustStruct)         RustStruct { value }
-  (RustStruct) impl SampleTrait for RustStruct {
-  (RustStruct)     let instance = RustStruct::new(42);

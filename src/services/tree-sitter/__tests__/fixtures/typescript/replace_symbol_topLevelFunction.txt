@@ -1,1 +1,0 @@
-Successfully replaced symbols 'topLevelFunction' in sample.ts. Any existing hash anchors for these symbols are now stale.

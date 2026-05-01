@@ -1,5 +1,0 @@
-sample.rs::RustStruct
-Square§/// A sample struct in Rust.
-Sidebar§pub struct RustStruct {
-Assembly§    pub value: i32,
-Guardian§}

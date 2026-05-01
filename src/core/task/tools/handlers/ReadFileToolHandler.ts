@@ -5,8 +5,8 @@ import { formatResponse } from "@core/prompts/responses"
 import { createToolError } from "@shared/tool-response"
 import { resolveWorkspacePath } from "@core/workspace"
 import { extractFileContent } from "@integrations/misc/extract-file-content"
-import { parseContent, parseFile, generateSkeleton, ParsedDefinition } from "@services/tree-sitter"
-import { loadRequiredLanguageParsers } from "@services/tree-sitter/languageParser"
+import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
+import type { ParsedDefinition } from "@services/tree-sitter"
 import { contentHash, hashLines, stripHashes, generateFullAnchoredContent } from "@utils/line-hashing"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { countFileLines, readFirstNLines } from "@utils/fs"
@@ -310,8 +310,8 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 					} else if (page === "prev") {
 						finalStartLine = Math.max(1, currentCursor - effectivePreviewLines)
 					} else if (page === "section" && section) {
-						const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-						const definitions = await parseFile(absolutePath, languageParsers, config.services.diracIgnoreController)
+						const daemonSymbols = await config.services.analyzer.outline(absolutePath)
+						const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols)
 						const target = definitions?.find(d => d.id === section)
 						if (target) {
 							finalStartLine = target.fullBodyRange?.startLine || target.lineIndex + 1
@@ -343,15 +343,13 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 					switch (mode) {
 						case "outline": {
 							if (!isSupported) return "Outline not available for this file type."
-							const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-							const definitions = await parseFile(absolutePath, languageParsers, config.services.diracIgnoreController)
-							return definitions ? this.buildOutline(definitions) : "No definitions found."
+							const daemonSymbols = await config.services.analyzer.outline(absolutePath)
+							const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols)
+							return definitions.length > 0 ? this.buildOutline(definitions) : "No definitions found."
 						}
 						case "skeleton": {
 							if (!isSupported) return (await extractFileContent(absolutePath, false)).text
-							const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-							const fullContent = (await extractFileContent(absolutePath, false)).text
-							return await generateSkeleton(fullContent, cleanExt, languageParsers)
+							return await config.services.analyzer.skeleton(absolutePath)
 						}
 						case "preview": {
 							const preview = await readFirstNLines(absolutePath, effectivePreviewLines)
@@ -360,9 +358,9 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 							
 							if (isSupported) {
 								try {
-									const languageParsers = await loadRequiredLanguageParsers([absolutePath])
-									const definitions = await parseFile(absolutePath, languageParsers, config.services.diracIgnoreController)
-									if (definitions) {
+									const daemonSymbols = await config.services.analyzer.outline(absolutePath)
+									const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols)
+									if (definitions.length > 0) {
 										const filtered = definitions.filter(d => d.kind === "class" || d.kind === "function" || d.kind === "interface")
 										const limited = filtered.slice(0, 50)
 										chunkMap = "\nChunk map (full file):\n" + limited

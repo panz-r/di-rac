@@ -100,6 +100,7 @@ import { StreamResponseHandler } from "./StreamResponseHandler"
 import { TaskMessenger } from "./TaskMessenger"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
+import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import { extractProviderDomainFromUrl, printSessionSummary, updateApiReqMsg } from "./utils"
 
 export type ToolResponse = DiracToolResponseContent
@@ -174,6 +175,7 @@ export class Task {
 	private diracIgnoreController: DiracIgnoreController
 	private commandPermissionController: CommandPermissionController
 	private toolExecutor: ToolExecutor
+	private analyzer: AnalyzerClient
 	/**
 	 * Whether the task is using native tool calls.
 	 * This is used to determine how we would format response.
@@ -509,6 +511,15 @@ export class Task {
 			this.getActiveHookExecution.bind(this),
 			this.runUserPromptSubmitHook.bind(this),
 		)
+		// Initialize tree-sitter daemon client
+		const analyzerBinary = path.join(__dirname, "dirac-analyzer")
+		this.analyzer = new AnalyzerClient(analyzerBinary, this.cwd)
+		this.toolExecutor.analyzer = this.analyzer
+
+		// Wire analyzer to symbol index service
+		const { SymbolIndexService } = require("@/services/symbol-index/SymbolIndexService")
+		SymbolIndexService.getInstance().setAnalyzer(this.analyzer)
+
 		this.environmentManager = new EnvironmentManager({
 			cwd: this.cwd,
 			terminalManager: this.terminalManager,
@@ -529,6 +540,7 @@ export class Task {
 			fileContextTracker: this.fileContextTracker,
 			workspaceManager: this.workspaceManager,
 			diracIgnoreController: this.diracIgnoreController,
+			analyzer: this.analyzer,
 			taskState: this.taskState,
 			getCurrentProviderInfo: this.getCurrentProviderInfo.bind(this),
 			getEnvironmentDetails: this.getEnvironmentDetails.bind(this),
@@ -578,6 +590,7 @@ export class Task {
 			fileContextTracker: this.fileContextTracker,
 			contextManager: this.contextManager,
 			commandExecutor: this.commandExecutor,
+			analyzer: this.analyzer,
 			cwd: this.cwd,
 			hookManager: this.hookManager,
 			initiateTaskLoop: this.initiateTaskLoop.bind(this),

@@ -275,6 +275,7 @@ export class RenameSymbolToolHandler implements IFullyManagedTool {
 				this.useLinterOnlyForSyntax,
 				this.diagnosticsTimeoutMs,
 				this.diagnosticsDelayMs,
+				config.services.analyzer,
 			)
 			const preDiagnostics = (await Promise.all(providers.map((p) => p.capturePreSaveState()))).flat()
 

@@ -1,6 +1,6 @@
-import { loadRequiredLanguageParsers } from "@/services/tree-sitter/languageParser"
-import { parseFile } from "@/services/tree-sitter/index"
+import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import path from "path"
+import * as fs from "fs/promises"
 
 const SUPPORTED_EXTENSIONS = new Set([
 	"ts", "tsx", "js", "jsx", "py", "rs", "go", "c", "cpp", "h", "hpp",
@@ -13,6 +13,7 @@ const MAX_TOTAL_LINES = 500
 export async function generateOutlinesForChangedFiles(
 	changedFiles: string[],
 	cwd: string,
+	analyzer?: { outline: (filePath: string) => Promise<any[]> },
 ): Promise<string | null> {
 	const parseable = changedFiles.filter((f) => {
 		const ext = f.split(".").pop()?.toLowerCase()
@@ -23,7 +24,10 @@ export async function generateOutlinesForChangedFiles(
 
 	const filesToParse = parseable.slice(0, MAX_FILES)
 	const absPaths = filesToParse.map((f) => path.resolve(cwd, f))
-	const languageParsers = await loadRequiredLanguageParsers(absPaths)
+
+	// If no analyzer provided, skip outline generation
+	if (!analyzer) return null
+
 	const parts: string[] = ["Current outlines for modified files:"]
 	let totalLines = 0
 
@@ -33,7 +37,10 @@ export async function generateOutlinesForChangedFiles(
 		const relPath = filesToParse[i]
 		const absPath = absPaths[i]
 		try {
-			const definitions = await parseFile(absPath, languageParsers)
+			const daemonSymbols = await analyzer.outline(absPath)
+			const fileContent = await fs.readFile(absPath, "utf8")
+			const sourceLines = fileContent.split("\n")
+			const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols, sourceLines)
 			if (!definitions || definitions.length === 0) continue
 
 			const fileParts: string[] = []

@@ -80,6 +80,7 @@ export class GetFileSkeletonToolHandler implements IFullyManagedTool {
 							config.services.diracIgnoreController,
 							config.ulid,
 							{ showCallGraph: true },
+							config.services.analyzer,
 						)
 					} catch (error) {
 						return `Error parsing ${absPath}: ${error instanceof Error ? error.message : String(error)}`

@@ -2,8 +2,7 @@ import path from "node:path"
 import fs from "node:fs/promises"
 import type { ToolUse } from "@core/assistant-message"
 import { resolveWorkspacePath } from "@core/workspace"
-import { loadRequiredLanguageParsers } from "@services/tree-sitter/languageParser"
-import { parseFile, parseContent } from "@services/tree-sitter"
+import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { readFirstNLines } from "@utils/fs"
 import { formatResponse } from "@/core/prompts/responses"
@@ -16,6 +15,13 @@ import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { listFiles } from "@services/glob/list-files"
 import { createToolError } from "@shared/tool-response"
+
+const EXT_TO_LANG: Record<string, string> = {
+	ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
+	py: "python", rs: "rust", go: "go", c: "c", cpp: "cpp",
+	h: "c", hpp: "cpp", java: "java", php: "php", rb: "ruby",
+	swift: "swift", kt: "java",
+}
 
 export class RepoMapToolHandler implements IFullyManagedTool {
 	readonly name = DiracDefaultTool.REPO_MAP
@@ -41,13 +47,13 @@ export class RepoMapToolHandler implements IFullyManagedTool {
 		try {
 			// 1. Walk workspace
 			const [fileInfos] = await listFiles(config.cwd, true, 500) // limit for repo map
-			
+
 			const results: any[] = []
 			for (const file of fileInfos) {
 				const absPath = file.path
 				const relPath = path.relative(config.cwd, absPath)
 				const ext = path.extname(absPath).toLowerCase().slice(1)
-				
+
 				const entry: any = {
 					file: relPath,
 					size: file.size,
@@ -55,40 +61,38 @@ export class RepoMapToolHandler implements IFullyManagedTool {
 
 				if (RepoMapToolHandler.SUPPORTED_EXTENSIONS.has(ext)) {
 					try {
-						const languageParsers = await loadRequiredLanguageParsers([absPath])
-						// Read a bit of the file for imports even if large
 						const previewContent = await readFirstNLines(absPath, 100)
-						const parseResult = await parseContent(previewContent, ext, languageParsers)
-						
-						if (parseResult) {
-							const { definitions, imports } = parseResult
+						const lang = EXT_TO_LANG[ext] || ext
+						const result = await config.services.analyzer.outlineContentWithImports(previewContent, lang)
+						const sourceLines = previewContent.split("\n")
+						const definitions = AnalyzerClient.toParsedDefinitions(result.symbols, sourceLines)
+						const imports = result.imports
 
-							// Capture top-level symbols
-							entry.symbols = definitions
-								.filter(s => s.kind === "class" || s.kind === "function" || s.kind === "interface")
-								.map(s => s.name)
-								.slice(0, 7)
+						// Capture top-level symbols
+						entry.symbols = definitions
+							.filter(s => s.kind === "class" || s.kind === "function" || s.kind === "interface")
+							.map(s => s.name)
+							.slice(0, 7)
 
-							// Capture imports (rough heuristic for "edges")
-							const workspaceImports = imports
-								.filter(imp => imp.includes("./") || imp.includes("../") || imp.includes("@/"))
-								.map(imp => imp.replace(/['";]/g, "").trim())
-								.slice(0, 5)
-							
-							if (workspaceImports.length > 0) {
-								entry.imports = workspaceImports
-							}
+						// Capture imports (rough heuristic for "edges")
+						const workspaceImports = imports
+							.filter(imp => imp.includes("./") || imp.includes("../") || imp.includes("@/"))
+							.map(imp => imp.replace(/['";]/g, "").trim())
+							.slice(0, 5)
 
-							// Cache in symbol index if not already there
-							if (!config.taskState.symbolIndex.has(relPath)) {
-								config.taskState.symbolIndex.set(relPath, definitions.map(d => ({
-									id: d.id,
-									name: d.name,
-									kind: d.kind,
-									line: d.lineIndex + 1,
-									signature: d.signature
-								})))
-							}
+						if (workspaceImports.length > 0) {
+							entry.imports = workspaceImports
+						}
+
+						// Cache in symbol index if not already there
+						if (!config.taskState.symbolIndex.has(relPath)) {
+							config.taskState.symbolIndex.set(relPath, definitions.map(d => ({
+								id: d.id,
+								name: d.name,
+								kind: d.kind,
+								line: d.lineIndex + 1,
+								signature: d.signature
+							})))
 						}
 					} catch (e) {
 						// Ignore parse errors
@@ -112,9 +116,9 @@ export class RepoMapToolHandler implements IFullyManagedTool {
 			if (!config.isSubagentExecution) {
 				await config.callbacks.say("tool", completeMessage, undefined, undefined, false)
 			}
-			
+
 			telemetryService.captureToolUsage(config.ulid, this.name, config.api.getModel().id, provider, true, true, undefined, block.isNativeToolCall)
-			
+
 			config.taskState.consecutiveMistakeCount = 0
 			return `Repository Structure Summary:\n\n${output}\n\nUse read_file --detail outline to see full symbol tables for specific files.`
 

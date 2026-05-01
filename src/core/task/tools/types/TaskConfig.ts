@@ -18,6 +18,7 @@ import type { ContextManager } from "../../../context/context-management/Context
 import type { StateManager } from "../../../storage/StateManager"
 import type { OutputManager } from "@/shared/services/OutputManager"
 import type { StructuredLogger } from "@/shared/services/StructuredLogger"
+import type { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import type { MessageStateHandler } from "../../message-state"
 import type { TaskState } from "../../TaskState"
 import type { AutoApprove } from "../../tools/autoApprove"
@@ -81,6 +82,7 @@ export interface TaskServices {
 	stateManager: StateManager
 	structuredLogger: StructuredLogger
 	outputManager: OutputManager
+	analyzer: AnalyzerClient
 }
 
 /**

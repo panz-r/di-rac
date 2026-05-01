@@ -1,3 +1,0 @@
-sample.py:
-  (PythonClass) class PythonClass:
-  (PythonClass)     obj = PythonClass("example")

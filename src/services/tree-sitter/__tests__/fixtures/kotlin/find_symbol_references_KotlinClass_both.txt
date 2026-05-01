@@ -1,3 +1,0 @@
-sample.kt:
-  (KotlinClass) class KotlinClass(var name: String) {
-  (KotlinClass)     val obj = KotlinClass("example")

@@ -1,3 +1,0 @@
-sample.cpp:
-  (getName)     std::string getName() const {
-  (getName)     std::cout << obj.getName() << std::endl;

@@ -151,6 +151,7 @@ export class GetFunctionToolHandler implements IFullyManagedTool {
 					functionNames,
 					config.services.diracIgnoreController,
 					config.ulid,
+					config.services.analyzer,
 				)
 
 				if (result) {

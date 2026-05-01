@@ -6,6 +6,7 @@ import { Controller } from "../../controller"
 import { DiracIgnoreController } from "../../ignore/DiracIgnoreController"
 import { StateManager } from "../../storage/StateManager"
 import { TaskState } from "../TaskState"
+import type { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 
 export interface ContextLoaderDependencies {
 	ulid: string
@@ -16,6 +17,7 @@ export interface ContextLoaderDependencies {
 	fileContextTracker: FileContextTracker
 	workspaceManager?: WorkspaceRootManager
 	diracIgnoreController: DiracIgnoreController
+	analyzer?: AnalyzerClient
 	taskState: TaskState
 	getCurrentProviderInfo: () => ApiProviderInfo
 	getEnvironmentDetails: (includeFileDetails?: boolean) => Promise<string>

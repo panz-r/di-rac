@@ -226,6 +226,7 @@ export class ContextLoader {
                         this.dependencies.diracIgnoreController,
                         this.dependencies.ulid,
                         { showCallGraph: true },
+                        this.dependencies.analyzer,
                     )
                     if (skeleton && !skeleton.includes("Unsupported file type")) {
                         skeletons.push(`<file_skeleton path="${relPath}">\n${skeleton}\n</file_skeleton>`)

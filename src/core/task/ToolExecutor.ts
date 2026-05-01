@@ -25,6 +25,7 @@ import { StateManager } from "../storage/StateManager"
 import { WorkspaceRootManager } from "../workspace"
 import { ToolResponse } from "."
 import { RecoveryEngine } from "./recovery"
+import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import { MessageStateHandler } from "./message-state"
 import { TaskState } from "./TaskState"
 import { AutoApprove } from "./tools/autoApprove"
@@ -39,6 +40,14 @@ export class ToolExecutor {
 	private autoApprover: AutoApprove
 	private coordinator: ToolExecutorCoordinator
 	public recoveryEngine: RecoveryEngine
+	private _analyzer: AnalyzerClient | null = null
+	public set analyzer(a: AnalyzerClient | null) {
+		this._analyzer = a
+		if (a) this.recoveryEngine.setAnalyzer(a)
+	}
+	public get analyzer(): AnalyzerClient | null {
+		return this._analyzer
+	}
 
 	private readonly noopReinit = async () => {}
 	private readonly noopUpdateHistory = async () => []
@@ -170,6 +179,7 @@ export class ToolExecutor {
 				stateManager: this.stateManager,
 				structuredLogger: new StructuredLogger(this.taskId, Session.get().getSessionId(), this.cwd),
 				outputManager: new OutputManager(this.cwd),
+				analyzer: this.analyzer!,
 			},
 			callbacks: {
 				say: this.say,

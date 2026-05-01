@@ -161,6 +161,7 @@ export class BatchProcessor {
             this.useLinterOnlyForSyntax,
             this.diagnosticsTimeoutMs,
             this.diagnosticsDelayMs,
+            config.services.analyzer,
         )
 
         // 1. Capture pre-save diagnostics for all files once

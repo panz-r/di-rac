@@ -2,8 +2,7 @@ import path from "node:path"
 import fs from "node:fs/promises"
 import type { ToolUse } from "@core/assistant-message"
 import { resolveWorkspacePath } from "@core/workspace"
-import { loadRequiredLanguageParsers } from "@services/tree-sitter/languageParser"
-import { parseFile } from "@services/tree-sitter"
+import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { formatResponse } from "@/core/prompts/responses"
 import { telemetryService } from "@/services/telemetry"
@@ -55,21 +54,25 @@ export class SearchSymbolsToolHandler implements IFullyManagedTool {
 		const provider = (currentMode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
 		try {
-			// 1. Lazy Indexing if needed
+			// 1. Lazy Indexing if needed — use daemon batch outline
 			if (config.taskState.symbolIndex.size === 0) {
-				const [fileInfos] = await listFiles(config.cwd, true, 1000) // limit to 1000 files for index
+				const [fileInfos] = await listFiles(config.cwd, true, 1000)
 				const sourceFiles = fileInfos.filter(f => {
 					const ext = path.extname(f.path).toLowerCase().slice(1)
 					return SearchSymbolsToolHandler.SUPPORTED_EXTENSIONS.has(ext)
 				})
 
+				// Use daemon batch outline for efficient bulk parsing
+				const filePaths = sourceFiles.map(f => f.path)
+				const batchResults = await config.services.analyzer.batchOutline(filePaths)
+
 				for (const file of sourceFiles) {
 					const absPath = file.path
 					const relPath = path.relative(config.cwd, absPath)
 					try {
-						const languageParsers = await loadRequiredLanguageParsers([absPath])
-						const definitions = await parseFile(absPath, languageParsers, config.services.diracIgnoreController)
-						if (definitions) {
+						const daemonSymbols = batchResults.get(absPath)
+						if (daemonSymbols && daemonSymbols.length > 0) {
+							const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols)
 							config.taskState.symbolIndex.set(relPath, definitions.map(d => ({
 								id: d.id,
 								name: d.name,
@@ -102,7 +105,7 @@ export class SearchSymbolsToolHandler implements IFullyManagedTool {
 			if (matches.length === 0) {
 				resultText = `No symbols matching '${query}' found.`
 			} else {
-				resultText = `Found ${matches.length} matching symbols:\n` + matches.map(m => 
+				resultText = `Found ${matches.length} matching symbols:\n` + matches.map(m =>
 					`  - [${m.id}] ${m.signature || m.name} in '${m.file}' (line ${m.line})`
 				).join("\n")
 			}

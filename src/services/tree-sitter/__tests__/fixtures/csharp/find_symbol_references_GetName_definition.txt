@@ -1,2 +1,0 @@
-sample.cs:
-  (GetName)         public string GetName()

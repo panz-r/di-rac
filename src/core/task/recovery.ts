@@ -156,6 +156,11 @@ export class RecoveryEngine {
 		this.readyPromise = this.loadRecoveryMemory()
 	}
 
+	private _analyzer: import("@/services/tree-sitter/AnalyzerClient").AnalyzerClient | null = null
+	setAnalyzer(analyzer: import("@/services/tree-sitter/AnalyzerClient").AnalyzerClient) {
+		this._analyzer = analyzer
+	}
+
 	private async getGlobalPlaybookPath(): Promise<string> {
 		const os = await import("os")
 		const path = await import("path")
@@ -796,13 +801,14 @@ export class RecoveryEngine {
 				this.editSnapshotPaths.set(filePath, snapFile)
 			} catch { /* non-critical */ }
 			try {
-				const { parseFile } = await import("@/services/tree-sitter")
-				const { loadRequiredLanguageParsers } = await import("@/services/tree-sitter/languageParser")
-				const languageParsers = await loadRequiredLanguageParsers([filePath])
-				const defs = await parseFile(filePath, languageParsers)
-				if (defs) {
-					this.preEditSymbols.set(filePath, defs)
-					this.turnEditLog.push({ file: filePath, oldSymbolIds: new Set(defs.map((d: any) => d.id || d.name)) })
+				if (this._analyzer) {
+					const { AnalyzerClient } = await import("@/services/tree-sitter/AnalyzerClient")
+					const daemonSymbols = await this._analyzer.outline(filePath)
+					const defs = AnalyzerClient.toParsedDefinitions(daemonSymbols)
+					if (defs.length > 0) {
+						this.preEditSymbols.set(filePath, defs)
+						this.turnEditLog.push({ file: filePath, oldSymbolIds: new Set(defs.map((d: any) => d.id || d.name)) })
+					}
 				}
 			} catch { /* ignore */ }
 		}
@@ -1500,10 +1506,9 @@ Some line numbers may have shifted. Please locate your target function in the ne
 						const preDefs = this.preEditSymbols.get(postFilePath)
 						if (preDefs && preDefs.length > 0) {
 							try {
-								const { parseFile } = await import("@/services/tree-sitter")
-								const { loadRequiredLanguageParsers } = await import("@/services/tree-sitter/languageParser")
-								const languageParsers = await loadRequiredLanguageParsers([postFilePath])
-								const postDefs = await parseFile(postFilePath, languageParsers)
+								const { AnalyzerClient } = await import("@/services/tree-sitter/AnalyzerClient")
+								const daemonSymbols = await this._analyzer!.outline(postFilePath)
+								const postDefs = AnalyzerClient.toParsedDefinitions(daemonSymbols)
 								if (postDefs) {
 									const entityDiffs = this.computeEntityDiff(preDefs, postDefs, postFilePath)
 									const confirmMajorChange = (args as any)?.confirm_major_change || (args as any)?.["confirm-major-change"]
@@ -1992,16 +1997,11 @@ Some line numbers may have shifted. Please locate your target function in the ne
 	 */
 	private async isFileParseValid(filePath: string): Promise<boolean> {
 		try {
-			const fs = await import("fs/promises")
-			const path = await import("path")
-			const content = await fs.readFile(filePath, "utf8")
-			const ext = path.extname(filePath).toLowerCase().slice(1)
-			const { loadRequiredLanguageParsers } = await import("@/services/tree-sitter/languageParser")
-			const languageParsers = await loadRequiredLanguageParsers([filePath])
-			const parser = languageParsers[ext]?.parser
-			if (!parser) return true // no parser available, assume valid
-			const tree = parser.parse(content)
-			return tree ? !tree.rootNode.hasError : true
+			if (this._analyzer) {
+				const symbols = await this._analyzer.outline(filePath)
+				return Array.isArray(symbols)
+			}
+			return true // no analyzer available, assume valid
 		} catch {
 			return true // on error, assume valid (don't block)
 		}
@@ -2031,11 +2031,11 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				lines.push("  WARNING: Syntax errors detected in the proposed edit.")
 			}
 			try {
-				const { parseFile } = await import("@/services/tree-sitter")
-				const { loadRequiredLanguageParsers } = await import("@/services/tree-sitter/languageParser")
-				const languageParsers = await loadRequiredLanguageParsers([tempPath])
-				const origDefs = (await parseFile(originalPath, languageParsers)) || []
-				const tempDefs = await parseFile(tempPath, languageParsers)
+				const { AnalyzerClient } = await import("@/services/tree-sitter/AnalyzerClient")
+				const origDaemonSymbols = await this._analyzer!.outline(originalPath)
+				const origDefs = AnalyzerClient.toParsedDefinitions(origDaemonSymbols)
+				const tempDaemonSymbols = await this._analyzer!.outline(tempPath)
+				const tempDefs = AnalyzerClient.toParsedDefinitions(tempDaemonSymbols)
 				if (tempDefs) {
 					const origNames = new Map(origDefs.map((d: any) => [d.name, d] as [string, any]))
 					const tempNames = new Map(tempDefs.map((d: any) => [d.name, d] as [string, any]))

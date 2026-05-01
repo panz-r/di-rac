@@ -1,4 +1,0 @@
-sample.ts:
-  (MyClass) class MyClass implements MyInterface {
-  (MyClass) 	const instance = new MyClass()
-  (MyClass) export { MyClass, topLevelFunction, outerFunction, DecoratedClass, shadowingFunction }
