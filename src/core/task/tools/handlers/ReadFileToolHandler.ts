@@ -441,10 +441,9 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 				}
 
 				const currentHash = contentHash(responseContent)
-				const tokenInfo = maxTokens ? ` [Budget: ${maxTokens}, Actual: ~${Math.round(responseContent.length * TOKEN_ESTIMATE_RATIO)}]` : ""
-				const degradedInfo = degraded ? " [DEGRADED TO STAY IN BUDGET]" : ""
-				
-				results.push(`${header}[File Hash: ${currentHash}]${tokenInfo}${degradedInfo}\n${responseContent}`)
+				const degradedInfo = degraded ? " [Content reduced to fit budget — use specific line ranges for full detail]" : ""
+
+				results.push(`${header}[File Hash: ${currentHash}]${degradedInfo}\n${responseContent}`)
 				
 				const labelRange = ranges.length > 0 ? `lines ${ranges.map(r => `${r.start}-${r.end}`).join(", ")}` : "full"
 				readFileResults.push({

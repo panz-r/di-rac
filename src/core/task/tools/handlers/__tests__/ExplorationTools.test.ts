@@ -160,7 +160,7 @@ describe("Progressive Exploration Tools", () => {
 				params: { paths: ["test.ts"], detail: "full", max_tokens: 50 }
 			})
 
-			assert.ok((result as string).includes("[DEGRADED TO STAY IN BUDGET]"))
+			assert.ok((result as string).includes("[Content reduced to fit budget"))
 		})
 	})
 
