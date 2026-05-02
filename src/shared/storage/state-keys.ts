@@ -268,6 +268,16 @@ const USER_SETTINGS_FIELDS = {
 
 	writePromptMetadataEnabled: { default: false as boolean },
 	writePromptMetadataDirectory: { default: undefined as string | undefined },
+
+	// Observer pattern
+	observerEnabled: { default: false as boolean },
+	observerProvider: { default: undefined as string | undefined },
+	observerModelId: { default: undefined as string | undefined },
+	observerTokenThreshold: { default: 50000 as number },
+	observerBufferActivation: { default: 0.8 as number },
+	observerBlockAfter: { default: 1.2 as number },
+	observerReflectionEnabled: { default: true as boolean },
+	observerReflectionTokenThreshold: { default: 40000 as number },
 } satisfies FieldDefinitions
 
 const SETTINGS_FIELDS = { ...API_HANDLER_SETTINGS_FIELDS, ...USER_SETTINGS_FIELDS }

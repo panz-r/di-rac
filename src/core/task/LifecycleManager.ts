@@ -34,6 +34,13 @@ export class LifecycleManager {
 
 		this.dependencies.taskState.isInitialized = true
 
+		// Initialize observer if enabled
+		if (this.dependencies.observerOrchestrator?.isEnabled) {
+			await this.dependencies.observerOrchestrator.initialize(
+				this.dependencies.messageStateHandler.getApiConversationHistory(),
+			)
+		}
+
 		const imageBlocks: DiracImageContentBlock[] = formatResponse.imageBlocks(images)
 
 		const userContent: DiracUserContent[] = [
@@ -186,6 +193,13 @@ export class LifecycleManager {
 
 		this.dependencies.taskState.isInitialized = true
 		this.dependencies.taskState.abort = false
+
+		// Initialize observer if enabled
+		if (this.dependencies.observerOrchestrator?.isEnabled) {
+			await this.dependencies.observerOrchestrator.initialize(
+				this.dependencies.messageStateHandler.getApiConversationHistory(),
+			)
+		}
 
 		const { response, text, images, files } = await this.dependencies.ask(askType)
 
@@ -501,6 +515,12 @@ export class LifecycleManager {
 			this.dependencies.diracIgnoreController.dispose()
 			this.dependencies.fileContextTracker.dispose()
 			this.dependencies.messageStateHandler.dispose()
+			if (this.dependencies.observerOrchestrator) {
+				await this.dependencies.observerOrchestrator.finalCompression(
+					this.dependencies.messageStateHandler.getApiConversationHistory(),
+				)
+				await this.dependencies.observerOrchestrator.dispose()
+			}
 			await this.dependencies.diffViewProvider.revertChanges()
 		} finally {
 			if (this.dependencies.taskState.taskLockAcquired) {

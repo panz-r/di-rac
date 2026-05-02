@@ -41,4 +41,5 @@ export interface LifecycleManagerDependencies {
 	initiateTaskLoop: (userContent: DiracContent[]) => Promise<void>
 	recordEnvironment: () => Promise<void>
 	getSessionSummaryData?: () => { recoveryEngine?: RecoveryEngine }
+	observerOrchestrator?: import("@core/observer").ObserverOrchestrator
 }

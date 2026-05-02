@@ -80,6 +80,11 @@ export class ApiConversationManager {
 	}
 
 	public async determineContextCompaction(previousApiReqIndex: number): Promise<boolean> {
+		// When observer is enabled, skip auto-condense — observer handles compression
+		if (this.dependencies.stateManager.getGlobalSettingsKey("observerEnabled")) {
+			return false
+		}
+
 		let shouldCompact = false
 		const useAutoCondense = this.dependencies.stateManager.getGlobalSettingsKey("useAutoCondense")
 		const autoCondenseThreshold = useAutoCondense ? 0.75 : undefined

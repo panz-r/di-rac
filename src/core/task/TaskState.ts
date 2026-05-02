@@ -98,6 +98,10 @@ export class TaskState {
 	didExecuteCommand: boolean = false
 	currentTurnNumber = 0
 
+	// Observer state
+	observerLastObservedIndex = 0
+	observerUnobservedTokenEstimate = 0
+
 	// Round 2 safeguard state
 	editStreakCount: Map<string, number> = new Map()
 	sessionLinesAdded = 0

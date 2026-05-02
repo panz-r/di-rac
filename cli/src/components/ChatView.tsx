@@ -1222,6 +1222,18 @@ export const ChatView: React.FC<ChatViewProps> = ({
 						setSlashMenuDismissed(true)
 						return
 					}
+					if (cmd.name === "observe") {
+						const stateManager = StateManager.get()
+						const currentState = stateManager.getGlobalSettingsKey("observerEnabled")
+						const newState = !currentState
+						stateManager.setSessionOverride("observerEnabled", newState)
+						ctrl?.task?.toggleObserver?.(newState)
+						setTextInput("")
+						setCursorPos(0)
+						setSelectedSlashIndex(0)
+						setSlashMenuDismissed(true)
+						return
+					}
 					const newText = insertSlashCommand(textInput, slashInfo.slashIndex, cmd.name)
 					setTextInput(newText)
 					setCursorPos(newText.length)

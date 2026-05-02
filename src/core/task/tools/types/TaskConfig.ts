@@ -83,7 +83,8 @@ export interface TaskServices {
 	structuredLogger: StructuredLogger
 	outputManager: OutputManager
 	analyzer: AnalyzerClient
-}
+		observerOrchestrator?: import("@core/observer").ObserverOrchestrator
+	}
 
 /**
  * All callback functions available to tool handlers

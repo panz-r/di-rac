@@ -599,4 +599,9 @@ const CLI_SCHEMAS: Partial<Record<DiracDefaultTool, CliSchema>> = {
 		positionals: [{ name: "file", param: "file", required: false }],
 		flags: [{ name: "--clear", param: "clear", type: "boolean" }],
 	},
+
+	// dirac_recall <query>
+	dirac_recall: {
+		positionals: [{ name: "query", param: "query", required: true }],
+	},
 }

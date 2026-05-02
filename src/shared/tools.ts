@@ -43,6 +43,7 @@ export enum DiracDefaultTool {
 
 	TOOL_SEARCH = "tool_search",
 	DIRAC_OUTPUTS = "dirac_outputs",
+	DIRAC_RECALL = "dirac_recall",
 }
 
 // Array of all tool names for compatibility

@@ -30,6 +30,7 @@ import { bash } from "./bash"
 import { compact } from "./compact"
 import { tool_search } from "./tool_search"
 import { dirac_outputs } from "./dirac_outputs"
+import { recall } from "./recall"
 
 /**
  * Registers all tools with the DiracToolSet provider.
@@ -69,6 +70,7 @@ export function registerDiracToolSets(): void {
 		compact,
 		tool_search,
 		dirac_outputs,
+		recall,
 	]
 
 	allTools.forEach((tool) => {

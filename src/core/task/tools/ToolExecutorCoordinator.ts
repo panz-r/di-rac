@@ -33,6 +33,7 @@ import { CompactHandler } from "./handlers/CompactHandler"
 import { DiracUndoToolHandler } from "./handlers/DiracUndoToolHandler"
 import { ToolSearchToolHandler } from "./handlers/ToolSearchToolHandler"
 import { DiracOutputsToolHandler } from "./handlers/DiracOutputsToolHandler"
+import { RecallHandler } from "./handlers/RecallHandler"
 
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
 import { AgentConfigLoader } from "./subagent/AgentConfigLoader"
@@ -125,6 +126,7 @@ export class ToolExecutorCoordinator {
 		[DiracDefaultTool.DIRAC_UNDO]: (_v: ToolValidator) => new DiracUndoToolHandler(),
 		[DiracDefaultTool.TOOL_SEARCH]: (_v: ToolValidator) => new ToolSearchToolHandler(),
 		[DiracDefaultTool.DIRAC_OUTPUTS]: (_v: ToolValidator) => new DiracOutputsToolHandler(),
+		[DiracDefaultTool.DIRAC_RECALL]: (_v: ToolValidator) => new RecallHandler(),
 	}
 
 	/**

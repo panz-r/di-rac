@@ -49,6 +49,9 @@ interface TaskOptions {
 	bashAutoApprove?: boolean
 	toolRecovery?: boolean
 	redirectTmp?: boolean
+	observe?: boolean
+	observeProvider?: string
+	observeModel?: string
 }
 
 let telemetryDisposed = false
@@ -167,6 +170,9 @@ const RESUME_FLAG_MAP = [
 	{ cliFlag: "--bash-auto-approve", key: "bashAutoApprove", hasValue: false },
 	{ cliFlag: "--tool-recovery", key: "toolRecovery", hasValue: false },
 	{ cliFlag: "--redirect-tmp", key: "redirectTmp", hasValue: false },
+	{ cliFlag: "--observe", key: "observe", hasValue: false },
+	{ cliFlag: "--observe-provider", key: "observeProvider", hasValue: true },
+	{ cliFlag: "--observe-model", key: "observeModel", hasValue: true },
 	{ cliFlag: "--model", key: "model", hasValue: true },
 	{ cliFlag: "--provider", key: "provider", hasValue: true },
 	{ cliFlag: "--timeout", key: "timeout", hasValue: true },
@@ -397,6 +403,23 @@ async function applyTaskOptions(options: TaskOptions): Promise<void> {
 
 	if (options.autoCondense) {
 		stateManager.setSessionOverride("useAutoCondense", true)
+	}
+
+	// Observer flags
+	if (options.observeProvider || options.observeModel) {
+		if (!options.observe) {
+			printWarning("--observe-provider and --observe-model require --observe. Ignoring observer config.")
+		}
+	}
+	if (options.observe) {
+		stateManager.setSessionOverride("observerEnabled", true)
+		if (options.observeProvider) {
+			await validate_provider(options.observeProvider)
+			stateManager.setSessionOverride("observerProvider", options.observeProvider)
+		}
+		if (options.observeModel) {
+			stateManager.setSessionOverride("observerModelId", options.observeModel)
+		}
 	}
 }
 
@@ -1223,6 +1246,9 @@ program
 	.option("--tool-recovery", "Enable deterministic error recovery engine")
 	.option("--redirect-tmp", "Silently redirect /tmp access to project-local .dirac-tmp")
 	.option("--hooks-dir <path>", "Path to additional hooks directory for runtime hook injection")
+	.option("--observe", "Enable observer agent for context compression")
+	.option("--observe-provider <provider>", "Observer API provider (requires --observe)")
+	.option("--observe-model <model>", "Observer model ID (requires --observe)")
 	.option("-T, --taskId <id>", "Resume an existing task by ID")
 	.action((prompt, options) => {
 		if (options.taskId) {
@@ -1459,6 +1485,9 @@ program
 	.option("--tool-recovery", "Enable deterministic error recovery engine")
 	.option("--redirect-tmp", "Silently redirect /tmp access to project-local .dirac-tmp")
 	.option("--hooks-dir <path>", "Path to additional hooks directory for runtime hook injection")
+	.option("--observe", "Enable observer agent for context compression")
+	.option("--observe-provider <provider>", "Observer API provider (requires --observe)")
+	.option("--observe-model <model>", "Observer model ID (requires --observe)")
 	.option("--kanban", "Run npx kanban --agent dirac")
 	.option("-T, --taskId <id>", "Resume an existing task by ID")
 	.option("--continue", "Resume the most recent task from the current working directory")

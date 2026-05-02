@@ -115,4 +115,10 @@ export const CLI_ONLY_COMMANDS: SlashCommand[] = [
 		section: "default",
 		cliCompatible: true,
 	},
+	{
+		name: "observe",
+		description: "Toggle observer agent on/off",
+		section: "default",
+		cliCompatible: true,
+	},
 ]

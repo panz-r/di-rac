@@ -8,6 +8,7 @@ import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import type { CommandExecutionOptions } from "@integrations/terminal"
 import { BrowserSession } from "@services/browser/BrowserSession"
 import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
+import type { ObserverOrchestrator } from "@core/observer"
 import { DiracAsk, DiracMessage, DiracSay, MultiCommandState } from "@shared/ExtensionMessage"
 import { DiracContent } from "@shared/messages/content"
 import { DiracDefaultTool, toolUseNames } from "@shared/tools"
@@ -135,6 +136,7 @@ export class ToolExecutor {
 			userContent: DiracContent[],
 			context: "initial_task" | "resume" | "feedback",
 		) => Promise<{ cancel?: boolean; wasCancelled?: boolean; contextModification?: string; errorMessage?: string }>,
+		private observerOrchestrator?: ObserverOrchestrator,
 	) {
 		this.autoApprover = new AutoApprove(this.stateManager)
 
@@ -178,6 +180,7 @@ export class ToolExecutor {
 				structuredLogger: new StructuredLogger(this.taskId, Session.get().getSessionId(), this.cwd),
 				outputManager: new OutputManager(this.cwd),
 				analyzer: this.analyzer!,
+				observerOrchestrator: this.observerOrchestrator,
 			},
 			callbacks: {
 				say: this.say,

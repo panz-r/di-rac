@@ -33,6 +33,7 @@ import { getSystemPrompt } from "@core/prompts/system-prompt"
 import { detectBestShell } from "@/utils/shell-detection"
 import { getAvailableCores } from "@/utils/os"
 import { ensureRulesDirectoryExists, ensureTaskDirectoryExists } from "@core/storage/disk"
+import { ObserverOrchestrator } from "@core/observer"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { HostProvider } from "@hosts/host-provider"
@@ -194,6 +195,7 @@ export class Task {
 	private lifecycleManager: LifecycleManager
 	private apiConversationManager: ApiConversationManager
 	private responseProcessor: ResponseProcessor
+	private observerOrchestrator?: ObserverOrchestrator
 
 	// Callbacks
 	private updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
@@ -446,6 +448,7 @@ export class Task {
 			this.clearActiveHookExecution.bind(this),
 			this.getActiveHookExecution.bind(this),
 			this.runUserPromptSubmitHook.bind(this),
+			this.observerOrchestrator,
 		)
 		// Initialize tree-sitter daemon client
 		const analyzerBinary = path.join(__dirname, "dirac-analyzer")
@@ -506,6 +509,8 @@ export class Task {
 			shouldRunBackgroundCheck: () => this.commandExecutor.hasActiveBackgroundCommand(),
 		})
 
+		this.observerOrchestrator = new ObserverOrchestrator(this.taskId, this.stateManager)
+
 		this.lifecycleManager = new LifecycleManager({
 			taskState: this.taskState,
 			messageStateHandler: this.messageStateHandler,
@@ -531,6 +536,7 @@ export class Task {
 			initiateTaskLoop: this.initiateTaskLoop.bind(this),
 			recordEnvironment: () => this.environmentContextTracker.recordEnvironment(),
 			getSessionSummaryData: () => ({ recoveryEngine: this.toolExecutor.recoveryEngine }),
+			observerOrchestrator: this.observerOrchestrator,
 		})
 
 		this.apiConversationManager = new ApiConversationManager({
@@ -730,6 +736,10 @@ export class Task {
 
 	public async cancelHookExecution(): Promise<boolean> {
 		return this.hookManager.cancelHookExecution()
+	}
+
+	public toggleObserver(enabled: boolean): void {
+		this.observerOrchestrator?.toggle(enabled)
 	}
 
 	private getCurrentProviderInfo(): ApiProviderInfo {
@@ -976,8 +986,20 @@ export class Task {
 		const { systemPrompt, tools } = await getSystemPrompt(promptContext)
 		this.taskState.useNativeToolCalls = !!tools?.length
 
+		// Observer: prepare context (slice observed messages, inject observation block)
+		let messagesForContext = this.messageStateHandler.getApiConversationHistory()
+		let enrichedSystemPrompt = systemPrompt
+
+		if (this.observerOrchestrator?.isEnabled) {
+			const result = this.observerOrchestrator.prepareContext(messagesForContext)
+			messagesForContext = result.messages
+			if (result.observationBlock) {
+				enrichedSystemPrompt += "\n\n---\n\n# Conversation Observations\n\n" + result.observationBlock
+			}
+		}
+
 		const contextManagementMetadata = await this.contextManager.getNewContextMessagesAndMetadata(
-			this.messageStateHandler.getApiConversationHistory(),
+			messagesForContext,
 			this.messageStateHandler.getDiracMessages(),
 			this.api,
 			this.taskState.conversationHistoryDeletedRange,
@@ -987,7 +1009,7 @@ export class Task {
 		)
 
 		await this.writePromptMetadataArtifacts({
-			systemPrompt,
+			systemPrompt: enrichedSystemPrompt,
 			providerInfo,
 			tools,
 			fullHistory: this.messageStateHandler.getApiConversationHistory(),
@@ -1021,7 +1043,7 @@ ${notice}`
 
 
 		// Response API requires native tool calls to be enabled
-		const stream = this.api.createMessage(systemPrompt, contextManagementMetadata.truncatedConversationHistory as any, tools)
+		const stream = this.api.createMessage(enrichedSystemPrompt, contextManagementMetadata.truncatedConversationHistory as any, tools)
 
 		const iterator = stream[Symbol.asyncIterator]()
 
@@ -1692,6 +1714,14 @@ ${notice}`
 				}
 
 				this.taskState.autoRetryAttempts = 0
+
+				// Observer: trigger compression check after this turn
+				if (this.observerOrchestrator?.isEnabled) {
+					await this.observerOrchestrator.onTurnComplete(
+						this.messageStateHandler.getApiConversationHistory(),
+					)
+				}
+
 				const recDidEndLoop = await this.recursivelyMakeDiracRequests(this.taskState.userMessageContent)
 				didEndLoop = recDidEndLoop
 			} else {
