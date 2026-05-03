@@ -1561,7 +1561,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 										}
 									}
 									// Cross-file blast-radius analysis
-									const blastResults = this.computeBlastRadius(entityDiffs, postFilePath)
+									const blastResults = await this.computeBlastRadius(entityDiffs, postFilePath)
 									if (blastResults.length > 0) {
 										const blastParts: string[] = []
 										for (const br of blastResults) {
@@ -2155,7 +2155,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 		return diffs
 	}
 
-	private computeBlastRadius(entityDiffs: EntityDiff[], editedFilePath: string): Array<{ symbolName: string; changeKind: string; callers: Array<{ path: string; line: number }>; isSignatureBreaking: boolean }> {
+	private async computeBlastRadius(entityDiffs: EntityDiff[], editedFilePath: string): Promise<Array<{ symbolName: string; changeKind: string; callers: Array<{ path: string; line: number }>; isSignatureBreaking: boolean }>> {
 		const results: Array<{ symbolName: string; changeKind: string; callers: Array<{ path: string; line: number }>; isSignatureBreaking: boolean }> = []
 		try {
 			const { SymbolIndexService } = require("@/services/symbol-index/SymbolIndexService")
@@ -2163,7 +2163,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 			for (const diff of entityDiffs) {
 				if (diff.kind === "DELETE" || (diff.kind === "MODIFY" && (diff.oldDef as any)?.signature !== (diff.newDef as any)?.signature)) {
 					const name = diff.id.split(":").pop() || diff.id
-					const refs = svc.getReferences(name) || []
+					const refs = await svc.searchSymbolsDaemon(name, "reference") || []
 					const externalCallers = refs
 						.filter((r: any) => r.path !== editedFilePath)
 						.map((r: any) => ({ path: r.path, line: r.startLine }))

@@ -173,7 +173,7 @@ describe("RenameSymbolToolHandler", () => {
 		const originalContent = "function oldName() {\n  console.log('hello');\n}\noldName();"
 		await fs.writeFile(filePath, originalContent)
 
-		symbolIndexServiceStub.getSymbols.withArgs("oldName").returns([
+		symbolIndexServiceStub.searchSymbolsDaemon.withArgs("oldName").resolves([
 			{ path: fileName, startLine: 0, startColumn: 9, endLine: 0, endColumn: 16, type: "definition" },
 			{ path: fileName, startLine: 3, startColumn: 0, endLine: 3, endColumn: 7, type: "reference" },
 		])
@@ -210,7 +210,7 @@ describe("RenameSymbolToolHandler", () => {
 		await fs.writeFile(path1, "export const myVar = 1;")
 		await fs.writeFile(path2, "import { myVar } from './file1';\nconsole.log(myVar);")
 
-		symbolIndexServiceStub.getSymbols.withArgs("myVar").returns([
+		symbolIndexServiceStub.searchSymbolsDaemon.withArgs("myVar").resolves([
 			{ path: file1, startLine: 0, startColumn: 13, endLine: 0, endColumn: 18, type: "definition" },
 			{ path: file2, startLine: 0, startColumn: 9, endLine: 0, endColumn: 14, type: "reference" },
 			{ path: file2, startLine: 1, startColumn: 12, endLine: 1, endColumn: 17, type: "reference" },
@@ -248,7 +248,7 @@ describe("RenameSymbolToolHandler", () => {
 		const originalContent = "const oldName = 1;\nconst oldNameSuffix = 2;\nconst prefixOldName = 3;"
 		await fs.writeFile(filePath, originalContent)
 
-		symbolIndexServiceStub.getSymbols.withArgs("oldName").returns([
+		symbolIndexServiceStub.searchSymbolsDaemon.withArgs("oldName").resolves([
 			{ path: fileName, startLine: 0, startColumn: 6, endLine: 0, endColumn: 13, type: "definition" },
 			// Simulate a bad index entry that points to something else
 			{ path: fileName, startLine: 2, startColumn: 0, endLine: 2, endColumn: 5, type: "definition" },
@@ -278,7 +278,7 @@ describe("RenameSymbolToolHandler", () => {
 		const { config, validator } = createConfig()
 		const handler = new RenameSymbolToolHandler(validator, false)
 
-		symbolIndexServiceStub.getSymbols.returns([])
+		;(symbolIndexServiceStub.searchSymbolsDaemon as any).resolves([])
 
 		const block = {
 			type: "tool_use" as const,
@@ -308,9 +308,7 @@ describe("RenameSymbolToolHandler", () => {
 		const filePath = path.join(tmpDir, fileName)
 		await fs.writeFile(filePath, "const x = 1;")
 
-		symbolIndexServiceStub.getSymbols.returns([
-			{ path: fileName, startLine: 0, startColumn: 6, endLine: 0, endColumn: 7, type: "definition" },
-		])
+		symbolIndexServiceStub.searchSymbolsDaemon.resolves([] as any)
 
 		const block = {
 			type: "tool_use" as const,
@@ -339,9 +337,7 @@ describe("RenameSymbolToolHandler", () => {
 		const filePath = path.join(tmpDir, fileName)
 		await fs.writeFile(filePath, "const x = 1;")
 
-		symbolIndexServiceStub.getSymbols.returns([
-			{ path: fileName, startLine: 0, startColumn: 6, endLine: 0, endColumn: 7, type: "definition" },
-		])
+		symbolIndexServiceStub.searchSymbolsDaemon.resolves([] as any)
 
 		const block = {
 			type: "tool_use" as const,
@@ -370,9 +366,7 @@ describe("RenameSymbolToolHandler", () => {
 		const filePath = path.join(tmpDir, fileName)
 		await fs.writeFile(filePath, "const x = 1;")
 
-		symbolIndexServiceStub.getSymbols.returns([
-			{ path: fileName, startLine: 0, startColumn: 6, endLine: 0, endColumn: 7, type: "definition" },
-		])
+		symbolIndexServiceStub.searchSymbolsDaemon.resolves([] as any)
 
 		// Mock post-diagnostics with a new error
 		getDiagnosticsStub.onCall(1).resolves({
@@ -474,7 +468,7 @@ describe("RenameSymbolToolHandler", () => {
 			call_id: "call-10",
 		}
 
-		symbolIndexServiceStub.getSymbols.returns([])
+		;(symbolIndexServiceStub.searchSymbolsDaemon as any).resolves([])
 
 		const result = await handler.execute(config, block)
 		assert.strictEqual(result, "No occurrences of symbol 'old' found in the specified paths.")

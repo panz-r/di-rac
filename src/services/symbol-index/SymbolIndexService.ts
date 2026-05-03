@@ -3,7 +3,6 @@ import * as fs from "fs/promises"
 import pLimit from "p-limit"
 import * as path from "path"
 import { Logger } from "../../shared/services/Logger"
-import { SymbolIndexDatabase } from "./SymbolIndexDatabase"
 import { CompilationDatabaseLoader } from "@/utils/compilation-db"
 
 export interface SymbolLocation {
@@ -130,7 +129,7 @@ export class SymbolIndexService {
 	private static readonly VERSION = 1
 
 	private projectRoot = ""
-	private db: SymbolIndexDatabase | null = null
+	private db: any = null
 	private saveTimeout: NodeJS.Timeout | null = null
 	private isScanningInternal = false
 	private scanQueue: { absolutePath: string; relPath: string }[] = []
@@ -173,27 +172,19 @@ export class SymbolIndexService {
 				this.scanQueue = []
 				this.pendingUpdates.clear()
 
-				if (this.db) {
-					Logger.info("[SymbolIndexService] Closing old database")
-					this.db.close()
-					this.db = null
-				}
+				this.db = null // sql.js removed; persistence now handled by daemon
 
 				if (this.isPersistenceEnabled) {
 					await this.ensureIndexDir()
 					await this.excludeIndexDirFromGit()
 				}
-				const dbPath = path.join(this.projectRoot, SymbolIndexService.INDEX_DIR, SymbolIndexService.INDEX_FILE)
-				Logger.info(`[SymbolIndexService] Creating database instance at ${dbPath}`)
-				this.db = await SymbolIndexDatabase.create(dbPath)
-
-				// Initialize build system awareness
-				await CompilationDatabaseLoader.getInstance().initialize(this.projectRoot)
 			}
+
+			// Initialize build system awareness
+			await CompilationDatabaseLoader.getInstance().initialize(this.projectRoot)
 
 			Logger.info("[SymbolIndexService] Starting full scan")
 			await this.runFullScan()
-			Logger.info("[SymbolIndexService] Full scan completed")
 		} finally {
 			this.isScanningInternal = false
 		}
@@ -445,8 +436,49 @@ export class SymbolIndexService {
 		return this.getSymbols(symbol, "definition", limit)
 	}
 
-	public getDependencies(relPath: string): string[] {
-		return this.db?.getDependencies(relPath) || []
+	public getDependencies(_relPath: string): string[] {
+		// Dependencies are tracked via the C/C++ include resolution in the daemon's indexer.
+		// For now, return an empty array. This is used by ContextLoader for header/source
+		// file heuristics which can be re-added to the daemon's db schema if needed.
+		return []
+	}
+
+	// ── Daemon-backed async queries (Phase 3: replacing sql.js) ──────────────
+
+	/**
+	 * Search symbols by name using the persistent daemon index.
+	 * Returns SymbolLocation[] matching the sync interface, converting from DaemonSearchResult.
+	 */
+	async searchSymbolsDaemon(
+		symbol: string,
+		type?: "definition" | "reference" | "declaration",
+		limit?: number,
+	): Promise<SymbolLocation[]> {
+		if (!this.analyzer) return []
+		const kindMap: Record<string, string> = {
+			definition: "function",
+			reference: "function",
+			declaration: "function",
+		}
+		const kind = type ? kindMap[type] : undefined
+		const results = await this.analyzer.searchIndex(symbol, kind, limit || 100)
+		return results.map((r) => ({
+			path: r.file,
+			startLine: r.start_line,
+			startColumn: r.start_col ?? 1,
+			endLine: r.end_line,
+			endColumn: r.end_col ?? 1,
+			type: (r.type === "d" ? "definition" : r.type === "r" ? "reference" : "declaration") as "definition" | "reference" | "declaration",
+			kind: r.kind || undefined,
+		}))
+	}
+
+	/**
+	 * Invalidate a file's entries in the persistent daemon index.
+	 */
+	async invalidateFileDaemon(filePath: string): Promise<void> {
+		if (!this.analyzer) return
+		await this.analyzer.invalidateFileIndex(filePath)
 	}
 
 	async updateFile(absolutePath: string): Promise<void> {
@@ -476,6 +508,8 @@ export class SymbolIndexService {
 		const relPath = path.relative(this.projectRoot, absolutePath)
 		this.db?.removeFile(relPath)
 		this.scheduleSave()
+		// Also invalidate from the persistent daemon index
+		await this.invalidateFileDaemon(absolutePath)
 	}
 
 	private scheduleSave(): void {

@@ -1,3 +1,4 @@
+use crate::db::{IndexDatabase, IndexStatus};
 use crate::error::AnalyzerError;
 use crate::extractor::{self, Import, Symbol};
 use crate::parser;
@@ -6,6 +7,7 @@ use crate::skeleton;
 use crate::symbol_range;
 use crate::context;
 use crate::indexer;
+use sha2::{Sha256, Digest};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -726,7 +728,179 @@ pub fn file_changed_cmd(
         status: Some(serde_json::json!({"removed": existed, "path": key.display().to_string()})),
         truncated: None,
         total_count: None,
+        data: None,
+    }
+}
+
+// ── Persistent index commands ─────────────────────────────────────────────────
+
+/// Index a file and persist symbols/imports to SQLite.
+pub fn index_file_persist_cmd(
+    parsed: &ParsedSource,
+    file_path: &str,
+    db: &IndexDatabase,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    let symbols = indexer::index_file(&parsed.source, &parsed.tree, parsed.language);
+    let imports = extractor::extract_imports(&parsed.source, &parsed.tree, parsed.language);
+
+    // Compute content hash for change detection
+    let mut hasher = Sha256::new();
+    hasher.update(parsed.source.as_bytes());
+    let content_hash = format!("{:x}", hasher.finalize());
+
+    // Get mtime from filesystem (0 if content-based)
+    let mtime = std::fs::metadata(file_path)
+        .and_then(|m| m.modified())
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64())
+        .unwrap_or(0.0);
+
+    match db.index_file(file_path, mtime, &content_hash, &symbols, &imports) {
+        Ok(count) => CommandOutput {
+            ok: true,
+            id,
+            symbols: None,
+            imports: None,
+            skeleton: None,
+            body: None,
+            start_line: None,
+            end_line: None,
+            results: None,
+            files: None,
+            status: None,
+            truncated: None,
+            total_count: None,
+            data: Some(serde_json::json!({
+                "indexed": true,
+                "symbol_count": count,
+                "import_count": imports.len(),
+            })),
+        },
+        Err(e) => error_output(id, "INDEX_ERROR", format!("Failed to index file: {}", e)),
+    }
+}
+
+/// Invalidate (remove) all index entries for a file.
+pub fn invalidate_file_cmd(
+    db: &IndexDatabase,
+    file_path: &str,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    match db.invalidate_file(file_path) {
+        Ok(()) => CommandOutput {
+            ok: true,
+            id,
+            symbols: None,
+            imports: None,
+            skeleton: None,
+            body: None,
+            start_line: None,
+            end_line: None,
+            results: None,
+            files: None,
+            status: None,
+            truncated: None,
+            total_count: None,
+            data: Some(serde_json::json!({"ok": true, "file": file_path})),
+        },
+        Err(e) => error_output(id, "INDEX_ERROR", format!("Failed to invalidate file: {}", e)),
+    }
+}
+
+/// Search the persistent index for symbols by name.
+pub fn search_index_cmd(
+    db: &IndexDatabase,
+    query: &str,
+    kind_filter: Option<&str>,
+    max_results: Option<usize>,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    let max = max_results.unwrap_or(100);
+    match db.search_symbols(query, kind_filter, max) {
+        Ok(results) => {
+            let json_results: Vec<serde_json::Value> = results
+                .into_iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "name": r.name,
+                        "type": r.type_,
+                        "kind": r.kind,
+                        "file": r.file_path,
+                        "start_line": r.start_line,
+                        "start_col": r.start_col,
+                        "end_line": r.end_line,
+                        "end_col": r.end_col,
+                    })
+                })
+                .collect();
+            CommandOutput {
+                ok: true,
+                id,
+                symbols: None,
+                imports: None,
+                skeleton: None,
+                body: None,
+                start_line: None,
+                end_line: None,
+                results: Some(json_results),
+                files: None,
+                status: None,
+                truncated: None,
+                total_count: None,
                 data: None,
+            }
+        }
+        Err(e) => error_output(id, "INDEX_ERROR", format!("Search failed: {}", e)),
+    }
+}
+
+/// Return index statistics.
+pub fn index_status_cmd(db: &IndexDatabase, id: Option<serde_json::Value>) -> CommandOutput {
+    match db.index_status() {
+        Ok(status) => CommandOutput {
+            ok: true,
+            id,
+            symbols: None,
+            imports: None,
+            skeleton: None,
+            body: None,
+            start_line: None,
+            end_line: None,
+            results: None,
+            files: None,
+            status: Some(serde_json::json!({
+                "file_count": status.file_count,
+                "symbol_count": status.symbol_count,
+                "import_count": status.import_count,
+            })),
+            truncated: None,
+            total_count: None,
+            data: None,
+        },
+        Err(e) => error_output(id, "INDEX_ERROR", format!("Status failed: {}", e)),
+    }
+}
+
+/// Clear all entries from the persistent index.
+pub fn clear_index_cmd(db: &IndexDatabase, id: Option<serde_json::Value>) -> CommandOutput {
+    match db.clear_index() {
+        Ok(()) => CommandOutput {
+            ok: true,
+            id,
+            symbols: None,
+            imports: None,
+            skeleton: None,
+            body: None,
+            start_line: None,
+            end_line: None,
+            results: None,
+            files: None,
+            status: Some(serde_json::json!({"ok": true, "message": "Index cleared"})),
+            truncated: None,
+            total_count: None,
+            data: None,
+        },
+        Err(e) => error_output(id, "INDEX_ERROR", format!("Clear failed: {}", e)),
     }
 }
 

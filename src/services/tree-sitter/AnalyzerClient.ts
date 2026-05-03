@@ -43,10 +43,13 @@ export interface CheckSyntaxResult {
 export interface DaemonSearchResult {
 	name: string
 	kind: string
+	type?: string  // "d", "r", "a", "i" — from persistent index
 	handle: string
 	file: string
 	start_line: number
+	start_col?: number
 	end_line: number
+	end_col?: number
 	parent?: string
 	signature?: string
 }
@@ -516,6 +519,41 @@ export class AnalyzerClient {
 			return resp.data || null
 		} catch {
 			return null
+		}
+	}
+
+	async searchIndex(query: string, kind?: string, maxResults?: number): Promise<DaemonSearchResult[]> {
+		const resp = await this.send({
+			command: "search-index",
+			query,
+			...(kind ? { kind } : {}),
+			...(maxResults ? { max_results: maxResults } : {}),
+		})
+		return resp.results || []
+	}
+
+	async invalidateFileIndex(filePath: string): Promise<void> {
+		try {
+			await this.send({ command: "invalidate-file", file: filePath })
+		} catch {
+			// Non-critical
+		}
+	}
+
+	async indexStatus(): Promise<{ file_count: number; symbol_count: number; import_count: number } | null> {
+		try {
+			const resp = await this.send({ command: "index-status" })
+			return resp.status || null
+		} catch {
+			return null
+		}
+	}
+
+	async clearIndex(): Promise<void> {
+		try {
+			await this.send({ command: "clear-index" })
+		} catch {
+			// Non-critical
 		}
 	}
 

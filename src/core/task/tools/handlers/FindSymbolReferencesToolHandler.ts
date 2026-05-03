@@ -120,11 +120,11 @@ export class FindSymbolReferencesToolHandler implements IFullyManagedTool {
 			for (const symbol of symbols) {
 				let locations: any[] = []
 				if (findType === "definition") {
-					locations = indexService.getDefinitions(symbol)
+					locations = await indexService.searchSymbolsDaemon(symbol, "definition")
 				} else if (findType === "reference") {
-					locations = indexService.getReferences(symbol)
+					locations = await indexService.searchSymbolsDaemon(symbol, "reference")
 				} else {
-					locations = indexService.getSymbols(symbol)
+					locations = await indexService.searchSymbolsDaemon(symbol)
 				}
 
 				for (const loc of locations) {

@@ -114,7 +114,7 @@ export class RenameSymbolToolHandler implements IFullyManagedTool {
 			}
 
 			// Find all occurrences of the symbol
-			const allLocations = indexService.getSymbols(existingSymbol)
+			const allLocations = await indexService.searchSymbolsDaemon(existingSymbol)
 
 			// Filter locations by requested paths
 			const relevantLocations = allLocations.filter((loc) => {

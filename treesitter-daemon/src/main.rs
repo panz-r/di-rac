@@ -1,5 +1,8 @@
+//! Dirac analyzer binary — re-exports from the library.
+mod cache;
 mod commands;
 mod context;
+mod db;
 mod error;
 mod extractor;
 mod indexer;
@@ -7,7 +10,6 @@ mod language;
 mod parser;
 mod queries;
 mod skeleton;
-mod cache;
 mod symbol_range;
 
 use clap::Parser;
@@ -16,12 +18,13 @@ use language::Language;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use crate::cache::ParseCache;
+use crate::db::IndexDatabase;
 
 /// Dirac Analyzer – persistent tree-sitter structural analysis daemon.
 #[derive(Parser)]
 #[command(name = "dirac-analyzer", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
-    /// Run a single command and exit (default: daemon mode reading stdin line-by-line)
+    /// Run a single request and exit (default: daemon mode reading stdin line-by-line)
     #[arg(short = '1', long = "oneshot")]
     oneshot: bool,
 
@@ -72,6 +75,10 @@ struct Cli {
     /// Max results for search-symbols
     #[arg(long)]
     max_results: Option<usize>,
+
+    /// Path to the SQLite index database (default: <workspace-root>/.dirac-symbol-index/data.db)
+    #[arg(long)]
+    db_path: Option<String>,
 }
 
 /// JSON request structure — matches the API contract.
@@ -83,27 +90,23 @@ struct JsonRequest {
     file: Option<String>,
     content: Option<String>,
     language: Option<String>,
-    /// Symbol handle (e.g. "fn:login", "class:AuthService") for expand-symbol command.
     #[serde(default)]
     handle: Option<String>,
-    /// List of file paths for batch / warm-cache commands.
     #[serde(default)]
     files: Option<Vec<String>>,
-    /// Subcommand for batch processing (e.g. "outline", "symbols").
     #[serde(default)]
     subcommand: Option<String>,
-    /// Search query string for search-symbols.
     #[serde(default)]
     query: Option<String>,
-    /// Optional kind filter for search-symbols (e.g. "function", "class").
     #[serde(default)]
     kind: Option<String>,
-    /// Root directory for repo-map.
     #[serde(default)]
     root: Option<String>,
-    /// Maximum number of results for search-symbols.
     #[serde(default)]
     max_results: Option<usize>,
+    /// Optional db path override (for CoW branch support)
+    #[serde(default)]
+    db_path: Option<String>,
 }
 
 fn main() {
@@ -115,10 +118,27 @@ fn main() {
     eprintln!("dirac-analyzer: ready");
 
     let workspace_root = cli.workspace_root.as_ref().map(PathBuf::from);
-    let workspace_root_ref = workspace_root.as_ref();
+
+    // Resolve the db path: explicit --db-path takes precedence
+    let db_path: Option<PathBuf> = cli.db_path.as_ref().map(PathBuf::from).or_else(|| {
+        workspace_root.as_ref().map(|ws| ws.join(".dirac-symbol-index").join("data.db"))
+    });
+
+    // Initialize the index database if a path is available
+    let index_db: Option<IndexDatabase> = db_path.as_ref().and_then(|p| {
+        match IndexDatabase::open(p) {
+            Ok(db) => {
+                eprintln!("dirac-analyzer: opened index database at {:?}", p);
+                Some(db)
+            }
+            Err(e) => {
+                eprintln!("dirac-analyzer: warning: could not open index database at {:?}: {}", p, e);
+                None
+            }
+        }
+    });
 
     if cli.oneshot {
-        // Single-request mode (manual testing / legacy)
         let id: Option<serde_json::Value> = None;
         let command = match &cli.command {
             Some(c) => c.clone(),
@@ -135,7 +155,7 @@ fn main() {
             cli.file.as_deref(),
             cli.content.as_deref(),
             cli.language.as_deref(),
-            workspace_root_ref,
+            workspace_root.as_ref(),
             &mut cache,
             cli.handle.as_deref(),
             cli.files.as_ref(),
@@ -144,11 +164,11 @@ fn main() {
             cli.kind.as_deref(),
             cli.root.as_deref(),
             cli.max_results,
+            index_db.as_ref(),
         );
         println!("{}", response);
     } else {
-        // Daemon mode: read stdin line by line indefinitely
-        run_daemon(workspace_root_ref);
+        run_daemon(workspace_root.as_ref(), index_db);
     }
 }
 
@@ -175,17 +195,15 @@ fn preload_grammars() {
             Language::Ruby => "def x; 1; end",
             Language::Php => "<?php $x = 1;",
         };
-        // Parse-and-discard to ensure grammar is fully loaded into memory
         let _ = parser.parse(dummy, None);
     }
 }
 
 /// Daemon loop: read newline-delimited JSON requests from stdin, write JSON responses to stdout.
-fn run_daemon(workspace_root: Option<&PathBuf>) {
+fn run_daemon(workspace_root: Option<&PathBuf>, index_db: Option<IndexDatabase>) {
     let mut cache = ParseCache::new();
     let stdin = io::stdin();
     let reader = stdin.lock();
-
 
     for line_result in reader.lines() {
         let line = match line_result {
@@ -197,7 +215,6 @@ fn run_daemon(workspace_root: Option<&PathBuf>) {
         if trimmed.is_empty() {
             continue; // skip blank lines
         }
-
 
         let request: JsonRequest = match serde_json::from_str(trimmed) {
             Ok(req) => req,
@@ -215,6 +232,9 @@ fn run_daemon(workspace_root: Option<&PathBuf>) {
         // Check for shutdown *before* processing
         let is_shutdown = request.command == "shutdown";
 
+        // Use the pre-opened db if available
+        let request_db: Option<&IndexDatabase> = index_db.as_ref();
+
         let response = process_request(
             &request.command,
             request.id,
@@ -230,6 +250,7 @@ fn run_daemon(workspace_root: Option<&PathBuf>) {
             request.kind.as_deref(),
             request.root.as_deref(),
             request.max_results,
+            request_db,
         );
 
         writeln!(io::stdout(), "{}", response).ok();
@@ -260,6 +281,7 @@ fn process_request(
     kind: Option<&str>,
     root: Option<&str>,
     max_results: Option<usize>,
+    index_db: Option<&IndexDatabase>,
 ) -> String {
     // Commands that don't need file/content parsing first.
     match command {
@@ -270,6 +292,10 @@ fn process_request(
             return commands::clear_cache_cmd(cache, id).to_json();
         }
         "search-symbols" => {
+            // Try persistent index first if available
+            if let Some(db) = index_db {
+                return commands::search_index_cmd(db, query.unwrap_or(""), kind, max_results, id).to_json();
+            }
             return commands::search_symbols_cmd(cache, query.unwrap_or(""), kind, max_results, id).to_json();
         }
         "repo-map" => {
@@ -300,6 +326,41 @@ fn process_request(
         "shutdown" => {
             return serde_json::json!({"ok": true, "id": id, "status": "shutting_down"}).to_string();
         }
+        // Persistent index commands
+        "index-file" => {
+            if index_db.is_some() {
+                // handled in the parsed section below
+            }
+        }
+        "invalidate-file" => {
+            if let (Some(db), Some(f)) = (index_db, file) {
+                return commands::invalidate_file_cmd(db, f, id).to_json();
+            }
+            let err = AnalyzerError::invalid_command("invalidate-file requires a file path and an open index database");
+            return err.to_json_response(id.as_ref());
+        }
+        "index-status" => {
+            if let Some(db) = index_db {
+                return commands::index_status_cmd(db, id).to_json();
+            }
+            let err = AnalyzerError::invalid_command("index-status requires an open index database");
+            return err.to_json_response(id.as_ref());
+        }
+        "clear-index" => {
+            if let Some(db) = index_db {
+                return commands::clear_index_cmd(db, id).to_json();
+            }
+            let err = AnalyzerError::invalid_command("clear-index requires an open index database");
+            return err.to_json_response(id.as_ref());
+        }
+        // search-index always uses the persistent index
+        "search-index" => {
+            if let Some(db) = index_db {
+                return commands::search_index_cmd(db, query.unwrap_or(""), kind, max_results, id).to_json();
+            }
+            let err = AnalyzerError::invalid_command("search-index requires an open index database");
+            return err.to_json_response(id.as_ref());
+        }
         _ => {}
     }
 
@@ -314,13 +375,6 @@ fn process_request(
     // Check cache first for file-based requests (skip for content-based).
     let parsed_owned: Option<crate::parser::ParsedSource> = if let Some(ref key) = cache_key {
         if let Some(cached) = cache.get(key) {
-            // We have it cached; but we need to pass a reference.
-            // Since Tree is not Clone, we re-parse for now when the cache
-            // holds the tree.  For the common case the command handlers
-            // receive a reference and we drop the data afterwards.
-            //
-            // Strategy: re-parse from the cached source so we get a fresh Tree.
-            // (tree_sitter::Tree cannot be cloned.)
             let mut parser = cached.language.parser();
             let tree = parser.parse(&cached.source, None);
             tree.map(|t| crate::parser::ParsedSource {
@@ -352,8 +406,6 @@ fn process_request(
 
     // Insert into cache if it was a file parse.
     if let Some(ref key) = cache_key {
-        // We need to re-parse to store the tree (since we just consumed it above).
-        // Actually, the tree was just created — let's store a re-parsed version.
         let mut store_parser = parsed.language.parser();
         if let Some(store_tree) = store_parser.parse(&parsed.source, None) {
             let stored = crate::parser::ParsedSource {
@@ -396,6 +448,14 @@ fn process_request(
                 err.to_json_response(id.as_ref())
             }
         };
+    }
+
+    // index-file with persistence
+    if command == "index-file" {
+        if let Some(db) = index_db {
+            let fpath = file.unwrap_or("");
+            return commands::index_file_persist_cmd(&parsed, fpath, db, id).to_json();
+        }
     }
 
     match commands::dispatch(&parsed, command, id.clone(), max_results) {

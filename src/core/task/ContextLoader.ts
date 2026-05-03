@@ -366,7 +366,7 @@ export class ContextLoader {
             // Pass 1: Definitions
             for (const symbol of symbols) {
                 if (totalLinesAdded >= MAX_AUTO_SYMBOL_TOTAL_LINES) break
-                const definitions = indexService.getDefinitions(symbol, MAX_AUTO_SYMBOL_TOTAL_LINES)
+                const definitions = await indexService.searchSymbolsDaemon(symbol, "definition", MAX_AUTO_SYMBOL_TOTAL_LINES)
                 const data = symbolResults.get(symbol)!
                 data.allLocations.push(...definitions)
 
@@ -382,7 +382,7 @@ export class ContextLoader {
             for (const symbol of symbols) {
                 if (totalLinesAdded >= MAX_AUTO_SYMBOL_TOTAL_LINES) break
                 const remainingLimit = MAX_AUTO_SYMBOL_TOTAL_LINES - totalLinesAdded
-                const declarations = indexService.getSymbols(symbol, "declaration", remainingLimit)
+                const declarations = await indexService.searchSymbolsDaemon(symbol, "declaration", remainingLimit)
                 const data = symbolResults.get(symbol)!
                 data.allLocations.push(...declarations)
 
@@ -398,7 +398,7 @@ export class ContextLoader {
             for (const symbol of symbols) {
                 if (totalLinesAdded >= MAX_AUTO_SYMBOL_TOTAL_LINES) break
                 const remainingLimit = MAX_AUTO_SYMBOL_TOTAL_LINES - totalLinesAdded
-                const references = indexService.getReferences(symbol, remainingLimit)
+                const references = await indexService.searchSymbolsDaemon(symbol, "reference", remainingLimit)
                 const data = symbolResults.get(symbol)!
                 data.allLocations.push(...references)
 
