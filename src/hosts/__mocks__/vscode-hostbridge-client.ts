@@ -45,7 +45,6 @@ export const vscodeHostBridgeClient = {
 		subscribeToActiveEditorChanges: () => () => {},
 		subscribeToWindowStateChanges: () => () => {},
 		getWindowState: async () => ({ focused: true }),
-		openWalkthrough: noOp,
 	},
 	diffClient: {
 		openDiff: noOp,
