@@ -21,6 +21,7 @@ type OpenAICompatConfig struct {
 	Temperature         *float64 // nil = use 0, else use this value; set to sentinel -1 to omit entirely
 	ToolChoice          string   // "" or "auto" (default) or "any"
 	NoStreamOptions     bool     // true = skip stream_options.include_usage
+	ContentArraySupport bool     // true = delta.content may be [{type:"text",text:"..."}] instead of string
 	ExtraHeaders        map[string]string
 	// ModifyRequest is called after the standard request is built.
 	// Use it to add provider-specific params (e.g. reasoning_format, drop_params).
@@ -113,7 +114,7 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	return openaiParseSSE(resp.Body, callback, h.config.FinishReasonMap)
+	return openaiParseSSE(resp.Body, callback, h.config.FinishReasonMap, h.config.ContentArraySupport)
 }
 
 func (h *openaiCompatHandler) resolveConfig(req *Request) (baseURL, apiKey string) {
@@ -451,7 +452,7 @@ func openaiAddReasoningContent(messages []map[string]interface{}, req *Request) 
 // openaiParseSSE reads an SSE stream and emits StreamChunks.
 // Handles all known OpenAI-compatible fields across providers:
 // content, reasoning_content, tool_calls, finish_reason, usage with all cache variants.
-func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReasonMap func(string) string) error {
+func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReasonMap func(string) string, contentArraySupport bool) error {
 	type toolCallState struct {
 		id   string
 		name string
@@ -475,7 +476,7 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content          string `json:"content"`
+					Content          json.RawMessage `json:"content"`
 					ReasoningContent string `json:"reasoning_content"`
 					Reasoning        string `json:"reasoning"`
 					ReasoningDetails []struct {
@@ -528,8 +529,17 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 		choice := chunk.Choices[0]
 		delta := choice.Delta
 
-		if delta.Content != "" {
-			callback(StreamChunk{Type: "delta", TextDelta: delta.Content})
+		if len(delta.Content) > 0 {
+			if contentArraySupport {
+				if text := extractContentString(delta.Content); text != "" {
+					callback(StreamChunk{Type: "delta", TextDelta: text})
+				}
+			} else {
+				var s string
+				if json.Unmarshal(delta.Content, &s) == nil && s != "" {
+					callback(StreamChunk{Type: "delta", TextDelta: s})
+				}
+			}
 		}
 		if delta.ReasoningContent != "" {
 			callback(StreamChunk{Type: "delta", Thinking: delta.ReasoningContent})
@@ -700,4 +710,32 @@ func openaiConvertResponse(resp map[string]interface{}, finishReasonMap func(str
 		Usage:      usage,
 		StopReason: stopReason,
 	}
+}
+
+// extractContentString extracts text from delta.content which may be
+// a JSON string ("hello") or a JSON array of [{type:"text",text:"..."}].
+func extractContentString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Try plain string first (most common case)
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	// Try array of {type, text} objects
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) == nil {
+		var texts []string
+		for _, p := range parts {
+			if p.Type == "text" && p.Text != "" {
+				texts = append(texts, p.Text)
+			}
+		}
+		return strings.Join(texts, "")
+	}
+	return ""
 }
