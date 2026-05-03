@@ -449,14 +449,9 @@ export class Task {
 			this.runUserPromptSubmitHook.bind(this),
 			this.observerOrchestrator,
 		)
-		// Initialize tree-sitter daemon client
-		const analyzerBinary = path.join(__dirname, "dirac-analyzer")
-		this.analyzer = new AnalyzerClient(analyzerBinary, this.cwd)
+		// Use the persistent analyzer daemon from Controller (lives across tasks)
+		this.analyzer = this.controller.getAnalyzer()!
 		this.toolExecutor.analyzer = this.analyzer
-
-		// Wire analyzer to symbol index service
-		const { SymbolIndexService } = require("@/services/symbol-index/SymbolIndexService")
-		SymbolIndexService.getInstance().setAnalyzer(this.analyzer)
 
 		this.environmentManager = new EnvironmentManager({
 			cwd: this.cwd,

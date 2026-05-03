@@ -38,13 +38,12 @@ export class ObserverAgent {
 	async compress(messages: DiracStorageMessage[]): Promise<string> {
 		const handler = this.getHandler()
 		const serialized = this.serializeMessages(messages)
-		const prompt = OBSERVER_SYSTEM_PROMPT + serialized
 
 		const observerMessages: DiracStorageMessage[] = [
-			{ role: "user", content: prompt, ts: Date.now() },
+			{ role: "user", content: serialized, ts: Date.now() },
 		]
 
-		const stream = handler.createMessage("", observerMessages, undefined)
+		const stream = handler.createMessage(OBSERVER_SYSTEM_PROMPT, observerMessages, undefined)
 
 		let result = ""
 		for await (const chunk of stream) {

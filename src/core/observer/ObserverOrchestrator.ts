@@ -1,6 +1,7 @@
 import { buildObserverConfig, type ObserverConfig, type ObservationEntry } from "./ObserverConfig"
 import { ObservationStore } from "./ObservationStore"
 import { ObserverAgent } from "./ObserverAgent"
+import { setObserverHealth } from "./index"
 import { ReflectorAgent } from "./ReflectorAgent"
 import type { StateManager } from "@core/storage/StateManager"
 import type { DiracStorageMessage } from "@shared/messages/content"
@@ -21,6 +22,8 @@ export class ObserverOrchestrator {
 	private pendingReflectionPromise: Promise<void> | undefined
 	private _isEnabled: boolean
 	private config: ObserverConfig
+	consecutiveFailures = 0
+	lastError: string | undefined
 
 	constructor(
 		private taskId: string,
@@ -140,12 +143,17 @@ export class ObserverOrchestrator {
 			}
 			await this.store.append(entry)
 			this.lastObservedMessageIndex = history.length
+			this.consecutiveFailures = 0
+			this.lastError = undefined
 
 			Logger.debug(
 				`[Observer] SYNC compressed ${unobserved.length} messages (~${tokenEstimate} tokens) — block mode`,
 			)
 		} catch (error) {
 			Logger.error("[Observer] Sync compression failed:", error)
+			this.consecutiveFailures++
+			this.lastError = error instanceof Error ? error.message : String(error)
+			setObserverHealth(true, this.lastError)
 		}
 	}
 
@@ -172,6 +180,9 @@ export class ObserverOrchestrator {
 
 				await this.store.append(entry)
 				this.lastObservedMessageIndex = history.length
+				this.consecutiveFailures = 0
+				this.lastError = undefined
+				setObserverHealth(false)
 
 				Logger.debug(
 					`[Observer] Compressed ${unobserved.length} messages (~${tokenEstimate} tokens) into observations`,
@@ -179,6 +190,9 @@ export class ObserverOrchestrator {
 			})
 			.catch((error) => {
 				Logger.error("[Observer] Compression failed:", error)
+				this.consecutiveFailures++
+				this.lastError = error instanceof Error ? error.message : String(error)
+				setObserverHealth(true, this.lastError)
 			})
 			.finally(() => {
 				this.pendingObserverPromise = undefined

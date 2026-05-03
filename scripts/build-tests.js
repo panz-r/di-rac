@@ -53,7 +53,7 @@ async function main() {
 	}
 }
 
-execSync("tsc -p ./tsconfig.test.json --outDir out", { encoding: "utf-8" })
+execSync("tsc -p ./tsconfig.json --outDir out", { encoding: "utf-8" })
 
 main().catch((e) => {
 	console.error(e)

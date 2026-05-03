@@ -43,6 +43,7 @@ import { checkCliInstallation } from "./state/checkCliInstallation"
 import { sendStateUpdate } from "./state/subscribeToState"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
 import { SkillMetadata } from "@/shared/skills"
+	import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 
 export class Controller {
 	public discoveredSkillsCache: SkillMetadata[] = []
@@ -56,6 +57,9 @@ export class Controller {
 
 	// Flag to prevent duplicate cancellations from spam clicking
 	private cancelInProgress = false
+
+	// Persistent analyzer daemon — lives across tasks, only shut down on process exit
+	private analyzer?: AnalyzerClient
 
 	// Timer for periodic remote config fetching
 
@@ -115,7 +119,32 @@ export class Controller {
 	async dispose() {
 		await this.clearTask()
 
+		// Shut down persistent analyzer daemon on process exit
+		if (this.analyzer) {
+			try {
+				await this.analyzer.shutdown()
+			} catch {
+				// non-fatal
+			}
+			this.analyzer = undefined
+		}
+
 		Logger.error("Controller disposed")
+	}
+
+	private async ensureAnalyzer(cwd: string): Promise<void> {
+		if (this.analyzer) return // already initialized — persists across tasks
+		const analyzerBinary = path.join(__dirname, "dirac-analyzer")
+		this.analyzer = new AnalyzerClient(analyzerBinary, cwd)
+		await this.analyzer.start()
+
+		// Wire analyzer to symbol index service
+		const { SymbolIndexService } = require("@/services/symbol-index/SymbolIndexService")
+		SymbolIndexService.getInstance().setAnalyzer(this.analyzer)
+	}
+
+	getAnalyzer(): AnalyzerClient | undefined {
+		return this.analyzer
 	}
 
 	// Auth methods
@@ -153,6 +182,9 @@ export class Controller {
 		})
 
 		const cwd = this.workspaceManager?.getPrimaryRoot()?.path || (await getCwd(getDesktopDir()))
+
+		// Lazy-initialize persistent analyzer daemon (once, lives across all tasks)
+		await this.ensureAnalyzer(cwd)
 
 		const taskId = historyItem?.id || Date.now().toString()
 

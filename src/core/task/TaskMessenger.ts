@@ -179,11 +179,16 @@ export class TaskMessenger {
 
 		await pWaitFor(
 			() => {
+				if (this.dependencies.taskState.abort) return true
 				const response = this.dependencies.taskState.askResponse
 				return response !== undefined || this.dependencies.taskState.lastMessageTs !== askTs
 			},
 			{ interval: 100 },
 		)
+
+		if (this.dependencies.taskState.abort) {
+			throw new Error("Dirac instance aborted")
+		}
 
 		if (this.dependencies.taskState.lastMessageTs !== askTs) {
 			Logger.debug("task_messenger", {

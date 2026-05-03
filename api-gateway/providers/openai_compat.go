@@ -558,11 +558,11 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 		// Groq reasoning field (DeepSeek models with reasoning_format: "parsed")
 		if delta.Reasoning != "" {
 			callback(StreamChunk{Type: "delta", Thinking: delta.Reasoning})
-			// MiniMax reasoning_details field (with reasoning_split=true)
-			for _, rd := range delta.ReasoningDetails {
-				if rd.Text != "" {
-					callback(StreamChunk{Type: "delta", Thinking: rd.Text})
-				}
+		}
+		// MiniMax reasoning_details field (with reasoning_split=true)
+		for _, rd := range delta.ReasoningDetails {
+			if rd.Text != "" {
+				callback(StreamChunk{Type: "delta", Thinking: rd.Text})
 			}
 		}
 

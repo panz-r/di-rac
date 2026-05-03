@@ -93,6 +93,9 @@ export class AnalyzerClient {
 	/** Set to true if the daemon cannot be started (binary missing, etc.) */
 	fallback = true
 
+	// Callers waiting for daemon to become ready after a crash/restart
+	private readyResolvers: Array<() => void> = []
+
 	// Metrics
 	private startTime: number = 0
 	private requestCount: number = 0
@@ -103,10 +106,9 @@ export class AnalyzerClient {
 	private lastSuccessfulRequestTime: number = 0
 	private consecutiveFailures: number = 0
 
-	// Resilience settings
-	private readonly maxRestartAttempts = 5
+	// Resilience settings — no cap on restarts for long-running sessions
 	private readonly baseRestartDelayMs = 2000
-	private readonly maxRestartDelayMs = 30000
+	private readonly maxRestartDelayMs = 60000
 
 	constructor(binaryPath: string, workspaceRoot: string) {
 		this.binaryPath = binaryPath
@@ -115,6 +117,7 @@ export class AnalyzerClient {
 
 	async start(): Promise<void> {
 		if (this.shuttingDown) return
+		if (this.process && !this.process.killed && !this.crashed) return
 		if (!fs.existsSync(this.binaryPath)) {
 			Logger.warn("AnalyzerClient", `Binary not found: ${this.binaryPath}`)
 			this.fallback = true
@@ -234,21 +237,9 @@ export class AnalyzerClient {
 		})
 
 		if (!this.shuttingDown) {
-			// Check if we've exceeded max restart attempts
-			if (this.restartCount >= this.maxRestartAttempts) {
-				Logger.error("AnalyzerClient", `Max restart attempts (${this.maxRestartAttempts}) reached. Giving up.`)
-				this.fallback = true
-				telemetryService.recordEvent({
-					category: "analyzer",
-					action: "daemon_gave_up",
-					label: `total_restarts:${this.restartCount}`,
-				})
-				return
-			}
-
-			// Exponential backoff with jitter
+			// Exponential backoff (no cap on attempts — long-running sessions need resilience)
 			const delay = Math.min(
-				this.baseRestartDelayMs * Math.pow(2, this.restartCount),
+				this.baseRestartDelayMs * Math.pow(2, Math.min(this.restartCount, 6)),
 				this.maxRestartDelayMs
 			)
 			Logger.info("AnalyzerClient", `Scheduling daemon restart in ${delay}ms`)
@@ -261,7 +252,7 @@ export class AnalyzerClient {
 	private async restart(): Promise<void> {
 		if (this.shuttingDown) return
 		this.restartCount++
-		Logger.info("AnalyzerClient", `Restarting daemon (attempt ${this.restartCount}/${this.maxRestartAttempts})...`)
+		Logger.info("AnalyzerClient", `Restarting daemon (attempt ${this.restartCount})...`)
 		try {
 			await this.spawnDaemon()
 			this.crashed = false
@@ -274,9 +265,13 @@ export class AnalyzerClient {
 				action: "daemon_restarted",
 				label: `attempt:${this.restartCount}`,
 			})
+
+			// Notify any callers waiting for the daemon to become ready
+			const resolvers = this.readyResolvers
+			this.readyResolvers = []
+			for (const resolve of resolvers) resolve()
 		} catch (e) {
 			Logger.warn("AnalyzerClient", `Restart failed: ${e}`)
-			this.fallback = true
 			// Continue retrying via handleCrash
 			this.handleCrash()
 		}
@@ -300,7 +295,41 @@ export class AnalyzerClient {
 		this.fallback = true
 	}
 
+	private async waitForReady(timeoutMs: number): Promise<void> {
+		if (this.process && !this.process.killed && !this.crashed) return
+		if (this.shuttingDown) throw new Error("Daemon shut down")
+
+		return new Promise<void>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.readyResolvers = this.readyResolvers.filter(r => r !== onReady)
+				reject(new Error("Timed out waiting for daemon to become ready"))
+			}, timeoutMs)
+			const onReady = () => {
+				clearTimeout(timer)
+				resolve()
+			}
+			this.readyResolvers.push(onReady)
+		})
+	}
+
 	private send(payload: Record<string, unknown>, timeoutMs = 60000): Promise<any> {
+		return new Promise((resolve, reject) => {
+			if (this.shuttingDown) {
+				reject(new Error("Daemon shut down"))
+				return
+			}
+			if (!this.process || this.process.killed || this.crashed) {
+				// Daemon is restarting — wait for it to become ready
+				this.waitForReady(timeoutMs).then(() => {
+					this.doSend(payload, timeoutMs).then(resolve, reject)
+				}).catch(reject)
+				return
+			}
+			this.doSend(payload, timeoutMs).then(resolve, reject)
+		})
+	}
+
+	private doSend(payload: Record<string, unknown>, timeoutMs: number): Promise<any> {
 		return new Promise((resolve, reject) => {
 			if (!this.process || this.process.killed) {
 				reject(new Error("Daemon not running"))
@@ -331,9 +360,7 @@ export class AnalyzerClient {
 		if (this.fallback && !this.process) {
 			return {
 				healthy: false,
-				reason: this.restartCount >= this.maxRestartAttempts
-					? "Max restart attempts reached"
-					: "Daemon not running",
+				reason: "Daemon not running",
 				metrics,
 			}
 		}

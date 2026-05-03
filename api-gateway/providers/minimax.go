@@ -3,10 +3,30 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
+	"fmt"
 	"log"
-	"regexp"
 	"strings"
+	"sync/atomic"
+	"time"
 )
+
+// MiniMax-specific response metadata
+type MiniMaxMetadata struct {
+	ReasoningDetails *ReasoningDetails `json:"reasoning_details,omitempty"`
+	CacheInfo        *CacheInfo        `json:"cache_info,omitempty"`
+}
+
+type ReasoningDetails struct {
+	Text   string `json:"reasoning_text,omitempty"`
+	Tokens int    `json:"reasoning_tokens,omitempty"`
+}
+
+type CacheInfo struct {
+	CacheHitTokens int `json:"cache_hit_tokens,omitempty"`
+	NewInputTokens  int `json:"new_input_tokens,omitempty"`
+	OutputTokens    int `json:"output_tokens,omitempty"`
+}
 
 // MiniMaxHandler translates between our internal protocol and MiniMax's native API.
 //
@@ -19,7 +39,8 @@ import (
 // The HTTP/SSE transport is handled by the shared openaiCompatHandler (pure transport,
 // no format translation). Format translation happens in the MiniMax-specific layers below.
 type MiniMaxHandler struct {
-	inner *openaiCompatHandler
+	inner       *openaiCompatHandler
+	callCounter atomic.Int64
 }
 
 func NewMiniMaxHandler() *MiniMaxHandler {
@@ -42,24 +63,107 @@ func NewMiniMaxHandler() *MiniMaxHandler {
 		}),
 	}
 }
-
 func (h *MiniMaxHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
-	result, err := h.inner.Send(ctx, req)
-	if err != nil {
-		return nil, err
+	const maxRetries = 3
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		result, err := h.inner.Send(ctx, req)
+		if err != nil {
+			if isRateLimitError(err) {
+				waitTime := time.Duration(1<<attempt) * time.Second
+				log.Printf("[MiniMax] Rate limited. Retry %d/%d in %v", attempt+1, maxRetries, waitTime)
+				select {
+				case <-time.After(waitTime):
+					lastErr = err
+					continue
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			return nil, err
+		}
+		result = extractMiniMaxMetadata(result)
+		return extractToolCallsFromResult(result, &h.callCounter), nil
 	}
-	return extractToolCallsFromResult(result), nil
+
+	return nil, fmt.Errorf("[MiniMax] max retries exceeded: %v", lastErr)
 }
 
+func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "rate limit")
+}
+
+func extractMiniMaxMetadata(result *SendResult) *SendResult {
+	if result == nil || result.Raw == nil {
+		return result
+	}
+
+	var rawResp map[string]interface{}
+	if err := json.Unmarshal(result.Raw, &rawResp); err != nil {
+		log.Printf("[MiniMax] failed to parse raw response: %v", err)
+		return result
+	}
+
+	if reasoning, ok := rawResp["reasoning_details"].(map[string]interface{}); ok {
+		if text, ok := reasoning["reasoning_text"].(string); ok {
+			log.Printf("[MiniMax] reasoning_text: %s", truncate(text, 200))
+		}
+		if tokens, ok := reasoning["reasoning_tokens"].(float64); ok {
+			log.Printf("[MiniMax] reasoning_tokens: %d", int(tokens))
+		}
+	}
+
+	if cacheInfo, ok := rawResp["cache_info"].(map[string]interface{}); ok {
+		if hitTokens, ok := cacheInfo["cache_hit_tokens"].(float64); ok {
+			log.Printf("[MiniMax] cache_hit_tokens: %d", int(hitTokens))
+		}
+		if newTokens, ok := cacheInfo["new_input_tokens"].(float64); ok {
+			log.Printf("[MiniMax] new_input_tokens: %d", int(newTokens))
+		}
+		if outTokens, ok := cacheInfo["output_tokens"].(float64); ok {
+			log.Printf("[MiniMax] output_tokens: %d", int(outTokens))
+		}
+	}
+
+	return result
+}
+
+
 func (h *MiniMaxHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	pipe := newMinimaxToolCallPipe(callback)
+	pipe := newMinimaxToolCallPipe(callback, &h.callCounter)
 	err := h.inner.Stream(ctx, req, pipe.handle)
 	pipe.flush()
 	log.Printf("[MiniMax] stream complete: buffered=%d xmlParsed=%d", pipe.totalBuffered, pipe.totalXmlParsed)
 	return err
 }
 
+func (h *MiniMaxHandler) Capabilities() *ProviderInfo {
+	return h.inner.Capabilities()
+}
+
 var _ Handler = (*MiniMaxHandler)(nil)
+
+// XML structs for parsing <minimax:tool_call> blocks
+type minimaxToolCallBlock struct {
+	XMLName xml.Name         `xml:"tool_call"`
+	Invokes []minimaxInvoke  `xml:"invoke"`
+}
+
+type minimaxInvoke struct {
+	XMLName    xml.Name        `xml:"invoke"`
+	Name       string          `xml:"name,attr"`
+	Parameters []minimaxParam  `xml:"parameter"`
+}
+
+type minimaxParam struct {
+	XMLName xml.Name `xml:"parameter"`
+	Name    string   `xml:"name,attr"`
+	Value   string   `xml:",innerxml"`
+}
 
 // ---------------------------------------------------------------------------
 // Streaming pipe: buffers text deltas, extracts <minimax:tool_call> XML blocks,
@@ -67,22 +171,17 @@ var _ Handler = (*MiniMaxHandler)(nil)
 // ---------------------------------------------------------------------------
 
 type minimaxToolCallPipe struct {
-	callback        func(StreamChunk) error
-	textBuffer      strings.Builder
-	totalBuffered   int
-	totalXmlParsed  int
+	callback       func(StreamChunk) error
+	textBuffer     strings.Builder
+	totalBuffered  int
+	totalXmlParsed int
+	counter        *atomic.Int64
 }
 
-func newMinimaxToolCallPipe(callback func(StreamChunk) error) *minimaxToolCallPipe {
-	return &minimaxToolCallPipe{callback: callback}
+func newMinimaxToolCallPipe(callback func(StreamChunk) error, counter *atomic.Int64) *minimaxToolCallPipe {
+	return &minimaxToolCallPipe{callback: callback, counter: counter}
 }
 
-var (
-	reToolCallOpen  = regexp.MustCompile(`<minimax:tool_call>`)
-	reToolCallClose = regexp.MustCompile(`</minimax:tool_call>`)
-	reInvoke        = regexp.MustCompile(`<invoke\s+name="([^"]*)">(.*?)</invoke>`)
-	reParam         = regexp.MustCompile(`<parameter\s+name="([^"]*)">(.*?)</parameter>`)
-)
 
 func (p *minimaxToolCallPipe) handle(chunk StreamChunk) error {
 	// Only intercept text deltas
@@ -137,70 +236,85 @@ func (p *minimaxToolCallPipe) tryParse() error {
 
 	p.textBuffer.Reset()
 
-	// Split into segments: text before tool calls, tool call blocks, text between/after
-	segments := reToolCallOpen.Split(buf, -1)
-	for i, seg := range segments {
-		if i == 0 && seg != "" {
-			// Text before first tool call
-			if err := p.callback(StreamChunk{Type: "delta", TextDelta: seg}); err != nil {
+	// Split into segments around <minimax:tool_call>...</minimax:tool_call> blocks
+	openTag := "<minimax:tool_call>"
+	closeTag := "</minimax:tool_call>"
+
+	for {
+		openIdx := strings.Index(buf, openTag)
+		if openIdx == -1 {
+			// No more tool calls — emit remaining text
+			if buf != "" {
+				if err := p.callback(StreamChunk{Type: "delta", TextDelta: buf}); err != nil {
+					return err
+				}
+			}
+			break
+		}
+
+		// Emit text before the opening tag
+		if openIdx > 0 {
+			if err := p.callback(StreamChunk{Type: "delta", TextDelta: buf[:openIdx]}); err != nil {
+				return err
+			}
+		}
+
+		closeIdx := strings.Index(buf, closeTag)
+		if closeIdx == -1 {
+			// Incomplete block — re-buffer from the opening tag
+			p.textBuffer.WriteString(buf[openIdx:])
+			break
+		}
+
+		// Extract the full XML block (including tags for unmarshaling)
+		xmlBlock := buf[openIdx : closeIdx+len(closeTag)]
+		buf = buf[closeIdx+len(closeTag):]
+
+		// Parse the XML block
+		var block minimaxToolCallBlock
+		if err := xml.Unmarshal([]byte(xmlBlock), &block); err != nil {
+			log.Printf("[MiniMax] XML parse error, emitting raw text: %v — %q", err, truncate(xmlBlock, 200))
+			if err := p.callback(StreamChunk{Type: "delta", TextDelta: xmlBlock}); err != nil {
 				return err
 			}
 			continue
 		}
-		if i == 0 {
-			continue
-		}
 
-		// Split on closing tag
-		parts := reToolCallClose.Split(seg, 2)
-		xmlBlock := parts[0]
-
-		// Parse invokes from the XML block
-		invokeMatches := reInvoke.FindAllStringSubmatch(xmlBlock, -1)
-		p.totalXmlParsed += len(invokeMatches)
-		for _, inv := range invokeMatches {
-			toolName := inv[1]
-			paramsXML := inv[2]
-
-			// Parse parameters
+		p.totalXmlParsed += len(block.Invokes)
+		for _, inv := range block.Invokes {
 			args := map[string]interface{}{}
-			paramMatches := reParam.FindAllStringSubmatch(paramsXML, -1)
-			for _, pm := range paramMatches {
-				paramName := pm[1]
-				paramVal := strings.TrimSpace(pm[2])
-				// Try JSON parse for objects/arrays, keep as string otherwise
+			for _, pm := range inv.Parameters {
+				paramVal := strings.TrimSpace(pm.Value)
 				var parsed interface{}
 				if err := json.Unmarshal([]byte(paramVal), &parsed); err == nil {
-					args[paramName] = parsed
+					args[pm.Name] = parsed
 				} else {
-					args[paramName] = paramVal
+					args[pm.Name] = paramVal
 				}
 			}
 
 			argsJSON, _ := json.Marshal(args)
+			callID := fmt.Sprintf("minimax_%d_%s", p.counter.Add(1), inv.Name)
 
-			// Emit tool call delta
 			if err := p.callback(StreamChunk{
 				Type:         "delta",
 				Index:        0,
-				ToolCallID:   "minimax_" + toolName,
-				ToolCallName: toolName,
+				ToolCallID:   callID,
+				ToolCallName: inv.Name,
 				JSONDelta:    string(argsJSON),
 			}); err != nil {
 				return err
 			}
 		}
 
-		// Text after the closing tag
-		if len(parts) > 1 && parts[1] != "" {
-			// If there's another tool call opening, don't emit yet
-			if !strings.Contains(parts[1], "<minimax:tool_call>") {
-				if err := p.callback(StreamChunk{Type: "delta", TextDelta: parts[1]}); err != nil {
+		// If remaining buf has no more tool calls, buffer it for re-check or emit
+		if !strings.Contains(buf, openTag) {
+			if buf != "" {
+				if err := p.callback(StreamChunk{Type: "delta", TextDelta: buf}); err != nil {
 					return err
 				}
-			} else {
-				p.textBuffer.WriteString(parts[1])
 			}
+			break
 		}
 	}
 
@@ -219,61 +333,78 @@ func (p *minimaxToolCallPipe) flush() {
 // Non-streaming: extract tool calls from text content blocks in result
 // ---------------------------------------------------------------------------
 
-func extractToolCallsFromResult(result *SendResult) *SendResult {
+func extractToolCallsFromResult(result *SendResult, counter *atomic.Int64) *SendResult {
 	if result == nil {
 		return result
 	}
 	var newBlocks []ContentBlock
+	openTag := "<minimax:tool_call>"
+	closeTag := "</minimax:tool_call>"
+
 	for _, block := range result.Content {
-		if block.Type != "text" || !strings.Contains(block.Text, "<minimax:tool_call>") {
+		if block.Type != "text" || !strings.Contains(block.Text, openTag) {
 			newBlocks = append(newBlocks, block)
 			continue
 		}
-		// Split text on <minimax:tool_call> blocks
-		segments := reToolCallOpen.Split(block.Text, -1)
-		for i, seg := range segments {
-			if i == 0 {
-				if seg != "" {
-					newBlocks = append(newBlocks, ContentBlock{Type: "text", Text: seg})
+
+		buf := block.Text
+		for {
+			openIdx := strings.Index(buf, openTag)
+			if openIdx == -1 {
+				if buf != "" {
+					newBlocks = append(newBlocks, ContentBlock{Type: "text", Text: buf})
 				}
+				break
+			}
+
+			if openIdx > 0 {
+				newBlocks = append(newBlocks, ContentBlock{Type: "text", Text: buf[:openIdx]})
+			}
+
+			closeIdx := strings.Index(buf, closeTag)
+			if closeIdx == -1 {
+				log.Printf("[MiniMax] incomplete XML block in non-streaming result: %q", truncate(buf[openIdx:], 200))
+				newBlocks = append(newBlocks, ContentBlock{Type: "text", Text: buf[openIdx:]})
+				break
+			}
+
+			xmlBlock := buf[openIdx : closeIdx+len(closeTag)]
+			buf = buf[closeIdx+len(closeTag):]
+
+			var xmlBlockStruct minimaxToolCallBlock
+			if err := xml.Unmarshal([]byte(xmlBlock), &xmlBlockStruct); err != nil {
+				log.Printf("[MiniMax] XML parse error in non-streaming: %v — %q", err, truncate(xmlBlock, 200))
+				newBlocks = append(newBlocks, ContentBlock{Type: "text", Text: xmlBlock})
 				continue
 			}
-			parts := reToolCallClose.Split(seg, 2)
-			xmlBlock := parts[0]
 
-			invokeMatches := reInvoke.FindAllStringSubmatch(xmlBlock, -1)
-			for _, inv := range invokeMatches {
-				toolName := inv[1]
-				paramsXML := inv[2]
+			for _, inv := range xmlBlockStruct.Invokes {
 				args := map[string]interface{}{}
-				paramMatches := reParam.FindAllStringSubmatch(paramsXML, -1)
-				for _, pm := range paramMatches {
-					paramName := pm[1]
-					paramVal := strings.TrimSpace(pm[2])
+				for _, pm := range inv.Parameters {
+					paramVal := strings.TrimSpace(pm.Value)
+					if paramVal == "" {
+						continue
+					}
 					var parsed interface{}
 					if err := json.Unmarshal([]byte(paramVal), &parsed); err == nil {
-						args[paramName] = parsed
+						args[pm.Name] = parsed
 					} else {
-						args[paramName] = paramVal
+						args[pm.Name] = paramVal
 					}
 				}
 				argsJSON, _ := json.Marshal(args)
+				callID := fmt.Sprintf("minimax_%d_%s", counter.Add(1), inv.Name)
 				newBlocks = append(newBlocks, ContentBlock{
 					Type: "tool_use",
 					ToolUse: &ToolUseBlock{
-						ID:   "minimax_" + toolName,
+						ID:   callID,
 						Type: "tool_use",
 						Function: struct {
 							Name      string `json:"name"`
 							Arguments string `json:"arguments"`
-						}{Name: toolName, Arguments: string(argsJSON)},
+						}{Name: inv.Name, Arguments: string(argsJSON)},
 					},
 				})
-			}
-
-			// Text after closing tag
-			if len(parts) > 1 && parts[1] != "" {
-				newBlocks = append(newBlocks, ContentBlock{Type: "text", Text: parts[1]})
 			}
 		}
 	}

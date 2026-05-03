@@ -119,6 +119,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getAvailableSlashCommands } from "@/core/controller/slash/getAvailableSlashCommands"
 import { showTaskWithId } from "@/core/controller/task/showTaskWithId"
 import { StateManager } from "@/core/storage/StateManager"
+import { observerFailing } from "@/core/observer"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { Session } from "@/shared/services/Session"
@@ -1474,6 +1475,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
 			}
 
 			if (prompt.trim() || imagePaths.length > 0) {
+				// If task is running, enqueue as steer message instead of starting new task
+				if (ctrl?.task && currentMessage && !imagePaths.length) {
+					ctrl.task.enqueueUserMessage(prompt.trim())
+					setQueuedCount((c) => c + 1)
+					setTextInput("")
+					setCursorPos(0)
+					inputStateStorage.delete(storageKey)
+					return
+				}
 				handleSubmit(prompt.trim(), imagePaths)
 			}
 			return
@@ -1718,7 +1728,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 									({lastApiReqTotalTokens.toLocaleString()}) | ${metrics.totalCost.toFixed(3)}
 								</Text>
 								{StateManager.get().getGlobalSettingsKey("observerEnabled") && (
-									<Text color="gray"> | <Text color="cyan">obs</Text> observer</Text>
+									<Text color="gray"> | <Text color={observerFailing ? "red" : "cyan"}>obs</Text> observer</Text>
 								)}
 							</Text>
 						</Box>

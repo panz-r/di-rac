@@ -135,12 +135,6 @@ export class LifecycleManager {
 			Logger.error("Failed to record environment metadata:", error)
 		}
 
-		// Start tree-sitter daemon (non-blocking — falls back to WASM if unavailable)
-		try {
-			await this.dependencies.analyzer.start()
-		} catch (error) {
-			Logger.error("Failed to start analyzer daemon:", error)
-		}
 
 		await this.dependencies.initiateTaskLoop(userContent)
 	}
@@ -398,13 +392,6 @@ export class LifecycleManager {
 
 		await this.dependencies.messageStateHandler.overwriteApiConversationHistory(modifiedApiConversationHistory)
 
-		// Start tree-sitter daemon for resumed tasks
-		try {
-			await this.dependencies.analyzer.start()
-		} catch (error) {
-			Logger.error("Failed to start analyzer daemon on resume:", error)
-		}
-
 		await this.dependencies.initiateTaskLoop(newUserContent)
 	}
 
@@ -502,12 +489,6 @@ export class LifecycleManager {
 				// non-fatal
 			}
 
-			// Shut down tree-sitter daemon
-			try {
-				await this.dependencies.analyzer.shutdown()
-			} catch {
-				// non-fatal
-			}
 
 			this.dependencies.terminalManager.disposeAll()
 			this.dependencies.urlContentFetcher.closeBrowser()
@@ -516,9 +497,6 @@ export class LifecycleManager {
 			this.dependencies.fileContextTracker.dispose()
 			this.dependencies.messageStateHandler.dispose()
 			if (this.dependencies.observerOrchestrator) {
-				await this.dependencies.observerOrchestrator.finalCompression(
-					this.dependencies.messageStateHandler.getApiConversationHistory(),
-				)
 				await this.dependencies.observerOrchestrator.dispose()
 			}
 			await this.dependencies.diffViewProvider.revertChanges()

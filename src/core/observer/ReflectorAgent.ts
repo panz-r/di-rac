@@ -25,12 +25,12 @@ export class ReflectorAgent {
 		const observerMessages: DiracStorageMessage[] = [
 			{
 				role: "user",
-				content: REFLECTOR_SYSTEM_PROMPT + "\n\n---\n\nOBSERVATION LOG TO RESTRUCTURE:\n\n" + observationBlock,
+				content: "OBSERVATION LOG TO RESTRUCTURE:\n\n" + observationBlock,
 				ts: Date.now(),
 			},
 		]
 
-		const stream = handler.createMessage("", observerMessages, undefined)
+		const stream = handler.createMessage(REFLECTOR_SYSTEM_PROMPT, observerMessages, undefined)
 
 		let result = ""
 		for await (const chunk of stream) {

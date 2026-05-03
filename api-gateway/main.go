@@ -458,6 +458,17 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 				Body:   mustMarshal(chunk),
 			})
 		case <-doneChan:
+			// Check for error that arrived simultaneously with done signal
+			select {
+			case streamErr := <-errChan:
+				encoder.Encode(&Response{
+					ID:     id,
+					Status: 500,
+					Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error()},
+				})
+				return
+			default:
+			}
 			// Drain remaining chunks before closing
 			for {
 				select {

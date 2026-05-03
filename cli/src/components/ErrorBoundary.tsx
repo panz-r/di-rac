@@ -24,6 +24,8 @@ export class ErrorBoundary extends React.Component<Props, { hasError: boolean }>
 	}
 
 	override componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+		// Clear the terminal to prevent stale UI artifacts (double prompt boxes, etc.)
+		process.stdout.write("\x1b[2J\x1b[3J\x1b[H")
 		onReactError(this.props, error, errorInfo)
 	}
 
