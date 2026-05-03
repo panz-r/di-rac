@@ -547,7 +547,9 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 			if tc.Function.Name != "" {
 				state.name = tc.Function.Name
 			}
-			if state.id != "" && state.name != "" && tc.Function.Arguments != "" {
+			// Emit tool call delta whenever we have arguments and a name.
+			// OpenAI streams send id+name first, then argument fragments in separate chunks.
+			if tc.Function.Arguments != "" {
 				callback(StreamChunk{
 					Type:         "delta",
 					Index:        idx,
