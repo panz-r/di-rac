@@ -69,7 +69,6 @@ import {
 } from "@shared/messages/content"
 import { DiracMessageModelInfo } from "@shared/messages/metrics"
 import { ShowMessageType } from "@shared/proto/index.host"
-import { convertDiracMessageToProto } from "@shared/proto-conversions/dirac-message"
 import { Logger } from "@shared/services/Logger"
 import { Session } from "@shared/services/Session"
 import { DiracDefaultTool } from "@shared/tools"
@@ -1467,7 +1466,7 @@ ${notice}`
 				})
 				const completedReasoning = this.messageStateHandler.getDiracMessages()[pendingReasoningIndex]
 				if (completedReasoning) {
-					await sendPartialMessageEvent(convertDiracMessageToProto(completedReasoning))
+					await sendPartialMessageEvent(completedReasoning)
 					await this.postStateToWebview()
 				}
 				return true

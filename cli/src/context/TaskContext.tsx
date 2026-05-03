@@ -5,7 +5,6 @@
 
 import { registerPartialMessageCallback } from "@core/controller/ui/subscribeToPartialMessage"
 import type { DiracMessage, ExtensionState } from "@shared/ExtensionMessage"
-import { convertProtoToDiracMessage } from "@shared/proto-conversions/dirac-message"
 import React, { createContext, ReactNode, useContext, useEffect, useRef, useState } from "react"
 
 interface TaskContextType {
@@ -67,15 +66,14 @@ export const TaskContextProvider: React.FC<TaskContextProviderProps> = ({ contro
 		}
 
 		// Subscribe to partial message events (for streaming updates)
-		const unsubscribePartial = registerPartialMessageCallback((protoMessage) => {
-			const updatedMessage = convertProtoToDiracMessage(protoMessage) as DiracMessage
+		const unsubscribePartial = registerPartialMessageCallback((message) => {
 			setState((prevState) => {
 				const messages = prevState.diracMessages || []
 				// Find and update the message by timestamp
-				const index = messages.findIndex((m) => m.ts === updatedMessage.ts)
+				const index = messages.findIndex((m) => m.ts === message.ts)
 				if (index >= 0) {
 					const newMessages = [...messages]
-					newMessages[index] = updatedMessage
+					newMessages[index] = message
 					return { ...prevState, diracMessages: newMessages }
 				}
 				return prevState

@@ -4,7 +4,6 @@ import { getHookModelContext } from "@core/hooks/hook-model-context"
 import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
 import { formatResponse } from "@core/prompts/responses"
 import { DiracAsk, DiracMessage, DiracSay, MultiCommandState } from "@shared/ExtensionMessage"
-import { convertDiracMessageToProto } from "@shared/proto-conversions/dirac-message"
 import { Logger } from "@shared/services/Logger"
 import { DiracDefaultTool } from "@shared/tools"
 import { DiracAskResponse } from "@shared/WebviewMessage"
@@ -69,8 +68,7 @@ export class TaskMessenger {
 						partial: true,
 						commandCompleted: false,
 					})
-					const protoMessage = convertDiracMessageToProto(diracMessages[idx])
-					await sendPartialMessageEvent(protoMessage)
+					await sendPartialMessageEvent(diracMessages[idx])
 					await this.dependencies.postStateToWebview()
 					return { ts: diracMessages[idx].ts, wasUpdate: true }
 				}
@@ -97,8 +95,7 @@ export class TaskMessenger {
 					partial: false,
 					commandCompleted: false,
 				})
-				const protoMessage = convertDiracMessageToProto(diracMessages[idx])
-				await sendPartialMessageEvent(protoMessage)
+				await sendPartialMessageEvent(diracMessages[idx])
 				await this.dependencies.postStateToWebview()
 				return { ts, wasUpdate: true }
 			}

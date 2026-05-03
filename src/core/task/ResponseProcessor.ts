@@ -3,7 +3,6 @@ import { parseAssistantMessageV2, ToolUse } from "@core/assistant-message"
 import { sendPartialMessageEvent } from "@core/controller/ui/subscribeToPartialMessage"
 import { telemetryService } from "@services/telemetry"
 import { DiracAssistantContent } from "@shared/messages/content"
-import { convertDiracMessageToProto } from "@shared/proto-conversions/dirac-message"
 import { Session } from "@shared/services/Session"
 import { READ_ONLY_TOOLS } from "@shared/tools"
 import { DiracAskResponse } from "@shared/WebviewMessage"
@@ -337,8 +336,7 @@ export class ResponseProcessor {
 				lastMessage.text = content
 				lastMessage.partial = false
 				await this.dependencies.messageStateHandler.saveDiracMessagesAndUpdateHistory()
-				const protoMessage = convertDiracMessageToProto(lastMessage)
-				await sendPartialMessageEvent(protoMessage)
+				await sendPartialMessageEvent(lastMessage)
 			}
 		}
 

@@ -1,11 +1,11 @@
 import { EmptyRequest } from "@shared/proto/dirac/common"
-import { DiracMessage } from "@shared/proto/dirac/ui"
 import { Logger } from "@/shared/services/Logger"
 import { getRequestRegistry, StreamingResponseHandler } from "../grpc-handler"
 import { Controller } from "../index"
+import type { DiracMessage } from "@shared/ExtensionMessage"
 
 // Keep track of active partial message subscriptions (gRPC streams)
-const activePartialMessageSubscriptions = new Set<StreamingResponseHandler<DiracMessage>>()
+const activePartialMessageSubscriptions = new Set<StreamingResponseHandler<any>>()
 
 // Keep track of callback-based subscriptions (for CLI and other non-gRPC consumers)
 export type PartialMessageCallback = (message: DiracMessage) => void
@@ -52,10 +52,11 @@ export function registerPartialMessageCallback(callback: PartialMessageCallback)
 
 /**
  * Send a partial message event to all active subscribers
- * @param partialMessage The DiracMessage to send
+ * @param partialMessage The domain DiracMessage to send (from ExtensionMessage)
  */
 export async function sendPartialMessageEvent(partialMessage: DiracMessage): Promise<void> {
 	// Send to gRPC stream subscribers
+	// Note: The gRPC path may need internal conversion to proto format
 	const streamPromises = Array.from(activePartialMessageSubscriptions).map(async (responseStream) => {
 		try {
 			await responseStream(
