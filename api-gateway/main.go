@@ -326,7 +326,20 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 				Body:   mustMarshal(chunk),
 			})
 		case <-doneChan:
-			return
+			// Drain remaining chunks before closing (race: complete chunk
+			// may be in the buffered channel but select picked doneChan first)
+			for {
+				select {
+				case chunk := <-chunks:
+					encoder.Encode(&Response{
+						ID:     id,
+						Status: 200,
+						Body:   mustMarshal(chunk),
+					})
+				default:
+					return
+				}
+			}
 		}
 	}
 }

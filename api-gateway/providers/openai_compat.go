@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -374,13 +375,14 @@ func openaiConvertAssistantContentBlocks(messages []map[string]interface{}, msg 
 // openaiBuildTools parses raw tool JSON into OpenAI-format tool definitions.
 func openaiBuildTools(toolsRaw []json.RawMessage) []map[string]interface{} {
 	var tools []map[string]interface{}
-	for _, toolJSON := range toolsRaw {
+	for i, toolJSON := range toolsRaw {
 		var tool struct {
 			Name        string          `json:"name"`
 			Description string          `json:"description"`
 			InputSchema json.RawMessage `json:"input_schema"`
 		}
 		if err := json.Unmarshal(toolJSON, &tool); err != nil {
+			log.Printf("[openaiBuildTools] tool[%d] unmarshal failed: %v (raw: %s)", i, err, string(toolJSON[:min(len(toolJSON), 100)]))
 			continue
 		}
 		var inputSchema interface{}
@@ -399,6 +401,15 @@ func openaiBuildTools(toolsRaw []json.RawMessage) []map[string]interface{} {
 			},
 		})
 	}
+	log.Printf("[openaiBuildTools] parsed %d/%d tools: %v", len(tools), len(toolsRaw), func() []string {
+		var names []string
+		for _, t := range tools {
+			if fn, ok := t["function"].(map[string]interface{}); ok {
+				names = append(names, fn["name"].(string))
+			}
+		}
+		return names
+	}())
 	return tools
 }
 
@@ -547,6 +558,8 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 			if tc.Function.Name != "" {
 				state.name = tc.Function.Name
 			}
+			// Log every tool call chunk for debugging
+			log.Printf("[SSE] tool_call: idx=%d id=%q name=%q args_len=%d args=%q", idx, tc.ID, tc.Function.Name, len(tc.Function.Arguments), tc.Function.Arguments)
 			// Emit tool call delta whenever we have arguments and a name.
 			// OpenAI streams send id+name first, then argument fragments in separate chunks.
 			if tc.Function.Arguments != "" {

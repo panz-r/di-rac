@@ -1,4 +1,5 @@
 import fs from "node:fs"
+import { execSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import dotenv from "dotenv"
@@ -252,13 +253,18 @@ async function main() {
 			fs.chmodSync(cliOutfile, "755")
 		}
 
-		// Copy the Go API gateway binary to dist/ if it exists
-		const gatewaySource = path.join(__dirname, "api-gateway", "api-gateway")
+		// Build and copy the Go API gateway binary
+		const gatewayDir = path.join(__dirname, "api-gateway")
+		const gatewaySource = path.join(gatewayDir, "api-gateway")
 		const gatewayDest = path.join(distDir, "api-gateway")
-		if (fs.existsSync(gatewaySource)) {
+		try {
+			execSync("go build -o api-gateway .", { cwd: gatewayDir, stdio: "pipe" })
+			console.log("[cli esbuild] Built api-gateway binary")
 			fs.copyFileSync(gatewaySource, gatewayDest)
 			fs.chmodSync(gatewayDest, "755")
 			console.log("[cli esbuild] Copied api-gateway binary to dist/")
+		} catch (e: any) {
+			console.error("[cli esbuild] WARNING: Failed to build api-gateway:", e.stderr?.toString() || e.message)
 		}
 	}
 }

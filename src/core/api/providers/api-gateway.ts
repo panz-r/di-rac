@@ -71,7 +71,7 @@ interface GatewayRequest {
 	provider: GatewayProviderConfig
 	messages: GatewayMessage[]
 	system?: string
-	tools?: string[]
+	tools?: Record<string, unknown>[]
 	max_tokens?: number
 	temperature?: number
 	top_p?: number
@@ -151,7 +151,7 @@ export class ApiGatewayHandler implements ApiHandler {
 			},
 			messages: gatewayMessages,
 			system: systemPrompt,
-			tools: tools?.map((t) => JSON.stringify(t)),
+			tools: tools as unknown as Record<string, unknown>[],
 		}
 
 		const modelInfo = this.options.modelInfo
