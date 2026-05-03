@@ -1,6 +1,6 @@
 import { AgentConfigLoader } from "@core/task/tools/subagent/AgentConfigLoader"
 import { DiracDefaultTool } from "@/shared/tools"
-import { type DiracToolSpec, toolSpecFunctionDeclarations, toolSpecFunctionDefinition, toolSpecInputSchema } from "../spec"
+import { type DiracToolSpec, toolSpecFunctionDeclarations, toolSpecInputSchema } from "../spec"
 import { SystemPromptContext } from "../types"
 
 export class DiracToolSet {
@@ -85,10 +85,6 @@ export class DiracToolSet {
 	 */
 	public static getNativeConverter(providerId: string, modelId?: string) {
 		switch (providerId) {
-			case "minimax":
-			case "anthropic":
-			case "bedrock":
-				return toolSpecInputSchema
 			case "gemini":
 				return toolSpecFunctionDeclarations
 			case "vertex":
@@ -97,8 +93,8 @@ export class DiracToolSet {
 				}
 				return toolSpecInputSchema
 			default:
-				// Default to OpenAI Compatible converter
-				return toolSpecFunctionDefinition
+				// All gateway-routed and Anthropic/Bedrock providers use input_schema format
+				return toolSpecInputSchema
 		}
 	}
 
