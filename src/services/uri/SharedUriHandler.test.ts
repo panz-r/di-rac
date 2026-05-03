@@ -1,7 +1,6 @@
 import { expect } from "chai"
 import { afterEach, beforeEach, describe, it } from "mocha"
 import * as sinon from "sinon"
-import { DiracWebviewProvider } from "@/core/webview"
 import { Logger } from "@/shared/services/Logger"
 import { ErrorService } from "../error"
 import { SharedUriHandler } from "./SharedUriHandler"
@@ -34,13 +33,11 @@ describe("SharedUriHandler", () => {
 
 		handleOpenRouterCallbackStub = sandbox.stub().resolves()
 		handleAuthCallbackStub = sandbox.stub().resolves()
-		const mockDiracWebviewProvider = {
-			controller: {
-				handleOpenRouterCallback: handleOpenRouterCallbackStub,
-				handleAuthCallback: handleAuthCallbackStub,
-			},
+		const mockController = {
+			handleOpenRouterCallback: handleOpenRouterCallbackStub,
+			handleAuthCallback: handleAuthCallbackStub,
 		} as any
-		sandbox.stub(DiracWebviewProvider, "getVisibleInstance").returns(mockDiracWebviewProvider)
+		SharedUriHandler.setController(mockController)
 	})
 
 	afterEach(() => {

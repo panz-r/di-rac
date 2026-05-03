@@ -829,14 +829,17 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 		Logger.warn("[initializeCli]", "API Gateway not available:", err)
 	}
 
-	// Send provider configurations to the API Gateway
 	const { sendProviderConfigsToGateway } = await import("./utils/gateway-client")
 	sendProviderConfigsToGateway().catch((err) => {
 		Logger.warn("[initializeCli]", "Failed to send provider configs to gateway:", err)
 	})
 
+	const { SharedUriHandler } = await import("@/services/uri/SharedUriHandler")
 	const webview = HostProvider.get().createDiracWebviewProvider() as any
 	const controller = webview.controller as Controller
+
+	// Set controller for SharedUriHandler (handles OAuth callbacks)
+	SharedUriHandler.setController(controller)
 
 	// Wrap initTask to save session metadata when a new task is created
 	const origInitTask = controller.initTask.bind(controller)

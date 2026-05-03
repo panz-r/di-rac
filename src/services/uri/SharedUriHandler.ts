@@ -1,5 +1,5 @@
-import { DiracWebviewProvider } from "@/core/webview"
 import { Logger } from "@/shared/services/Logger"
+import type { Controller } from "@core/controller/index"
 
 export const TASK_URI_PATH = "/task"
 
@@ -7,6 +7,26 @@ export const TASK_URI_PATH = "/task"
  * Shared URI handler that processes both VSCode URI events and HTTP server callbacks
  */
 export class SharedUriHandler {
+	private static controller: Controller | null = null
+
+	/**
+	 * Set the controller instance for URI handling
+	 * Called during TUI startup before the server starts
+	 */
+	public static setController(controller: Controller): void {
+		SharedUriHandler.controller = controller
+	}
+
+	/**
+	 * Get the controller instance
+	 */
+	private static getController(): Controller {
+		if (!SharedUriHandler.controller) {
+			throw new Error("SharedUriHandler: No controller set. Call setController() during startup.")
+		}
+		return SharedUriHandler.controller
+	}
+
 	/**
 	 * Processes a URI and routes it to the appropriate handler
 	 * @param url The URI to process (can be from VSCode or converted from HTTP)
@@ -30,19 +50,14 @@ export class SharedUriHandler {
 				}),
 		)
 
-		const visibleWebview = DiracWebviewProvider.getVisibleInstance()
-
-		if (!visibleWebview) {
-			Logger.warn("SharedUriHandler: No visible webview found")
-			return false
-		}
+		const controller = SharedUriHandler.getController()
 
 		try {
 			switch (path) {
 				case "/openrouter": {
 					const code = query.get("code")
 					if (code) {
-						await visibleWebview.controller.handleOpenRouterCallback(code)
+						await controller.handleOpenRouterCallback(code)
 						return true
 					}
 					Logger.warn("SharedUriHandler: Missing code parameter for OpenRouter callback")
@@ -51,7 +66,7 @@ export class SharedUriHandler {
 				case "/requesty": {
 					const code = query.get("code")
 					if (code) {
-						await visibleWebview.controller.handleRequestyCallback(code)
+						await controller.handleRequestyCallback(code)
 						return true
 					}
 					Logger.warn("SharedUriHandler: Missing code parameter for Requesty callback")
@@ -60,7 +75,7 @@ export class SharedUriHandler {
 				case TASK_URI_PATH: {
 					const prompt = query.get("prompt")
 					if (prompt) {
-						await visibleWebview.controller.handleTaskCreation(prompt)
+						await controller.handleTaskCreation(prompt)
 						return true
 					}
 					Logger.warn("SharedUriHandler: Missing prompt parameter for task creation")
@@ -69,7 +84,7 @@ export class SharedUriHandler {
 				case "/hicap": {
 					const code = query.get("code")
 					if (code) {
-						await visibleWebview.controller.handleHicapCallback(code)
+						await controller.handleHicapCallback(code)
 						return true
 					}
 					Logger.warn("SharedUriHandler: Missing code parameter for Hicap callback")
