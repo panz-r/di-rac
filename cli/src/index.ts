@@ -628,6 +628,10 @@ function setupSignalHandlers() {
 				if (task) {
 					task.abortTask()
 				}
+				try {
+					const { stopApiGateway } = await import("./utils/gateway-spawn")
+					await stopApiGateway()
+				} catch {}
 				printResumeCommand()
 				const signalTaskId = activeContext.controller.task?.taskId
 				if (signalTaskId) await saveFileManifest(signalTaskId)
@@ -793,6 +797,20 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 		}
 	}
 	await ErrorService.initialize()
+
+	// Start the API Gateway binary (if available) and wait for its socket
+	const { startApiGateway } = await import("./utils/gateway-spawn")
+	try {
+		await startApiGateway()
+	} catch (err) {
+		Logger.warn("[initializeCli]", "API Gateway not available:", err)
+	}
+
+	// Send provider configurations to the API Gateway
+	const { sendProviderConfigsToGateway } = await import("./utils/gateway-client")
+	sendProviderConfigsToGateway().catch((err) => {
+		Logger.warn("[initializeCli]", "Failed to send provider configs to gateway:", err)
+	})
 
 	const webview = HostProvider.get().createDiracWebviewProvider() as any
 	const controller = webview.controller as Controller

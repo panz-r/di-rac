@@ -54,7 +54,7 @@ export const updateApiReqMsg = async (params: UpdateApiReqMsgParams) => {
 				(() => {
 					const info = params.api.getModel().info
 					const provider = params.api.constructor.name
-					if (provider === "ZAiHandler" || provider === "OpenAiHandler" || provider === "DeepSeekHandler") {
+					if (provider === "ApiGatewayHandler" || provider === "ZAiHandler" || provider === "OpenAiHandler" || provider === "DeepSeekHandler") {
 						return calculateApiCostOpenAI(
 							info,
 							params.inputTokens,

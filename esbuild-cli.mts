@@ -259,6 +259,25 @@ async function main() {
 			}
 		}
 
+		// Build Go API Gateway
+		const apiGatewayDir = path.join(__dirname, "api-gateway")
+		const apiGatewayBin = path.join(apiGatewayDir, "api-gateway")
+		if (fs.existsSync(path.join(apiGatewayDir, "go.mod"))) {
+			console.log("[api-gateway] Building Go API gateway...")
+			const { execSync } = await import("child_process")
+			try {
+				execSync("go build -o api-gateway", { cwd: apiGatewayDir, stdio: "inherit" })
+				if (fs.existsSync(apiGatewayBin)) {
+					if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true })
+					fs.copyFileSync(apiGatewayBin, path.join(distDir, "api-gateway"))
+					fs.chmodSync(path.join(distDir, "api-gateway"), "755")
+					console.log("[api-gateway] Copied to dist/")
+				}
+			} catch {
+				console.error("[api-gateway] Go build failed, skipping API gateway binary")
+			}
+		}
+
 		// Build CLI executable
 		console.log("[cli esbuild] Building CLI executable...")
 		const cliCtx = await esbuild.context(cliConfig)

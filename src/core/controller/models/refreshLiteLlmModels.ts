@@ -1,6 +1,6 @@
 import type { ModelInfo } from "@shared/api"
 import { OpenRouterCompatibleModelInfo } from "@shared/proto/dirac/models"
-import { fetchLiteLlmModelsInfo } from "@/core/api/providers/litellm"
+import { fetchLiteLlmModelsInfo } from "@/core/api/providers/litellm-models"
 import { StateManager } from "@/core/storage/StateManager"
 import { toProtobufModels } from "@/shared/proto-conversions/models/typeConversion"
 import { Logger } from "@/shared/services/Logger"
