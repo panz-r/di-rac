@@ -45,8 +45,12 @@ type Request struct {
 	Temperature   float64                   `json:"temperature,omitempty"`
 	TopP          float64                   `json:"top_p,omitempty"`
 	Stop          []string                  `json:"stop,omitempty"`
-	Thinking      *providers.ThinkingConfig `json:"thinking,omitempty"`
-	ModelOverride string                    `json:"model_override,omitempty"`
+	Thinking         *providers.ThinkingConfig `json:"thinking,omitempty"`
+	ModelOverride    string                    `json:"model_override,omitempty"`
+	Logprobs         bool                      `json:"logprobs,omitempty"`
+	TopLogprobs      int                       `json:"top_logprobs,omitempty"`
+	PresencePenalty  float64                   `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float64                   `json:"frequency_penalty,omitempty"`
 }
 
 // SetProviderRequest handles provider configuration
@@ -255,6 +259,43 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
+		// Handle list-providers
+		if typeCheck.Type == "list-providers" {
+			providerList := s.providerRegistry.SupportedProviders()
+			body, _ := json.Marshal(map[string]interface{}{
+				"providers": providerList,
+			})
+			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			continue
+		}
+
+		// Handle provider-info
+		if typeCheck.Type == "provider-info" {
+			var infoReq struct {
+				Provider string `json:"provider"`
+			}
+			if err := json.Unmarshal(rawMsg, &infoReq); err != nil || infoReq.Provider == "" {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 400,
+					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: "provider-info requires 'provider' field"},
+				})
+				continue
+			}
+			info := s.providerRegistry.GetCapabilities(infoReq.Provider)
+			if info == nil {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 404,
+					Error:  &ErrorDetail{Code: "NOT_FOUND", Message: "No capabilities for provider: " + infoReq.Provider},
+				})
+				continue
+			}
+			body, _ := json.Marshal(info)
+			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			continue
+		}
+
 		// Regular API request
 		var req Request
 		if err := json.Unmarshal(rawMsg, &req); err != nil {
@@ -346,16 +387,20 @@ func (s *Server) processRequest(ctx context.Context, req *Request) *Response {
 
 func (s *Server) buildProviderRequest(req *Request) *providers.Request {
 	return &providers.Request{
-		Provider:      req.Provider,
-		Messages:      req.Messages,
-		System:        req.System,
-		Tools:         req.Tools,
-		MaxTokens:     req.MaxTokens,
-		Temperature:   req.Temperature,
-		TopP:          req.TopP,
-		Stop:          req.Stop,
-		ModelOverride: req.ModelOverride,
-		Thinking:      req.Thinking,
+		Provider:         req.Provider,
+		Messages:         req.Messages,
+		System:           req.System,
+		Tools:            req.Tools,
+		MaxTokens:        req.MaxTokens,
+		Temperature:      req.Temperature,
+		TopP:             req.TopP,
+		Stop:             req.Stop,
+		ModelOverride:    req.ModelOverride,
+		Thinking:         req.Thinking,
+		Logprobs:         req.Logprobs,
+		TopLogprobs:      req.TopLogprobs,
+		PresencePenalty:  req.PresencePenalty,
+		FrequencyPenalty: req.FrequencyPenalty,
 	}
 }
 

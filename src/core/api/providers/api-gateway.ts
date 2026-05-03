@@ -25,6 +25,7 @@ interface GatewayProviderConfig {
 interface GatewayThinkingConfig {
 	type: string
 	budget_tokens?: number
+	reasoning_effort?: string // "high" or "max" (DeepSeek, OpenAI o-series)
 }
 
 interface GatewayContentBlock {
@@ -78,6 +79,10 @@ interface GatewayRequest {
 	stop?: string[]
 	thinking?: GatewayThinkingConfig
 	model_override?: string
+	logprobs?: boolean
+	top_logprobs?: number
+	presence_penalty?: number
+	frequency_penalty?: number
 }
 
 interface GatewayResponse {
@@ -524,6 +529,104 @@ export class ApiGatewayHandler implements ApiHandler {
 			})
 		})
 	}
+}
+
+// --- Provider capabilities types (match Go ProviderInfo) ---
+
+export interface ProviderSetting {
+	key: string
+	label: string
+	type: "toggle" | "slider" | "select" | "text"
+	default?: unknown
+	min?: number
+	max?: number
+	step?: number
+	options?: { value: string; label?: string }[]
+	description?: string
+	group?: string
+}
+
+export interface ProviderFeatures {
+	supports_thinking: boolean
+	supports_reasoning_effort: boolean
+	supports_tools: boolean
+	supports_images: boolean
+	supports_prompt_cache: boolean
+	supports_streaming: boolean
+}
+
+export interface ProviderInfo {
+	id: string
+	default_model: string
+	settings?: ProviderSetting[]
+	features: ProviderFeatures
+}
+
+// --- Gateway query helpers ---
+
+function gatewayQuery<T>(socketPath: string, request: Record<string, unknown>): Promise<T | null> {
+	return new Promise((resolve) => {
+		if (!fs.existsSync(socketPath)) {
+			resolve(null)
+			return
+		}
+		const socket = new net.Socket()
+		const timeout = setTimeout(() => {
+			socket.destroy()
+			resolve(null)
+		}, 5000)
+
+		let buffer = ""
+		socket.connect(socketPath, () => {
+			clearTimeout(timeout)
+			socket.write(JSON.stringify(request) + "\n")
+		})
+
+		socket.on("data", (data) => {
+			buffer += data.toString()
+			const lines = buffer.split("\n")
+			buffer = lines.pop() || ""
+			for (const line of lines) {
+				if (!line.trim()) continue
+				try {
+					const resp = JSON.parse(line)
+					socket.destroy()
+					if (resp.error) {
+						resolve(null)
+					} else if (resp.body) {
+						resolve(resp.body as T)
+					} else {
+						resolve(null)
+					}
+					return
+				} catch {
+					// skip
+				}
+			}
+		})
+
+		socket.once("error", () => {
+			clearTimeout(timeout)
+			resolve(null)
+		})
+
+		socket.once("close", () => {
+			clearTimeout(timeout)
+			resolve(null)
+		})
+	})
+}
+
+export function queryProviderList(socketPath?: string): Promise<string[] | null> {
+	const sock = socketPath || process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
+	return gatewayQuery<{ providers: string[] }>(sock, { type: "list-providers" }).then(
+		(r) => r?.providers ?? null,
+	)
+}
+
+export function queryProviderInfo(providerId: string, socketPath?: string): Promise<ProviderInfo | null> {
+	const sock = socketPath || process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
+	return gatewayQuery<ProviderInfo>(sock, { type: "provider-info", provider: providerId })
 }
 
 export function createApiGatewayHandler(

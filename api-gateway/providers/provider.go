@@ -9,16 +9,20 @@ import (
 
 // Request represents a standardized API request
 type Request struct {
-	Provider      ProviderConfig
-	Messages      []Message
-	System        string
-	Tools         []json.RawMessage
-	MaxTokens     int
-	Temperature   float64
-	TopP          float64
-	Stop          []string
-	ModelOverride string
-	Thinking      *ThinkingConfig
+	Provider         ProviderConfig
+	Messages         []Message
+	System           string
+	Tools            []json.RawMessage
+	MaxTokens        int
+	Temperature      float64
+	TopP             float64
+	Stop             []string
+	ModelOverride    string
+	Thinking         *ThinkingConfig
+	Logprobs         bool    `json:"logprobs,omitempty"`
+	TopLogprobs      int     `json:"top_logprobs,omitempty"`
+	PresencePenalty  float64 `json:"presence_penalty,omitempty"`
+	FrequencyPenalty float64 `json:"frequency_penalty,omitempty"`
 }
 
 // ProviderConfig contains the provider-specific configuration
@@ -82,8 +86,9 @@ type ImageSourceBlock struct {
 
 // ThinkingConfig configures extended thinking
 type ThinkingConfig struct {
-	Type         string `json:"type"`
-	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	Type            string `json:"type"`
+	BudgetTokens    int    `json:"budget_tokens,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"` // "high" or "max" (DeepSeek, OpenAI o-series)
 }
 
 // StreamChunk represents a streaming response chunk with typed delta fields
@@ -176,6 +181,19 @@ func (r *Registry) GetHandler(providerID string) (Handler, error) {
 		return nil, errors.New("unsupported provider: " + providerID)
 	}
 	return handler, nil
+}
+
+// GetCapabilities returns capability info for a provider, or nil if
+// the handler doesn't implement CapableHandler.
+func (r *Registry) GetCapabilities(providerID string) *ProviderInfo {
+	handler, ok := r.handlers[providerID]
+	if !ok {
+		return nil
+	}
+	if ch, ok := handler.(CapableHandler); ok {
+		return ch.Capabilities()
+	}
+	return nil
 }
 
 // Register registers a handler for a provider

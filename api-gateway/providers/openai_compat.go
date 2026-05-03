@@ -22,6 +22,7 @@ type OpenAICompatConfig struct {
 	ToolChoice          string   // "" or "auto" (default) or "any"
 	NoStreamOptions     bool     // true = skip stream_options.include_usage
 	ContentArraySupport bool     // true = delta.content may be [{type:"text",text:"..."}] instead of string
+	StrictTools         bool     // true = add "strict": true to all tool function definitions
 	ExtraHeaders        map[string]string
 	// ModifyRequest is called after the standard request is built.
 	// Use it to add provider-specific params (e.g. reasoning_format, drop_params).
@@ -31,6 +32,8 @@ type OpenAICompatConfig struct {
 	ModifyMessages func(messages []map[string]interface{}, req *Request) []map[string]interface{}
 	// FinishReasonMap maps non-standard finish reasons (e.g. ZAI's "model_context_window_exceeded").
 	FinishReasonMap func(string) string
+	// Capabilities declares this provider's supported settings and features.
+	Capabilities *ProviderInfo
 }
 
 // openaiCompatHandler implements Handler for any OpenAI-compatible API.
@@ -117,6 +120,10 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 	return openaiParseSSE(resp.Body, callback, h.config.FinishReasonMap, h.config.ContentArraySupport)
 }
 
+func (h *openaiCompatHandler) Capabilities() *ProviderInfo {
+	return h.config.Capabilities
+}
+
 func (h *openaiCompatHandler) resolveConfig(req *Request) (baseURL, apiKey string) {
 	baseURL = h.config.BaseURL
 	apiKey = ""
@@ -193,7 +200,7 @@ func (h *openaiCompatHandler) buildRequest(req *Request, stream bool) map[string
 
 	// Tools
 	if len(req.Tools) > 0 {
-		tools := openaiBuildTools(req.Tools)
+		tools := openaiBuildTools(req.Tools, h.config.StrictTools)
 		if len(tools) > 0 {
 			result["tools"] = tools
 			choice := h.config.ToolChoice
@@ -374,7 +381,7 @@ func openaiConvertAssistantContentBlocks(messages []map[string]interface{}, msg 
 }
 
 // openaiBuildTools parses raw tool JSON into OpenAI-format tool definitions.
-func openaiBuildTools(toolsRaw []json.RawMessage) []map[string]interface{} {
+func openaiBuildTools(toolsRaw []json.RawMessage, strict bool) []map[string]interface{} {
 	var tools []map[string]interface{}
 	for i, toolJSON := range toolsRaw {
 		var tool struct {
@@ -393,13 +400,17 @@ func openaiBuildTools(toolsRaw []json.RawMessage) []map[string]interface{} {
 		if inputSchema == nil {
 			inputSchema = map[string]interface{}{"type": "object"}
 		}
+		fn := map[string]interface{}{
+			"name":        tool.Name,
+			"description": tool.Description,
+			"parameters":  inputSchema,
+		}
+		if strict {
+			fn["strict"] = true
+		}
 		tools = append(tools, map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        tool.Name,
-				"description": tool.Description,
-				"parameters":  inputSchema,
-			},
+			"type":     "function",
+			"function": fn,
 		})
 	}
 	log.Printf("[openaiBuildTools] parsed %d/%d tools: %v", len(tools), len(toolsRaw), func() []string {
