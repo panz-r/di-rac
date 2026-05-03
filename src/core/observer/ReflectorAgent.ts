@@ -1,11 +1,11 @@
-import { buildApiHandlerForRole } from "@/shared/roles"
+import { buildApiHandler } from "@/core/api"
 import type { ObserverConfig } from "./ObserverConfig"
 import { REFLECTOR_SYSTEM_PROMPT } from "./ObserverConfig"
 import type { StateManager } from "@core/storage/StateManager"
 import type { DiracStorageMessage } from "@shared/messages/content"
 
 export class ReflectorAgent {
-	private handler: ReturnType<typeof buildApiHandlerForRole> | undefined
+	private handler: ReturnType<typeof buildApiHandler> | undefined
 
 	constructor(
 		private config: ObserverConfig,
@@ -15,7 +15,7 @@ export class ReflectorAgent {
 	private getHandler() {
 		if (this.handler) return this.handler
 		const apiConfig = this.stateManager.getApiConfiguration()
-		this.handler = buildApiHandlerForRole(apiConfig, "observe")
+		this.handler = buildApiHandler(apiConfig, "observe")
 		return this.handler
 	}
 

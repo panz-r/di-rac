@@ -21,6 +21,7 @@ export interface SearchableListItem {
 interface SearchableListProps<T extends SearchableListItem> {
 	items: T[]
 	onSelect: (item: T) => void
+	onEdit?: (item: T) => void
 	isActive?: boolean
 	maxRows?: number
 	filterFn?: (item: T, search: string) => boolean
@@ -31,6 +32,7 @@ const DEFAULT_MAX_ROWS = 8
 export function SearchableList<T extends SearchableListItem>({
 	items,
 	onSelect,
+	onEdit,
 	isActive = true,
 	maxRows = DEFAULT_MAX_ROWS,
 	filterFn,
@@ -76,9 +78,17 @@ export function SearchableList<T extends SearchableListItem>({
 				setIndex((prev) => Math.max(0, prev - 1))
 			} else if (key.downArrow) {
 				setIndex((prev) => Math.min(filteredItems.length - 1, prev + 1))
-			} else if (key.return || key.tab) {
+			} else if (key.return) {
 				if (filteredItems[index]) {
 					onSelect(filteredItems[index])
+				}
+			} else if (key.tab) {
+				if (filteredItems[index]) {
+					if (onEdit) {
+						onEdit(filteredItems[index])
+					} else {
+						onSelect(filteredItems[index])
+					}
 				}
 			} else if (key.backspace || key.delete) {
 				setSearch((prev) => prev.slice(0, -1))

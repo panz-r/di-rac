@@ -56,12 +56,6 @@ export const CLI_ONLY_COMMANDS: SlashCommand[] = [
 		cliCompatible: true,
 	},
 	{
-		name: "models",
-		description: "Change the model used for the current mode",
-		section: "default",
-		cliCompatible: true,
-	},
-	{
 		name: "history",
 		description: "Browse and search task history",
 		section: "default",

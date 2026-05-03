@@ -13,10 +13,11 @@ export { getProviderLabel }
 
 interface ProviderPickerProps {
 	onSelect: (providerId: string) => void
+	onEdit?: (providerId: string) => void
 	isActive?: boolean
 }
 
-export const ProviderPicker: React.FC<ProviderPickerProps> = ({ onSelect, isActive = true }) => {
+export const ProviderPicker: React.FC<ProviderPickerProps> = ({ onSelect, onEdit, isActive = true }) => {
 	// Get API configuration to check which providers are configured
 	const apiConfig = StateManager.get().getApiConfiguration()
 	const sorted = useValidProviders()
@@ -29,5 +30,5 @@ export const ProviderPicker: React.FC<ProviderPickerProps> = ({ onSelect, isActi
 		}))
 	}, [apiConfig, sorted])
 
-	return <SearchableList isActive={isActive} items={items} onSelect={(item) => onSelect(item.id)} />
+	return <SearchableList isActive={isActive} items={items} onSelect={(item) => onSelect(item.id)} onEdit={onEdit ? (item) => onEdit(item.id) : undefined} />
 }

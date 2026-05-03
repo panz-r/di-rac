@@ -991,10 +991,14 @@ export class Task {
 		let enrichedSystemPrompt = systemPrompt
 
 		if (this.observerOrchestrator?.isEnabled) {
+			const originalCount = messagesForContext.length
 			const result = this.observerOrchestrator.prepareContext(messagesForContext)
 			messagesForContext = result.messages
 			if (result.observationBlock) {
 				enrichedSystemPrompt += "\n\n---\n\n# Conversation Observations\n\n" + result.observationBlock
+			}
+			if (result.removedCount > 0) {
+				await this.say("info", `observer compressed ${result.removedCount} messages into observations (${originalCount} → ${messagesForContext.length})`)
 			}
 		}
 

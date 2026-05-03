@@ -20,6 +20,7 @@ import { openExternal } from "@/utils/env"
 import { supportsReasoningEffortForModel } from "@/utils/model-utils"
 import { version as CLI_VERSION } from "../../../package.json"
 import { COLORS } from "../constants/colors"
+import { useTerminalSize } from "../hooks/useTerminalSize"
 import { useStdinContext } from "../context/StdinContext"
 import { isMouseEscapeSequence } from "../utils/input"
 import { applyBedrockConfig, applyProviderConfig } from "../utils/provider-config"
@@ -31,12 +32,12 @@ import { LanguagePicker } from "./LanguagePicker"
 import { CUSTOM_MODEL_ID, hasModelPicker, ModelPicker } from "./ModelPicker"
 import { Panel, PanelTab } from "./Panel"
 import { getProviderLabel, ProviderPicker } from "./ProviderPicker"
+import { ROLE_DESCRIPTORS, type ModelRole } from "@/shared/roles"
 
 interface SettingsPanelContentProps {
 	onClose: () => void
 	controller?: Controller
 	initialMode?: "model-picker" | "featured-models"
-	initialModelKey?: "actModelId" | "planModelId"
 }
 
 type SettingsTab = "api" | "auto-approve" | "features" | "other"
@@ -116,7 +117,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	onClose,
 	controller,
 	initialMode,
-	initialModelKey,
 }) => {
 	const { isRawModeSupported } = useStdinContext()
 	const stateManager = StateManager.get()
@@ -127,7 +127,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	const [isEditing, setIsEditing] = useState(false)
 	const [isPickingModel, setIsPickingModel] = useState(initialMode === "model-picker")
 	const [pickingModelKey, setPickingModelKey] = useState<"actModelId" | "planModelId" | null>(
-		initialMode ? (initialModelKey ?? "actModelId") : null,
+		initialMode ? "actModelId" as const : null,
 	)
 	const [isPickingProvider, setIsPickingProvider] = useState(false)
 	const [isPickingLanguage, setIsPickingLanguage] = useState(false)
@@ -159,9 +159,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	})
 
 	// API tab state
-	const [separateModels, setSeparateModels] = useState<boolean>(
-		() => stateManager.getGlobalSettingsKey("planActSeparateModelsSetting") ?? false,
-	)
 	// Thinking is enabled if budget > 0
 	const [actThinkingEnabled, setActThinkingEnabled] = useState<boolean>(
 		() => (stateManager.getGlobalSettingsKey("actModeThinkingBudgetTokens") ?? 0) > 0,
@@ -199,6 +196,13 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	// Refresh trigger to force re-reading model IDs from state
 	const [modelRefreshKey, setModelRefreshKey] = useState(0)
 	const refreshModelIds = useCallback(() => setModelRefreshKey((k) => k + 1), [])
+
+	// Terminal size for virtual scrolling
+	const { rows: terminalRows } = useTerminalSize()
+
+	// Role-based picking state
+	const [configuringRole, setConfiguringRole] = useState<ModelRole | null>(null)
+	const [pickingModelRole, setPickingModelRole] = useState<ModelRole | null>(null)
 	// Read model IDs from state (re-reads when refreshKey changes)
 	// Update OpenAI Codex auth status
 	useEffect(() => {
@@ -252,152 +256,110 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		const showPlanThinkingOption = !providerUsesReasoningEffort && !showPlanReasoningEffort
 
 		switch (currentTab) {
-			case "api":
-				return [
-					{
-						key: "provider",
-						label: "Provider",
-						type: "editable",
-						value: provider ? getProviderLabel(provider) : "not configured",
-					},
-					...(provider === "zai"
-						? [
-								{
+				case "api":
+					return ROLE_DESCRIPTORS.flatMap((desc): ListItem[] => {
+						const roleProvider = (stateManager as any).getGlobalSettingsKey(desc.providerKey) as string | undefined
+						const actProvider = stateManager.getApiConfiguration().actModeApiProvider || ""
+						const inheritsFromAct = desc.providerInheritsFromAct && !roleProvider
+						const isEnabled = desc.enabledKey ? (stateManager as any).getGlobalSettingsKey(desc.enabledKey) : true
+						const effectiveProvider = roleProvider || (inheritsFromAct ? actProvider : "")
+						const roleItems: ListItem[] = []
+
+						roleItems.push({ key: `${desc.role}Spacer`, label: "", type: "spacer", value: "" })
+						roleItems.push({ key: `${desc.role}Header`, label: desc.label, type: "header", value: "" })
+
+						if (desc.enabledKey) {
+							roleItems.push({ key: desc.enabledKey, label: "Enabled", type: "checkbox", value: !!isEnabled })
+						}
+						if (isEnabled) {
+							roleItems.push({
+								key: desc.providerKey,
+								label: "Provider",
+								type: "editable",
+								value: inheritsFromAct
+									? `${getProviderLabel(actProvider)} (same as Act)`
+									: roleProvider ? getProviderLabel(roleProvider) : "not configured",
+							})
+							if (effectiveProvider) {
+								const modelIdKey = getProviderModelIdKey(effectiveProvider as ApiProvider, desc.role)
+								const modelId = (stateManager as any).getGlobalSettingsKey(modelIdKey) as string
+								roleItems.push({
+									key: modelIdKey,
+									label: "Model ID",
+									type: "editable",
+									value: modelId || "not set",
+								})
+								// Thinking/reasoning for act/plan only
+								if (desc.role === "act" || desc.role === "plan") {
+									const mode = desc.role as "act" | "plan"
+									const isAct = mode === "act"
+									const showThinking = isAct ? showActThinkingOption : showPlanThinkingOption
+									const showReasoning = isAct ? showActReasoningEffort : showPlanReasoningEffort
+									const thinkingEnabled = isAct ? actThinkingEnabled : planThinkingEnabled
+									const reasoningVal = isAct ? actReasoningEffort : planReasoningEffort
+									if (showThinking) {
+										roleItems.push({
+											key: isAct ? "actThinkingEnabled" : "planThinkingEnabled",
+											label: "Enable thinking",
+											type: "checkbox",
+											value: thinkingEnabled,
+										})
+									}
+									if (showReasoning) {
+										roleItems.push({
+											key: isAct ? "actReasoningEffort" : "planReasoningEffort",
+											label: "Reasoning effort",
+											type: "cycle",
+											value: reasoningVal,
+										})
+									}
+								}
+							}
+							// zai special entrypoint row
+							if (effectiveProvider === "zai" && desc.role === "act") {
+								roleItems.push({
 									key: "zaiApiLine",
 									label: "Entrypoint",
-									type: "cycle" as const,
+									type: "cycle",
 									value: {
 										international: "api.z.ai",
 										"coding-plan": "Coding Plan",
 										china: "open.bigmodel.cn",
 									}[(stateManager.getGlobalSettingsKey("zaiApiLine") as string) || "international"] || "api.z.ai",
-								},
-							]
-						: []),
-					...(provider === "openai-codex" && openAiCodexIsAuthenticated
-						? [
-								{
+								})
+							}
+							// codex auth status (act role only)
+							if (effectiveProvider === "openai-codex" && openAiCodexIsAuthenticated && desc.role === "act") {
+								roleItems.push({
 									key: "codexEmail",
 									label: "Authenticated as",
-									type: "readonly" as const,
+									type: "readonly",
 									value: openAiCodexEmail || "ChatGPT User",
-								},
-								{
+								})
+								roleItems.push({
 									key: "codexSignOut",
 									label: "Sign Out",
-									type: "action" as const,
+									type: "action",
 									value: "",
-								},
-							]
-						: []),
-					...(separateModels
-						? [
-								{ key: "spacer0", label: "", type: "spacer" as const, value: "" },
-								{ key: "actHeader", label: "Act Mode", type: "header" as const, value: "" },
-								{
-									key: "actModelId",
-									label: "Model ID",
-									type: "editable" as const,
-									value: actModelId || "not set",
-								},
-								...(showActThinkingOption
-									? [
-											{
-												key: "actThinkingEnabled",
-												label: "Enable thinking",
-												type: "checkbox" as const,
-												value: actThinkingEnabled,
-											},
-										]
-									: []),
-								...(showActReasoningEffort
-									? [
-											{
-												key: "actReasoningEffort",
-												label: "Reasoning effort",
-												type: "cycle" as const,
-												value: actReasoningEffort,
-											},
-										]
-									: []),
-								{ key: "planHeader", label: "Plan Mode", type: "header" as const, value: "" },
-								{
-									key: "planModelId",
-									label: "Model ID",
-									type: "editable" as const,
-									value: planModelId || "not set",
-								},
-								...(showPlanThinkingOption
-									? [
-											{
-												key: "planThinkingEnabled",
-												label: "Enable thinking",
-												type: "checkbox" as const,
-												value: planThinkingEnabled,
-											},
-										]
-									: []),
-								...(showPlanReasoningEffort
-									? [
-											{
-												key: "planReasoningEffort",
-												label: "Reasoning effort",
-												type: "cycle" as const,
-												value: planReasoningEffort,
-											},
-										]
-									: []),
-								{ key: "spacer1", label: "", type: "spacer" as const, value: "" },
-							]
-						: [
-								{
-									key: "actModelId",
-									label: "Model ID",
-									type: "editable" as const,
-									value: actModelId || "not set",
-								},
-								...(showActThinkingOption
-									? [
-											{
-												key: "actThinkingEnabled",
-												label: "Enable thinking",
-												type: "checkbox" as const,
-												value: actThinkingEnabled,
-											},
-										]
-									: []),
-								...(showActReasoningEffort
-									? [
-											{
-												key: "actReasoningEffort",
-												label: "Reasoning effort",
-												type: "cycle" as const,
-												value: actReasoningEffort,
-											},
-										]
-									: []),
-							]),
-					{
-						key: "separateModels",
-						label: "Use separate models for Plan and Act",
-						type: "checkbox",
-						value: separateModels,
-					},
-				]
+								})
+							}
+						}
+						return roleItems
+					})
 
-			case "auto-approve": {
-				const result: ListItem[] = []
-				const actions = autoApproveSettings.actions
+				case "auto-approve": {
+					const result: ListItem[] = []
+					const actions = autoApproveSettings.actions
 
 				// Helper to add parent/child checkbox pairs
-				const addActionPair = (
+					const addActionPair = (
 					parentKey: string,
 					parentLabel: string,
 					parentDesc: string,
 					childKey: string,
 					childLabel: string,
 					childDesc: string,
-				) => {
+					) => {
 					result.push({
 						key: parentKey,
 						label: parentLabel,
@@ -418,23 +380,23 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 					}
 				}
 
-				addActionPair(
+					addActionPair(
 					"readFiles",
 					"Read and analyze files",
 					"Read and analyze files in the working directory",
 					"readFilesExternally",
 					"Read all files",
 					"Read files outside working directory",
-				)
-				addActionPair(
+					)
+					addActionPair(
 					"editFiles",
 					"Edit and create files",
 					"Edit and create files in the working directory",
 					"editFilesExternally",
 					"Edit all files",
 					"Edit files outside working directory",
-				)
-				result.push({
+					)
+					result.push({
 					key: "executeCommands",
 					label: "Auto-approve safe commands",
 					type: "checkbox",
@@ -442,7 +404,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 					description: "Run harmless terminal commands automatically",
 				})
 
-				result.push(
+					result.push(
 					{
 						key: "useBrowser",
 						label: "Use the browser",
@@ -494,10 +456,9 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		provider,
 		actModelId,
 		planModelId,
-		separateModels,
-		actThinkingEnabled,
+			actThinkingEnabled,
 		planThinkingEnabled,
-		actReasoningEffort,
+			actReasoningEffort,
 		planReasoningEffort,
 		autoApproveSettings,
 		features,
@@ -513,6 +474,8 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		setIsPickingModel(false)
 		setPickingModelKey(null)
 		setIsPickingProvider(false)
+		setConfiguringRole(null)
+		setPickingModelRole(null)
 		setIsPickingLanguage(false)
 		setIsEnteringApiKey(false)
 		setPendingProvider(null)
@@ -540,17 +503,13 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			if (mode === "act") {
 				setActReasoningEffort(effort)
 				stateManager.setGlobalState("actModeReasoningEffort", effort)
-				if (!separateModels) {
-					setPlanReasoningEffort(effort)
-					stateManager.setGlobalState("planModeReasoningEffort", effort)
-				}
 			} else {
 				setPlanReasoningEffort(effort)
 				stateManager.setGlobalState("planModeReasoningEffort", effort)
 			}
 			rebuildTaskApi()
 		},
-		[separateModels, rebuildTaskApi, stateManager],
+		[rebuildTaskApi, stateManager],
 	)
 
 	// Handle toggle/edit for selected item
@@ -587,22 +546,43 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		}
 
 		if (item.type === "editable") {
-			// For provider field, use the provider picker
-			if (item.key === "provider") {
+			// Provider fields — open provider picker
+			const providerDesc = item.key === "provider"
+				? ROLE_DESCRIPTORS.find((d) => d.role === "act")
+				: ROLE_DESCRIPTORS.find((d) => d.providerKey === item.key)
+			if (providerDesc) {
+				setConfiguringRole(providerDesc.role)
 				setIsPickingProvider(true)
 				return
 			}
-			// For model ID fields, check if we should use the model picker
-			if ((item.key === "actModelId" || item.key === "planModelId") && hasModelPicker(provider)) {
-				setPickingModelKey(item.key as "actModelId" | "planModelId")
-				setIsPickingModel(true)
-				return
+
+			// Model ID fields — open model picker or inline editor
+			const isModelField = item.key.endsWith("ModelId") || item.key === "observerModelId"
+			if (isModelField) {
+				const modelRole = item.key.startsWith("actMode") ? "act" as ModelRole
+					: item.key.startsWith("planMode") ? "plan" as ModelRole
+					: "observe" as ModelRole
+				const roleDesc = ROLE_DESCRIPTORS.find((d) => d.role === modelRole)
+				if (roleDesc) {
+					const roleProvider = (stateManager as any).getGlobalSettingsKey(roleDesc.providerKey) as string
+					const actProvider = stateManager.getApiConfiguration().actModeApiProvider || ""
+					const effectiveProvider = roleProvider || (roleDesc.providerInheritsFromAct ? actProvider : "")
+					if (effectiveProvider && hasModelPicker(effectiveProvider)) {
+						setPickingModelRole(modelRole)
+						setIsPickingModel(true)
+						return
+					}
+				}
+				// No model picker — fall through to inline edit
 			}
-			// For language field, use the language picker
+
+			// Language field
 			if (item.key === "language") {
 				setIsPickingLanguage(true)
 				return
 			}
+
+			// Fallback: inline text edit
 			setEditValue(typeof item.value === "string" ? item.value : "")
 			setIsEditing(true)
 			return
@@ -611,39 +591,25 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		// Checkbox handling
 		const newValue = !item.value
 
+		// Role enable toggles (observer, future roles)
+		const roleWithEnable = ROLE_DESCRIPTORS.find((d) => d.enabledKey && d.enabledKey === item.key)
+		if (roleWithEnable?.enabledKey) {
+			const roleNewVal = !item.value;
+			(stateManager as any).setGlobalState(roleWithEnable.enabledKey, roleNewVal)
+			stateManager.flushPendingState()
+			refreshModelIds()
+			if (roleWithEnable.role === "observe") {
+				controller?.task?.toggleObserver(roleNewVal)
+			}
+			return
+		}
+
 		// Feature settings (simple toggles)
 		if (item.key in FEATURE_SETTINGS) {
 			toggleFeature(item.key as FeatureKey)
 			return
 		}
 
-		// API tab
-		if (item.key === "separateModels") {
-			setSeparateModels(newValue)
-			stateManager.setGlobalState("planActSeparateModelsSetting", newValue)
-			// When disabling separate models, sync plan model to act model
-			if (!newValue) {
-				const apiConfig = stateManager.getApiConfiguration()
-				const actProvider = apiConfig.actModeApiProvider
-				const planProvider = apiConfig.planModeApiProvider || actProvider
-				if (actProvider) {
-					const actKey = getProviderModelIdKey(actProvider, "act")
-					const planKey = planProvider ? getProviderModelIdKey(planProvider, "plan") : null
-					const actModel = stateManager.getGlobalSettingsKey(actKey)
-					if (planKey) stateManager.setGlobalState(planKey, actModel)
-				}
-				const actThinkingBudget = stateManager.getGlobalSettingsKey("actModeThinkingBudgetTokens") ?? 0
-				stateManager.setGlobalState("planModeThinkingBudgetTokens", actThinkingBudget)
-				setPlanThinkingEnabled(actThinkingBudget > 0)
-
-				const actEffort = normalizeReasoningEffort(stateManager.getGlobalSettingsKey("actModeReasoningEffort"))
-				stateManager.setGlobalState("planModeReasoningEffort", actEffort)
-				setPlanReasoningEffort(actEffort)
-			}
-
-			rebuildTaskApi()
-			return
-		}
 
 		// Thinking toggles - set budget to 1024 when enabled, 0 when disabled
 		if (item.key === "codexSignOut") {
@@ -659,11 +625,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		if (item.key === "actThinkingEnabled") {
 			setActThinkingEnabled(newValue)
 			stateManager.setGlobalState("actModeThinkingBudgetTokens", newValue ? 1024 : 0)
-			if (!separateModels) {
-				setPlanThinkingEnabled(newValue)
-				stateManager.setGlobalState("planModeThinkingBudgetTokens", newValue ? 1024 : 0)
-			}
-			// Rebuild API handler to apply thinking budget change
+				// Rebuild API handler to apply thinking budget change
 			rebuildTaskApi()
 			return
 		}
@@ -724,8 +686,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		stateManager,
 		autoApproveSettings,
 		toggleFeature,
-		separateModels,
-		actReasoningEffort,
+				actReasoningEffort,
 		planReasoningEffort,
 		rebuildTaskApi,
 		setReasoningEffortForMode,
@@ -772,6 +733,31 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	// Handle model selection from picker
 	const handleModelSelect = useCallback(
 		async (modelId: string) => {
+			// Role model selection (observer, future roles)
+			if (pickingModelRole) {
+				const desc = ROLE_DESCRIPTORS.find((d) => d.role === pickingModelRole)
+				if (desc) {
+					const roleProvider = (stateManager as any).getGlobalSettingsKey(desc.providerKey) as string
+					const actProv = stateManager.getApiConfiguration().actModeApiProvider || ""
+					const effectiveProvider = roleProvider || (desc.providerInheritsFromAct ? actProv : "")
+					if (effectiveProvider) {
+						const modelKey = getProviderModelIdKey(effectiveProvider as ApiProvider, desc.role)
+						stateManager.setGlobalState(modelKey, modelId)
+					}
+					await stateManager.flushPendingState()
+					if (desc.role === "observe") {
+						controller?.task?.toggleObserver(false)
+						controller?.task?.toggleObserver(true)
+					}
+				}
+				setPickingModelRole(null)
+				setIsPickingModel(false)
+				refreshModelIds()
+				rebuildTaskApi()
+				if (initialMode) onClose()
+				return
+			}
+
 			if (!pickingModelKey) return
 
 			// Intercept "Custom" selection for Bedrock — redirect to custom ARN input flow
@@ -784,11 +770,9 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			const apiConfig = stateManager.getApiConfiguration()
 			const actProvider = apiConfig.actModeApiProvider
 			const planProvider = apiConfig.planModeApiProvider || actProvider
-			const providerForSelection = separateModels
-				? pickingModelKey === "actModelId"
-					? actProvider
-					: planProvider
-				: actProvider || planProvider
+			const providerForSelection = pickingModelKey === "actModelId"
+				? actProvider || planProvider
+				: planProvider || actProvider
 			if (!providerForSelection) return
 			// Use provider-specific model ID keys (e.g., dirac uses actModeOpenRouterModelId)
 			const actKey = actProvider ? getProviderModelIdKey(actProvider, "act") : null
@@ -801,25 +785,12 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				modelInfo = openRouterModels?.[modelId]
 			}
 
-			if (separateModels) {
-				// Only update the selected mode's model
-				const stateKey = pickingModelKey === "actModelId" ? actKey : planKey
-				if (stateKey) stateManager.setGlobalState(stateKey, modelId)
-				// Set model info for the selected mode
-				if (modelInfo) {
-					const infoKey =
-						pickingModelKey === "actModelId" ? "actModeOpenRouterModelInfo" : "planModeOpenRouterModelInfo"
-					stateManager.setGlobalState(infoKey, modelInfo)
-				}
-			} else {
-				// Update both modes to keep them in sync
-				if (actKey) stateManager.setGlobalState(actKey, modelId)
-				if (planKey) stateManager.setGlobalState(planKey, modelId)
-				// Set model info for both modes
-				if (modelInfo) {
-					stateManager.setGlobalState("actModeOpenRouterModelInfo", modelInfo)
-					stateManager.setGlobalState("planModeOpenRouterModelInfo", modelInfo)
-				}
+			const stateKey = pickingModelKey === "actModelId" ? actKey : planKey
+			if (stateKey) stateManager.setGlobalState(stateKey, modelId)
+			if (modelInfo) {
+				const infoKey =
+					pickingModelKey === "actModelId" ? "actModeOpenRouterModelInfo" : "planModeOpenRouterModelInfo"
+				stateManager.setGlobalState(infoKey, modelInfo)
 			}
 
 			// Flush pending state to ensure model ID is persisted
@@ -841,7 +812,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				onClose()
 			}
 		},
-		[pickingModelKey, separateModels, stateManager, controller, provider, refreshModelIds, initialMode, onClose],
+		[pickingModelKey, pickingModelRole, stateManager, controller, provider, refreshModelIds, initialMode, onClose],
 	)
 
 	// Handle language selection from picker
@@ -886,10 +857,13 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 
 	const handleProviderSelect = useCallback(
 		async (providerId: string) => {
-			// Special handling for Dirac - uses OAuth (but skip if already logged in)
+			const role = configuringRole || undefined
+
+			// Special handling for Dirac - uses OAuth
 			if (providerId === "dirac") {
 				setIsPickingProvider(false)
-				await applyProviderConfig({ providerId: "dirac", controller })
+				setConfiguringRole(null)
+				await applyProviderConfig({ providerId: "dirac", role, controller })
 				setProvider("dirac")
 				refreshModelIds()
 				return
@@ -898,6 +872,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			// Special handling for OpenAI Codex - uses OAuth instead of API key
 			if (providerId === "openai-codex") {
 				setIsPickingProvider(false)
+				setConfiguringRole(null)
 				startCodexAuth()
 				return
 			}
@@ -913,25 +888,50 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			// Check if this provider needs an API key
 			const keyField = ProviderToApiKeyMap[providerId as ApiProvider]
 			if (keyField) {
-				// Provider needs an API key - go to API key entry mode
-				// Pre-fill with existing key if configured
 				const apiConfig = stateManager.getApiConfiguration()
 				const fieldName = Array.isArray(keyField) ? keyField[0] : keyField
 				const existingKey = (apiConfig as Record<string, string>)[fieldName] || ""
-				setPendingProvider(providerId)
-				setApiKeyValue(existingKey)
-				setIsPickingProvider(false)
-				setIsEnteringApiKey(true)
+				if (existingKey) {
+					// Key already configured — just apply provider for this role
+					await applyProviderConfig({ providerId, role, controller })
+					setProvider(providerId)
+					refreshModelIds()
+					setIsPickingProvider(false)
+					setConfiguringRole(null)
+				} else {
+					// Need to enter API key
+					setPendingProvider(providerId)
+					setApiKeyValue("")
+					setIsPickingProvider(false)
+					setIsEnteringApiKey(true)
+				}
 			} else {
-				// Provider doesn't need an API key (rare) - just set it
-				await applyProviderConfig({ providerId, controller })
+				await applyProviderConfig({ providerId, role, controller })
 				setProvider(providerId)
 				refreshModelIds()
 				setIsPickingProvider(false)
+				setConfiguringRole(null)
 			}
 		},
-		[stateManager, startCodexAuth, controller, refreshModelIds],
-	)
+		[stateManager, startCodexAuth, controller, refreshModelIds, configuringRole],
+		)
+
+		// Handle Tab-to-edit on a configured provider in the picker
+		const handleProviderEdit = useCallback(
+			(providerId: string) => {
+				setIsPickingProvider(false)
+				setPendingProvider(providerId)
+				const keyField = ProviderToApiKeyMap[providerId as ApiProvider]
+				if (keyField) {
+					const apiConfig = stateManager.getApiConfiguration()
+					const fieldName = Array.isArray(keyField) ? keyField[0] : keyField
+					const existingKey = (apiConfig as Record<string, string>)[fieldName] || ""
+					setApiKeyValue(existingKey)
+					setIsEnteringApiKey(true)
+				}
+			},
+			[stateManager],
+		)
 
 	// Handle API key submission after provider selection
 	const handleApiKeySubmit = useCallback(
@@ -940,29 +940,30 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				return
 			}
 
-			await applyProviderConfig({ providerId: pendingProvider, apiKey: submittedValue.trim(), controller })
+			const role = configuringRole || undefined
+			await applyProviderConfig({ providerId: pendingProvider, apiKey: submittedValue.trim(), role, controller })
 			setProvider(pendingProvider)
 			refreshModelIds()
 			setIsEnteringApiKey(false)
 			setPendingProvider(null)
 			setApiKeyValue("")
+			setConfiguringRole(null)
 		},
-		[pendingProvider, controller, refreshModelIds],
+		[pendingProvider, controller, refreshModelIds, configuringRole],
 	)
 
 	// Handle Bedrock configuration complete
 	const handleBedrockComplete = useCallback(
 		(bedrockConfig: BedrockConfig) => {
-			// Update UI state first for responsiveness
+			const role = configuringRole || undefined
 			setProvider("bedrock")
 			refreshModelIds()
 			setIsConfiguringBedrock(false)
 			setPendingProvider(null)
-
-			// Apply config and rebuild API handler in background
-			applyBedrockConfig({ bedrockConfig, controller })
+			setConfiguringRole(null)
+			applyBedrockConfig({ bedrockConfig, role, controller })
 		},
-		[controller, refreshModelIds],
+		[controller, refreshModelIds, configuringRole],
 	)
 
 	// Handle saving edited value
@@ -981,15 +982,8 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				const actKey = actProvider ? getProviderModelIdKey(actProvider, "act") : null
 				const planKey = planProvider ? getProviderModelIdKey(planProvider, "plan") : null
 
-				if (separateModels) {
-					// Only update the selected mode's model
-					const stateKey = item.key === "actModelId" ? actKey : planKey
+				const stateKey = item.key === "actModelId" ? actKey : planKey
 					if (stateKey) stateManager.setGlobalState(stateKey, editValue || undefined)
-				} else {
-					// Update both modes to keep them in sync
-					if (actKey) stateManager.setGlobalState(actKey, editValue || undefined)
-					if (planKey) stateManager.setGlobalState(planKey, editValue || undefined)
-				}
 
 				stateManager.flushPendingState()
 				refreshModelIds()
@@ -1002,7 +996,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				break
 		}
 		setIsEditing(false)
-	}, [items, selectedIndex, editValue, separateModels, stateManager, refreshModelIds, rebuildTaskApi])
+	}, [items, selectedIndex, editValue, stateManager, refreshModelIds, rebuildTaskApi])
 
 	// Navigate to next/prev item, skipping non-interactive items
 	const navigateItems = useCallback(
@@ -1049,9 +1043,10 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			}
 
 			// Provider picker mode - escape to close, input is handled by ProviderPicker
-			if (isPickingProvider) {
+			if (isPickingProvider || configuringRole) {
 				if (key.escape) {
 					setIsPickingProvider(false)
+					setConfiguringRole(null)
 				}
 				return
 			}
@@ -1062,7 +1057,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				if (key.escape) {
 					setIsPickingModel(false)
 					setPickingModelKey(null)
-					// If opened from /models command, close the entire settings panel
+					setPickingModelRole(null)
 					if (initialMode) {
 						onClose()
 					}
@@ -1156,10 +1151,10 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 						Select Provider
 					</Text>
 					<Box marginTop={1}>
-						<ProviderPicker isActive={isPickingProvider} onSelect={handleProviderSelect} />
+						<ProviderPicker isActive={isPickingProvider} onSelect={handleProviderSelect} onEdit={handleProviderEdit} />
 					</Box>
 					<Box marginTop={1}>
-						<Text color="gray">Type to search, arrows to navigate, Enter to select, Esc to cancel</Text>
+						<Text color="gray">Type to search, arrows to navigate, Enter to select, Tab to edit, Esc to cancel</Text>
 					</Box>
 				</Box>
 			)
@@ -1173,6 +1168,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 						setIsEnteringApiKey(false)
 						setPendingProvider(null)
 						setApiKeyValue("")
+						setConfiguringRole(null)
 					}}
 					onChange={setApiKeyValue}
 					onSubmit={handleApiKeySubmit}
@@ -1189,6 +1185,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 					onCancel={() => {
 						setIsConfiguringBedrock(false)
 						setPendingProvider(null)
+						setConfiguringRole(null)
 					}}
 					onComplete={handleBedrockComplete}
 				/>
@@ -1247,8 +1244,19 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		}
 
 
-		if (isPickingModel && pickingModelKey) {
-			const label = pickingModelKey === "actModelId" ? "Model ID (Act)" : "Model ID (Plan)"
+		if (isPickingModel && (pickingModelKey || pickingModelRole)) {
+			let label: string
+			let pickerProvider: string
+			if (pickingModelRole) {
+				const desc = ROLE_DESCRIPTORS.find((d) => d.role === pickingModelRole)
+				const roleProvider = desc ? (stateManager as any).getGlobalSettingsKey(desc.providerKey) as string : ""
+				const actProv = stateManager.getApiConfiguration().actModeApiProvider || ""
+				pickerProvider = roleProvider || (desc?.providerInheritsFromAct ? actProv : "")
+				label = `Model ID (${desc?.label || pickingModelRole})`
+			} else {
+				label = pickingModelKey === "actModelId" ? "Model ID (Act)" : "Model ID (Plan)"
+				pickerProvider = provider
+			}
 			return (
 				<Box flexDirection="column">
 					<Text bold color={COLORS.primaryBlue}>
@@ -1260,7 +1268,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 							isActive={isPickingModel}
 							onChange={() => {}}
 							onSubmit={handleModelSelect}
-							provider={provider}
+							provider={pickerProvider}
 						/>
 					</Box>
 					<Box marginTop={1}>
@@ -1316,9 +1324,22 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			)
 		}
 
+			// Virtual scrolling: only render visible items around selectedIndex
+			const panelOverhead = 10
+			const visibleRows = Math.max(terminalRows - panelOverhead, 6)
+			const halfWindow = Math.floor(visibleRows / 2)
+			let scrollStart = Math.max(0, selectedIndex - halfWindow)
+			let scrollEnd = Math.min(items.length, scrollStart + visibleRows)
+			if (scrollEnd - scrollStart < visibleRows) {
+				scrollStart = Math.max(0, scrollEnd - visibleRows)
+			}
+			const visibleItems = items.slice(scrollStart, scrollEnd)
+
 		return (
 			<Box flexDirection="column">
-				{items.map((item, idx) => {
+				{scrollStart > 0 && <Text color="gray">{`  ↑ ${scrollStart} more above`}</Text>}
+				{visibleItems.map((item, i) => {
+					const idx = scrollStart + i
 					const isSelected = idx === selectedIndex
 
 					if (item.type === "header") {
@@ -1406,6 +1427,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 						</Text>
 					)
 				})}
+				{scrollEnd < items.length && <Text color="gray">{`  ↓ ${items.length - scrollEnd} more below`}</Text>}
 			</Box>
 		)
 	}
@@ -1413,6 +1435,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	// Determine if we're in a subpage (picker, editor, or waiting state)
 	const isSubpage =
 		isPickingProvider ||
+		!!configuringRole ||
 		isPickingModel ||
 		isPickingLanguage ||
 		isEnteringApiKey ||

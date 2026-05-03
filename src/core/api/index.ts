@@ -1,5 +1,7 @@
-import { ApiConfiguration, ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
+import { ApiConfiguration, ModelInfo, openAiModelInfoSaneDefaults, QwenApiRegions } from "@shared/api"
 import { Mode } from "@shared/storage/types"
+import { getRoleStateKey } from "@shared/roles"
+import type { ModelRole } from "@shared/roles"
 import { DiracStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { DiracTool } from "@/shared/tools"
@@ -34,7 +36,7 @@ export interface ApiHandlerModel {
 export interface ApiProviderInfo {
 	providerId: string
 	model: ApiHandlerModel
-	mode: Mode
+	mode: ModelRole
 	customPrompt?: string // "compact"
 }
 
@@ -65,7 +67,7 @@ function gatewayHandler(
 function createHandlerForProvider(
 	apiProvider: string | undefined,
 	options: Omit<ApiConfiguration, "apiProvider">,
-	mode: Mode,
+	mode: "act" | "plan",
 ): ApiHandler {
 	// Providers migrated to the Go API gateway
 	const thinkingBudgetTokens =
@@ -351,33 +353,56 @@ function createHandlerForProvider(
 	}
 }
 
-export function buildApiHandler(configuration: ApiConfiguration, mode: Mode): ApiHandler {
-	const { planModeApiProvider, actModeApiProvider, ...options } = configuration
+export function buildApiHandler(configuration: ApiConfiguration, role: ModelRole): ApiHandler {
+	const { planModeApiProvider, actModeApiProvider, ...options } = configuration as Record<string, any>
 
-	const apiProvider = mode === "plan" ? planModeApiProvider : actModeApiProvider
+	// Resolve effective mode and provider.
+	// Act/plan use their dedicated provider keys.
+	// Other roles (observe, etc.) read a role-specific provider key, falling back to act.
+	let effectiveMode: "act" | "plan"
+	let apiProvider: string | undefined
+
+	if (role === "plan") {
+		effectiveMode = "plan"
+		apiProvider = planModeApiProvider || actModeApiProvider
+	} else if (role === "act") {
+		effectiveMode = "act"
+		apiProvider = actModeApiProvider
+	} else {
+		// Non-act/plan role (observe, future roles)
+		const cfg = configuration as Record<string, any>
+		const roleProviderKey = getRoleStateKey(role, "provider")
+		apiProvider = cfg[roleProviderKey] || actModeApiProvider
+
+		if (cfg[roleProviderKey]) {
+			const roleModelKey = getRoleStateKey(role, "apiModelId")
+			options.actModeApiModelId = cfg[roleModelKey] || options.actModeApiModelId
+			options.actModeApiProvider = cfg[roleProviderKey]
+		}
+		effectiveMode = "act"
+	}
 
 	// Validate thinking budget tokens against model's maxTokens to prevent API errors
-	// wrapped in a try-catch for safety, but this should never throw
 	try {
-		const thinkingBudgetTokens = mode === "plan" ? options.planModeThinkingBudgetTokens : options.actModeThinkingBudgetTokens
+		const thinkingBudgetTokens = effectiveMode === "plan" ? options.planModeThinkingBudgetTokens : options.actModeThinkingBudgetTokens
 		if (thinkingBudgetTokens && thinkingBudgetTokens > 0) {
-			const handler = createHandlerForProvider(apiProvider, options, mode)
+			const handler = createHandlerForProvider(apiProvider, options, effectiveMode)
 
 			const modelInfo = handler.getModel().info
 			if (modelInfo?.maxTokens && modelInfo.maxTokens > 0 && thinkingBudgetTokens > modelInfo.maxTokens) {
 				const clippedValue = modelInfo.maxTokens - 1
-				if (mode === "plan") {
+				if (effectiveMode === "plan") {
 					options.planModeThinkingBudgetTokens = clippedValue
 				} else {
 					options.actModeThinkingBudgetTokens = clippedValue
 				}
 			} else {
-				return handler // don't rebuild unless its necessary
+				return handler
 			}
 		}
 	} catch (error) {
 		Logger.error("buildApiHandler error:", error)
 	}
 
-	return createHandlerForProvider(apiProvider, options, mode)
+	return createHandlerForProvider(apiProvider, options, effectiveMode)
 }

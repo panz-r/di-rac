@@ -412,7 +412,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
 	// Panel state
 	const [activePanel, setActivePanel] = useState<
-		| { type: "settings"; initialMode?: "model-picker" | "featured-models"; initialModelKey?: "actModelId" | "planModelId" }
+		| { type: "settings"; initialMode?: "model-picker" | "featured-models" }
 		| { type: "history" }
 		| { type: "help" }
 		| { type: "skills" }
@@ -1161,23 +1161,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
 						setSlashMenuDismissed(true)
 						return
 					}
-					if (cmd.name === "models") {
-						const apiConfig = StateManager.get().getApiConfiguration()
-						// Use current mode's provider to determine picker type
-						const provider =
-							mode === "act"
-								? apiConfig.actModeApiProvider || apiConfig.planModeApiProvider
-								: apiConfig.planModeApiProvider || apiConfig.actModeApiProvider
-						const initialMode = !provider ? undefined : provider === "dirac" ? "featured-models" : "model-picker"
-						// Set model for current mode (plan or act)
-						const initialModelKey = mode === "act" ? "actModelId" : "planModelId"
-						setActivePanel({ type: "settings", initialMode, initialModelKey })
-						setTextInput("")
-						setCursorPos(0)
-						setSelectedSlashIndex(0)
-						setSlashMenuDismissed(true)
-						return
-					}
 					if (cmd.name === "history") {
 						setActivePanel({ type: "history" })
 						setTextInput("")
@@ -1635,7 +1618,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
 					<SettingsPanelContent
 						controller={ctrl}
 						initialMode={activePanel.initialMode}
-						initialModelKey={activePanel.initialModelKey}
 						onClose={() => setActivePanel(null)}
 					/>
 				)}
@@ -1735,6 +1717,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
 								})()} <Text color="gray">
 									({lastApiReqTotalTokens.toLocaleString()}) | ${metrics.totalCost.toFixed(3)}
 								</Text>
+								{StateManager.get().getGlobalSettingsKey("observerEnabled") && (
+									<Text color="gray"> | <Text color="cyan">obs</Text> observer</Text>
+								)}
 							</Text>
 						</Box>
 

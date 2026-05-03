@@ -20,7 +20,7 @@ export class ContextManager {
 		use_subagents: "discardable", use_skill: "discardable", compact: "discardable",
 		summarize_task: "discardable", tool_search: "discardable", dirac_outputs: "discardable",
 		list_skills: "discardable", plan_mode_respond: "discardable", new_task: "discardable",
-		report_bug: "discardable", generate_explanation: "discardable",
+		report_bug: "discardable",
 	}
 
 	// mapping from the apiMessages outer index to the inner message index to a list of actual changes, ordered by timestamp

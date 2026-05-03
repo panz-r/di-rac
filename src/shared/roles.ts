@@ -1,48 +1,157 @@
-import { buildApiHandler } from "@core/api"
 import type { ApiConfiguration, ApiProvider } from "@shared/api"
-import { getProviderDefaultModelId, getProviderModelIdKey } from "@shared/providers/provider-registry"
+import { getProviderDefaultModelId } from "@shared/providers/provider-registry"
 
 export type ModelRole = "act" | "plan" | "observe"
 
-const ROLE_PROVIDER_KEYS: Record<ModelRole, string> = {
-	act: "actModeApiProvider",
-	plan: "planModeApiProvider",
-	observe: "observerProvider",
-}
+export type Mode = "act" | "plan"
 
-const ROLE_MODEL_KEYS: Record<ModelRole, string> = {
-	act: "actModeApiModelId",
-	plan: "planModeApiModelId",
-	observe: "observerModelId",
-}
+// --- Role key map: maps (role, suffix) → state key name ---
 
-export function getRoleProviderKey(role: ModelRole): string {
-	return ROLE_PROVIDER_KEYS[role]
-}
-
-export function getRoleModelKey(role: ModelRole): string {
-	return ROLE_MODEL_KEYS[role]
+const ROLE_KEY_MAP: Record<string, string> = {
+	// act
+	"act.provider": "actModeApiProvider",
+	"act.apiModelId": "actModeApiModelId",
+	"act.thinkingBudgetTokens": "actModeThinkingBudgetTokens",
+	"act.reasoningEffort": "actModeReasoningEffort",
+	"act.verbosity": "actModeVerbosity",
+	"act.geminiThinkingLevel": "geminiActModeThinkingLevel",
+	"act.vsCodeLmModelSelector": "actModeVsCodeLmModelSelector",
+	"act.awsBedrockCustomSelected": "actModeAwsBedrockCustomSelected",
+	"act.awsBedrockCustomModelBaseId": "actModeAwsBedrockCustomModelBaseId",
+	"act.openRouterModelId": "actModeOpenRouterModelId",
+	"act.openRouterModelInfo": "actModeOpenRouterModelInfo",
+	"act.diracModelId": "actModeDiracModelId",
+	"act.diracModelInfo": "actModeDiracModelInfo",
+	"act.openAiModelId": "actModeOpenAiModelId",
+	"act.openAiModelInfo": "actModeOpenAiModelInfo",
+	"act.lmStudioModelId": "actModeLmStudioModelId",
+	"act.liteLlmModelId": "actModeLiteLlmModelId",
+	"act.liteLlmModelInfo": "actModeLiteLlmModelInfo",
+	"act.codingPlanZAiModelId": "actModeCodingPlanZAiModelId",
+	"act.codingPlanZAiModelInfo": "actModeCodingPlanZAiModelInfo",
+	"act.requestyModelId": "actModeRequestyModelId",
+	"act.requestyModelInfo": "actModeRequestyModelInfo",
+	"act.togetherModelId": "actModeTogetherModelId",
+	"act.fireworksModelId": "actModeFireworksModelId",
+	"act.sapAiCoreModelId": "actModeSapAiCoreModelId",
+	"act.sapAiCoreDeploymentId": "actModeSapAiCoreDeploymentId",
+	"act.groqModelId": "actModeGroqModelId",
+	"act.groqModelInfo": "actModeGroqModelInfo",
+	"act.basetenModelId": "actModeBasetenModelId",
+	"act.basetenModelInfo": "actModeBasetenModelInfo",
+	"act.huggingFaceModelId": "actModeHuggingFaceModelId",
+	"act.huggingFaceModelInfo": "actModeHuggingFaceModelInfo",
+	"act.huaweiCloudMaasModelId": "actModeHuaweiCloudMaasModelId",
+	"act.huaweiCloudMaasModelInfo": "actModeHuaweiCloudMaasModelInfo",
+	"act.aihubmixModelId": "actModeAihubmixModelId",
+	"act.aihubmixModelInfo": "actModeAihubmixModelInfo",
+	"act.hicapModelId": "actModeHicapModelId",
+	"act.hicapModelInfo": "actModeHicapModelInfo",
+	"act.nousResearchModelId": "actModeNousResearchModelId",
+	"act.nvidiaNimModelId": "actModeNvidiaNimModelId",
+	"act.vercelAiGatewayModelId": "actModeVercelAiGatewayModelId",
+	"act.vercelAiGatewayModelInfo": "actModeVercelAiGatewayModelInfo",
+	// plan
+	"plan.provider": "planModeApiProvider",
+	"plan.apiModelId": "planModeApiModelId",
+	"plan.thinkingBudgetTokens": "planModeThinkingBudgetTokens",
+	"plan.reasoningEffort": "planModeReasoningEffort",
+	"plan.verbosity": "planModeVerbosity",
+	"plan.geminiThinkingLevel": "geminiPlanModeThinkingLevel",
+	"plan.vsCodeLmModelSelector": "planModeVsCodeLmModelSelector",
+	"plan.awsBedrockCustomSelected": "planModeAwsBedrockCustomSelected",
+	"plan.awsBedrockCustomModelBaseId": "planModeAwsBedrockCustomModelBaseId",
+	"plan.openRouterModelId": "planModeOpenRouterModelId",
+	"plan.openRouterModelInfo": "planModeOpenRouterModelInfo",
+	"plan.diracModelId": "planModeDiracModelId",
+	"plan.diracModelInfo": "planModeDiracModelInfo",
+	"plan.openAiModelId": "planModeOpenAiModelId",
+	"plan.openAiModelInfo": "planModeOpenAiModelInfo",
+	"plan.lmStudioModelId": "planModeLmStudioModelId",
+	"plan.liteLlmModelId": "planModeLiteLlmModelId",
+	"plan.liteLlmModelInfo": "planModeLiteLlmModelInfo",
+	"plan.codingPlanZAiModelId": "planModeCodingPlanZAiModelId",
+	"plan.codingPlanZAiModelInfo": "planModeCodingPlanZAiModelInfo",
+	"plan.requestyModelId": "planModeRequestyModelId",
+	"plan.requestyModelInfo": "planModeRequestyModelInfo",
+	"plan.togetherModelId": "planModeTogetherModelId",
+	"plan.fireworksModelId": "planModeFireworksModelId",
+	"plan.sapAiCoreModelId": "planModeSapAiCoreModelId",
+	"plan.sapAiCoreDeploymentId": "planModeSapAiCoreDeploymentId",
+	"plan.groqModelId": "planModeGroqModelId",
+	"plan.groqModelInfo": "planModeGroqModelInfo",
+	"plan.basetenModelId": "planModeBasetenModelId",
+	"plan.basetenModelInfo": "planModeBasetenModelInfo",
+	"plan.huggingFaceModelId": "planModeHuggingFaceModelId",
+	"plan.huggingFaceModelInfo": "planModeHuggingFaceModelInfo",
+	"plan.huaweiCloudMaasModelId": "planModeHuaweiCloudMaasModelId",
+	"plan.huaweiCloudMaasModelInfo": "planModeHuaweiCloudMaasModelInfo",
+	"plan.aihubmixModelId": "planModeAihubmixModelId",
+	"plan.aihubmixModelInfo": "planModeAihubmixModelInfo",
+	"plan.hicapModelId": "planModeHicapModelId",
+	"plan.hicapModelInfo": "planModeHicapModelInfo",
+	"plan.nousResearchModelId": "planModeNousResearchModelId",
+	"plan.nvidiaNimModelId": "planModeNvidiaNimModelId",
+	"plan.vercelAiGatewayModelId": "planModeVercelAiGatewayModelId",
+	"plan.vercelAiGatewayModelInfo": "planModeVercelAiGatewayModelInfo",
+	// observe (minimal own keys, falls back to act for everything else)
+	"observe.provider": "observerProvider",
+	"observe.apiModelId": "observerModelId",
 }
 
 /**
- * Build an ApiHandler for any role. For act/plan, delegates directly to buildApiHandler.
- * For observe (and future roles), clones config, overrides act-mode keys with the
- * role's provider/model, then calls buildApiHandler with "act" mode.
+ * Resolves a role-specific state key from a generic suffix.
+ * For observe (and future roles), unknown suffixes fall back to act's keys.
  */
-export function buildApiHandlerForRole(config: ApiConfiguration, role: ModelRole) {
-	if (role === "act" || role === "plan") {
-		return buildApiHandler(config, role)
-	}
+export function getRoleStateKey(role: ModelRole, suffix: string): string {
+	const key = `${role}.${suffix}`
+	if (key in ROLE_KEY_MAP) return ROLE_KEY_MAP[key]
+	if (role !== "act") return getRoleStateKey("act", suffix)
+	return suffix
+}
 
-	const provider = (config as any)[ROLE_PROVIDER_KEYS[role]] as ApiProvider | undefined
-	const modelId = (config as any)[ROLE_MODEL_KEYS[role]] as string | undefined
+/**
+ * Read a role-scoped value from an ApiConfiguration object.
+ */
+export function getRoleConfigValue(config: ApiConfiguration, role: ModelRole, suffix: string): unknown {
+	return (config as Record<string, unknown>)[getRoleStateKey(role, suffix)]
+}
 
-	const effective = { ...config } as Record<string, unknown>
-	const targetProvider: ApiProvider = provider || config.actModeApiProvider || "openrouter"
-	effective.actModeApiProvider = targetProvider
+// --- Role UI descriptors for settings panel ---
 
-	const modelKey = getProviderModelIdKey(targetProvider, "act")
-	effective[modelKey] = modelId || getProviderDefaultModelId(targetProvider) || ""
+export interface RoleDescriptor {
+	role: ModelRole
+	label: string
+	providerKey: string
+	modelKey: string
+	enabledKey?: string
+	providerInheritsFromAct?: boolean
+}
 
-	return buildApiHandler(effective as ApiConfiguration, "act")
+export const ROLE_DESCRIPTORS: RoleDescriptor[] = [
+	{
+		role: "act",
+		label: "Act",
+		providerKey: "actModeApiProvider",
+		modelKey: "actModeApiModelId",
+	},
+	{
+		role: "plan",
+		label: "Plan",
+		providerKey: "planModeApiProvider",
+		modelKey: "planModeApiModelId",
+		providerInheritsFromAct: true,
+	},
+	{
+		role: "observe",
+		label: "Observer",
+		providerKey: "observerProvider",
+		modelKey: "observerModelId",
+		enabledKey: "observerEnabled",
+		providerInheritsFromAct: true,
+	},
+]
+
+export function getRoleDescriptor(role: ModelRole): RoleDescriptor {
+	return ROLE_DESCRIPTORS.find((d) => d.role === role)!
 }

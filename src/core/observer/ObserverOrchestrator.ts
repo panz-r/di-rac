@@ -9,6 +9,7 @@ import { Logger } from "@/shared/services/Logger"
 export interface PrepareContextResult {
 	messages: DiracStorageMessage[]
 	observationBlock: string
+	removedCount: number
 }
 
 export class ObserverOrchestrator {
@@ -228,7 +229,7 @@ export class ObserverOrchestrator {
 
 	prepareContext(history: DiracStorageMessage[]): PrepareContextResult {
 		if (!this._isEnabled) {
-			return { messages: history, observationBlock: "" }
+			return { messages: history, observationBlock: "", removedCount: 0 }
 		}
 
 		const observationBlock = this.store.buildObservationBlock()
@@ -238,10 +239,11 @@ export class ObserverOrchestrator {
 				...history.slice(0, 2),
 				...history.slice(this.lastObservedMessageIndex),
 			]
-			return { messages: slicedMessages, observationBlock }
+			const removedCount = history.length - slicedMessages.length
+			return { messages: slicedMessages, observationBlock, removedCount }
 		}
 
-		return { messages: history, observationBlock }
+		return { messages: history, observationBlock, removedCount: 0 }
 	}
 
 	/**

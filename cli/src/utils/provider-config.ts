@@ -5,6 +5,8 @@
 
 import type { ApiProvider } from "@shared/api"
 import { getProviderModelIdKey, ProviderToApiKeyMap } from "@shared/storage"
+import type { ModelRole } from "@shared/roles"
+import { getRoleStateKey } from "@shared/roles"
 import { buildApiHandler } from "@/core/api"
 import type { Controller } from "@/core/controller"
 import { refreshOpenRouterModels } from "@/core/controller/models/refreshOpenRouterModels"
@@ -15,54 +17,76 @@ import { getDefaultModelId } from "../components/ModelPicker"
 
 export interface ApplyProviderConfigOptions {
 	providerId: string
+	role?: ModelRole
 	apiKey?: string
-	modelId?: string // Override default model
-	baseUrl?: string // For OpenAI-compatible providers
-	azureApiVersion?: string // For Azure OpenAI
+	modelId?: string
+	baseUrl?: string
+	azureApiVersion?: string
 	controller?: Controller
 }
 
 /**
- * Apply provider configuration to state and rebuild API handler if needed
+ * Apply provider configuration to state and rebuild API handler if needed.
+ * When role is specified, writes config for that role only.
+ * When role is omitted (default: "act"), also syncs to plan if plan has no provider.
  */
 export async function applyProviderConfig(options: ApplyProviderConfigOptions): Promise<void> {
-	const { providerId, apiKey, modelId, baseUrl, azureApiVersion, controller } = options
+	const { providerId, role = "act", apiKey, modelId, baseUrl, azureApiVersion, controller } = options
 	const stateManager = StateManager.get()
 
-	const config: Record<string, string> = {
-		actModeApiProvider: providerId,
-		planModeApiProvider: providerId,
+	const config: Record<string, string> = {}
+
+	// Set provider for the target role
+	config[getRoleStateKey(role, "provider")] = providerId
+
+	// For act role, also set plan if plan has no explicit provider
+	if (role === "act") {
+		const planProvider = stateManager.getGlobalSettingsKey("planModeApiProvider")
+		if (!planProvider) {
+			config["planModeApiProvider"] = providerId
+		}
 	}
 
 	// Add model ID (use provided or fall back to default)
-	// Use provider-specific model ID keys (e.g., actModeOpenRouterModelId for dirac/openrouter)
 	const finalModelId = modelId || getDefaultModelId(providerId)
 	if (finalModelId) {
-		const actModelKey = getProviderModelIdKey(providerId as ApiProvider, "act")
-		const planModelKey = getProviderModelIdKey(providerId as ApiProvider, "plan")
-		if (actModelKey) config[actModelKey] = finalModelId
-		if (planModelKey) config[planModelKey] = finalModelId
+		const modelKey = getProviderModelIdKey(providerId as ApiProvider, role)
+		if (modelKey) config[modelKey] = finalModelId
 
-		// Fetch model info from the provider API (not just disk cache) so headless
-		// CLI auth gets correct maxTokens, thinkingConfig, etc.
+		// For act role, also sync model to plan if plan has no explicit provider
+		if (role === "act") {
+			const planProvider = stateManager.getGlobalSettingsKey("planModeApiProvider")
+			if (!planProvider) {
+				const planModelKey = getProviderModelIdKey(providerId as ApiProvider, "plan")
+				if (planModelKey) config[planModelKey] = finalModelId
+			}
+		}
+
+		// Fetch model info from the provider API
 		if ((providerId === "dirac" || providerId === "openrouter") && controller) {
 			const openRouterModels = await refreshOpenRouterModels(controller)
 			const modelInfo = openRouterModels?.[finalModelId]
 			if (modelInfo) {
-				stateManager.setGlobalState("actModeOpenRouterModelInfo", modelInfo)
-				stateManager.setGlobalState("planModeOpenRouterModelInfo", modelInfo)
+				const infoKey = getRoleStateKey(role, "openRouterModelInfo") as any
+				stateManager.setGlobalState(infoKey, modelInfo)
+				if (role === "act") {
+					stateManager.setGlobalState("planModeOpenRouterModelInfo", modelInfo)
+				}
 			}
 		} else if (providerId === "vercel-ai-gateway" && controller) {
 			const vercelModels = await refreshVercelAiGatewayModels(controller)
 			const modelInfo = vercelModels?.[finalModelId]
 			if (modelInfo) {
-				stateManager.setGlobalState("actModeVercelAiGatewayModelInfo", modelInfo)
-				stateManager.setGlobalState("planModeVercelAiGatewayModelInfo", modelInfo)
+				const infoKey = getRoleStateKey(role, "vercelAiGatewayModelInfo") as any
+				stateManager.setGlobalState(infoKey, modelInfo)
+				if (role === "act") {
+					stateManager.setGlobalState("planModeVercelAiGatewayModelInfo", modelInfo)
+				}
 			}
 		}
 	}
 
-	// Add API key if provided (maps to provider-specific field like anthropicApiKey, openAiApiKey, etc.)
+	// Add API key if provided (shared across roles, not role-specific)
 	if (apiKey) {
 		const keyField = ProviderToApiKeyMap[providerId as keyof typeof ProviderToApiKeyMap]
 		if (keyField) {
@@ -71,19 +95,16 @@ export async function applyProviderConfig(options: ApplyProviderConfigOptions): 
 		}
 	}
 
-	// Add base URL if provided (for OpenAI-compatible providers)
+	// Add base URL if provided (shared across roles)
 	if (baseUrl) {
 		let normalizedBaseUrl = baseUrl.trim()
 		if (normalizedBaseUrl) {
-			// Normalize URL: strip trailing /chat/completions and trailing slashes
-			// The OpenAI SDK appends /chat/completions automatically.
 			normalizedBaseUrl = normalizedBaseUrl.replace(/\/chat\/completions\/?$/, "")
 			normalizedBaseUrl = normalizedBaseUrl.replace(/\/+$/, "")
 		}
 		config.openAiBaseUrl = normalizedBaseUrl
 	}
 
-	// Add Azure API version if provided
 	if (azureApiVersion) {
 		config.azureApiVersion = azureApiVersion
 	}
@@ -102,48 +123,56 @@ export async function applyProviderConfig(options: ApplyProviderConfigOptions): 
 
 export interface ApplyBedrockConfigOptions {
 	bedrockConfig: BedrockConfig
+	role?: ModelRole
 	modelId?: string
-	customModelBaseId?: string // Base model ID for custom ARN/Inference Profile (for capability detection)
+	customModelBaseId?: string
 	controller?: Controller
 }
 
 /**
- * Apply Bedrock provider configuration to state
- * Handles AWS-specific fields (authentication, region, credentials)
- * When customModelBaseId is provided, sets the custom model flags so the system
- * knows to use the ARN as the model ID and the base model for capability detection.
+ * Apply Bedrock provider configuration to state.
+ * When role is specified, writes config for that role only.
  */
 export async function applyBedrockConfig(options: ApplyBedrockConfigOptions): Promise<void> {
-	const { bedrockConfig, modelId, customModelBaseId, controller } = options
+	const { bedrockConfig, role = "act", modelId, customModelBaseId, controller } = options
 	const stateManager = StateManager.get()
 
 	const config: Record<string, unknown> = {
-		actModeApiProvider: "bedrock",
-		planModeApiProvider: "bedrock",
+		[getRoleStateKey(role, "provider")]: "bedrock",
 		awsAuthentication: bedrockConfig.awsAuthentication,
 		awsRegion: bedrockConfig.awsRegion,
 		awsUseCrossRegionInference: bedrockConfig.awsUseCrossRegionInference,
 	}
 
+	// For act role, also set plan if plan has no explicit provider
+	if (role === "act") {
+		const planProvider = stateManager.getGlobalSettingsKey("planModeApiProvider")
+		if (!planProvider) {
+			config["planModeApiProvider"] = "bedrock"
+		}
+	}
+
 	// Add model ID
 	const finalModelId = modelId || getDefaultModelId("bedrock")
 	if (finalModelId) {
-		const actModelKey = getProviderModelIdKey("bedrock" as ApiProvider, "act")
-		const planModelKey = getProviderModelIdKey("bedrock" as ApiProvider, "plan")
-		if (actModelKey) config[actModelKey] = finalModelId
-		if (planModelKey) config[planModelKey] = finalModelId
+		const modelKey = getProviderModelIdKey("bedrock" as ApiProvider, role)
+		if (modelKey) config[modelKey] = finalModelId
+
+		if (role === "act") {
+			const planProvider = stateManager.getGlobalSettingsKey("planModeApiProvider")
+			if (!planProvider) {
+				const planModelKey = getProviderModelIdKey("bedrock" as ApiProvider, "plan")
+				if (planModelKey) config[planModelKey] = finalModelId
+			}
+		}
 	}
 
 	// Handle custom model (Application Inference Profile ARN)
 	if (customModelBaseId) {
-		config.actModeAwsBedrockCustomSelected = true
-		config.planModeAwsBedrockCustomSelected = true
-		config.actModeAwsBedrockCustomModelBaseId = customModelBaseId
-		config.planModeAwsBedrockCustomModelBaseId = customModelBaseId
+		config[getRoleStateKey(role, "awsBedrockCustomSelected")] = true
+		config[getRoleStateKey(role, "awsBedrockCustomModelBaseId")] = customModelBaseId
 	} else {
-		// Ensure custom flags are cleared when using a standard model
-		config.actModeAwsBedrockCustomSelected = false
-		config.planModeAwsBedrockCustomSelected = false
+		config[getRoleStateKey(role, "awsBedrockCustomSelected")] = false
 	}
 
 	// Add optional AWS credentials

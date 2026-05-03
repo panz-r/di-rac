@@ -30,6 +30,7 @@ import {
 	wandbDefaultModelId,
 	xaiDefaultModelId,
 } from "../api"
+import type { ModelRole } from "../roles"
 import type { Secrets, SettingsKey } from "../storage/state-keys"
 
 // ---------------------------------------------------------------------------
@@ -355,16 +356,18 @@ export const ProviderToApiKeyMap: Partial<Record<ApiProvider, keyof Secrets | (k
 	)
 
 /**
- * Get the provider-specific model ID state key for a given provider and mode.
- * Providers with a modelIdKeySuffix get dedicated keys (e.g., actModeOpenRouterModelId).
- * Others fall back to the generic actModeApiModelId / planModeApiModelId.
+ * Get the provider-specific model ID state key for a given provider and role.
+ * For observe, returns the generic observerModelId key.
+ * For act/plan, providers with a modelIdKeySuffix get dedicated keys.
  */
-export function getProviderModelIdKey(provider: ApiProvider, mode: "act" | "plan"): SettingsKey {
+export function getProviderModelIdKey(provider: ApiProvider, role: ModelRole): SettingsKey {
+	if (role === "observe") return "observerModelId" as SettingsKey
+	const modePrefix = role === "plan" ? "planMode" : "actMode"
 	const descriptor = byId.get(provider)
 	if (descriptor?.modelIdKeySuffix) {
-		return `${mode}Mode${descriptor.modelIdKeySuffix}` as SettingsKey
+		return `${modePrefix}${descriptor.modelIdKeySuffix}` as SettingsKey
 	}
-	return `${mode}ModeApiModelId` as SettingsKey
+	return `${modePrefix}ApiModelId` as SettingsKey
 }
 
 /** Get the default model ID for a provider. */
