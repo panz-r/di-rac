@@ -467,6 +467,9 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 					Content          string `json:"content"`
 					ReasoningContent string `json:"reasoning_content"`
 					Reasoning        string `json:"reasoning"`
+					ReasoningDetails []struct {
+						Text string `json:"text"`
+					} `json:"reasoning_details"`
 					ToolCalls        []struct {
 						Index    int    `json:"index"`
 						ID       string `json:"id"`
@@ -523,6 +526,12 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 		// Groq reasoning field (DeepSeek models with reasoning_format: "parsed")
 		if delta.Reasoning != "" {
 			callback(StreamChunk{Type: "delta", Thinking: delta.Reasoning})
+			// MiniMax reasoning_details field (with reasoning_split=true)
+			for _, rd := range delta.ReasoningDetails {
+				if rd.Text != "" {
+					callback(StreamChunk{Type: "delta", Thinking: rd.Text})
+				}
+			}
 		}
 
 		for _, tc := range delta.ToolCalls {
@@ -596,6 +605,20 @@ func openaiConvertResponse(resp map[string]interface{}, finishReasonMap func(str
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
 				if text, ok := msg["content"].(string); ok && text != "" {
 					content = append(content, ContentBlock{Type: "text", Text: text})
+				}
+				// MiniMax reasoning_details (with reasoning_split=true)
+				if rds, ok := msg["reasoning_details"].([]interface{}); ok {
+					for _, rd := range rds {
+						if rdMap, ok := rd.(map[string]interface{}); ok {
+							if text, ok := rdMap["text"].(string); ok && text != "" {
+								content = append(content, ContentBlock{Type: "thinking", Thinking: text})
+							}
+						}
+					}
+				}
+				// Standard reasoning_content (DeepSeek, Groq, etc.)
+				if rc, ok := msg["reasoning_content"].(string); ok && rc != "" {
+					content = append(content, ContentBlock{Type: "thinking", Thinking: rc})
 				}
 				if toolCalls, ok := msg["tool_calls"].([]interface{}); ok {
 					for _, tc := range toolCalls {
