@@ -52,6 +52,7 @@ function gatewayHandler(
 		baseUrl?: string
 		model?: string
 		thinkingBudgetTokens?: number
+		reasoningEffort?: string
 	},
 ): ApiGatewayHandler {
 	return new ApiGatewayHandler({
@@ -61,6 +62,7 @@ function gatewayHandler(
 		model: opts.model,
 		thinkingBudgetTokens: opts.thinkingBudgetTokens,
 		enableThinking: true,
+		reasoningEffort: opts.reasoningEffort,
 	})
 }
 
@@ -72,6 +74,8 @@ function createHandlerForProvider(
 	// Providers migrated to the Go API gateway
 	const thinkingBudgetTokens =
 		mode === "plan" ? options.planModeThinkingBudgetTokens : options.actModeThinkingBudgetTokens
+	const reasoningEffort =
+		mode === "plan" ? options.planModeReasoningEffort : options.actModeReasoningEffort
 
 	switch (apiProvider) {
 		// --- Go gateway providers ---
@@ -113,6 +117,7 @@ function createHandlerForProvider(
 			return gatewayHandler("deepseek", {
 				apiKey: options.deepSeekApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				reasoningEffort,
 			})
 		case "requesty":
 			return gatewayHandler("requesty", {

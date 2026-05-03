@@ -13,6 +13,7 @@ import { Box, Text, useInput } from "ink"
 import Spinner from "ink-spinner"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import { buildApiHandler } from "@/core/api"
+import { queryProviderInfo, type ProviderInfo } from "@/core/api/providers/api-gateway"
 import type { Controller } from "@/core/controller"
 import { StateManager } from "@/core/storage/StateManager"
 import { openAiCodexOAuthManager } from "@/integrations/openai-codex/oauth"
@@ -59,9 +60,10 @@ function normalizeReasoningEffort(value: unknown): OpenaiReasoningEffort {
 	return "low"
 }
 
-function nextReasoningEffort(current: OpenaiReasoningEffort): OpenaiReasoningEffort {
-	const idx = OPENAI_REASONING_EFFORT_OPTIONS.indexOf(current)
-	return OPENAI_REASONING_EFFORT_OPTIONS[(idx + 1) % OPENAI_REASONING_EFFORT_OPTIONS.length]
+function nextReasoningEffort(current: OpenaiReasoningEffort, options?: readonly string[]): OpenaiReasoningEffort {
+	const opts = options || OPENAI_REASONING_EFFORT_OPTIONS
+	const idx = opts.indexOf(current)
+	return (opts[(idx + 1) % opts.length] ?? opts[0]) as OpenaiReasoningEffort
 }
 
 const TABS: PanelTab[] = [
@@ -197,6 +199,22 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	const [modelRefreshKey, setModelRefreshKey] = useState(0)
 	const refreshModelIds = useCallback(() => setModelRefreshKey((k) => k + 1), [])
 
+		// Gateway-discovered provider capabilities
+		const [gatewayProviderInfo, setGatewayProviderInfo] = useState<ProviderInfo | null>(null)
+		useEffect(() => {
+			if (!provider) {
+				setGatewayProviderInfo(null)
+				return
+			}
+			queryProviderInfo(provider).then(setGatewayProviderInfo).catch(() => setGatewayProviderInfo(null))
+		}, [provider])
+
+		// Extract reasoning effort options from gateway-discovered provider info
+		const gatewayReasoningEffortOptions = gatewayProviderInfo?.settings
+			?.find(s => s.key === "reasoning_effort" && s.type === "select")
+			?.options?.map(o => o.value).filter(Boolean)
+
+
 	// Terminal size for virtual scrolling
 	const { rows: terminalRows } = useTerminalSize()
 
@@ -249,9 +267,10 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	// Build items list based on current tab
 	const items: ListItem[] = useMemo(() => {
 		// Some providers/models expose reasoning effort instead of thinking budget controls.
+		const gatewaySupportsReasoningEffort = gatewayProviderInfo?.features?.supports_reasoning_effort ?? false
 		const providerUsesReasoningEffort = provider === "openai-native" || provider === "openai-codex"
-		const showActReasoningEffort = supportsReasoningEffortForModel(actModelId || "")
-		const showPlanReasoningEffort = supportsReasoningEffortForModel(planModelId || "")
+		const showActReasoningEffort = supportsReasoningEffortForModel(actModelId || "") || gatewaySupportsReasoningEffort
+		const showPlanReasoningEffort = supportsReasoningEffortForModel(planModelId || "") || gatewaySupportsReasoningEffort
 		const showActThinkingOption = !providerUsesReasoningEffort && !showActReasoningEffort
 		const showPlanThinkingOption = !providerUsesReasoningEffort && !showPlanReasoningEffort
 
@@ -464,6 +483,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		features,
 		preferredLanguage,
 		telemetry,
+		gatewayProviderInfo,
 	])
 
 	// Reset selection when changing tabs
@@ -540,7 +560,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			const targetMode = item.key === "actReasoningEffort" ? "act" : item.key === "planReasoningEffort" ? "plan" : undefined
 			if (targetMode) {
 				const currentEffort = targetMode === "act" ? actReasoningEffort : planReasoningEffort
-				setReasoningEffortForMode(targetMode, nextReasoningEffort(currentEffort))
+				setReasoningEffortForMode(targetMode, nextReasoningEffort(currentEffort, gatewayReasoningEffortOptions))
 			}
 			return
 		}
@@ -690,6 +710,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		planReasoningEffort,
 		rebuildTaskApi,
 		setReasoningEffortForMode,
+		gatewayReasoningEffortOptions,
 	])
 
 	// Handle completion of the Bedrock custom ARN flow (ARN + base model selected)

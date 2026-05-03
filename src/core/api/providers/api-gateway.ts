@@ -128,6 +128,7 @@ export class ApiGatewayHandler implements ApiHandler {
 			modelInfo?: ModelInfo
 			thinkingBudgetTokens?: number
 			enableThinking?: boolean
+			reasoningEffort?: string
 		},
 	) {
 		this.socketPath = process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
@@ -167,6 +168,7 @@ export class ApiGatewayHandler implements ApiHandler {
 			request.thinking = {
 				type: "enabled",
 				budget_tokens: this.options.thinkingBudgetTokens,
+				reasoning_effort: this.options.reasoningEffort || undefined,
 			}
 		}
 
