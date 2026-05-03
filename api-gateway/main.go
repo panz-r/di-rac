@@ -413,8 +413,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 				Body:   mustMarshal(chunk),
 			})
 		case <-doneChan:
-			// Drain remaining chunks before closing (race: complete chunk
-			// may be in the buffered channel but select picked doneChan first)
+			// Drain remaining chunks before closing
 			for {
 				select {
 				case chunk := <-chunks:
@@ -424,6 +423,12 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 						Body:   mustMarshal(chunk),
 					})
 				default:
+					// Always send complete signal so the client never hangs
+					encoder.Encode(&Response{
+						ID:     id,
+						Status: 200,
+						Body:   json.RawMessage(`{"type":"complete"}`),
+					})
 					return
 				}
 			}

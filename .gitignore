@@ -1,4 +1,5 @@
 out
+api-gateway/api-gateway
 dist
 dist-standalone
 node_modules
