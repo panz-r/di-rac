@@ -8,7 +8,7 @@ import type { ApiHandler, ApiHandlerModel } from "../index"
 import type { ModelInfo } from "@shared/api"
 
 const SOCKET_PATH = `${process.env.HOME || "/root"}/.dirac/api-gateway.sock`
-const DEFAULT_TIMEOUT_MS = 120000
+const DEFAULT_TIMEOUT_MS = 240000
 
 // --- Gateway protocol types (match Go structs in api-gateway/) ---
 
@@ -169,7 +169,7 @@ export class ApiGatewayHandler implements ApiHandler {
 		const blockTypes = new Map<number, string>() // index → "text" | "thinking" | "tool_use"
 		const toolCallAccumulators = new Map<
 			number,
-			{ id: string; name: string; inputJson: string; callId?: string }
+			{ id: string; name: string; inputJson: string; callId?: string; streamed?: boolean }
 		>()
 
 		const stream = this.connectAndStream(request)
@@ -178,6 +178,7 @@ export class ApiGatewayHandler implements ApiHandler {
 			if (this.abortController?.signal.aborted) return
 
 			if (response.error) {
+				Logger.error("[Gateway:stream]", `Error from gateway: status=${response.status} code=${response.error.code} msg=${response.error.message} retriable=${response.error.retriable}`)
 				const err = new Error(response.error.message)
 				;(err as any).status = response.status
 				;(err as any).retriable = response.error.retriable
@@ -200,6 +201,17 @@ export class ApiGatewayHandler implements ApiHandler {
 							}
 							if (chunk.tool_call_id) acc.id = chunk.tool_call_id
 							if (chunk.tool_call_name) acc.name = chunk.tool_call_name
+							// Yield immediately so the TUI shows the tool name before arguments stream in
+							yield {
+								type: "tool_calls",
+								tool_call: {
+									call_id: acc.id || undefined,
+									function: {
+										id: acc.id || undefined,
+										name: acc.name || undefined,
+									},
+								},
+							} as ApiStreamChunk
 						}
 					}
 					break
@@ -231,25 +243,51 @@ export class ApiGatewayHandler implements ApiHandler {
 						if (chunk.tool_call_id) acc.id = chunk.tool_call_id
 						if (chunk.tool_call_name) acc.name = chunk.tool_call_name
 						if (chunk.json_delta) acc.inputJson += chunk.json_delta.replace(/^"|"$/g, "")
+						// Yield incrementally so the TUI streams tool arguments
+						if (acc.name && chunk.json_delta) {
+							acc.streamed = true
+							yield {
+								type: "tool_calls",
+								tool_call: {
+									call_id: acc.id || undefined,
+									function: {
+										id: acc.id || undefined,
+										name: acc.name,
+										arguments: chunk.json_delta,
+									},
+								},
+							} as ApiStreamChunk
+						}
 					}
 					break
 				}
 				case "stop": {
-					// Finalize any pending tool calls
+					// Tool calls were already emitted incrementally during streaming.
+					// Finalize any remaining tool calls that didn't get incremental deltas (e.g. tools with no arguments).
 					for (const [idx, acc] of toolCallAccumulators) {
+						if (acc.streamed) {
+							toolCallAccumulators.delete(idx)
+							continue
+						}
+						if (!acc.name) {
+							Logger.warn("[Gateway:stream]", `Tool call at index ${idx} has no name (id=${acc.id})`)
+							continue
+						}
 						let args = acc.inputJson
-						try {
-							args = JSON.stringify(JSON.parse(args))
-						} catch {
-							// keep raw if unparseable
+						if (args) {
+							try {
+								args = JSON.stringify(JSON.parse(args))
+							} catch {
+								// keep raw if unparseable
+							}
 						}
 						yield {
 							type: "tool_calls",
 							tool_call: {
-								call_id: acc.callId || acc.id || undefined,
+								call_id: acc.id || undefined,
 								function: {
 									id: acc.id || undefined,
-									name: acc.name || undefined,
+									name: acc.name,
 									arguments: args || undefined,
 								},
 							},

@@ -18,6 +18,10 @@ import (
 
 const Version = "0.1.0"
 
+// Build-time configurable rate limits (override via -ldflags "-X main.maxRequestsPerSec=10 -X main.maxInflightReqs=5")
+var maxRequestsPerSec int = 5
+var maxInflightReqs int = 3
+
 var SocketPath = os.Getenv("DIRAC_API_GATEWAY_SOCKET")
 
 func init() {
@@ -76,6 +80,74 @@ type Server struct {
 	cancel           context.CancelFunc
 	providerConfigs  map[string]providers.ProviderConfig
 	configMu         sync.RWMutex
+	rateLimiter      *RateLimiter
+}
+
+// RateLimiter controls outbound request rate and concurrency.
+// Token bucket for rate limiting, buffered channel for max-inflight.
+type RateLimiter struct {
+	tokens chan struct{} // token bucket for req/s rate limiting
+	sem    chan struct{} // semaphore for max concurrent requests
+	done   chan struct{}
+}
+
+func NewRateLimiter(ratePerSec, maxConcurrent int) *RateLimiter {
+	rl := &RateLimiter{
+		tokens: make(chan struct{}, ratePerSec),
+		sem:    make(chan struct{}, maxConcurrent),
+		done:   make(chan struct{}),
+	}
+	// Fill initial burst allowance
+	for i := 0; i < ratePerSec; i++ {
+		rl.tokens <- struct{}{}
+	}
+	// Drip tokens at steady rate
+	interval := time.Second / time.Duration(ratePerSec)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				select {
+				case rl.tokens <- struct{}{}:
+				default: // bucket full
+				}
+			case <-rl.done:
+				return
+			}
+		}
+	}()
+	return rl
+}
+
+// Wait blocks until a rate-limit token and an inflight slot are available, or ctx expires.
+func (rl *RateLimiter) Wait(ctx context.Context) error {
+	// Acquire rate-limit token
+	select {
+	case <-rl.tokens:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	// Acquire inflight slot
+	select {
+	case rl.sem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return nil
+}
+
+// Release frees an inflight slot.
+func (rl *RateLimiter) Release() {
+	select {
+	case <-rl.sem:
+	default:
+	}
+}
+
+func (rl *RateLimiter) Stop() {
+	close(rl.done)
 }
 
 // NewServer creates a new server instance
@@ -86,6 +158,7 @@ func NewServer() *Server {
 		ctx:              ctx,
 		cancel:           cancel,
 		providerConfigs:  make(map[string]providers.ProviderConfig),
+		rateLimiter:      NewRateLimiter(maxRequestsPerSec, maxInflightReqs),
 	}
 }
 
@@ -111,6 +184,7 @@ func (s *Server) Start() error {
 
 	log.Println("Shutting down...")
 	s.cancel()
+	s.rateLimiter.Stop()
 	ln.Close()
 	s.wg.Wait()
 	return nil
@@ -193,7 +267,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		if req.Timeout == 0 {
-			req.Timeout = 120000
+			req.Timeout = 240000
 		}
 
 		// Merge stored provider config (set-provider) into request
@@ -201,14 +275,27 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		ctx, cancel := context.WithTimeout(s.ctx, time.Duration(req.Timeout)*time.Millisecond)
 
+		// Wait for rate limit token and inflight slot
+		if err := s.rateLimiter.Wait(ctx); err != nil {
+			encoder.Encode(&Response{
+				ID:     req.ID,
+				Status: 429,
+				Error:  &ErrorDetail{Code: "RATE_LIMITED", Message: "Gateway queue timeout: too many concurrent requests", Retriable: true},
+			})
+			cancel()
+			continue
+		}
+
 		if req.Stream {
 			// For streaming: send ack, then stream, then continue loop
 			encoder.Encode(&Response{ID: req.ID, Status: 200})
 			s.handleStreaming(ctx, req.ID, &req, encoder)
+			s.rateLimiter.Release()
 			cancel()
 		} else {
 			// For non-streaming: process and send response
 			resp := s.processRequest(ctx, &req)
+			s.rateLimiter.Release()
 			encoder.Encode(resp)
 			cancel()
 		}
