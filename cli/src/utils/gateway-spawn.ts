@@ -16,6 +16,7 @@ process.env.DIRAC_API_GATEWAY_SOCKET = INSTANCE_SOCKET_PATH
 
 let gatewayProcess: ChildProcess | null = null
 let gatewayBinPath: string | null = null
+let gatewayReady = false
 let cleanupRegistered = false
 
 function findGatewayBinary(): string | null {
@@ -34,7 +35,22 @@ function findGatewayBinary(): string | null {
 		if (fs.existsSync(localBin)) return localBin
 	} catch {}
 
+	// 3. Source tree fallback: <project-root>/api-gateway/api-gateway
+	try {
+		const cliPath = fileURLToPath(import.meta.url)
+		const cliDir = path.dirname(cliPath)
+		// cliDir is dist/ or dist/ relative — walk up to project root
+		const projectRoot = path.resolve(cliDir, "..")
+		const sourceBin = path.join(projectRoot, "api-gateway", "api-gateway")
+		if (fs.existsSync(sourceBin)) return sourceBin
+	} catch {}
+
 	return null
+}
+
+/** Returns true if the gateway process was successfully started and is still running. */
+export function isGatewayAvailable(): boolean {
+	return gatewayReady && gatewayProcess !== null
 }
 
 function waitForSocket(timeoutMs = 15000): Promise<void> {
@@ -66,6 +82,7 @@ function killGateway() {
 	} catch {}
 	gatewayProcess = null
 	gatewayBinPath = null
+	gatewayReady = false
 	try {
 		if (fs.existsSync(INSTANCE_SOCKET_PATH)) fs.unlinkSync(INSTANCE_SOCKET_PATH)
 	} catch {}
@@ -110,18 +127,21 @@ export async function startApiGateway(): Promise<void> {
 	})
 
 	gatewayProcess.on("exit", (code, signal) => {
+		gatewayReady = false
 		Logger.warn("[Gateway]", `Exited with code=${code} signal=${signal}`)
 		gatewayProcess = null
 		gatewayBinPath = null
 	})
 
 	gatewayProcess.on("error", (err) => {
+		gatewayReady = false
 		Logger.error("[Gateway]", `Spawn error: ${err.message}`)
 		gatewayProcess = null
 		gatewayBinPath = null
 	})
 
 	await waitForSocket()
+	gatewayReady = true
 	Logger.info("[Gateway]", `Ready on ${INSTANCE_SOCKET_PATH}`)
 
 	// Ensure gateway is killed when the CLI exits, regardless of exit path

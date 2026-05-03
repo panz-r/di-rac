@@ -251,6 +251,15 @@ async function main() {
 		if (fs.existsSync(cliOutfile)) {
 			fs.chmodSync(cliOutfile, "755")
 		}
+
+		// Copy the Go API gateway binary to dist/ if it exists
+		const gatewaySource = path.join(__dirname, "api-gateway", "api-gateway")
+		const gatewayDest = path.join(distDir, "api-gateway")
+		if (fs.existsSync(gatewaySource)) {
+			fs.copyFileSync(gatewaySource, gatewayDest)
+			fs.chmodSync(gatewayDest, "755")
+			console.log("[cli esbuild] Copied api-gateway binary to dist/")
+		}
 	}
 }
 

@@ -1,4 +1,5 @@
 import net from "net"
+import fs from "node:fs"
 import { Logger } from "@/shared/services/Logger"
 import { ApiStream, type ApiStreamChunk } from "../transform/stream"
 import type { DiracStorageMessage } from "@/shared/messages/content"
@@ -415,6 +416,14 @@ export class ApiGatewayHandler implements ApiHandler {
 	// --- Socket connection ---
 
 	private async *connectAndStream(request: GatewayRequest): AsyncGenerator<GatewayResponse> {
+		if (!fs.existsSync(this.socketPath)) {
+			throw new Error(
+				`API gateway is not running (socket not found at ${this.socketPath}). ` +
+				`Ensure the gateway binary is built and the CLI can find it. ` +
+				`Set DIRAC_API_GATEWAY_BIN to the binary path if needed.`,
+			)
+		}
+
 		const socket = await this.connect()
 		if (!socket) {
 			throw new Error(`Failed to connect to API gateway at ${this.socketPath}`)
