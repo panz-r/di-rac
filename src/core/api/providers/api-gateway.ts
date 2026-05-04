@@ -544,7 +544,7 @@ export class ApiGatewayHandler implements ApiHandler {
 export interface ProviderSetting {
 	key: string
 	label: string
-	type: "toggle" | "slider" | "select" | "text"
+	type: "toggle" | "slider" | "select" | "text" | "number"
 	scope?: "global" | "per-mode"
 	default?: unknown
 	min?: number

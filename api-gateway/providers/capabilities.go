@@ -8,6 +8,7 @@ const (
 	SettingSlider SettingType = "slider" // number with min/max/step
 	SettingSelect SettingType = "select" // dropdown
 	SettingText   SettingType = "text"   // text input
+	SettingNumber SettingType = "number" // integer input
 )
 
 // SettingScope determines whether a setting has one value or one per act/plan mode.

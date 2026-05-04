@@ -162,6 +162,20 @@ function buildDynamicItems(
 				})
 				break
 			}
+			case "number": {
+				const val = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
+				const numVal = typeof val === "number" ? val : (typeof setting.default === "number" ? setting.default : 0)
+				items.push({
+					key,
+					label,
+					type: "editable",
+					value: String(numVal),
+					description: desc || undefined,
+					indent: 4,
+					disabled: isInactive,
+				})
+				break
+			}
 		}
 	}
 	return items
@@ -191,6 +205,8 @@ function computeNextValue(
 			return next > max + 0.001 ? min : next
 		}
 		case "text":
+			return currentVal
+		case "number":
 			return currentVal
 	}
 	return currentVal
@@ -509,19 +525,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 										}
 									}
 								}
-								// zai special entrypoint row
-								if (effectiveProvider === "zai" && desc.role === "act") {
-									roleItems.push({
-										key: "zaiApiLine",
-										label: "Entrypoint",
-										type: "cycle",
-										value: {
-											international: "api.z.ai",
-											"coding-plan": "Coding Plan",
-											china: "open.bigmodel.cn",
-										}[(stateManager.getGlobalSettingsKey("zaiApiLine") as string) || "international"] || "api.z.ai",
-									})
-								}
 								// codex auth status (act role only)
 								if (effectiveProvider === "openai-codex" && openAiCodexIsAuthenticated && desc.role === "act") {
 									roleItems.push({
@@ -737,20 +740,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		}
 
 		if (item.type === "cycle") {
-			if (item.key === "zaiApiLine") {
-				const current = (stateManager.getGlobalSettingsKey("zaiApiLine") as string) || "international"
-				const lines = ["international", "coding-plan", "china"]
-				const next = lines[(lines.indexOf(current) + 1) % lines.length]
-				stateManager.setGlobalState("zaiApiLine", next)
-				stateManager.flushPendingState()
-				setModelRefreshKey((k) => k + 1)
-				if (controller?.task) {
-					const mode = stateManager.getGlobalSettingsKey("mode")
-					const apiConfig = stateManager.getApiConfiguration()
-					controller.task.api = buildApiHandler({ ...apiConfig, ulid: controller.task.ulid }, mode)
-				}
-				return
-			}
 			const targetMode = item.key === "actReasoningEffort" ? "act" : item.key === "planReasoningEffort" ? "plan" : undefined
 			if (targetMode) {
 				const currentEffort = targetMode === "act" ? actReasoningEffort : planReasoningEffort
@@ -1553,6 +1542,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 					<Text bold color={COLORS.primaryBlue}>
 						Edit: {item?.label}
 					</Text>
+					{item?.description && <Text color="gray">{item.description}</Text>}
 					<Box marginTop={1}>
 						<Text color="white">{editValue}</Text>
 						<Text color="gray">|</Text>
@@ -1617,6 +1607,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 									checked={Boolean(item.value)}
 									description={item.description}
 									isSelected={isSelected}
+									disabled={item.disabled}
 									label={item.disabled ? item.label + " (inactive)" : item.label}
 								/>
 							</Box>

@@ -13,20 +13,22 @@ interface CheckboxProps {
 	checked: boolean
 	/** Whether this checkbox is currently selected/focused */
 	isSelected?: boolean
+	/** Whether this checkbox is disabled/inactive */
+	disabled?: boolean
 	/** Optional description shown below the label */
 	description?: string
 }
 
-export const Checkbox: React.FC<CheckboxProps> = ({ label, checked, isSelected = false, description }) => {
+export const Checkbox: React.FC<CheckboxProps> = ({ label, checked, isSelected = false, disabled = false, description }) => {
 	return (
 		<Box flexDirection="column">
 			<Text>
-				<Text bold color={isSelected ? COLORS.primaryBlue : undefined}>
-					{isSelected ? "❯" : " "}{" "}
+				<Text bold color={isSelected && !disabled ? COLORS.primaryBlue : undefined}>
+					{isSelected && !disabled ? "❯" : " "}{" "}
 				</Text>
-				<Text color={isSelected || checked ? COLORS.primaryBlue : "gray"}>{checked ? "[✓]" : "[ ]"}</Text>
-				<Text color={isSelected ? COLORS.primaryBlue : "white"}> {label}</Text>
-				{isSelected && <Text color="gray"> (Tab to toggle)</Text>}
+				<Text color={disabled ? "gray" : (isSelected || checked ? COLORS.primaryBlue : "gray")}>{disabled ? "[ ]" : checked ? "[✓]" : "[ ]"}</Text>
+				<Text color={disabled ? "gray" : (isSelected ? COLORS.primaryBlue : "white")}> {label}</Text>
+				{isSelected && !disabled && <Text color="gray"> (Tab to toggle)</Text>}
 			</Text>
 			{description && (
 				<Box marginLeft={6}>

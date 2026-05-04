@@ -1,399 +1,352 @@
 package providers
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
+	"math"
 	"strings"
 )
 
-// ZAIHandler handles Zhipu AI (ZAI) API requests.
-// ZAI uses OpenAI-compatible chat completions with:
+// ZAIHandler handles Zhipu AI (ZAI) API requests via their OpenAI-compatible endpoint.
+// Wraps the shared openaiCompatHandler with ZAI-specific config:
 //   - Custom headers (HTTP-Referer, X-Title)
 //   - thinking: { type: "enabled" } (no budget_tokens)
 //   - tool_stream: true for streaming tool calls
 //   - reasoning_content in streaming deltas
+//   - Dynamic base URL (international, china, coding-plan)
+//   - Default model: glm-5
 type ZAIHandler struct {
-	httpClient *http.Client
-	baseURL    string
-	apiKey     string
-	apiLine    string // "china", "coding-plan", "international"
+	inner *openaiCompatHandler
 }
 
 func NewZAIHandler() *ZAIHandler {
 	return &ZAIHandler{
-		httpClient: &http.Client{},
-		apiLine:    "international",
+		inner: newOpenAICompatHandler(OpenAICompatConfig{
+			BaseURL:             "https://api.z.ai/api/paas/v4",
+			DefaultModel:        "glm-5",
+			ContentArraySupport: true,
+			ExtraHeaders: map[string]string{
+				"HTTP-Referer": "https://dirac.run",
+				"X-Title":      "Dirac",
+			},
+			FinishReasonMap: func(reason string) string {
+				if reason == "model_context_window_exceeded" {
+					return "length"
+				}
+				return reason
+			},
+			ModifyMessages: func(messages []map[string]interface{}, req *Request) []map[string]interface{} {
+				messages = openaiAddReasoningContent(messages, req)
+				return coerceAssistantMessages(messages)
+			},
+			Capabilities: &ProviderInfo{
+				ID:           "zai",
+				DefaultModel: "glm-5",
+				Features: ProviderFeatures{
+					SupportsThinking:        true,
+					SupportsReasoningEffort: true,
+					SupportsTools:           true,
+					SupportsImages:          true,
+					SupportsStreaming:       true,
+					SupportsPromptCache:     true,
+				},
+				Settings: []ProviderSetting{
+					{
+						Key:         "temperature",
+						Label:       "Temperature",
+						Type:        SettingSlider,
+						Min:         fPtr(0),
+						Max:         fPtr(1),
+						Step:        fPtr(0.01),
+						Default:     1.0,
+						Group:       "sampling",
+						Description: "Controls randomness (0 = deterministic, 1 = creative). Ignored in thinking mode.",
+						ValidRange:  "0 – 1",
+					},
+					{
+						Key:         "top_p",
+						Label:       "Top P",
+						Type:        SettingSlider,
+						Min:         fPtr(0.01),
+						Max:         fPtr(1),
+						Step:        fPtr(0.01),
+						Default:     0.95,
+						Group:       "sampling",
+						Description: "Nucleus sampling threshold. Ignored in thinking mode.",
+						ValidRange:  "0.01 – 1",
+					},
+					{
+						Key:         "do_sample",
+						Label:       "Enable Sampling",
+						Type:        SettingToggle,
+						Default:     true,
+						Group:       "sampling",
+						Description: "Enable sampling (default: true). Ignored in thinking mode.",
+					},
+					{
+						Key:         "logprobs",
+						Label:       "Log Probabilities",
+						Type:        SettingToggle,
+						Group:       "sampling",
+						Description: "Return log probabilities of output tokens.",
+					},
+					{
+						Key:        "top_logprobs",
+						Label:      "Top Logprobs",
+						Type:       SettingSlider,
+						Min:        fPtr(0),
+						Max:        fPtr(20),
+						Step:       fPtr(1),
+						Group:      "sampling",
+						ValidRange: "0 – 20",
+					},
+					{
+						Key:   "reasoning_effort",
+						Label: "Reasoning Effort",
+						Type:  SettingSelect,
+						Scope: ScopePerMode,
+						Options: []SelectOption{
+							{Value: "", Label: "Default"},
+							{Value: "high", Label: "High"},
+							{Value: "low", Label: "Low"},
+						},
+						Group:       "reasoning",
+						Description: "Controls reasoning depth (GLM-4.5+ only). Only applies in thinking mode.",
+					},
+					{
+						Key:         "clear_thinking",
+						Label:       "Clear Thinking",
+						Type:        SettingToggle,
+						Default:     true,
+						Group:       "reasoning",
+						Description: "Clear reasoning_content from previous turns (default: true). Only applies in thinking mode.",
+					},
+					{
+						Key:         "stop",
+						Label:       "Stop Sequences",
+						Type:        SettingText,
+						Group:       "output",
+						Description: "Custom stop sequence (max 1 for ZAI).",
+					},
+					{
+						Key:   "response_format",
+						Label: "Response Format",
+						Type:  SettingSelect,
+						Group: "output",
+						Options: []SelectOption{
+							{Value: "", Label: "Default"},
+							{Value: "json_object", Label: "JSON"},
+						},
+						Description: "Force JSON output format.",
+					},
+					{
+						Key:   "api_line",
+						Label: "API Line",
+						Type:  SettingSelect,
+						Group: "provider",
+						Options: []SelectOption{
+							{Value: "international", Label: "International"},
+							{Value: "coding-plan", Label: "Coding Plan"},
+							{Value: "china", Label: "China"},
+						},
+						Default:     "international",
+						Description: "ZAI API endpoint region.",
+					},
+					{
+						Key:         "user_id",
+						Label:       "User ID",
+						Type:        SettingText,
+						Group:       "provider",
+						Description: "Unique end-user ID (6–128 characters).",
+					},
+					{
+						Key:         "request_id",
+						Label:       "Request ID",
+						Type:        SettingText,
+						Group:       "provider",
+						Description: "Unique request ID (optional).",
+					},
+				},
+			},
+			ModifyRequest: func(req *Request, result map[string]interface{}) {
+				isThinking := req.Thinking != nil && req.Thinking.Type == "enabled"
+
+				if isThinking {
+					thinkingConfig := map[string]interface{}{"type": "enabled"}
+					if !req.SettingBool("clear_thinking") {
+						thinkingConfig["clear_thinking"] = false
+					}
+					result["thinking"] = thinkingConfig
+					effort := req.SettingString("reasoning_effort")
+					if effort == "" && req.Thinking.ReasoningEffort != "" {
+						effort = req.Thinking.ReasoningEffort
+					}
+					if effort != "" {
+						result["reasoning_effort"] = effort
+					}
+					delete(result, "temperature")
+					delete(result, "top_p")
+				} else {
+					result["temperature"] = req.SettingFloat("temperature")
+					tp := req.SettingFloat("top_p")
+					if tp == 0 {
+						tp = 0.95
+					}
+					result["top_p"] = tp
+				}
+
+				if !req.SettingBool("do_sample") {
+					result["do_sample"] = false
+				}
+
+				if len(req.Tools) > 0 {
+					result["tool_stream"] = true
+				}
+
+				if stop := req.SettingString("stop"); stop != "" {
+					result["stop"] = []string{stop}
+				}
+
+				if rf := req.SettingString("response_format"); rf != "" {
+					result["response_format"] = map[string]string{"type": rf}
+				}
+
+				logprobs := req.SettingBool("logprobs")
+				if !logprobs {
+					logprobs = req.Logprobs
+				}
+				if logprobs {
+					result["logprobs"] = true
+					topLogprobs := int(req.SettingFloat("top_logprobs"))
+					if topLogprobs == 0 {
+						topLogprobs = req.TopLogprobs
+					}
+					if topLogprobs > 0 {
+						result["top_logprobs"] = topLogprobs
+					}
+				}
+
+				if userID := req.SettingString("user_id"); userID != "" {
+					result["user_id"] = userID
+				}
+				if requestID := req.SettingString("request_id"); requestID != "" {
+					result["request_id"] = requestID
+				}
+			},
+		}),
 	}
 }
 
-func (h *ZAIHandler) getConfig(req *Request) (baseURL, apiKey string) {
-	baseURL = h.baseURL
-	apiKey = h.apiKey
+func (h *ZAIHandler) resolveBaseURL(req *Request) string {
 	if req.Provider.BaseURL != "" {
-		baseURL = req.Provider.BaseURL
+		return req.Provider.BaseURL
 	}
-	if baseURL == "" {
-		switch h.apiLine {
-		case "china":
-			baseURL = "https://open.bigmodel.cn/api/paas/v4"
-		case "coding-plan":
-			baseURL = "https://api.z.ai/api/coding/paas/v4"
-		default:
-			baseURL = "https://api.z.ai/api/paas/v4"
-		}
+	switch req.SettingString("api_line") {
+	case "china":
+		return "https://open.bigmodel.cn/api/paas/v4"
+	case "coding-plan":
+		return "https://api.z.ai/api/coding/paas/v4"
+	default:
+		return "https://api.z.ai/api/paas/v4"
 	}
-	if req.Provider.APIKey != "" {
-		apiKey = req.Provider.APIKey
-	}
-	return
 }
 
 func (h *ZAIHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
-	baseURL, apiKey := h.getConfig(req)
-	zaiReq := h.buildRequest(req, false)
-
-	reqBody, err := json.Marshal(zaiReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/chat/completions", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	h.setHeaders(httpReq, apiKey)
-
-	resp, err := h.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var openaiResp map[string]interface{}
-	if err := json.Unmarshal(body, &openaiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return h.convertResponse(openaiResp), nil
+	h.inner.config.BaseURL = h.resolveBaseURL(req)
+	return h.inner.Send(ctx, req)
 }
 
 func (h *ZAIHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	baseURL, apiKey := h.getConfig(req)
-	zaiReq := h.buildRequest(req, true)
-
-	reqBody, err := json.Marshal(zaiReq)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/chat/completions", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	h.setHeaders(httpReq, apiKey)
-	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("Cache-Control", "no-cache")
-
-	resp, err := h.httpClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	return h.parseSSEStream(resp.Body, callback)
+	h.inner.config.BaseURL = h.resolveBaseURL(req)
+	return h.inner.Stream(ctx, req, callback)
 }
 
-func (h *ZAIHandler) setHeaders(httpReq *http.Request, apiKey string) {
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("HTTP-Referer", "https://dirac.run")
-	httpReq.Header.Set("X-Title", "Dirac")
-	if apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	}
+func (h *ZAIHandler) Capabilities() *ProviderInfo {
+	return h.inner.Capabilities()
 }
 
-func (h *ZAIHandler) buildRequest(req *Request, stream bool) map[string]interface{} {
-	// Reuse OpenAI message conversion
-	openai := &OpenAIHandler{}
-	messages := openai.convertMessages(req)
+func (h *ZAIHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	result := &ValidateSettingsResult{Settings: make(map[string]SettingValidation)}
+	isThinking := thinking != nil && thinking.Type == "enabled"
 
-	model := req.Provider.Model
-	if req.ModelOverride != "" {
-		model = req.ModelOverride
-	}
-	if model == "" {
-		model = "glm-5"
-	}
+	for _, s := range h.inner.Capabilities().Settings {
+		val := settings[s.Key]
+		v := SettingValidation{Status: StatusActive}
 
-	result := map[string]interface{}{
-		"model":       model,
-		"messages":    messages,
-		"temperature": 0,
-	}
-
-	if stream {
-		result["stream"] = true
-		result["stream_options"] = map[string]interface{}{"include_usage": true}
-	}
-
-	if req.MaxTokens > 0 {
-		result["max_tokens"] = req.MaxTokens
-	}
-	if req.TopP > 0 {
-		result["top_p"] = req.TopP
-	}
-
-	// ZAI thinking: { type: "enabled" } (no budget_tokens)
-	if req.Thinking != nil && req.Thinking.BudgetTokens > 0 {
-		result["thinking"] = map[string]interface{}{
-			"type": "enabled",
+		// Clamp slider values to [min, max]
+		if s.Type == SettingSlider {
+			num := toFloat(val)
+			clamped := num
+			if s.Min != nil {
+				clamped = math.Max(clamped, *s.Min)
+			}
+			if s.Max != nil {
+				clamped = math.Min(clamped, *s.Max)
+			}
+			if clamped != num {
+				v.Value = clamped
+			}
+			val = clamped
 		}
-	}
 
-	// Tools with tool_stream
-	if len(req.Tools) > 0 {
-		var tools []map[string]interface{}
-		for _, toolJSON := range req.Tools {
-			var tool struct {
-				Name        string          `json:"name"`
-				Description string          `json:"description"`
-				InputSchema json.RawMessage `json:"input_schema"`
+		// Active/inactive based on thinking mode
+		if isThinking {
+			switch s.Key {
+			case "temperature", "top_p", "do_sample":
+				v.Status = StatusInactive
+				v.Message = "Ignored in thinking mode"
 			}
-			if err := json.Unmarshal(toolJSON, &tool); err != nil {
-				continue
+		} else {
+			switch s.Key {
+			case "reasoning_effort", "clear_thinking":
+				v.Status = StatusInactive
+				v.Message = "Only applies in thinking mode"
 			}
-			var inputSchema interface{}
-			if len(tool.InputSchema) > 0 {
-				json.Unmarshal(tool.InputSchema, &inputSchema)
-			}
-			if inputSchema == nil {
-				inputSchema = map[string]interface{}{"type": "object"}
-			}
-			tools = append(tools, map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        tool.Name,
-					"description": tool.Description,
-					"parameters":  inputSchema,
-				},
-			})
 		}
-		if len(tools) > 0 {
-			result["tools"] = tools
-			result["tool_choice"] = "auto"
-			result["tool_stream"] = true
-		}
-	}
 
+		// ZAI: stop is limited to 1 sequence
+		if s.Key == "stop" {
+			if stopSeq, ok := val.(string); ok && strings.Contains(stopSeq, ",") {
+				v.Error = "ZAI supports only 1 stop sequence"
+				v.Value = strings.Split(stopSeq, ",")[0]
+			}
+		}
+
+		// response_format: only "json_object" is valid
+		if s.Key == "response_format" {
+			if rf, ok := val.(string); ok && rf != "" && rf != "json_object" {
+				v.Error = "Must be 'json_object' or empty"
+				v.Value = ""
+			}
+		}
+
+		// reasoning_effort: only "high" or "low"
+		if s.Key == "reasoning_effort" {
+			if effort, ok := val.(string); ok && effort != "" && effort != "high" && effort != "low" {
+				v.Error = "Must be 'high' or 'low'"
+				v.Value = "high"
+			}
+		}
+
+		// user_id: 6–128 characters
+		if s.Key == "user_id" {
+			if uid, ok := val.(string); ok && len(uid) > 0 && (len(uid) < 6 || len(uid) > 128) {
+				v.Error = "Must be 6–128 characters"
+				v.Value = ""
+			}
+		}
+
+		// Cross-parameter: logprobs requires top_logprobs > 0
+		if s.Key == "top_logprobs" && toFloat(settings["logprobs"]) != 0 {
+			num := toFloat(val)
+			if num <= 0 {
+				v.Error = "Must be > 0 when logprobs is enabled"
+				v.Value = float64(1)
+			}
+		}
+
+		result.Settings[s.Key] = v
+	}
 	return result
 }
 
-func (h *ZAIHandler) parseSSEStream(body io.Reader, callback func(StreamChunk) error) error {
-	type toolCallState struct {
-		id   string
-		name string
-	}
-	toolCalls := make(map[int]*toolCallState)
-
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			callback(StreamChunk{Type: "complete"})
-			return nil
-		}
-
-		var chunk struct {
-			Choices []struct {
-				Delta struct {
-					Content          string `json:"content"`
-					ReasoningContent string `json:"reasoning_content"`
-					ToolCalls        []struct {
-						Index    int    `json:"index"`
-						ID       string `json:"id"`
-						Type     string `json:"type"`
-						Function struct {
-							Name      string `json:"name"`
-							Arguments string `json:"arguments"`
-						} `json:"function"`
-					} `json:"tool_calls"`
-				} `json:"delta"`
-				FinishReason *string `json:"finish_reason"`
-			} `json:"choices"`
-			Usage struct {
-				PromptTokens int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				PromptTokensDetails struct {
-					CachedTokens int `json:"cached_tokens"`
-				} `json:"prompt_tokens_details"`
-				CompletionTokensDetails struct {
-					ReasoningTokens int `json:"reasoning_tokens"`
-				} `json:"completion_tokens_details"`
-			} `json:"usage"`
-		}
-
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
-		}
-
-		if len(chunk.Choices) == 0 {
-			if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-				usage := &Usage{
-					InputTokens:          chunk.Usage.PromptTokens,
-					OutputTokens:         chunk.Usage.CompletionTokens,
-					CacheReadInputTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
-					ReasoningTokens:      chunk.Usage.CompletionTokensDetails.ReasoningTokens,
-				}
-				callback(StreamChunk{Type: "stop", Usage: usage})
-			}
-			continue
-		}
-
-		choice := chunk.Choices[0]
-		delta := choice.Delta
-
-		if delta.Content != "" {
-			callback(StreamChunk{Type: "delta", TextDelta: delta.Content})
-		}
-
-		if delta.ReasoningContent != "" {
-			callback(StreamChunk{Type: "delta", Thinking: delta.ReasoningContent})
-		}
-
-		for _, tc := range delta.ToolCalls {
-			idx := tc.Index
-			state, ok := toolCalls[idx]
-			if !ok {
-				state = &toolCallState{}
-				toolCalls[idx] = state
-			}
-			if tc.ID != "" {
-				state.id = tc.ID
-			}
-			if tc.Function.Name != "" {
-				state.name = tc.Function.Name
-			}
-			if state.id != "" && state.name != "" && tc.Function.Arguments != "" {
-				callback(StreamChunk{
-					Type:      "delta",
-					Index:     idx,
-					JSONDelta: tc.Function.Arguments,
-					ToolCallID:   state.id,
-					ToolCallName: state.name,
-				})
-			}
-		}
-
-		if choice.FinishReason != nil {
-			finishReason := *choice.FinishReason
-			usage := &Usage{}
-			if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-				usage.InputTokens = chunk.Usage.PromptTokens
-				usage.OutputTokens = chunk.Usage.CompletionTokens
-				usage.CacheReadInputTokens = chunk.Usage.PromptTokensDetails.CachedTokens
-				usage.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
-			}
-			callback(StreamChunk{Type: "stop", FinishReason: mapZAIFinishReason(finishReason), Usage: usage})
-		}
-	}
-
-	return nil
-}
-
-func (h *ZAIHandler) convertResponse(resp map[string]interface{}) *SendResult {
-	var content []ContentBlock
-
-	if choices, ok := resp["choices"].([]interface{}); ok && len(choices) > 0 {
-		if choice, ok := choices[0].(map[string]interface{}); ok {
-			if msg, ok := choice["message"].(map[string]interface{}); ok {
-				if text, ok := msg["content"].(string); ok && text != "" {
-					content = append(content, ContentBlock{Type: "text", Text: text})
-				}
-				if toolCalls, ok := msg["tool_calls"].([]interface{}); ok {
-					for _, tc := range toolCalls {
-						if tcMap, ok := tc.(map[string]interface{}); ok {
-							id, _ := tcMap["id"].(string)
-							if fn, ok := tcMap["function"].(map[string]interface{}); ok {
-								name, _ := fn["name"].(string)
-								args, _ := fn["arguments"].(string)
-								content = append(content, ContentBlock{
-									Type: "tool_use",
-									ToolUse: &ToolUseBlock{
-										ID:   id,
-										Type: "tool_use",
-										Function: struct {
-											Name      string `json:"name"`
-											Arguments string `json:"arguments"`
-										}{Name: name, Arguments: args},
-									},
-								})
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	usage := &Usage{}
-	if usageMap, ok := resp["usage"].(map[string]interface{}); ok {
-		if tokens, ok := usageMap["prompt_tokens"].(float64); ok {
-			usage.InputTokens = int(tokens)
-		}
-		if tokens, ok := usageMap["completion_tokens"].(float64); ok {
-			usage.OutputTokens = int(tokens)
-		}
-	}
-
-	stopReason := ""
-	if choices, ok := resp["choices"].([]interface{}); ok && len(choices) > 0 {
-		if choice, ok := choices[0].(map[string]interface{}); ok {
-			if sr, ok := choice["finish_reason"].(string); ok {
-				stopReason = mapZAIFinishReason(sr)
-			}
-		}
-	}
-
-	return &SendResult{
-		Content:    content,
-		Usage:      usage,
-		StopReason: stopReason,
-	}
-}
-
-// mapZAIFinishReason maps ZAI-specific finish reasons to standard ones.
-// ZAI returns "model_context_window_exceeded" instead of "length" when context is full.
-func mapZAIFinishReason(reason string) string {
-	switch reason {
-	case "model_context_window_exceeded":
-		return "length"
-	default:
-		return reason
-	}
-}
-
-// Ensure ZAIHandler satisfies Handler
-var _ Handler = (*ZAIHandler)(nil)
+var _ SettingsValidator = (*ZAIHandler)(nil)

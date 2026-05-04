@@ -110,7 +110,6 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	sapAiCoreBaseUrl: { default: undefined as string | undefined },
 	sapAiCoreUseOrchestrationMode: { default: true as boolean },
 	difyBaseUrl: { default: undefined as string | undefined },
-	zaiApiLine: { default: undefined as string | undefined },
 	minimaxApiLine: { default: undefined as string | undefined },
 	aihubmixBaseUrl: { default: undefined as string | undefined },
 	aihubmixAppCode: { default: undefined as string | undefined },

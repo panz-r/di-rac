@@ -240,6 +240,7 @@ function createHandlerForProvider(
 				apiKey: options.zaiApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				thinkingBudgetTokens,
+				settings: providerSettings,
 			})
 		case "minimax":
 			return gatewayHandler("minimax", {

@@ -64,6 +64,22 @@ func (r *Request) SettingBool(key string) bool {
 	return false
 }
 
+// SettingInt returns a setting value as int64, or 0 if not set.
+func (r *Request) SettingInt(key string) int64 {
+	if r.Settings == nil {
+		return 0
+	}
+	if v, ok := r.Settings[key]; ok {
+		if f, ok := v.(float64); ok {
+			return int64(f)
+		}
+		if i, ok := v.(int64); ok {
+			return i
+		}
+	}
+	return 0
+}
+
 // ProviderConfig contains the provider-specific configuration
 type ProviderConfig struct {
 	ID        string `json:"id"`
