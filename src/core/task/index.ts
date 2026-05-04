@@ -955,8 +955,7 @@ export class Task {
 			browserSettings: this.stateManager.getGlobalSettingsKey("browserSettings"),
 			yoloModeToggled: this.stateManager.getGlobalSettingsKey("yoloModeToggled"),
 			subagentsEnabled: this.stateManager.getGlobalSettingsKey("subagentsEnabled"),
-			diracWebToolsEnabled:
-				this.stateManager.getGlobalSettingsKey("diracWebToolsEnabled") && featureFlagsService.getWebtoolsEnabled(),
+			diracWebToolsEnabled: this.stateManager.getGlobalSettingsKey("diracWebToolsEnabled"),
 			isMultiRootEnabled: multiRootEnabled,
 			workspaceRoots,
 			isSubagentRun: false,

@@ -4,7 +4,6 @@ import { createToolError } from "@shared/tool-response"
 import axios from "axios"
 import { DiracEnv } from "@/config"
 import { buildDiracExtraHeaders } from "@/services/EnvUtils"
-import { featureFlagsService } from "@/services/feature-flags"
 import { telemetryService } from "@/services/telemetry"
 import { parsePartialArrayString } from "@/shared/array"
 import { DIRAC_ACCOUNT_AUTH_ERROR_MESSAGE } from "@/shared/DiracAccount"
@@ -56,10 +55,9 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 			const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
 			const provider = (currentMode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-			// Check if Dirac web tools are enabled (both user setting and feature flag)
+			// Check if Dirac web tools are enabled
 			const diracWebToolsEnabled = config.services.stateManager.getGlobalSettingsKey("diracWebToolsEnabled")
-			const featureFlagEnabled = featureFlagsService.getWebtoolsEnabled()
-			if (provider !== "dirac" || !diracWebToolsEnabled || !featureFlagEnabled) {
+			if (provider !== "dirac" || !diracWebToolsEnabled) {
 				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Dirac web tools are currently disabled.", "unrecoverable"))
 			}
 

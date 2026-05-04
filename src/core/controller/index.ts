@@ -22,8 +22,6 @@ import { DiracEnv } from "@/config"
 import type { FolderLockWithRetryResult } from "@/core/locks/types"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
-import { BannerService } from "@/services/banner/BannerService"
-import { featureFlagsService } from "@/services/feature-flags"
 import { getDistinctId } from "@/services/logging/distinctId"
 import { telemetryService } from "@/services/telemetry"
 import { DiracExtensionContext } from "@/shared/dirac"
@@ -98,7 +96,6 @@ export class Controller {
 				await this.postStateToWebview()
 			},
 		})
-		BannerService.initialize(this)
 
 		// Check CLI installation status once on startup
 		checkCliInstallation(this)
@@ -653,8 +650,8 @@ export class Controller {
 		const version = ExtensionRegistryInfo.version
 		const diracConfig = DiracEnv.config()
 		const environment = diracConfig.environment
-		const banners = BannerService.get().getActiveBanners() ?? []
-		const welcomeBanners = BannerService.get().getWelcomeBanners() ?? []
+		const banners: any[] = []
+		const welcomeBanners: any[] = []
 
 		// Check OpenAI Codex authentication status
 		const { openAiCodexOAuthManager } = await import("@/integrations/openai-codex/oauth")
@@ -715,11 +712,11 @@ export class Controller {
 			},
 			diracWebToolsEnabled: {
 				user: this.stateManager.getGlobalSettingsKey("diracWebToolsEnabled"),
-				featureFlag: featureFlagsService.getWebtoolsEnabled(),
+				featureFlag: true,
 			},
 			worktreesEnabled: {
 				user: this.stateManager.getGlobalSettingsKey("worktreesEnabled"),
-				featureFlag: featureFlagsService.getWorktreesEnabled(),
+				featureFlag: false,
 			},
 			hooksEnabled: getHooksEnabledSafe(this.stateManager.getGlobalSettingsKey("hooksEnabled")),
 			lastDismissedInfoBannerVersion,
