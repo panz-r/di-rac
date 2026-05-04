@@ -1,4 +1,6 @@
 import { ApiConfiguration, ModelInfo, openAiModelInfoSaneDefaults, QwenApiRegions } from "@shared/api"
+import { queryProviderInfo, type ProviderSetting } from "@/core/api/providers/api-gateway"
+import { getSettingsForMode } from "@shared/storage/provider-settings" 
 import { Mode } from "@shared/storage/types"
 import { getRoleStateKey } from "@shared/roles"
 import type { ModelRole } from "@shared/roles"
@@ -44,6 +46,29 @@ export interface SingleCompletionHandler {
 	completePrompt(prompt: string): Promise<string>
 }
 
+// Extract provider-mode settings from the flat providerSettings map.
+function extractProviderSettings(
+	store: Record<string, unknown>,
+	providerId: string,
+	mode: "act" | "plan",
+): Record<string, unknown> {
+	const result: Record<string, unknown> = {}
+	const globalPrefix = `${providerId}:global:`
+	const modePrefix = `${providerId}:${mode}:`
+	for (const [key, value] of Object.entries(store)) {
+		if (key.startsWith(modePrefix)) {
+			const settingKey = key.slice(modePrefix.length)
+			result[settingKey] = value
+		} else if (key.startsWith(globalPrefix)) {
+			const settingKey = key.slice(globalPrefix.length)
+			if (!(settingKey in result)) {
+				result[settingKey] = value
+			}
+		}
+	}
+	return result
+}
+
 // Helper: create an ApiGatewayHandler for a provider that has been migrated to the Go gateway.
 function gatewayHandler(
 	providerId: string,
@@ -53,6 +78,7 @@ function gatewayHandler(
 		model?: string
 		thinkingBudgetTokens?: number
 		reasoningEffort?: string
+		settings?: Record<string, unknown>
 	},
 ): ApiGatewayHandler {
 	return new ApiGatewayHandler({
@@ -63,6 +89,7 @@ function gatewayHandler(
 		thinkingBudgetTokens: opts.thinkingBudgetTokens,
 		enableThinking: true,
 		reasoningEffort: opts.reasoningEffort,
+		settings: opts.settings,
 	})
 }
 
@@ -76,6 +103,8 @@ function createHandlerForProvider(
 		mode === "plan" ? options.planModeThinkingBudgetTokens : options.actModeThinkingBudgetTokens
 	const reasoningEffort =
 		mode === "plan" ? options.planModeReasoningEffort : options.actModeReasoningEffort
+	const providerSettingsStore = (options.providerSettings || {}) as Record<string, unknown>
+	const providerSettings = extractProviderSettings(providerSettingsStore, apiProvider || "", mode)
 
 	switch (apiProvider) {
 		// --- Go gateway providers ---
@@ -118,6 +147,7 @@ function createHandlerForProvider(
 				apiKey: options.deepSeekApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				reasoningEffort,
+				settings: providerSettings,
 			})
 		case "requesty":
 			return gatewayHandler("requesty", {

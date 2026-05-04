@@ -13,7 +13,8 @@ import { Box, Text, useInput } from "ink"
 import Spinner from "ink-spinner"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import { buildApiHandler } from "@/core/api"
-import { queryProviderInfo, type ProviderInfo } from "@/core/api/providers/api-gateway"
+import { queryProviderInfo, queryValidateSettings, type ProviderInfo, type ProviderSetting, type ValidateSettingsResult } from "@/core/api/providers/api-gateway"
+import { getProviderSetting, setProviderSetting, type SettingScope } from "@shared/storage/provider-settings"
 import type { Controller } from "@/core/controller"
 import { StateManager } from "@/core/storage/StateManager"
 import { openAiCodexOAuthManager } from "@/integrations/openai-codex/oauth"
@@ -33,7 +34,7 @@ import { LanguagePicker } from "./LanguagePicker"
 import { CUSTOM_MODEL_ID, hasModelPicker, ModelPicker } from "./ModelPicker"
 import { Panel, PanelTab } from "./Panel"
 import { getProviderLabel, ProviderPicker } from "./ProviderPicker"
-import { ROLE_DESCRIPTORS, type ModelRole } from "@/shared/roles"
+import { ROLE_DESCRIPTORS, getRoleStateKey, type ModelRole } from "@/shared/roles"
 
 interface SettingsPanelContentProps {
 	onClose: () => void
@@ -50,7 +51,9 @@ interface ListItem {
 	value: string | boolean
 	description?: string
 	isSubItem?: boolean
+	indent?: number
 	parentKey?: string
+	disabled?: boolean
 }
 
 function normalizeReasoningEffort(value: unknown): OpenaiReasoningEffort {
@@ -64,6 +67,133 @@ function nextReasoningEffort(current: OpenaiReasoningEffort, options?: readonly 
 	const opts = options || OPENAI_REASONING_EFFORT_OPTIONS
 	const idx = opts.indexOf(current)
 	return (opts[(idx + 1) % opts.length] ?? opts[0]) as OpenaiReasoningEffort
+}
+
+// --- Generic dynamic settings helpers ---
+
+function buildDynamicItems(
+	settings: ProviderSetting[],
+	providerId: string,
+	mode: "act" | "plan",
+	stateManager: StateManager,
+	validation?: ValidateSettingsResult | null,
+): ListItem[] {
+	const items: ListItem[] = []
+	let currentGroup = ""
+
+	for (const setting of settings) {
+		const scope: SettingScope = setting.scope || "global"
+		const key = `dyn:${mode}:${setting.key}`
+		const label = setting.label || setting.key
+		const v = validation?.settings?.[setting.key]
+		const isInactive = v?.status === "inactive"
+		// Build description: combine setting description with validation info
+		let desc = setting.description || ""
+		if (v?.message) desc = v.message
+		if (v?.error) desc = (desc ? desc + " | " : "") + "Error: " + v.error
+		if (setting.valid_range) desc = (desc ? desc + " " : "") + `(${setting.valid_range})`
+
+		// Group header (indented under the role)
+		if (setting.group && setting.group !== currentGroup) {
+			currentGroup = setting.group
+			items.push({
+				key: `dynGroup:${setting.group}`,
+				label: setting.group.charAt(0).toUpperCase() + setting.group.slice(1),
+				type: "header",
+				value: "",
+				indent: 2,
+			})
+		}
+
+		switch (setting.type) {
+			case "select": {
+				const opts = setting.options || []
+				const val = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
+				const currentOpt = opts.find(o => o.value === val) || opts[0]
+				items.push({
+					key,
+					label,
+					type: "cycle",
+					value: currentOpt?.label || currentOpt?.value || "",
+					description: desc || undefined,
+					indent: 4,
+					disabled: isInactive,
+				})
+				break
+			}
+			case "toggle": {
+				const val = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
+				items.push({
+					key,
+					label,
+					type: "checkbox",
+					value: val !== undefined ? !!val : !!setting.default,
+					description: desc || undefined,
+					indent: 4,
+					disabled: isInactive,
+				})
+				break
+			}
+			case "slider": {
+				const min = setting.min ?? 0
+				const val = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
+				const numVal = typeof val === "number" ? val : (typeof setting.default === "number" ? setting.default : min)
+				items.push({
+					key,
+					label,
+					type: "editable",
+					value: String(numVal),
+					description: desc || undefined,
+					indent: 4,
+					disabled: isInactive,
+				})
+				break
+			}
+			case "text": {
+				const val = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
+				items.push({
+					key,
+					label,
+					type: "editable",
+					value: typeof val === "string" ? val : (typeof setting.default === "string" ? setting.default : ""),
+					description: desc || undefined,
+					indent: 4,
+					disabled: isInactive,
+				})
+				break
+			}
+		}
+	}
+	return items
+}
+
+
+function computeNextValue(
+	currentVal: unknown,
+	setting: ProviderSetting,
+): unknown {
+	switch (setting.type) {
+		case "select": {
+			const opts = setting.options || []
+			const currentStr = currentVal != null ? String(currentVal) : ""
+			const idx = opts.findIndex(o => o.value === currentStr)
+			const nextIdx = (idx + 1) % opts.length
+			return opts[nextIdx]?.value ?? ""
+		}
+		case "toggle":
+			return !currentVal
+		case "slider": {
+			const min = setting.min ?? 0
+			const max = setting.max ?? 100
+			const step = setting.step ?? 1
+			const current = typeof currentVal === "number" ? currentVal : min
+			const next = current + step
+			return next > max + 0.001 ? min : next
+		}
+		case "text":
+			return currentVal
+	}
+	return currentVal
 }
 
 const TABS: PanelTab[] = [
@@ -199,21 +329,51 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	const [modelRefreshKey, setModelRefreshKey] = useState(0)
 	const refreshModelIds = useCallback(() => setModelRefreshKey((k) => k + 1), [])
 
-		// Gateway-discovered provider capabilities
-		const [gatewayProviderInfo, setGatewayProviderInfo] = useState<ProviderInfo | null>(null)
+		// Gateway-discovered provider capabilities (cached per provider)
+		const [providerInfoCache, setProviderInfoCache] = useState<Record<string, ProviderInfo>>({})
 		useEffect(() => {
-			if (!provider) {
-				setGatewayProviderInfo(null)
-				return
-			}
-			queryProviderInfo(provider).then(setGatewayProviderInfo).catch(() => setGatewayProviderInfo(null))
+			if (!provider || provider in providerInfoCache) return
+			queryProviderInfo(provider).then((info) => {
+				if (info) setProviderInfoCache((prev) => ({ ...prev, [provider]: info }))
+			}).catch(() => {})
 		}, [provider])
 
-		// Extract reasoning effort options from gateway-discovered provider info
-		const gatewayReasoningEffortOptions = gatewayProviderInfo?.settings
-			?.find(s => s.key === "reasoning_effort" && s.type === "select")
-			?.options?.map(o => o.value).filter(Boolean)
-
+			// Validation results for dynamic settings (per provider+role)
+			const [validationCache, setValidationCache] = useState<Record<string, ValidateSettingsResult>>({})
+			useEffect(() => {
+				const info = providerInfoCache[provider]
+				if (!info?.settings?.length) return
+				const settingsStore = (stateManager.getGlobalSettingsKey("providerSettings") || {}) as Record<string, unknown>
+				// Query validation for each role
+				for (const desc of ROLE_DESCRIPTORS) {
+					const role = desc.role as "act" | "plan"
+					const settings: Record<string, unknown> = {}
+					for (const s of info.settings) {
+						const scope: SettingScope = s.scope || "global"
+						const modeKey = scope === "per-mode" ? role : "global"
+						const key = `${provider}:${modeKey}:${s.key}`
+						if (key in settingsStore) settings[s.key] = settingsStore[key]
+						else if (s.default !== undefined) settings[s.key] = s.default
+					}
+					const budgetKey = getRoleStateKey(desc.role, "thinkingBudgetTokens")
+					const budget = (stateManager as any).getGlobalSettingsKey(budgetKey) as number
+					const thinking = budget > 0 ? { type: "enabled", budget_tokens: budget } : undefined
+					queryValidateSettings(provider, settings, thinking).then((result) => {
+						if (result) {
+							setValidationCache((prev) => ({ ...prev, [provider + ":" + desc.role]: result }))
+							for (const [key, validation] of Object.entries(result.settings)) {
+								if (validation.value !== undefined) {
+									const setting = info.settings?.find(s => s.key === key)
+									if (setting) {
+										const scope: SettingScope = setting.scope || "global"
+										setProviderSetting(stateManager, provider, role, key, scope, validation.value)
+									}
+								}
+							}
+						}
+					}).catch(() => {})
+				}
+			}, [provider, providerInfoCache, actThinkingEnabled, planThinkingEnabled])
 
 	// Terminal size for virtual scrolling
 	const { rows: terminalRows } = useTerminalSize()
@@ -266,13 +426,12 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 
 	// Build items list based on current tab
 	const items: ListItem[] = useMemo(() => {
-		// Some providers/models expose reasoning effort instead of thinking budget controls.
-		const gatewaySupportsReasoningEffort = gatewayProviderInfo?.features?.supports_reasoning_effort ?? false
-		const providerUsesReasoningEffort = provider === "openai-native" || provider === "openai-codex"
-		const showActReasoningEffort = supportsReasoningEffortForModel(actModelId || "") || gatewaySupportsReasoningEffort
-		const showPlanReasoningEffort = supportsReasoningEffortForModel(planModelId || "") || gatewaySupportsReasoningEffort
-		const showActThinkingOption = !providerUsesReasoningEffort && !showActReasoningEffort
-		const showPlanThinkingOption = !providerUsesReasoningEffort && !showPlanReasoningEffort
+			// Legacy flags for providers without gateway-declared settings
+			const providerUsesReasoningEffort = provider === "openai-native" || provider === "openai-codex"
+			const showActReasoningEffort = supportsReasoningEffortForModel(actModelId || "")
+			const showPlanReasoningEffort = supportsReasoningEffortForModel(planModelId || "")
+			const showActThinkingOption = !providerUsesReasoningEffort && !showActReasoningEffort
+			const showPlanThinkingOption = !providerUsesReasoningEffort && !showPlanReasoningEffort
 
 		switch (currentTab) {
 				case "api":
@@ -308,15 +467,15 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 									type: "editable",
 									value: modelId || "not set",
 								})
-								// Thinking/reasoning for act/plan only
+																// Provider settings for act/plan roles
 								if (desc.role === "act" || desc.role === "plan") {
 									const mode = desc.role as "act" | "plan"
-									const isAct = mode === "act"
-									const showThinking = isAct ? showActThinkingOption : showPlanThinkingOption
-									const showReasoning = isAct ? showActReasoningEffort : showPlanReasoningEffort
-									const thinkingEnabled = isAct ? actThinkingEnabled : planThinkingEnabled
-									const reasoningVal = isAct ? actReasoningEffort : planReasoningEffort
-									if (showThinking) {
+									const roleProviderInfo = providerInfoCache[effectiveProvider]
+									if (roleProviderInfo?.settings?.length) {
+									// Dynamic: render settings from gateway-discovered schema
+									if (roleProviderInfo.features?.supports_thinking) {
+										const isAct = mode === "act"
+										const thinkingEnabled = isAct ? actThinkingEnabled : planThinkingEnabled
 										roleItems.push({
 											key: isAct ? "actThinkingEnabled" : "planThinkingEnabled",
 											label: "Enable thinking",
@@ -324,43 +483,60 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 											value: thinkingEnabled,
 										})
 									}
-									if (showReasoning) {
-										roleItems.push({
-											key: isAct ? "actReasoningEffort" : "planReasoningEffort",
-											label: "Reasoning effort",
-											type: "cycle",
-											value: reasoningVal,
-										})
+									roleItems.push(...buildDynamicItems(roleProviderInfo.settings, effectiveProvider, mode, stateManager, validationCache[effectiveProvider + ":" + desc.role]))
+									} else {
+										// Legacy: hardcoded thinking/reasoning for providers without gateway settings
+										const isAct = mode === "act"
+										const showThinking = isAct ? showActThinkingOption : showPlanThinkingOption
+										const showReasoning = isAct ? showActReasoningEffort : showPlanReasoningEffort
+										const thinkingEnabled = isAct ? actThinkingEnabled : planThinkingEnabled
+										const reasoningVal = isAct ? actReasoningEffort : planReasoningEffort
+										if (showThinking) {
+											roleItems.push({
+												key: isAct ? "actThinkingEnabled" : "planThinkingEnabled",
+												label: "Enable thinking",
+												type: "checkbox",
+												value: thinkingEnabled,
+											})
+										}
+										if (showReasoning) {
+											roleItems.push({
+												key: isAct ? "actReasoningEffort" : "planReasoningEffort",
+												label: "Reasoning effort",
+												type: "cycle",
+												value: reasoningVal,
+											})
+										}
 									}
 								}
-							}
-							// zai special entrypoint row
-							if (effectiveProvider === "zai" && desc.role === "act") {
-								roleItems.push({
-									key: "zaiApiLine",
-									label: "Entrypoint",
-									type: "cycle",
-									value: {
-										international: "api.z.ai",
-										"coding-plan": "Coding Plan",
-										china: "open.bigmodel.cn",
-									}[(stateManager.getGlobalSettingsKey("zaiApiLine") as string) || "international"] || "api.z.ai",
-								})
-							}
-							// codex auth status (act role only)
-							if (effectiveProvider === "openai-codex" && openAiCodexIsAuthenticated && desc.role === "act") {
-								roleItems.push({
-									key: "codexEmail",
-									label: "Authenticated as",
-									type: "readonly",
-									value: openAiCodexEmail || "ChatGPT User",
-								})
-								roleItems.push({
-									key: "codexSignOut",
-									label: "Sign Out",
-									type: "action",
-									value: "",
-								})
+								// zai special entrypoint row
+								if (effectiveProvider === "zai" && desc.role === "act") {
+									roleItems.push({
+										key: "zaiApiLine",
+										label: "Entrypoint",
+										type: "cycle",
+										value: {
+											international: "api.z.ai",
+											"coding-plan": "Coding Plan",
+											china: "open.bigmodel.cn",
+										}[(stateManager.getGlobalSettingsKey("zaiApiLine") as string) || "international"] || "api.z.ai",
+									})
+								}
+								// codex auth status (act role only)
+								if (effectiveProvider === "openai-codex" && openAiCodexIsAuthenticated && desc.role === "act") {
+									roleItems.push({
+										key: "codexEmail",
+										label: "Authenticated as",
+										type: "readonly",
+										value: openAiCodexEmail || "ChatGPT User",
+									})
+									roleItems.push({
+										key: "codexSignOut",
+										label: "Sign Out",
+										type: "action",
+										value: "",
+									})
+								}
 							}
 						}
 						return roleItems
@@ -483,7 +659,8 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		features,
 		preferredLanguage,
 		telemetry,
-		gatewayProviderInfo,
+		providerInfoCache,
+		validationCache,
 	])
 
 	// Reset selection when changing tabs
@@ -535,10 +712,27 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	// Handle toggle/edit for selected item
 	const handleAction = useCallback(() => {
 		const item = items[selectedIndex]
-		if (!item || item.type === "readonly" || item.type === "separator" || item.type === "header" || item.type === "spacer")
+		if (!item || item.type === "readonly" || item.type === "separator" || item.type === "header" || item.type === "spacer" || item.disabled)
 			return
 
 		if (item.type === "action") {
+			return
+		}
+
+		// Dynamic settings handler (dyn: prefix)
+		if ((item.type === "cycle" || item.type === "checkbox") && item.key.startsWith("dyn:")) {
+			const parts = item.key.split(":")
+			const mode = parts[1] as "act" | "plan"
+			const settingKey = parts.slice(2).join(":")
+			const setting = providerInfoCache[provider]?.settings?.find(s => s.key === settingKey)
+			if (setting) {
+				const scope: SettingScope = setting.scope || "global"
+				const currentVal = getProviderSetting(stateManager, provider, mode, setting.key, scope)
+				const nextVal = computeNextValue(currentVal, setting)
+				setProviderSetting(stateManager, provider, mode, setting.key, scope, nextVal)
+				refreshModelIds()
+				rebuildTaskApi()
+			}
 			return
 		}
 
@@ -560,7 +754,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			const targetMode = item.key === "actReasoningEffort" ? "act" : item.key === "planReasoningEffort" ? "plan" : undefined
 			if (targetMode) {
 				const currentEffort = targetMode === "act" ? actReasoningEffort : planReasoningEffort
-				setReasoningEffortForMode(targetMode, nextReasoningEffort(currentEffort, gatewayReasoningEffortOptions))
+				setReasoningEffortForMode(targetMode, nextReasoningEffort(currentEffort))
 			}
 			return
 		}
@@ -710,7 +904,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		planReasoningEffort,
 		rebuildTaskApi,
 		setReasoningEffortForMode,
-		gatewayReasoningEffortOptions,
 	])
 
 	// Handle completion of the Bedrock custom ARN flow (ARN + base model selected)
@@ -990,7 +1183,31 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	// Handle saving edited value
 	const handleSave = useCallback(() => {
 		const item = items[selectedIndex]
-		if (!item) return
+		if (!item || item.disabled) return
+
+		// Dynamic settings editable handler
+		if (item.key.startsWith("dyn:")) {
+			const parts = item.key.split(":")
+			const mode = parts[1] as "act" | "plan"
+			const settingKey = parts.slice(2).join(":")
+			const setting = providerInfoCache[provider]?.settings?.find(s => s.key === settingKey)
+			if (setting) {
+				const scope: SettingScope = setting.scope || "global"
+				let val: unknown = editValue
+				if (setting.type === "slider") {
+					const num = parseFloat(editValue)
+					if (isNaN(num)) { setIsEditing(false); return }
+					const min = setting.min ?? -Infinity
+					const max = setting.max ?? Infinity
+					val = Math.min(max, Math.max(min, num))
+				}
+				setProviderSetting(stateManager, provider, mode, setting.key, scope, val)
+				refreshModelIds()
+				rebuildTaskApi()
+			}
+			setIsEditing(false)
+			return
+		}
 
 		switch (item.key) {
 			case "actModelId":
@@ -1395,12 +1612,12 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 
 					if (item.type === "checkbox") {
 						return (
-							<Box key={item.key} marginLeft={item.isSubItem ? 2 : 0}>
+							<Box key={item.key} marginLeft={item.indent ?? (item.isSubItem ? 2 : 0)}>
 								<Checkbox
 									checked={Boolean(item.value)}
 									description={item.description}
 									isSelected={isSelected}
-									label={item.label}
+									label={item.disabled ? item.label + " (inactive)" : item.label}
 								/>
 							</Box>
 						)
@@ -1421,31 +1638,35 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 
 					if (item.type === "cycle") {
 						return (
-							<Text key={item.key}>
+							<Box key={item.key} marginLeft={item.indent ?? (item.isSubItem ? 2 : 0)}>
+							<Text>
 								<Text bold color={isSelected ? COLORS.primaryBlue : undefined}>
 									{isSelected ? "❯" : " "}{" "}
 								</Text>
-								<Text color={isSelected ? COLORS.primaryBlue : "white"}>{item.label}: </Text>
-								<Text color={COLORS.primaryBlue}>
+								<Text color={item.disabled ? "gray" : (isSelected ? COLORS.primaryBlue : "white")}>{`${item.label}${item.disabled ? " (inactive)" : ""}: `}</Text>
+								<Text color={item.disabled ? "gray" : COLORS.primaryBlue}>
 									{typeof item.value === "string" ? item.value : String(item.value)}
 								</Text>
-								{isSelected && <Text color="gray"> (Tab to cycle)</Text>}
+								{isSelected && !item.disabled && <Text color="gray"> (Tab to cycle)</Text>}
 							</Text>
+							</Box>
 						)
 					}
 
 					// Readonly or editable field
 					return (
-						<Text key={item.key}>
-							<Text bold color={isSelected ? COLORS.primaryBlue : undefined}>
-								{isSelected ? "❯" : " "}{" "}
+						<Box key={item.key} marginLeft={item.indent ?? (item.isSubItem ? 2 : 0)}>
+							<Text>
+								<Text bold color={isSelected ? COLORS.primaryBlue : undefined}>
+									{isSelected ? "❯" : " "}{" "}
+								</Text>
+								{item.label && <Text color={item.disabled ? "gray" : (isSelected ? COLORS.primaryBlue : "white")}>{`${item.label}${item.disabled ? " (inactive)" : ""}: `}</Text>}
+								<Text color={item.disabled ? "gray" : (item.type === "readonly" ? "gray" : COLORS.primaryBlue)}>
+									{typeof item.value === "string" ? item.value : String(item.value)}
+								</Text>
+								{item.type === "editable" && isSelected && !item.disabled && <Text color="gray"> (Tab to edit)</Text>}
 							</Text>
-							{item.label && <Text color={isSelected ? COLORS.primaryBlue : "white"}>{item.label}: </Text>}
-							<Text color={item.type === "readonly" ? "gray" : COLORS.primaryBlue}>
-								{typeof item.value === "string" ? item.value : String(item.value)}
-							</Text>
-							{item.type === "editable" && isSelected && <Text color="gray"> (Tab to edit)</Text>}
-						</Text>
+						</Box>
 					)
 				})}
 				{scrollEnd < items.length && <Text color="gray">{`  ↓ ${items.length - scrollEnd} more below`}</Text>}

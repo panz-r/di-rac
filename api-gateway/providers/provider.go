@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 )
 
 // Request represents a standardized API request
@@ -23,6 +24,44 @@ type Request struct {
 	TopLogprobs      int     `json:"top_logprobs,omitempty"`
 	PresencePenalty  float64 `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float64 `json:"frequency_penalty,omitempty"`
+	Settings         map[string]interface{} `json:"settings,omitempty"`
+}
+
+// SettingString returns a setting value as string, or "" if not set.
+func (r *Request) SettingString(key string) string {
+	if r.Settings == nil {
+		return ""
+	}
+	if v, ok := r.Settings[key]; ok {
+		return fmt.Sprint(v)
+	}
+	return ""
+}
+
+// SettingFloat returns a setting value as float64, or 0 if not set.
+func (r *Request) SettingFloat(key string) float64 {
+	if r.Settings == nil {
+		return 0
+	}
+	if v, ok := r.Settings[key]; ok {
+		if f, ok := v.(float64); ok {
+			return f
+		}
+	}
+	return 0
+}
+
+// SettingBool returns a setting value as bool, or false if not set.
+func (r *Request) SettingBool(key string) bool {
+	if r.Settings == nil {
+		return false
+	}
+	if v, ok := r.Settings[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
 }
 
 // ProviderConfig contains the provider-specific configuration
@@ -194,6 +233,69 @@ func (r *Registry) GetCapabilities(providerID string) *ProviderInfo {
 		return ch.Capabilities()
 	}
 	return nil
+}
+
+// ValidateSettings validates the given settings for a provider, returning
+// per-parameter status, corrected values, and error messages.
+// If the handler implements SettingsValidator, delegates to it.
+// Otherwise, performs generic validation from the ProviderInfo schema.
+func (r *Registry) ValidateSettings(providerID string, settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	handler, ok := r.handlers[providerID]
+	if !ok {
+		return nil
+	}
+	if sv, ok := handler.(SettingsValidator); ok {
+		return sv.ValidateSettings(settings, thinking)
+	}
+	// Generic validation from ProviderInfo schema
+	info := r.GetCapabilities(providerID)
+	if info == nil || len(info.Settings) == 0 {
+		return nil
+	}
+	result := &ValidateSettingsResult{Settings: make(map[string]SettingValidation)}
+	for _, s := range info.Settings {
+		v := SettingValidation{Status: StatusActive}
+		if s.Type == SettingSlider {
+			num := toFloat(settings[s.Key])
+			if num == 0 {
+				num = floatDefault(s.Default, 0)
+			}
+			clamped := num
+			if s.Min != nil {
+				clamped = math.Max(clamped, *s.Min)
+			}
+			if s.Max != nil {
+				clamped = math.Min(clamped, *s.Max)
+			}
+			if clamped != num {
+				v.Value = clamped
+			}
+		}
+		result.Settings[s.Key] = v
+	}
+	return result
+}
+
+// toFloat converts an interface{} to float64.
+func toFloat(v interface{}) float64 {
+	if v == nil {
+		return 0
+	}
+	if f, ok := v.(float64); ok {
+		return f
+	}
+	return 0
+}
+
+// floatDefault returns the float64 value of def, or fallback.
+func floatDefault(def interface{}, fallback float64) float64 {
+	if def == nil {
+		return fallback
+	}
+	if f, ok := def.(float64); ok {
+		return f
+	}
+	return fallback
 }
 
 // Register registers a handler for a provider

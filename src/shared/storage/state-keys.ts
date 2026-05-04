@@ -210,6 +210,9 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	// Deprecated model settings
 	hicapModelId: { default: undefined as string | undefined },
 	lmStudioModelId: { default: undefined as string | undefined },
+
+	// Generic provider settings discovered from gateway (key: "providerId:mode:settingKey")
+	providerSettings: { default: {} as Record<string, unknown> },
 } satisfies FieldDefinitions
 
 const USER_SETTINGS_FIELDS = {

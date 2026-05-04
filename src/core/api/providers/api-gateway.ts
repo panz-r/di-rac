@@ -83,6 +83,7 @@ interface GatewayRequest {
 	top_logprobs?: number
 	presence_penalty?: number
 	frequency_penalty?: number
+	settings?: Record<string, unknown>
 }
 
 interface GatewayResponse {
@@ -129,6 +130,7 @@ export class ApiGatewayHandler implements ApiHandler {
 			thinkingBudgetTokens?: number
 			enableThinking?: boolean
 			reasoningEffort?: string
+			settings?: Record<string, unknown>
 		},
 	) {
 		this.socketPath = process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
@@ -170,6 +172,10 @@ export class ApiGatewayHandler implements ApiHandler {
 				budget_tokens: this.options.thinkingBudgetTokens,
 				reasoning_effort: this.options.reasoningEffort || undefined,
 			}
+		}
+
+		if (this.options.settings && Object.keys(this.options.settings).length > 0) {
+			request.settings = this.options.settings
 		}
 
 		// Content block state tracking for streaming
@@ -539,6 +545,7 @@ export interface ProviderSetting {
 	key: string
 	label: string
 	type: "toggle" | "slider" | "select" | "text"
+	scope?: "global" | "per-mode"
 	default?: unknown
 	min?: number
 	max?: number
@@ -546,6 +553,7 @@ export interface ProviderSetting {
 	options?: { value: string; label?: string }[]
 	description?: string
 	group?: string
+	valid_range?: string
 }
 
 export interface ProviderFeatures {
@@ -629,6 +637,33 @@ export function queryProviderList(socketPath?: string): Promise<string[] | null>
 export function queryProviderInfo(providerId: string, socketPath?: string): Promise<ProviderInfo | null> {
 	const sock = socketPath || process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
 	return gatewayQuery<ProviderInfo>(sock, { type: "provider-info", provider: providerId })
+}
+
+export interface SettingValidation {
+	status: "active" | "inactive"
+	value?: unknown
+	error?: string
+	message?: string
+}
+
+export interface ValidateSettingsResult {
+	settings: Record<string, SettingValidation>
+	errors?: string[]
+}
+
+export function queryValidateSettings(
+	providerId: string,
+	settings: Record<string, unknown>,
+	thinking?: { type: string; budget_tokens?: number; reasoning_effort?: string },
+	socketPath?: string,
+): Promise<ValidateSettingsResult | null> {
+	const sock = socketPath || process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
+	return gatewayQuery<ValidateSettingsResult>(sock, {
+		type: "validate-parameters",
+		provider: providerId,
+		settings,
+		thinking,
+	})
 }
 
 export function createApiGatewayHandler(

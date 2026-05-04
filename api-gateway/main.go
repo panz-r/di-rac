@@ -51,6 +51,7 @@ type Request struct {
 	TopLogprobs      int                       `json:"top_logprobs,omitempty"`
 	PresencePenalty  float64                   `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float64                   `json:"frequency_penalty,omitempty"`
+	Settings         map[string]interface{}    `json:"settings,omitempty"`
 }
 
 // SetProviderRequest handles provider configuration
@@ -296,6 +297,35 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
+		// Handle validate-parameters
+		if typeCheck.Type == "validate-parameters" {
+			var validateReq struct {
+				Provider string                    `json:"provider"`
+				Settings map[string]interface{}    `json:"settings"`
+				Thinking *providers.ThinkingConfig `json:"thinking,omitempty"`
+			}
+			if err := json.Unmarshal(rawMsg, &validateReq); err != nil || validateReq.Provider == "" {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 400,
+					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: "validate-parameters requires 'provider' and 'settings' fields"},
+				})
+				continue
+			}
+			result := s.providerRegistry.ValidateSettings(validateReq.Provider, validateReq.Settings, validateReq.Thinking)
+			if result == nil {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 200,
+					Body:   json.RawMessage(`{"settings":{}}`),
+				})
+				continue
+			}
+			body, _ := json.Marshal(result)
+			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			continue
+		}
+
 		// Regular API request
 		var req Request
 		if err := json.Unmarshal(rawMsg, &req); err != nil {
@@ -401,6 +431,7 @@ func (s *Server) buildProviderRequest(req *Request) *providers.Request {
 		TopLogprobs:      req.TopLogprobs,
 		PresencePenalty:  req.PresencePenalty,
 		FrequencyPenalty: req.FrequencyPenalty,
+		Settings:         req.Settings,
 	}
 }
 
