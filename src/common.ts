@@ -6,7 +6,6 @@ import { Logger } from "@/shared/services/Logger";
 import type { WorkspaceLogHandle } from "@/shared/services/WorkspaceLogSubscriber";
 import type { StorageContext } from "@/shared/storage/storage-context";
 import { FileContextTracker } from "./core/context/context-tracking/FileContextTracker";
-import { clearOnboardingModelsCache } from "./core/controller/models/getDiracOnboardingModels";
 import { HookDiscoveryCache } from "./core/hooks/HookDiscoveryCache";
 import { HookProcessRegistry } from "./core/hooks/HookProcessRegistry";
 import { StateManager } from "./core/storage/StateManager";
@@ -218,8 +217,6 @@ export async function tearDown(): Promise<void> {
 	// Dispose all webview instances
 	await DiracWebviewProvider.disposeAllInstances()
 	syncWorker().dispose()
-	clearOnboardingModelsCache()
-
 	// Kill any running hook processes to prevent zombies
 	await HookProcessRegistry.terminateAll()
 	// Clean up hook discovery cache

@@ -1,4 +1,3 @@
-import { clearOnboardingModelsCache, getDiracOnboardingModels } from "@/core/controller/models/getDiracOnboardingModels"
 import type { OnboardingModel } from "@/shared/proto/dirac/state"
 import { FEATURE_FLAGS, FeatureFlag, FeatureFlagDefaultValue } from "@/shared/services/feature-flags/feature-flags"
 import { Logger } from "@/shared/services/Logger"
@@ -65,8 +64,7 @@ export class FeatureFlagsService {
 			throw error
 		}
 
-		getDiracOnboardingModels() // Refresh onboarding models cache if relevant flag changed
-	}
+		}
 
 	private async getFeatureFlag(flagName: FeatureFlag): Promise<FeatureFlagPayload | undefined> {
 		try {
@@ -115,16 +113,6 @@ export class FeatureFlagsService {
 
 	public getWorktreesEnabled(): boolean {
 		return this.getBooleanFlagEnabled(FeatureFlag.WORKTREES)
-	}
-
-	public getOnboardingOverrides() {
-		const payload = this.cache.get(FeatureFlag.ONBOARDING_MODELS)
-		// Check if payload is object
-		if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-			return payload.models as unknown as Record<string, OnboardingModel & { hidden?: boolean }>
-		}
-		clearOnboardingModelsCache()
-		return undefined
 	}
 
 	/**
