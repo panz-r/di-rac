@@ -110,6 +110,7 @@ function createHandlerForProvider(
 				apiKey: options.openRouterApiKey,
 				model: mode === "plan" ? options.planModeOpenRouterModelId : options.actModeOpenRouterModelId,
 				thinkingBudgetTokens,
+				settings: providerSettings,
 			})
 		case "openai": {
 			const openAiModelId = mode === "plan" ? options.planModeOpenAiModelId : options.actModeOpenAiModelId
