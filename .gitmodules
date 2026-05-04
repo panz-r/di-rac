@@ -1,9 +1,0 @@
-[submodule "vendor/tree-sitter"]
-	path = vendor/tree-sitter
-	url = https://github.com/tree-sitter/tree-sitter.git
-[submodule "vendor/tree-sitter-python"]
-	path = vendor/tree-sitter-python
-	url = https://github.com/tree-sitter/tree-sitter-python.git
-[submodule "vendor/tree-sitter-typescript"]
-	path = vendor/tree-sitter-typescript
-	url = https://github.com/tree-sitter/tree-sitter-typescript.git

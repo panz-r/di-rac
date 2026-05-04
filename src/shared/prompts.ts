@@ -1,1 +1,0 @@
-export const SYSTEM_PROMPT_VERSION = 1
