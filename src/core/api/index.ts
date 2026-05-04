@@ -139,13 +139,6 @@ function createHandlerForProvider(
 				reasoningEffort,
 				settings: providerSettings,
 			})
-		case "requesty":
-			return gatewayHandler("requesty", {
-				apiKey: options.requestyApiKey,
-				baseUrl: options.requestyBaseUrl,
-				model: mode === "plan" ? options.planModeRequestyModelId : options.actModeRequestyModelId,
-				thinkingBudgetTokens,
-			})
 		case "fireworks":
 			return gatewayHandler("fireworks", {
 				apiKey: options.fireworksApiKey,
@@ -162,22 +155,10 @@ function createHandlerForProvider(
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				thinkingBudgetTokens,
 			})
-		case "doubao":
-			return gatewayHandler("doubao", {
-				apiKey: options.doubaoApiKey,
-				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-			})
 		case "mistral":
 			return gatewayHandler("mistral", {
 				apiKey: options.mistralApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-			})
-		case "litellm":
-			return gatewayHandler("litellm", {
-				apiKey: options.liteLlmApiKey,
-				baseUrl: options.liteLlmBaseUrl,
-				model: mode === "plan" ? options.planModeLiteLlmModelId : options.actModeLiteLlmModelId,
-				thinkingBudgetTokens,
 			})
 		case "moonshot":
 			return gatewayHandler("moonshot", {
@@ -214,17 +195,6 @@ function createHandlerForProvider(
 				apiKey: options.groqApiKey,
 				model: mode === "plan" ? options.planModeGroqModelId : options.actModeGroqModelId,
 			})
-		case "huawei-cloud-maas":
-			return gatewayHandler("huawei-cloud-maas", {
-				apiKey: options.huaweiCloudMaasApiKey,
-				model: mode === "plan" ? options.planModeHuaweiCloudMaasModelId : options.actModeHuaweiCloudMaasModelId,
-			})
-		case "vercel-ai-gateway":
-			return gatewayHandler("vercel-ai-gateway", {
-				apiKey: options.vercelAiGatewayApiKey,
-				model: mode === "plan" ? options.planModeVercelAiGatewayModelId : options.actModeVercelAiGatewayModelId,
-				thinkingBudgetTokens,
-			})
 		case "zai":
 			return gatewayHandler("zai", {
 				apiKey: options.zaiApiKey,
@@ -237,21 +207,6 @@ function createHandlerForProvider(
 				apiKey: options.minimaxApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				thinkingBudgetTokens,
-			})
-		case "hicap":
-			return gatewayHandler("hicap", {
-				apiKey: options.hicapApiKey,
-				model: mode === "plan" ? options.planModeHicapModelId : options.actModeHicapModelId,
-			})
-		case "nousResearch":
-			return gatewayHandler("nousresearch", {
-				apiKey: options.nousResearchApiKey,
-				model: mode === "plan" ? options.planModeNousResearchModelId : options.actModeNousResearchModelId,
-			})
-		case "wandb":
-			return gatewayHandler("wandb", {
-				apiKey: options.wandbApiKey,
-				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 			})
 		case "nvidia-nim":
 			return gatewayHandler("nvidia-nim", {

@@ -345,19 +345,11 @@ func (r *Registry) registerProviders() {
 	r.Register("together", NewTogetherHandler())
 	r.Register("sambanova", NewSambaNovaHandler())
 	r.Register("cerebras", NewCerebrasHandler())
-	r.Register("litellm", NewLiteLLMHandler())
-	r.Register("doubao", NewDoubaoHandler())
 	r.Register("lmstudio", NewLmStudioHandler())
 	r.Register("moonshot", NewMoonshotHandler())
-	r.Register("requesty", NewRequestyHandler())
 	r.Register("nvidia-nim", NewNvidiaNimHandler())
-	r.Register("nousresearch", NewNousResearchHandler())
 	r.Register("nebius", NewNebiusHandler())
-	r.Register("hicap", NewHicapHandler())
 	r.Register("huggingface", NewHuggingFaceHandler())
-	r.Register("huawei-cloud-maas", NewHuaweiCloudMaaSHandler())
-	r.Register("wandb", NewWandbHandler())
-	r.Register("vercel-ai-gateway", NewVercelAIGatewayHandler())
 }
 
 // ValidateRequest validates a request before processing

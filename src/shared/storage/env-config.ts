@@ -15,7 +15,6 @@ export const ENV_VAR_TO_SECRET_KEY: Record<string, keyof Secrets> = {
 	CEREBRAS_API_KEY: "cerebrasApiKey",
 	XAI_API_KEY: "xaiApiKey",
 	OPENROUTER_API_KEY: "openRouterApiKey",
-	AI_GATEWAY_API_KEY: "vercelAiGatewayApiKey",
 	ZAI_API_KEY: "zaiApiKey",
 	MISTRAL_API_KEY: "mistralApiKey",
 	MOONSHOT_API_KEY: "moonshotApiKey",
@@ -67,7 +66,6 @@ export function getProviderFromEnv(): ApiProvider | undefined {
 	if (process.env.ZAI_API_KEY) return "zai"
 	if (process.env.MINIMAX_API_KEY || process.env.MINIMAX_CN_API_KEY) return "minimax"
 	if (process.env.CEREBRAS_API_KEY) return "cerebras"
-	if (process.env.AI_GATEWAY_API_KEY) return "vercel-ai-gateway"
 	if (process.env.DEEPSEEK_API_KEY) return "deepseek"
 	if (process.env.QWEN_API_KEY) return "qwen"
 	if (process.env.TOGETHER_API_KEY) return "together"

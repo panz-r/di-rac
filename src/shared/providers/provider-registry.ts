@@ -12,16 +12,11 @@ import {
 	deepSeekDefaultModelId,
 	fireworksDefaultModelId,
 	groqDefaultModelId,
-	huaweiCloudMaasDefaultModelId,
 	huggingFaceDefaultModelId,
 	internationalQwenDefaultModelId,
-	liteLlmDefaultModelId,
 	minimaxDefaultModelId,
 	moonshotDefaultModelId,
-	nousResearchDefaultModelId,
 	openRouterDefaultModelId,
-	requestyDefaultModelId,
-	wandbDefaultModelId,
 	xaiDefaultModelId,
 } from "../api"
 import type { ModelRole } from "../roles"
@@ -106,15 +101,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		defaultModelId: openRouterDefaultModelId,
 	},
 	{
-		providerId: "litellm",
-		label: "LiteLLM",
-		modelIdKeySuffix: "LiteLlmModelId",
-		apiKeyFields: "liteLlmApiKey",
-		defaultModelId: liteLlmDefaultModelId,
-		isConfiguredOverride: (c) =>
-			!!(c.liteLlmBaseUrl || c.liteLlmApiKey || c.planModeLiteLlmModelId || c.actModeLiteLlmModelId),
-	},
-	{
 		providerId: "claude-code",
 		label: "Claude Code",
 		isConfiguredOverride: (c) => !!c.claudeCodePath,
@@ -142,20 +128,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		apiKeyFields: "cerebrasApiKey",
 	},
 	{
-		providerId: "vercel-ai-gateway",
-		label: "Vercel AI Gateway",
-		modelIdKeySuffix: "VercelAiGatewayModelId",
-		apiKeyFields: "vercelAiGatewayApiKey",
-		defaultModelId: openRouterDefaultModelId,
-	},
-	{
-		providerId: "requesty",
-		label: "Requesty",
-		modelIdKeySuffix: "RequestyModelId",
-		apiKeyFields: "requestyApiKey",
-		defaultModelId: requestyDefaultModelId,
-	},
-	{
 		providerId: "fireworks",
 		label: "Fireworks AI",
 		modelIdKeySuffix: "FireworksModelId",
@@ -174,11 +146,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		label: "Alibaba Qwen",
 		apiKeyFields: "qwenApiKey",
 		defaultModelId: internationalQwenDefaultModelId,
-	},
-	{
-		providerId: "doubao",
-		label: "Bytedance Doubao",
-		apiKeyFields: "doubaoApiKey",
 	},
 	{
 		providerId: "lmstudio",
@@ -218,13 +185,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		apiKeyFields: "sambanovaApiKey",
 	},
 	{
-		providerId: "huawei-cloud-maas",
-		label: "Huawei Cloud MaaS",
-		modelIdKeySuffix: "HuaweiCloudMaasModelId",
-		apiKeyFields: "huaweiCloudMaasApiKey",
-		defaultModelId: huaweiCloudMaasDefaultModelId,
-	},
-	{
 		providerId: "oca",
 		label: "Oracle Code Assist",
 	},
@@ -233,26 +193,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		label: "MiniMax",
 		apiKeyFields: "minimaxApiKey",
 		defaultModelId: minimaxDefaultModelId,
-	},
-	{
-		providerId: "hicap",
-		label: "Hicap",
-		modelIdKeySuffix: "HicapModelId",
-		apiKeyFields: "hicapApiKey",
-		defaultModelId: "",
-	},
-	{
-		providerId: "nousResearch",
-		label: "NousResearch",
-		modelIdKeySuffix: "NousResearchModelId",
-		apiKeyFields: "nousResearchApiKey",
-		defaultModelId: nousResearchDefaultModelId,
-	},
-	{
-		providerId: "wandb",
-		label: "W&B Inference by CoreWeave",
-		apiKeyFields: "wandbApiKey",
-		defaultModelId: wandbDefaultModelId,
 	},
 	{
 		providerId: "nvidia-nim",

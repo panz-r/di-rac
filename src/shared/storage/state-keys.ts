@@ -1,5 +1,5 @@
 import { AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
-import { ApiProvider, DEFAULT_API_PROVIDER, LiteLLMModelInfo, ModelInfo, OpenAiCompatibleModelInfo } from "@shared/api"
+import { ApiProvider, DEFAULT_API_PROVIDER, ModelInfo, OpenAiCompatibleModelInfo } from "@shared/api"
 import { BrowserSettings, DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { DiracRulesToggles } from "@shared/dirac-rules"
 import { HistoryItem } from "@shared/HistoryItem"
@@ -71,8 +71,6 @@ const GLOBAL_STATE_FIELDS = {
 // Fields that map directly to ApiHandlerOptions in @shared/api.ts
 const API_HANDLER_SETTINGS_FIELDS = {
 	// Global configuration (not mode-specific)
-	liteLlmBaseUrl: { default: undefined as string | undefined },
-	liteLlmUsePromptCache: { default: undefined as boolean | undefined },
 	openAiHeaders: { default: {} as Record<string, string> },
 	anthropicBaseUrl: { default: undefined as string | undefined },
 	apiGatewayProviderId: { default: undefined as string | undefined },
@@ -86,7 +84,6 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	geminiBaseUrl: { default: undefined as string | undefined },
 	geminiSearchEnabled: { default: true as boolean },
 
-	requestyBaseUrl: { default: undefined as string | undefined },
 	fireworksModelMaxCompletionTokens: { default: undefined as number | undefined },
 	fireworksModelMaxTokens: { default: undefined as number | undefined },
 	azureApiVersion: { default: undefined as string | undefined },
@@ -110,27 +107,16 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	planModeOpenAiModelId: { default: undefined as string | undefined },
 	planModeOpenAiModelInfo: { default: undefined as OpenAiCompatibleModelInfo | undefined },
 	planModeLmStudioModelId: { default: undefined as string | undefined },
-	planModeLiteLlmModelId: { default: undefined as string | undefined },
-	planModeLiteLlmModelInfo: { default: undefined as LiteLLMModelInfo | undefined },
 	planModeCodingPlanZAiModelId: { default: undefined as string | undefined },
 	planModeCodingPlanZAiModelInfo: { default: undefined as ModelInfo | undefined },
-	planModeRequestyModelId: { default: undefined as string | undefined },
-	planModeRequestyModelInfo: { default: undefined as ModelInfo | undefined },
 	planModeTogetherModelId: { default: undefined as string | undefined },
 	planModeFireworksModelId: { default: undefined as string | undefined },
 	planModeGroqModelId: { default: undefined as string | undefined },
 	planModeGroqModelInfo: { default: undefined as ModelInfo | undefined },
 	planModeHuggingFaceModelId: { default: undefined as string | undefined },
 	planModeHuggingFaceModelInfo: { default: undefined as ModelInfo | undefined },
-	planModeHuaweiCloudMaasModelId: { default: undefined as string | undefined },
-	planModeHuaweiCloudMaasModelInfo: { default: undefined as ModelInfo | undefined },
-	planModeHicapModelId: { default: undefined as string | undefined },
-	planModeHicapModelInfo: { default: undefined as ModelInfo | undefined },
-	planModeNousResearchModelId: { default: undefined as string | undefined },
 	planModeNvidiaNimModelId: { default: undefined as string | undefined },
 	nvidiaNimBaseUrl: { default: "https://integrate.api.nvidia.com/v1" as string },
-	planModeVercelAiGatewayModelId: { default: undefined as string | undefined },
-	planModeVercelAiGatewayModelInfo: { default: undefined as ModelInfo | undefined },
 
 	// Act mode configurations
 	actModeApiModelId: { default: undefined as string | undefined },
@@ -146,33 +132,21 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	actModeOpenAiModelId: { default: undefined as string | undefined },
 	actModeOpenAiModelInfo: { default: undefined as OpenAiCompatibleModelInfo | undefined },
 	actModeLmStudioModelId: { default: undefined as string | undefined },
-	actModeLiteLlmModelId: { default: undefined as string | undefined },
-	actModeLiteLlmModelInfo: { default: undefined as LiteLLMModelInfo | undefined },
 	actModeCodingPlanZAiModelId: { default: undefined as string | undefined },
 	actModeCodingPlanZAiModelInfo: { default: undefined as ModelInfo | undefined },
-	actModeRequestyModelId: { default: undefined as string | undefined },
-	actModeRequestyModelInfo: { default: undefined as ModelInfo | undefined },
 	actModeTogetherModelId: { default: undefined as string | undefined },
 	actModeFireworksModelId: { default: undefined as string | undefined },
 	actModeGroqModelId: { default: undefined as string | undefined },
 	actModeGroqModelInfo: { default: undefined as ModelInfo | undefined },
 	actModeHuggingFaceModelId: { default: undefined as string | undefined },
 	actModeHuggingFaceModelInfo: { default: undefined as ModelInfo | undefined },
-	actModeHuaweiCloudMaasModelId: { default: undefined as string | undefined },
-	actModeHuaweiCloudMaasModelInfo: { default: undefined as ModelInfo | undefined },
-	actModeHicapModelId: { default: undefined as string | undefined },
-	actModeHicapModelInfo: { default: undefined as ModelInfo | undefined },
-	actModeNousResearchModelId: { default: undefined as string | undefined },
 	actModeNvidiaNimModelId: { default: undefined as string | undefined },
-	actModeVercelAiGatewayModelId: { default: undefined as string | undefined },
-	actModeVercelAiGatewayModelInfo: { default: undefined as ModelInfo | undefined },
 
 	// Model-specific settings
 	planModeApiProvider: { default: DEFAULT_API_PROVIDER as ApiProvider },
 	actModeApiProvider: { default: DEFAULT_API_PROVIDER as ApiProvider },
 
 	// Deprecated model settings
-	hicapModelId: { default: undefined as string | undefined },
 	lmStudioModelId: { default: undefined as string | undefined },
 
 	// Generic provider settings discovered from gateway (key: "providerId:mode:settingKey")
@@ -263,13 +237,10 @@ const SECRETS_KEYS = [
 	"openAiApiKey",
 	"geminiApiKey",
 	"deepSeekApiKey",
-	"requestyApiKey",
 	"togetherApiKey",
 	"fireworksApiKey",
 	"qwenApiKey",
-	"doubaoApiKey",
 	"mistralApiKey",
-	"liteLlmApiKey",
 	"authNonce",
 	"xaiApiKey",
 	"moonshotApiKey",
@@ -279,13 +250,8 @@ const SECRETS_KEYS = [
 	"sambanovaApiKey",
 	"cerebrasApiKey",
 	"groqApiKey",
-	"huaweiCloudMaasApiKey",
-	"vercelAiGatewayApiKey",
 	"openAiCompatibleCustomApiKey",
 	"minimaxApiKey",
-	"hicapApiKey",
-	"nousResearchApiKey",
-	"wandbApiKey",
 	"nvidiaNimApiKey",
 ] as const
 

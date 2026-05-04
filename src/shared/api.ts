@@ -8,15 +8,12 @@ export type ApiProvider =
 	| "openai"
 	| "lmstudio"
 	| "gemini"
-	| "requesty"
 	| "together"
 	| "deepseek"
 	| "qwen"
-	| "doubao"
 	| "mistral"
 	| "vscode-lm"
 	| "dirac"
-	| "litellm"
 	| "moonshot"
 	| "nebius"
 	| "fireworks"
@@ -25,14 +22,9 @@ export type ApiProvider =
 	| "cerebras"
 	| "groq"
 	| "huggingface"
-	| "huawei-cloud-maas"
-	| "vercel-ai-gateway"
 	| "zai"
 	| "oca"
 	| "minimax"
-	| "hicap"
-	| "nousResearch"
-	| "wandb"
 	| "nvidia-nim"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
@@ -42,15 +34,12 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"openai",
 	"lmstudio",
 	"gemini",
-	"requesty",
 	"together",
 	"deepseek",
 	"qwen",
-	"doubao",
 	"mistral",
 	"vscode-lm",
 	"dirac",
-	"litellm",
 	"moonshot",
 	"nebius",
 	"fireworks",
@@ -59,14 +48,9 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"cerebras",
 	"groq",
 	"huggingface",
-	"huawei-cloud-maas",
-	"vercel-ai-gateway",
 	"zai",
 	"oca",
 	"minimax",
-	"hicap",
-	"nousResearch",
-	"wandb",
 	"nvidia-nim",
 ]
 
@@ -200,20 +184,6 @@ export const GPT_5_4_PRO_TIERS = [
 		outputPrice: 270.0,
 	},
 ]
-
-export interface HicapCompatibleModelInfo extends ModelInfo {
-	temperature?: number
-}
-
-export const hicapModelInfoSaneDefaults: HicapCompatibleModelInfo = {
-	maxTokens: -1,
-	contextWindow: 128_000,
-	supportsImages: true,
-	supportsPromptCache: true,
-	inputPrice: 0,
-	outputPrice: 0,
-	temperature: 1,
-}
 
 // Anthropic
 // https://docs.anthropic.com/en/docs/about-claude/models // prices updated 2025-01-02
@@ -1149,54 +1119,6 @@ export const internationalQwenDefaultModelId: InternationalQwenModelId = Object.
 )[0] as InternationalQwenModelId
 export const mainlandQwenDefaultModelId: MainlandQwenModelId = Object.keys(mainlandQwenModels)[0] as MainlandQwenModelId
 
-// Doubao
-// https://www.volcengine.com/docs/82379/1298459
-// https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement
-export type DoubaoModelId = keyof typeof doubaoModels
-export const doubaoDefaultModelId: DoubaoModelId = "doubao-1-5-pro-256k-250115"
-export const doubaoModels = {
-	"doubao-1-5-pro-256k-250115": {
-		maxTokens: 12_288,
-		contextWindow: 256_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.7,
-		outputPrice: 1.3,
-		cacheWritesPrice: 0,
-		cacheReadsPrice: 0,
-	},
-	"doubao-1-5-pro-32k-250115": {
-		maxTokens: 12_288,
-		contextWindow: 32_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.11,
-		outputPrice: 0.3,
-		cacheWritesPrice: 0,
-		cacheReadsPrice: 0,
-	},
-	"deepseek-v3-250324": {
-		maxTokens: 12_288,
-		contextWindow: 128_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.55,
-		outputPrice: 2.19,
-		cacheWritesPrice: 0,
-		cacheReadsPrice: 0,
-	},
-	"deepseek-r1-250120": {
-		maxTokens: 32_768,
-		contextWindow: 64_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.27,
-		outputPrice: 1.09,
-		cacheWritesPrice: 0,
-		cacheReadsPrice: 0,
-	},
-} as const satisfies Record<string, ModelInfo>
-
 // Mistral
 // https://docs.mistral.ai/getting-started/models/models_overview/
 export type MistralModelId = keyof typeof mistralModels
@@ -1291,26 +1213,6 @@ export const mistralModels = {
 		outputPrice: 2.0,
 	},
 } as const satisfies Record<string, ModelInfo>
-
-// LiteLLM
-// https://docs.litellm.ai/docs/
-export type LiteLLMModelId = string
-export const liteLlmDefaultModelId = "anthropic/claude-3-7-sonnet-20250219"
-export interface LiteLLMModelInfo extends ModelInfo {
-	temperature?: number
-}
-
-export const liteLlmModelInfoSaneDefaults: LiteLLMModelInfo = {
-	maxTokens: -1,
-	contextWindow: 128_000,
-	supportsImages: true,
-	supportsPromptCache: true,
-	inputPrice: 0,
-	outputPrice: 0,
-	cacheWritesPrice: 0,
-	cacheReadsPrice: 0,
-	temperature: 0,
-}
 
 // Nebius AI Studio
 // https://docs.nebius.com/studio/inference/models
@@ -1481,146 +1383,6 @@ export const nebiusModels = {
 } as const satisfies Record<string, ModelInfo>
 export type NebiusModelId = keyof typeof nebiusModels
 export const nebiusDefaultModelId = "Qwen/Qwen2.5-32B-Instruct-fast" satisfies NebiusModelId
-
-// W&B Inference by CoreWeave
-// https://docs.wandb.ai/inference/models
-export const wandbModels = {
-	"deepseek-ai/DeepSeek-V3.1": {
-		maxTokens: 8_192,
-		contextWindow: 161_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.55,
-		outputPrice: 1.65,
-		description: "A large hybrid model that supports both thinking and non-thinking modes via prompt templates",
-	},
-	"meta-llama/Llama-4-Scout-17B-16E-Instruct": {
-		maxTokens: 16_384,
-		contextWindow: 64_000,
-		supportsImages: true,
-		supportsPromptCache: false,
-		inputPrice: 0.17,
-		outputPrice: 0.66,
-		description: "Multimodal model integrating text and image understanding, ideal for visual tasks and combined analysis",
-	},
-	"meta-llama/Llama-3.3-70B-Instruct": {
-		maxTokens: 8_192,
-		contextWindow: 128_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.71,
-		outputPrice: 0.71,
-		description: "Multilingual model excelling in conversational tasks, detailed instruction-following, and coding",
-	},
-	"microsoft/Phi-4-mini-instruct": {
-		maxTokens: 4_096,
-		contextWindow: 128_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.08,
-		outputPrice: 0.35,
-		description: "Compact, efficient model ideal for fast responses in resource-constrained environments",
-	},
-	"MiniMaxAI/MiniMax-M2.5": {
-		supportsTools: true,
-		maxTokens: 40_960,
-		contextWindow: 197_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.3,
-		outputPrice: 1.2,
-		description:
-			"MoE model with a highly sparse architecture designed for high-throughput and low latency with strong coding capabilities",
-	},
-	"nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8": {
-		maxTokens: 8_192,
-		contextWindow: 262_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.2,
-		outputPrice: 0.8,
-		description: "A LatentMoE model designed to deliver strong agentic, reasoning, and conversational capabilities",
-	},
-	"openai/gpt-oss-120b": {
-		maxTokens: 32_768,
-		contextWindow: 131_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.15,
-		outputPrice: 0.6,
-		description: "Efficient Mixture-of-Experts model designed for high-reasoning, agentic and general-purpose use cases",
-	},
-	"openai/gpt-oss-20b": {
-		maxTokens: 32_768,
-		contextWindow: 131_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.05,
-		outputPrice: 0.2,
-		description:
-			"Lower latency Mixture-of-Experts model trained on OpenAI’s Harmony response format with reasoning capabilities",
-	},
-	"OpenPipe/Qwen3-14B-Instruct": {
-		maxTokens: 8_192,
-		contextWindow: 32_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.05,
-		outputPrice: 0.22,
-		description:
-			"An efficient multilingual, dense, instruction-tuned model, optimized by OpenPipe for building agents with finetuning",
-	},
-	"Qwen/Qwen3-235B-A22B-Thinking-2507": {
-		maxTokens: 32_768,
-		contextWindow: 262_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.1,
-		outputPrice: 0.1,
-		description:
-			"High-performance Mixture-of-Experts model optimized for structured reasoning, math, and long-form generation",
-	},
-	"Qwen/Qwen3-235B-A22B-Instruct-2507": {
-		maxTokens: 32_768,
-		contextWindow: 262_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.1,
-		outputPrice: 0.1,
-		description: "Efficient multilingual, Mixture-of-Experts, instruction-tuned model, optimized for logical reasoning",
-	},
-	"Qwen/Qwen3-30B-A3B-Instruct-2507": {
-		maxTokens: 8_192,
-		contextWindow: 262_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.1,
-		outputPrice: 0.3,
-		description: "MoE instruction-tuned model with enhanced reasoning, coding, and long-context understanding",
-	},
-	"Qwen/Qwen3-Coder-480B-A35B-Instruct": {
-		maxTokens: 32_768,
-		contextWindow: 262_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 1.0,
-		outputPrice: 1.5,
-		description:
-			"Mixture-of-Experts model optimized for agentic coding tasks such as function calling, tool use, and long-context reasoning",
-	},
-	"zai-org/GLM-5-FP8": {
-		supportsTools: true,
-		maxTokens: 8_192,
-		contextWindow: 200_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 1.0,
-		outputPrice: 3.2,
-		description: "Mixture-of-Experts model for long-horizon agentic tasks with strong performance on reasoning and coding",
-	},
-} as const satisfies Record<string, ModelInfo>
-export type WandbModelId = keyof typeof wandbModels
-export const wandbDefaultModelId = "meta-llama/Llama-3.3-70B-Instruct" satisfies WandbModelId
 
 // X AI
 // https://docs.x.ai/docs/api-reference
@@ -2016,22 +1778,6 @@ export const groqModels = {
 	},
 } as const satisfies Record<string, OpenAiCompatibleModelInfo>
 
-// Requesty
-// https://requesty.ai/models
-export const requestyDefaultModelId = "anthropic/claude-3-7-sonnet-latest"
-export const requestyDefaultModelInfo: ModelInfo = {
-	maxTokens: 8192,
-	contextWindow: 200_000,
-	supportsImages: true,
-
-	supportsPromptCache: true,
-	inputPrice: 3.0,
-	outputPrice: 15.0,
-	cacheWritesPrice: 3.75,
-	cacheReadsPrice: 0.3,
-	description: "Anthropic's most intelligent model. Highest level of intelligence and capability.",
-}
-
 // Moonshot AI Studio
 // https://platform.moonshot.ai/docs/pricing/chat
 export const moonshotModels = {
@@ -2088,79 +1834,6 @@ export const moonshotModels = {
 } as const satisfies Record<string, OpenAiCompatibleModelInfo>
 export type MoonshotModelId = keyof typeof moonshotModels
 export const moonshotDefaultModelId = "kimi-k2.6" satisfies MoonshotModelId
-
-// Huawei Cloud MaaS
-
-export type HuaweiCloudMaasModelId = keyof typeof huaweiCloudMaasModels
-export const huaweiCloudMaasDefaultModelId: HuaweiCloudMaasModelId = "DeepSeek-V3"
-export const huaweiCloudMaasModels = {
-	"DeepSeek-V3": {
-		maxTokens: 16_384,
-		contextWindow: 64_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.27,
-		outputPrice: 1.1,
-		cacheWritesPrice: 0,
-		cacheReadsPrice: 0,
-	},
-	"DeepSeek-R1": {
-		maxTokens: 16_384,
-		contextWindow: 64_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.55,
-		outputPrice: 2.2,
-		cacheWritesPrice: 0,
-		cacheReadsPrice: 0,
-		thinkingConfig: {
-			maxBudget: 8192,
-			outputPrice: 2.2,
-		},
-	},
-	"deepseek-r1-250528": {
-		maxTokens: 16_384,
-		contextWindow: 64_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.55,
-		outputPrice: 2.2,
-		cacheWritesPrice: 0,
-		cacheReadsPrice: 0,
-		thinkingConfig: {
-			maxBudget: 8192,
-			outputPrice: 2.2,
-		},
-	},
-	"qwen3-235b-a22b": {
-		maxTokens: 8_192,
-		contextWindow: 32_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.27,
-		outputPrice: 1.1,
-		cacheWritesPrice: 0,
-		cacheReadsPrice: 0,
-		thinkingConfig: {
-			maxBudget: 4096,
-			outputPrice: 1.1,
-		},
-	},
-	"qwen3-32b": {
-		maxTokens: 8_192,
-		contextWindow: 32_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.27,
-		outputPrice: 1.1,
-		cacheWritesPrice: 0,
-		cacheReadsPrice: 0,
-		thinkingConfig: {
-			maxBudget: 4096,
-			outputPrice: 1.1,
-		},
-	},
-} as const satisfies Record<string, ModelInfo>
 
 // Z AI
 // https://docs.z.ai/guides/llm/glm-5
@@ -2522,33 +2195,6 @@ export const minimaxModels = {
 	},
 } as const satisfies Record<string, ModelInfo>
 
-// NousResearch
-// https://inference-api.nousResearch.com
-export type NousResearchModelId = keyof typeof nousResearchModels
-export const nousResearchDefaultModelId: NousResearchModelId = "Hermes-4-405B"
-export const nousResearchModels = {
-	"Hermes-4-405B": {
-		maxTokens: 8192,
-		contextWindow: 128_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.09,
-		outputPrice: 0.37,
-		description:
-			"This is the largest model in the Hermes 4 family, and it is the fullest expression of our design, focused on advanced reasoning and creative depth rather than optimizing inference speed or cost.",
-	},
-	"Hermes-4-70B": {
-		maxTokens: 8192,
-		contextWindow: 128_000,
-		supportsImages: false,
-		supportsPromptCache: false,
-		inputPrice: 0.05,
-		outputPrice: 0.2,
-		description:
-			"This incarnation of Hermes 4 balances scale and size. It handles complex reasoning tasks, while staying fast and cost effective. A versatile choice for many use cases.",
-	},
-} as const satisfies Record<string, ModelInfo>
-
 /**
  * Central registry of all hardcoded model maps.
  * This is used as the single source of truth for model-to-provider mapping.
@@ -2560,21 +2206,17 @@ export const ALL_MODEL_MAPS: [ApiProvider, Record<string, ModelInfo>][] = [
 	["huggingface", huggingFaceModels],
 	["qwen", internationalQwenModels],
 	["qwen", mainlandQwenModels],
-	["doubao", doubaoModels],
 	["mistral", mistralModels],
 	["nebius", nebiusModels],
-	["wandb", wandbModels],
 	["xai", xaiModels],
 	["sambanova", sambanovaModels],
 	["cerebras", cerebrasModels],
 	["groq", groqModels],
 	["moonshot", moonshotModels],
-	["huawei-cloud-maas", huaweiCloudMaasModels],
 	["zai", internationalZAiModels],
 	["zai", mainlandZAiModels],
 	["fireworks", fireworksModels],
 	["minimax", minimaxModels],
-	["nousResearch", nousResearchModels],
 ]
 
 /**

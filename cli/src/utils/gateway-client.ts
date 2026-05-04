@@ -48,9 +48,7 @@ const ProviderBaseUrlMap: Partial<Record<string, string>> = {
 	anthropic: "anthropicBaseUrl",
 	openai: "openAiBaseUrl",
 	gemini: "geminiBaseUrl",
-	litellm: "liteLlmBaseUrl",
 	lmstudio: "lmStudioBaseUrl",
-	requesty: "requestyBaseUrl",
 	nvidiaNim: "nvidiaNimBaseUrl",
 	"api-gateway": "apiGatewayBaseUrl",
 }
