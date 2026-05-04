@@ -7,7 +7,6 @@ import {
 	condenseToolResponse,
 	newRuleToolResponse,
 	newTaskToolResponse,
-	reportBugToolResponse,
 } from "../prompts/commands"
 import { getSkillContent } from "../context/instructions/user-instructions/skills"
 import { SkillMetadata } from "@/shared/skills"
@@ -36,14 +35,13 @@ export async function parseSlashCommands(
 	availableSkills: SkillMetadata[] = [],
 	remoteWorkflowToggles: Record<string, boolean> = {},
 ): Promise<{ processedText: string; needsDiracrulesFileCheck: boolean }> {
-	const SUPPORTED_DEFAULT_COMMANDS = ["newtask", "smol", "compact", "newrule", "reportbug"]
+	const SUPPORTED_DEFAULT_COMMANDS = ["newtask", "smol", "compact", "newrule"]
 
 	const commandReplacements: Record<string, string> = {
 		newtask: newTaskToolResponse(),
 		smol: condenseToolResponse(),
 		compact: condenseToolResponse(),
 		newrule: newRuleToolResponse(),
-		reportbug: reportBugToolResponse(),
 	}
 
 	// Regex patterns to extract content from different XML tags

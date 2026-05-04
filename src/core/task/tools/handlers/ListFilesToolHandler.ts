@@ -66,7 +66,7 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 		const recursiveRaw = block.params.recursive
 		const recursive = String(recursiveRaw ?? "").toLowerCase() === "true"
 
-		// Extract provider using the proven pattern from ReportBugHandler
+		// Extract provider
 		const apiConfig = config.services.stateManager.getApiConfiguration()
 		const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
 		const provider = (currentMode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string

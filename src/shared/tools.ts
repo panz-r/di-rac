@@ -21,7 +21,6 @@ export enum DiracDefaultTool {
 	WEB_SEARCH = "web_search",
 	CONDENSE = "condense",
 	SUMMARIZE_TASK = "summarize_task",
-	REPORT_BUG = "report_bug",
 	NEW_RULE = "new_rule",
 	USE_SKILL = "use_skill",
 	LIST_SKILLS = "list_skills",

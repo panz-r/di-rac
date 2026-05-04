@@ -146,7 +146,6 @@ export type DiracAsk =
 	| "new_task"
 	| "condense"
 	| "summarize_task"
-	| "report_bug"
 	| "use_subagents"
 
 export type DiracSay =

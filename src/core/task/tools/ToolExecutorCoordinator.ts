@@ -17,7 +17,6 @@ import { PlanModeRespondHandler } from "./handlers/PlanModeRespondHandler"
 import { ReadFileToolHandler } from "./handlers/ReadFileToolHandler"
 import { ReplaceSymbolToolHandler } from "./handlers/ReplaceSymbolToolHandler"
 import { RenameSymbolToolHandler } from "./handlers/RenameSymbolToolHandler"
-import { ReportBugHandler } from "./handlers/ReportBugHandler"
 import { SearchFilesToolHandler } from "./handlers/SearchFilesToolHandler"
 import { UseSubagentsToolHandler } from "./handlers/SubagentToolHandler"
 import { SummarizeTaskHandler } from "./handlers/SummarizeTaskHandler"
@@ -111,7 +110,6 @@ export class ToolExecutorCoordinator {
 		[DiracDefaultTool.WEB_SEARCH]: (_v: ToolValidator) => new WebSearchToolHandler(),
 		[DiracDefaultTool.CONDENSE]: (_v: ToolValidator) => new CondenseHandler(),
 		[DiracDefaultTool.SUMMARIZE_TASK]: (_v: ToolValidator) => new SummarizeTaskHandler(_v),
-		[DiracDefaultTool.REPORT_BUG]: (_v: ToolValidator) => new ReportBugHandler(),
 		[DiracDefaultTool.NEW_RULE]: (v: ToolValidator) =>
 			new SharedToolHandler(DiracDefaultTool.NEW_RULE, new WriteToFileToolHandler(v)),
 		[DiracDefaultTool.USE_SKILL]: (_v: ToolValidator) => new UseSkillToolHandler(),
