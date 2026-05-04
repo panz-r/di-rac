@@ -10,10 +10,3 @@ export const COLORS = {
 	// Plan mode color
 	planYellow: "yellow",
 } as const
-
-/**
- * Get the appropriate color for the current mode
- */
-export function getModeColor(mode: "act" | "plan"): string {
-	return mode === "plan" ? COLORS.planYellow : COLORS.primaryBlue
-}
