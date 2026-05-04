@@ -7,11 +7,9 @@ import { ApiConfiguration } from "./api"
 import { SkillMetadata } from "./skills"
 import { BrowserSettings } from "./BrowserSettings"
 import { DiracFeatureSetting } from "./DiracFeatureSetting"
-import { BannerCardData } from "./dirac/banner"
 import { DiracRulesToggles } from "./dirac-rules"
 import { HistoryItem } from "./HistoryItem"
 import { DiracMessageModelInfo } from "./messages"
-import { OnboardingModelGroup } from "./proto/dirac/state"
 import { isOpenaiReasoningEffort, Mode, OPENAI_REASONING_EFFORT_OPTIONS, OpenaiReasoningEffort } from "./storage/types"
 export type { Mode, OpenaiReasoningEffort }
 export { OPENAI_REASONING_EFFORT_OPTIONS, isOpenaiReasoningEffort }
@@ -39,7 +37,6 @@ export const COMMAND_CANCEL_TOKEN = "__dirac_command_cancel__"
 export interface ExtensionState {
 	isNewUser: boolean
 	welcomeViewCompleted: boolean
-	onboardingModels: OnboardingModelGroup | undefined
 	apiConfiguration?: ApiConfiguration
 	autoApprovalSettings: AutoApprovalSettings
 	browserSettings: BrowserSettings
@@ -102,9 +99,7 @@ export interface ExtensionState {
 	writePromptMetadataDirectory?: string
 	optOutOfRemoteConfig?: boolean
 	doubleCheckCompletionEnabled?: boolean
-	banners?: BannerCardData[]
 	availableSkills?: SkillMetadata[]
-	welcomeBanners?: BannerCardData[]
 	openAiCodexIsAuthenticated?: boolean
 	openAiCodexEmail?: string
 }

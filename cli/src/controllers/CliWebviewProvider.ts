@@ -1,9 +1,8 @@
 import { DiracWebviewProvider } from "@/core/webview"
-import type { DiracExtensionContext } from "@/shared/dirac"
 
 export class CliWebviewProvider extends DiracWebviewProvider {
-	constructor(context: DiracExtensionContext) {
-		super(context)
+	constructor(_context: any) {
+		super(_context)
 	}
 
 	override getWebviewUrl(path: string): string {

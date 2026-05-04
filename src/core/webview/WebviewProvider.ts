@@ -3,7 +3,6 @@ import { Controller } from "@core/controller/index"
 import axios from "axios"
 import { readFile } from "fs/promises"
 import { HostProvider } from "@/hosts/host-provider"
-import { DiracExtensionContext } from "@/shared/dirac"
 import { ShowMessageType } from "@/shared/proto/host/window"
 import { Logger } from "@/shared/services/Logger"
 import { getNonce } from "./getNonce"
@@ -13,7 +12,7 @@ export abstract class DiracWebviewProvider {
 
 	private static instance: DiracWebviewProvider | null = null
 
-	constructor(readonly context: DiracExtensionContext) {
+	constructor(readonly context: any) {
 		DiracWebviewProvider.instance = this
 
 		// Create controller with cache service

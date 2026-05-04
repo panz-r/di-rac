@@ -12,7 +12,6 @@ import type {
 import type { HostBridgeClientProvider, StreamingCallbacks } from "@hosts/host-provider-types"
 import * as proto from "@shared/proto/index"
 import { StateManager } from "@/core/storage/StateManager"
-import { DiracClient } from "@/shared/dirac"
 import { version as CLI_VERSION } from "../../../package.json"
 import { printError, printInfo, printWarning } from "../utils/display"
 
@@ -101,7 +100,7 @@ export class CliEnvServiceClient implements EnvServiceClientInterface {
 		return proto.host.GetHostVersionResponse.create({
 			version: CLI_VERSION,
 			platform: "Dirac CLI - Node.js",
-			diracType: DiracClient.Cli,
+			diracType: "CLI",
 		})
 	}
 

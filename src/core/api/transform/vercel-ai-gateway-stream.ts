@@ -85,7 +85,6 @@ export async function createVercelAIGatewayStream(
 	const maxTokens = model.info?.maxTokens || undefined
 
 	// Use temperature from model info, default to 0
-	// Model-specific temperatures are derived in refreshVercelAiGatewayModels.ts
 	let temperature: number | undefined = model.info?.temperature ?? 0
 	let topP: number | undefined
 

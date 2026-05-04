@@ -24,7 +24,6 @@ import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import { getDistinctId } from "@/services/logging/distinctId"
 import { telemetryService } from "@/services/telemetry"
-import { DiracExtensionContext } from "@/shared/dirac"
 import { getAxiosSettings } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
 import { Session } from "@/shared/services/Session"
@@ -35,9 +34,7 @@ import { ensureCacheDirectoryExists, GlobalFileNames } from "../storage/disk"
 import { type PersistenceErrorEvent, StateManager } from "../storage/StateManager"
 import { Task } from "../task"
 import { getOrDiscoverSkills } from "../context/instructions/user-instructions/skills"
-import { getDiracOnboardingModels } from "./models/getDiracOnboardingModels"
 import { appendDiracStealthModels } from "./models/refreshOpenRouterModels"
-import { checkCliInstallation } from "./state/checkCliInstallation"
 import { sendStateUpdate } from "./state/subscribeToState"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
 import { SkillMetadata } from "@/shared/skills"
@@ -81,7 +78,7 @@ export class Controller {
 		return this.workspaceManager
 	}
 
-	constructor(readonly context: DiracExtensionContext) {
+	constructor(readonly context: any) {
 		Session.reset() // Reset session on controller initialization
 		PromptRegistry.getInstance() // Ensure prompts and tools are registered
 		this.stateManager = StateManager.get()
@@ -96,9 +93,6 @@ export class Controller {
 				await this.postStateToWebview()
 			},
 		})
-
-		// Check CLI installation status once on startup
-		checkCliInstallation(this)
 
 		// Initialize workspace manager in background
 		this.ensureWorkspaceManager().then(() => {
@@ -581,7 +575,6 @@ export class Controller {
 
 	async getStateToPostToWebview(): Promise<ExtensionState> {
 		// Get API configuration from cache for immediate access
-		const onboardingModels = getDiracOnboardingModels()
 		const apiConfiguration = this.stateManager.getApiConfiguration()
 		const lastShownAnnouncementId = this.stateManager.getGlobalStateKey("lastShownAnnouncementId")
 		const taskHistory = this.stateManager.getGlobalStateKey("taskHistory")
@@ -649,8 +642,6 @@ export class Controller {
 		const distinctId = getDistinctId()
 		const diracConfig = DiracEnv.config()
 		const environment = diracConfig.environment
-		const banners: any[] = []
-		const welcomeBanners: any[] = []
 
 		// Check OpenAI Codex authentication status
 		const { openAiCodexOAuthManager } = await import("@/integrations/openai-codex/oauth")
@@ -691,7 +682,6 @@ export class Controller {
 			defaultTerminalProfile,
 			isNewUser,
 			welcomeViewCompleted,
-			onboardingModels,
 			terminalOutputLineLimit,
 			maxConsecutiveMistakes,
 			customPrompt,
@@ -725,8 +715,6 @@ export class Controller {
 			backgroundEditEnabled: this.stateManager.getGlobalSettingsKey("backgroundEditEnabled"),
 			optOutOfRemoteConfig: this.stateManager.getGlobalSettingsKey("optOutOfRemoteConfig"),
 			doubleCheckCompletionEnabled,
-			banners,
-			welcomeBanners,
 			openAiCodexIsAuthenticated,
 			openAiCodexEmail,
 			availableSkills,

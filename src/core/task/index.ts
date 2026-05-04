@@ -55,7 +55,6 @@ import { featureFlagsService } from "@services/feature-flags"
 import { telemetryService } from "@services/telemetry"
 import { ApiConfiguration } from "@shared/api"
 import { findLastIndex } from "@shared/array"
-import { DiracClient } from "@shared/dirac"
 import { DiracApiReqCancelReason, DiracApiReqInfo, DiracAsk, DiracSay, MultiCommandState } from "@shared/ExtensionMessage"
 import { HistoryItem } from "@shared/HistoryItem"
 import { DEFAULT_LANGUAGE_SETTINGS, getLanguageKey, LanguageDisplay } from "@shared/Languages"
@@ -847,7 +846,7 @@ export class Task {
 		const providerInfo = this.getCurrentProviderInfo()
 		const host = await HostProvider.env.getHostVersion({})
 		const ide = host?.platform || "Unknown"
-		const isCliEnvironment = host?.diracType === DiracClient.Cli
+		const isCliEnvironment = host?.diracType === "CLI"
 		const browserSettings = this.stateManager.getGlobalSettingsKey("browserSettings")
 		const disableBrowserTool = browserSettings.disableToolUse ?? false
 		// dirac browser tool uses image recognition for navigation (requires model image support).
