@@ -504,6 +504,49 @@ export async function writeTaskHistoryToState(items: HistoryItem[]): Promise<voi
 	}
 }
 
+
+/**
+ * Workspace-local message history for CLI prompt history.
+ * Stored at .dirac-state/message-history.json within each workspace root.
+ */
+
+const DIRAC_STATE_DIR = ".dirac-state"
+const MESSAGE_HISTORY_FILE = "message-history.json"
+
+export async function ensureWorkspaceStateDir(workspacePath: string): Promise<string> {
+	const fullPath = path.resolve(workspacePath, DIRAC_STATE_DIR)
+	await fs.mkdir(fullPath, { recursive: true })
+	return fullPath
+}
+
+export async function getWorkspaceMessageHistoryPath(workspacePath: string): Promise<string> {
+	const stateDir = await ensureWorkspaceStateDir(workspacePath)
+	return path.join(stateDir, MESSAGE_HISTORY_FILE)
+}
+
+export async function readWorkspaceMessageHistory(workspacePath: string): Promise<string[]> {
+	try {
+		const filePath = await getWorkspaceMessageHistoryPath(workspacePath)
+		if (!(await fileExistsAtPath(filePath))) {
+			return []
+		}
+		const contents = await fs.readFile(filePath, "utf8")
+		return JSON.parse(contents)
+	} catch (error) {
+		Logger.error("[Disk] Failed to read workspace message history:", error)
+		return []
+	}
+}
+
+export async function writeWorkspaceMessageHistory(workspacePath: string, messages: string[]): Promise<void> {
+	try {
+		const filePath = await getWorkspaceMessageHistoryPath(workspacePath)
+		await atomicWriteFile(filePath, JSON.stringify(messages))
+	} catch (error) {
+		Logger.error("[Disk] Failed to write workspace message history:", error)
+		throw error
+	}
+}
 export async function readTaskSettingsFromStorage(taskId: string): Promise<Partial<Settings>> {
 	try {
 		const taskDirectoryFilePath = await ensureTaskDirectoryExists(taskId)

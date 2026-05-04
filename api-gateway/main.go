@@ -479,6 +479,17 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 						Body:   mustMarshal(chunk),
 					})
 				default:
+					// Final check: an error may have arrived between the first check and now
+					select {
+					case streamErr := <-errChan:
+						encoder.Encode(&Response{
+							ID:     id,
+							Status: 500,
+							Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error()},
+						})
+						return
+					default:
+					}
 					// Always send complete signal so the client never hangs
 					encoder.Encode(&Response{
 						ID:     id,

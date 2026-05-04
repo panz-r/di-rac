@@ -88,10 +88,6 @@
  * - patchConsole: false in render() options - prevents Ink from interfering with console
  * - Console suppression in utils/console.ts - prevents core debug output from breaking Ink
  *
- * Centering in Static:
- * Ink's Box centering (justifyContent, alignItems) doesn't work reliably inside
- * Static. We use manual centering via centerText() which pads strings based on
- * process.stdout.columns.
  *
  * References:
  * - Ink flicker issue: https://github.com/vadimdemedes/ink/issues/359
@@ -119,6 +115,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getAvailableSlashCommands } from "@/core/controller/slash/getAvailableSlashCommands"
 import { showTaskWithId } from "@/core/controller/task/showTaskWithId"
 import { StateManager } from "@/core/storage/StateManager"
+import { readWorkspaceMessageHistory, writeWorkspaceMessageHistory } from "@/core/storage/disk"
 import { observerFailing } from "@/core/observer"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
@@ -129,7 +126,7 @@ import { useHomeEndKeys } from "../hooks/useHomeEndKeys"
 import { useIsSpinnerActive } from "../hooks/useStateSubscriber"
 import { findWordEnd, findWordStart, useTextInput } from "../hooks/useTextInput"
 import { moveCursorDown, moveCursorUp } from "../utils/cursor"
-import { centerText, setTerminalTitle } from "../utils/display"
+import { setTerminalTitle } from "../utils/display"
 import {
     checkAndWarnRipgrepMissing,
     extractMentionQuery,
@@ -348,16 +345,28 @@ export const ChatView: React.FC<ChatViewProps> = ({
 	const taskState = useTaskState()
 	const { controller: taskController, clearState } = useTaskContext()
 	const { isActive: isSpinnerActive, startTime: spinnerStartTime } = useIsSpinnerActive()
+	const [submitting, setSubmitting] = useState(false)
+
+	// True from the instant Enter is pressed until the task's first API request
+	// (covers the gap between submit and api_req_started)
+	const isBusy = isSpinnerActive || submitting
 
 	// Reset queued count when streaming ends (drained messages consumed by next turn)
 	const prevSpinnerRef = useRef(false)
 	useEffect(() => {
-		if (prevSpinnerRef.current && !isSpinnerActive) {
+		if (prevSpinnerRef.current && !isBusy) {
 			setQueuedCount(0)
 		}
-		prevSpinnerRef.current = isSpinnerActive
-	}, [isSpinnerActive])
+		prevSpinnerRef.current = isBusy
+	}, [isBusy])
 
+	// Cleanup for poll refs - prevents memory leak when component unmounts during task init
+	useEffect(() => {
+		return () => {
+			if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+			if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
+		}
+	}, [])
 	// Prefer prop controller over context controller (memoized for stable reference in callbacks)
 	const ctrl = useMemo(() => controller || taskController, [controller, taskController])
 
@@ -402,6 +411,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
 	const activePasteStartPosRef = useRef<number>(0) // Where the placeholder starts in the text
 	const activePasteLinesRef = useRef<number>(0) // Total line count for current paste
 	const pasteUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null) // Debounce placeholder updates
+	// Poll cleanup refs for steer message during task init
+	const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
+	const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 	const PASTE_CHUNK_WINDOW_MS = 150 // Chunks within this window are combined into one paste
 	const PASTE_UPDATE_DEBOUNCE_MS = 50 // Debounce visual updates to avoid flicker
 
@@ -552,6 +564,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 		setTaskSwitchKey((k) => k + 1) // Force remount for fresh Static instance
 		clearState() // Force clear React state (bypasses empty messages check)
 		setTextInput("")
+		setHistoryIndex(-1)
 		setCursorPos(0)
 		// Clear persisted state
 		inputStateStorage.delete(storageKey)
@@ -587,7 +600,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
 	const workspacePath = useMemo(() => {
 		try {
-			const root = ctrl?.getWorkspaceManagerSync?.()?.getPrimaryRoot?.()
+			const root = ctrl?.getWorkspaceManager?.()?.getPrimaryRoot?.()
 			if (root?.path) {
 				return root.path
 			}
@@ -640,8 +653,31 @@ export const ChatView: React.FC<ChatViewProps> = ({
 		loadCommands()
 	}, [ctrl])
 
-	// Get history items (limited to MAX_HISTORY_ITEMS, most recent first)
+	// State for workspace-local message history
+	const [workspaceMessageHistory, setWorkspaceMessageHistory] = useState<string[]>([])
+
+	// Load workspace-local message history when workspacePath changes
+	useEffect(() => {
+		let cancelled = false
+		const loadHistory = async () => {
+			const history = await readWorkspaceMessageHistory(workspacePath)
+			if (!cancelled) {
+				setWorkspaceMessageHistory(history)
+			}
+		}
+		loadHistory()
+		return () => {
+			cancelled = true
+		}
+	}, [workspacePath])
+
+	// Get history items from workspace-local storage (most recent first)
 	const getHistoryItems = useCallback(() => {
+		// First try workspace-local message history
+		if (workspaceMessageHistory.length > 0) {
+			return workspaceMessageHistory.slice(0, MAX_HISTORY_ITEMS)
+		}
+		// Fall back to global task history
 		const history = StateManager.get().getGlobalStateKey("taskHistory")
 		if (!history?.length) return []
 		const filtered = [...history]
@@ -650,7 +686,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 			.slice(0, MAX_HISTORY_ITEMS)
 			.filter(Boolean) as string[]
 		return [...new Set(filtered)]
-	}, [])
+	}, [workspaceMessageHistory])
 
 	const messages = taskState.diracMessages || []
 
@@ -875,8 +911,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
 	// Get button config based on the last message state
 	const buttonConfig = useMemo(() => {
 		const lastMsg = messages[messages.length - 1] as DiracMessage | undefined
-		return getButtonConfig(lastMsg, isSpinnerActive)
-	}, [messages, isSpinnerActive])
+		return getButtonConfig(lastMsg, isBusy)
+	}, [messages, isBusy])
 
 	// Handle button actions (1 for primary, 2 for secondary)
 	const handleButtonAction = useCallback(
@@ -963,12 +999,19 @@ export const ChatView: React.FC<ChatViewProps> = ({
 						: []
 				const validImages = imageDataUrls.filter((img): img is string => img !== null)
 				setTerminalTitle(expandedText.trim())
+				setSubmitting(true)
 				await ctrl.initTask(expandedText.trim(), validImages.length > 0 ? validImages : undefined)
+				// Save to workspace-local message history
+				const updatedHistory = [expandedText.trim(), ...workspaceMessageHistory.filter(h => h !== expandedText.trim())].slice(0, MAX_HISTORY_ITEMS)
+				await writeWorkspaceMessageHistory(workspacePath, updatedHistory).catch(err => Logger.error("[ChatView] Failed to write message to history:", err))
+				setWorkspaceMessageHistory(updatedHistory)
 			} catch (_error) {
 				onError?.()
+			} finally {
+				setSubmitting(false)
 			}
 		},
-		[ctrl, onError, pastedTexts, storageKey],
+		[ctrl, onError, pastedTexts, storageKey, workspacePath, workspaceMessageHistory],
 	)
 
 	// Auto-submit initial prompt if provided
@@ -1315,7 +1358,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 		// Only when buttons are enabled, not streaming, and no text has been typed
 		if (
 			buttonConfig.enableButtons &&
-			!isSpinnerActive &&
+			!isBusy &&
 			textInput === "" &&
 			!isYoloSuppressed(yolo, pendingAsk?.ask as DiracAsk | undefined)
 		) {
@@ -1475,16 +1518,62 @@ export const ChatView: React.FC<ChatViewProps> = ({
 			}
 
 			if (prompt.trim() || imagePaths.length > 0) {
-				// If task is running, enqueue as steer message instead of starting new task
-				if (ctrl?.task && currentMessage && !imagePaths.length) {
-					ctrl.task.enqueueUserMessage(prompt.trim())
+				// If task is running (or initing), enqueue as steer message instead of starting new task
+				if ((ctrl?.task || submitting) && !imagePaths.length) {
+					const msg = prompt.trim()
+					if (ctrl?.task) {
+						ctrl.task.enqueueUserMessage(msg)
+					} else {
+						// Task is initing — drain queue once it exists
+						let cancelled = false
+						pollIntervalRef.current = setInterval(() => {
+							if (cancelled) { clearInterval(pollIntervalRef.current!); return }
+							if (ctrl?.task) {
+								ctrl.task.enqueueUserMessage(msg)
+								clearInterval(pollIntervalRef.current!)
+							}
+						}, 50)
+						// Safety: clear after 30s even if task never appears
+						pollTimeoutRef.current = setTimeout(() => { cancelled = true; clearInterval(pollIntervalRef.current!); clearTimeout(pollTimeoutRef.current!) }, 30000)
+					}
 					setQueuedCount((c) => c + 1)
 					setTextInput("")
 					setCursorPos(0)
+					// Save steer message to workspace-local history
+					const updatedHistory = [prompt.trim(), ...workspaceMessageHistory.filter(h => h !== prompt.trim())].slice(0, MAX_HISTORY_ITEMS)
+					writeWorkspaceMessageHistory(workspacePath, updatedHistory).catch(err => Logger.error("[ChatView] Failed to write steer message to history:", err))
+					setWorkspaceMessageHistory(updatedHistory)
 					inputStateStorage.delete(storageKey)
 					return
 				}
 				handleSubmit(prompt.trim(), imagePaths)
+			}
+			return
+		}
+		// Ctrl+D: defer message for delivery after current task completes
+		if (key.ctrl && input === "d" && textInput.trim()) {
+			const msg = textInput.trim()
+			if (ctrl?.task || submitting) {
+				if (ctrl?.task) {
+					ctrl.task.enqueueDeferredMessage(msg)
+				} else {
+					let cancelled = false
+					pollIntervalRef.current = setInterval(() => {
+						if (cancelled) { clearInterval(pollIntervalRef.current!); return }
+						if (ctrl?.task) {
+							ctrl.task.enqueueDeferredMessage(msg)
+							clearInterval(pollIntervalRef.current!)
+						}
+					}, 50)
+					pollTimeoutRef.current = setTimeout(() => { cancelled = true; clearInterval(pollIntervalRef.current!); clearTimeout(pollTimeoutRef.current!) }, 30000)
+				}
+				setDeferredCount((c) => c + 1)
+				setTextInput("")
+				setCursorPos(0)
+				const updatedHistory = [msg, ...workspaceMessageHistory.filter(h => h !== msg)].slice(0, MAX_HISTORY_ITEMS)
+				writeWorkspaceMessageHistory(workspacePath, updatedHistory).catch(err => Logger.error("[ChatView] Failed to write deferred message to history:", err))
+				setWorkspaceMessageHistory(updatedHistory)
+				inputStateStorage.delete(storageKey)
 			}
 			return
 		}
@@ -1585,13 +1674,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
 				{/* Action buttons for tool approvals and other asks (not during streaming) */}
 				{buttonConfig.enableButtons &&
-					!isSpinnerActive &&
+					!isBusy &&
 					!isYoloSuppressed(yolo, pendingAsk?.ask as DiracAsk | undefined) && (
 						<ActionButtons config={buttonConfig} mode={mode} />
 					)}
 
 				{/* Thinking indicator when processing */}
-				{isSpinnerActive && <ThinkingIndicator mode={mode} onCancel={handleCancel} startTime={spinnerStartTime} />}
+				{isBusy && <ThinkingIndicator mode={mode} onCancel={handleCancel} startTime={spinnerStartTime} />}
 
 				{/* Queued message indicator */}
 				{(queuedCount > 0 || deferredCount > 0) && !activePanel && (
