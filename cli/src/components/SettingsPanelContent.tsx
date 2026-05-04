@@ -17,8 +17,6 @@ import { queryProviderInfo, queryValidateSettings, type ProviderInfo, type Provi
 import { getProviderSetting, setProviderSetting, type SettingScope } from "@shared/storage/provider-settings"
 import type { Controller } from "@/core/controller"
 import { StateManager } from "@/core/storage/StateManager"
-import { openAiCodexOAuthManager } from "@/integrations/openai-codex/oauth"
-import { openExternal } from "@/utils/env"
 import { supportsReasoningEffortForModel } from "@/utils/model-utils"
 import { version as CLI_VERSION } from "../../../package.json"
 import { COLORS } from "../constants/colors"
@@ -282,11 +280,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	const [isEnteringApiKey, setIsEnteringApiKey] = useState(false)
 	const [pendingProvider, setPendingProvider] = useState<string | null>(null)
 	const [isConfiguringBedrock, setIsConfiguringBedrock] = useState(false)
-	const [isWaitingForCodexAuth, setIsWaitingForCodexAuth] = useState(false)
-	const [codexAuthUrl, setCodexAuthUrl] = useState<string | null>(null)
-	const [codexAuthError, setCodexAuthError] = useState<string | null>(null)
-	const [openAiCodexIsAuthenticated, setOpenAiCodexIsAuthenticated] = useState(false)
-	const [openAiCodexEmail, setOpenAiCodexEmail] = useState<string | undefined>(undefined)
 	const [apiKeyValue, setApiKeyValue] = useState("")
 	const [editValue, setEditValue] = useState("")
 
@@ -398,21 +391,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	const [configuringRole, setConfiguringRole] = useState<ModelRole | null>(null)
 	const [pickingModelRole, setPickingModelRole] = useState<ModelRole | null>(null)
 	// Read model IDs from state (re-reads when refreshKey changes)
-	// Update OpenAI Codex auth status
-	useEffect(() => {
-		const updateAuthStatus = async () => {
-			const isAuthenticated = await openAiCodexOAuthManager.isAuthenticated()
-			setOpenAiCodexIsAuthenticated(isAuthenticated)
-			if (isAuthenticated) {
-				const email = await openAiCodexOAuthManager.getEmail()
-				setOpenAiCodexEmail(email ?? undefined)
-			} else {
-				setOpenAiCodexEmail(undefined)
-			}
-		}
-		updateAuthStatus()
-	}, [provider, isWaitingForCodexAuth])
-
 
 	const { actModelId, planModelId } = useMemo(() => {
 		const apiConfig = stateManager.getApiConfiguration()
@@ -443,7 +421,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	// Build items list based on current tab
 	const items: ListItem[] = useMemo(() => {
 			// Legacy flags for providers without gateway-declared settings
-			const providerUsesReasoningEffort = provider === "openai-native" || provider === "openai-codex"
+			const providerUsesReasoningEffort = provider === "openai-native"
 			const showActReasoningEffort = supportsReasoningEffortForModel(actModelId || "")
 			const showPlanReasoningEffort = supportsReasoningEffortForModel(planModelId || "")
 			const showActThinkingOption = !providerUsesReasoningEffort && !showActReasoningEffort
@@ -524,21 +502,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 											})
 										}
 									}
-								}
-								// codex auth status (act role only)
-								if (effectiveProvider === "openai-codex" && openAiCodexIsAuthenticated && desc.role === "act") {
-									roleItems.push({
-										key: "codexEmail",
-										label: "Authenticated as",
-										type: "readonly",
-										value: openAiCodexEmail || "ChatGPT User",
-									})
-									roleItems.push({
-										key: "codexSignOut",
-										label: "Sign Out",
-										type: "action",
-										value: "",
-									})
 								}
 							}
 						}
@@ -815,16 +778,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 
 
 		// Thinking toggles - set budget to 1024 when enabled, 0 when disabled
-		if (item.key === "codexSignOut") {
-			openAiCodexOAuthManager.clearCredentials().then(() => {
-				setOpenAiCodexIsAuthenticated(false)
-				setOpenAiCodexEmail(undefined)
-				rebuildTaskApi()
-			})
-			return
-		}
-
-
 		if (item.key === "actThinkingEnabled") {
 			setActThinkingEnabled(newValue)
 			stateManager.setGlobalState("actModeThinkingBudgetTokens", newValue ? 1024 : 0)
@@ -903,9 +856,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 
 			// Build a minimal BedrockConfig from current state for applyBedrockConfig
 			const bedrockConfig: BedrockConfig = {
-				awsRegion: apiConfig.awsRegion ?? "us-east-1",
-				awsAuthentication: apiConfig.awsUseProfile ? "profile" : "credentials",
-				awsUseCrossRegionInference: Boolean(apiConfig.awsUseCrossRegionInference),
+				awsAuthentication: "credentials",
 			}
 
 			await applyBedrockConfig({
@@ -1028,36 +979,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		[stateManager],
 	)
 
-	// Handle OpenAI Codex OAuth flow
-	const startCodexAuth = useCallback(async () => {
-		try {
-			setIsWaitingForCodexAuth(true)
-			setCodexAuthError(null)
-
-			// Get the authorization URL and start the callback server
-			const authUrl = openAiCodexOAuthManager.startAuthorizationFlow()
-			setCodexAuthUrl(authUrl)
-
-			// Open browser to authorization URL
-			await openExternal(authUrl)
-
-			// Wait for the callback
-			await openAiCodexOAuthManager.waitForCallback()
-
-			// Success - apply provider config
-			await applyProviderConfig({ providerId: "openai-codex", controller })
-			setProvider("openai-codex")
-			refreshModelIds()
-			setIsWaitingForCodexAuth(false)
-			setCodexAuthUrl(null)
-		} catch (error) {
-			openAiCodexOAuthManager.cancelAuthorizationFlow()
-			setCodexAuthError(error instanceof Error ? error.message : String(error))
-			setIsWaitingForCodexAuth(false)
-			setCodexAuthUrl(null)
-		}
-	}, [controller])
-
 	const handleProviderSelect = useCallback(
 		async (providerId: string) => {
 			const role = configuringRole || undefined
@@ -1069,14 +990,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				await applyProviderConfig({ providerId: "dirac", role, controller })
 				setProvider("dirac")
 				refreshModelIds()
-				return
-			}
-
-			// Special handling for OpenAI Codex - uses OAuth instead of API key
-			if (providerId === "openai-codex") {
-				setIsPickingProvider(false)
-				setConfiguringRole(null)
-				startCodexAuth()
 				return
 			}
 
@@ -1116,7 +1029,7 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				setConfiguringRole(null)
 			}
 		},
-		[stateManager, startCodexAuth, controller, refreshModelIds, configuringRole],
+		[stateManager, controller, refreshModelIds, configuringRole],
 		)
 
 		// Handle Tab-to-edit on a configured provider in the picker
@@ -1198,30 +1111,16 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			return
 		}
 
-		switch (item.key) {
-			case "actModelId":
-			case "planModelId": {
-				// Use provider-specific model ID keys (e.g., dirac uses actModeOpenRouterModelId)
-				const apiConfig = stateManager.getApiConfiguration()
-				const actProvider = apiConfig.actModeApiProvider
-				const planProvider = apiConfig.planModeApiProvider || actProvider
-				if (!actProvider && !planProvider) break
-				const actKey = actProvider ? getProviderModelIdKey(actProvider, "act") : null
-				const planKey = planProvider ? getProviderModelIdKey(planProvider, "plan") : null
-
-				const stateKey = item.key === "actModelId" ? actKey : planKey
-					if (stateKey) stateManager.setGlobalState(stateKey, editValue || undefined)
-
+		// Provider-specific model ID keys (e.g., actModeNvidiaNimModelId, actModeApiModelId)
+			if (item.key.endsWith("ModelId") || item.key === "observerModelId") {
+				stateManager.setGlobalState(item.key as any, editValue || undefined)
 				stateManager.flushPendingState()
 				refreshModelIds()
 				rebuildTaskApi()
-				break
-			}
-			case "language":
+			} else if (item.key === "language") {
 				setPreferredLanguage(editValue)
 				stateManager.setGlobalState("preferredLanguage", editValue)
-				break
-		}
+			}
 		setIsEditing(false)
 	}, [items, selectedIndex, editValue, stateManager, refreshModelIds, rebuildTaskApi])
 
@@ -1299,22 +1198,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				}
 				return
 			}
-
-			// Codex OAuth waiting mode - escape to cancel
-			if (isWaitingForCodexAuth) {
-				if (key.escape) {
-					openAiCodexOAuthManager.cancelAuthorizationFlow()
-					setIsWaitingForCodexAuth(false)
-				}
-				return
-			}
-
-			// Codex OAuth error mode - any key to dismiss
-			if (codexAuthError) {
-				setCodexAuthError(null)
-				return
-			}
-
 			// Organization picker mode - escape to close, input is handled by OrganizationPicker
 
 			// Bedrock custom flow - input handled by BedrockCustomModelFlow component
@@ -1416,57 +1299,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 					}}
 					onComplete={handleBedrockComplete}
 				/>
-			)
-		}
-		if (isWaitingForCodexAuth) {
-			return (
-				<Box flexDirection="column">
-					<Box>
-						<Text color={COLORS.primaryBlue}>
-							<Spinner type="dots" />
-						</Text>
-						<Text color="white"> Waiting for ChatGPT sign-in...</Text>
-					</Box>
-					<Box marginTop={1}>
-						<Text color="gray">Sign in with your ChatGPT account in the browser.</Text>
-					</Box>
-					{codexAuthUrl && (
-						<Box flexDirection="column" marginTop={1}>
-							<Text color="gray">If the browser didn't open, use this URL:</Text>
-							<Text color="cyan" wrap="wrap">
-								{codexAuthUrl}
-							</Text>
-							<Box marginTop={1}>
-								<Text color="yellow">
-									Note: If you are on a remote machine, you may need to set up SSH port forwarding:
-								</Text>
-							</Box>
-							<Text color="gray">ssh -L 1455:localhost:1455 your-remote-host</Text>
-						</Box>
-					)}
-					<Box marginTop={1}>
-						<Text color="gray">Requires ChatGPT Plus, Pro, or Team subscription.</Text>
-					</Box>
-					<Box marginTop={1}>
-						<Text color="gray">Esc to cancel</Text>
-					</Box>
-				</Box>
-			)
-		}
-
-		if (codexAuthError) {
-			return (
-				<Box flexDirection="column">
-					<Text bold color="red">
-						ChatGPT sign-in failed
-					</Text>
-					<Box marginTop={1}>
-						<Text color="yellow">{codexAuthError}</Text>
-					</Box>
-					<Box marginTop={1}>
-						<Text color="gray">Press any key to continue</Text>
-					</Box>
-				</Box>
 			)
 		}
 
@@ -1673,8 +1505,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		isPickingLanguage ||
 		isEnteringApiKey ||
 		isConfiguringBedrock ||
-		isWaitingForCodexAuth ||
-		!!codexAuthError ||
 		isBedrockCustomFlow ||
 		isEditing
 

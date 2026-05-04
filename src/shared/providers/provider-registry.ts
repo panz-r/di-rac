@@ -9,11 +9,8 @@
 import type { ApiProvider } from "../api"
 import {
 	anthropicDefaultModelId,
-	basetenDefaultModelId,
-	bedrockDefaultModelId,
 	deepSeekDefaultModelId,
 	fireworksDefaultModelId,
-	geminiDefaultModelId,
 	groqDefaultModelId,
 	huaweiCloudMaasDefaultModelId,
 	huggingFaceDefaultModelId,
@@ -22,11 +19,8 @@ import {
 	minimaxDefaultModelId,
 	moonshotDefaultModelId,
 	nousResearchDefaultModelId,
-	openAiNativeDefaultModelId,
 	openRouterDefaultModelId,
 	requestyDefaultModelId,
-	sapAiCoreDefaultModelId,
-	vertexDefaultModelId,
 	wandbDefaultModelId,
 	xaiDefaultModelId,
 } from "../api"
@@ -72,22 +66,15 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		defaultModelId: openRouterDefaultModelId,
 	},
 	{
-		providerId: "openai-codex",
-		label: "ChatGPT Subscription",
-		isConfiguredOverride: (c) => !!c["openai-codex-oauth-credentials"],
-	},
-	{
 		providerId: "gemini",
 		label: "Google Gemini",
 		apiKeyFields: "geminiApiKey",
-		defaultModelId: geminiDefaultModelId,
 	},
 	{
 		providerId: "openai",
 		label: "OpenAI Compatible",
 		modelIdKeySuffix: "OpenAiModelId",
 		apiKeyFields: ["openAiApiKey", "openAiCompatibleCustomApiKey"],
-		defaultModelId: openAiNativeDefaultModelId,
 		isConfiguredOverride: (c) =>
 			!!(
 				(c.openAiBaseUrl && (c.openAiApiKey || c.openAiCompatibleCustomApiKey)) ||
@@ -102,13 +89,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		defaultModelId: anthropicDefaultModelId,
 	},
 	{
-		providerId: "bedrock",
-		label: "Amazon Bedrock",
-		apiKeyFields: ["awsAccessKey", "awsBedrockApiKey"],
-		defaultModelId: bedrockDefaultModelId,
-		isConfiguredOverride: (c) => !!c.awsRegion,
-	},
-	{
 		providerId: "vscode-lm",
 		label: "GitHub Copilot",
 	},
@@ -119,24 +99,11 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		defaultModelId: deepSeekDefaultModelId,
 	},
 	{
-		providerId: "openai-native",
-		label: "OpenAI",
-		apiKeyFields: "openAiNativeApiKey",
-		defaultModelId: openAiNativeDefaultModelId,
-	},
-	{
 		providerId: "openrouter",
 		label: "OpenRouter",
 		modelIdKeySuffix: "OpenRouterModelId",
 		apiKeyFields: "openRouterApiKey",
 		defaultModelId: openRouterDefaultModelId,
-	},
-	{
-		providerId: "vertex",
-		label: "GCP Vertex AI",
-		apiKeyFields: "geminiApiKey",
-		defaultModelId: vertexDefaultModelId,
-		isConfiguredOverride: (c) => !!(c.vertexProjectId && c.vertexRegion),
 	},
 	{
 		providerId: "litellm",
@@ -151,15 +118,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		providerId: "claude-code",
 		label: "Claude Code",
 		isConfiguredOverride: (c) => !!c.claudeCodePath,
-	},
-	{
-		providerId: "sapaicore",
-		label: "SAP AI Core",
-		modelIdKeySuffix: "SapAiCoreModelId",
-		apiKeyFields: ["sapAiCoreClientId", "sapAiCoreClientSecret"],
-		defaultModelId: sapAiCoreDefaultModelId,
-		isConfiguredOverride: (c) =>
-			!!(c.sapAiCoreBaseUrl && c.sapAiCoreClientId && c.sapAiCoreClientSecret && c.sapAiCoreTokenUrl),
 	},
 	{
 		providerId: "mistral",
@@ -191,13 +149,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		defaultModelId: openRouterDefaultModelId,
 	},
 	{
-		providerId: "baseten",
-		label: "Baseten",
-		modelIdKeySuffix: "BasetenModelId",
-		apiKeyFields: "basetenApiKey",
-		defaultModelId: basetenDefaultModelId,
-	},
-	{
 		providerId: "requesty",
 		label: "Requesty",
 		modelIdKeySuffix: "RequestyModelId",
@@ -223,11 +174,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		label: "Alibaba Qwen",
 		apiKeyFields: "qwenApiKey",
 		defaultModelId: internationalQwenDefaultModelId,
-	},
-	{
-		providerId: "qwen-code",
-		label: "Qwen Code",
-		apiKeyFields: "qwenApiKey",
 	},
 	{
 		providerId: "doubao",
@@ -261,11 +207,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		apiKeyFields: "nebiusApiKey",
 	},
 	{
-		providerId: "asksage",
-		label: "AskSage",
-		apiKeyFields: "asksageApiKey",
-	},
-	{
 		providerId: "xai",
 		label: "xAI",
 		apiKeyFields: "xaiApiKey",
@@ -284,12 +225,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		defaultModelId: huaweiCloudMaasDefaultModelId,
 	},
 	{
-		providerId: "dify",
-		label: "Dify.ai",
-		apiKeyFields: "difyApiKey",
-		isConfiguredOverride: (c) => !!(c.difyBaseUrl && c.difyApiKey),
-	},
-	{
 		providerId: "oca",
 		label: "Oracle Code Assist",
 	},
@@ -305,13 +240,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		modelIdKeySuffix: "HicapModelId",
 		apiKeyFields: "hicapApiKey",
 		defaultModelId: "",
-	},
-	{
-		providerId: "aihubmix",
-		label: "AIhubmix",
-		modelIdKeySuffix: "AihubmixModelId",
-		apiKeyFields: "aihubmixApiKey",
-		defaultModelId: openRouterDefaultModelId,
 	},
 	{
 		providerId: "nousResearch",

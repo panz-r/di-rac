@@ -7,10 +7,7 @@ import { Box, Text, useApp, useInput } from "ink"
 import Spinner from "ink-spinner"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import { StateManager } from "@/core/storage/StateManager"
-import { openAiCodexOAuthManager } from "@/integrations/openai-codex/oauth"
-import { openAiCodexDefaultModelId } from "@/shared/api"
 import { getRandomQuote } from "@/shared/quotes"
-import { openExternal } from "@/utils/env"
 import { COLORS } from "../constants/colors"
 import { useStdinContext } from "../context/StdinContext"
 import { useScrollableList } from "../hooks/useScrollableList"
@@ -35,7 +32,6 @@ type AuthStep =
 	| "saving"
 	| "success"
 	| "error"
-	| "openai_codex_auth"
 	| "bedrock"
 	| "import"
 	| "bedrock_custom"
@@ -156,7 +152,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ controller, onComplete, onEr
 	const [modelId, setModelId] = useState("")
 	const [baseUrl, setBaseUrl] = useState("")
 	const [errorMessage, setErrorMessage] = useState("")
-	const [codexAuthUrl, setCodexAuthUrl] = useState<string | null>(null)
 	const [providerSearch, setProviderSearch] = useState("")
 	const [providerIndex, setProviderIndex] = useState(0)
 	const [importSources, setImportSources] = useState<DetectedSources>({ codex: false, opencode: false })
@@ -166,9 +161,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ controller, onComplete, onEr
 	// Main menu items - conditionally include import options
 	const mainMenuItems: SelectItem[] = useMemo(() => {
 		const items: SelectItem[] = []
-
-		// Add OpenAI Codex option for ChatGPT subscribers
-		items.push({ label: "Sign in with ChatGPT Subscription", value: "openai_codex_auth" })
 
 		// Add import options if detected
 		if (importSources.codex) {
@@ -229,44 +221,11 @@ export const AuthView: React.FC<AuthViewProps> = ({ controller, onComplete, onEr
 		}
 	}, [step, selectedProvider])
 
-	// Start OpenAI Codex OAuth flow
-	const startOpenAiCodexAuth = useCallback(async () => {
-		try {
-			// Get the authorization URL and start the callback server
-			const authUrl = openAiCodexOAuthManager.startAuthorizationFlow()
-			setCodexAuthUrl(authUrl)
-
-			// Open browser to authorization URL (uses cross-platform 'open' package)
-			await openExternal(authUrl)
-
-			// Wait for the callback
-			await openAiCodexOAuthManager.waitForCallback()
-
-			// Success - save configuration
-			await applyProviderConfig({ providerId: "openai-codex", controller })
-			const stateManager = StateManager.get()
-			stateManager.setGlobalState("welcomeViewCompleted", true)
-			await stateManager.flushPendingState()
-			setSelectedProvider("openai-codex")
-			setModelId(openAiCodexDefaultModelId)
-			setStep("success")
-			setCodexAuthUrl(null)
-		} catch (error) {
-			openAiCodexOAuthManager.cancelAuthorizationFlow()
-			setErrorMessage(error instanceof Error ? error.message : String(error))
-			setStep("error")
-			setCodexAuthUrl(null)
-		}
-	}, [controller])
-
 	const handleMainMenuSelect = useCallback(
 		(value: string) => {
 			if (value === "exit") {
 				exit()
 				onComplete?.()
-			} else if (value === "openai_codex_auth") {
-				setStep("openai_codex_auth")
-				startOpenAiCodexAuth()
 			} else if (value === "configure_byo") {
 				setStep("provider")
 			} else if (value === "import_codex") {
@@ -277,22 +236,19 @@ export const AuthView: React.FC<AuthViewProps> = ({ controller, onComplete, onEr
 				setStep("import")
 			}
 		},
-		[exit, onComplete, startOpenAiCodexAuth],
+		[exit, onComplete],
 	)
 
 	const handleProviderSelect = useCallback(
 		(value: string) => {
 			setSelectedProvider(value)
-			if (value === "openai-codex") {
-				setStep("openai_codex_auth")
-				startOpenAiCodexAuth()
-			} else if (value === "bedrock") {
+			if (value === "bedrock") {
 				setStep("bedrock")
 			} else {
 				setStep("apikey")
 			}
 		},
-		[startOpenAiCodexAuth],
+		[],
 	)
 
 	const handleApiKeySubmit = useCallback(
@@ -483,10 +439,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ controller, onComplete, onEr
 				setBaseUrl("")
 				setStep("modelid")
 				break
-			case "openai_codex_auth":
-				openAiCodexOAuthManager.cancelAuthorizationFlow()
-				setStep("menu")
-				break
 			case "bedrock":
 				setBedrockConfig(null)
 				setStep("provider")
@@ -614,39 +566,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ controller, onComplete, onEr
 					</Box>
 				)
 
-			case "openai_codex_auth":
-				return (
-					<Box flexDirection="column">
-						<Box>
-							<Text color={COLORS.primaryBlue}>
-								<Spinner type="dots" />
-							</Text>
-							<Text color="white"> Waiting for ChatGPT sign-in...</Text>
-						</Box>
-						<Text> </Text>
-						<Text color="gray">Sign in with your ChatGPT account in the browser.</Text>
-						{codexAuthUrl && (
-							<Box flexDirection="column" marginTop={1}>
-								<Text color="gray">If the browser didn't open, use this URL:</Text>
-								<Text color="cyan" wrap="wrap">
-									{codexAuthUrl}
-								</Text>
-								<Box marginTop={1}>
-									<Text color="yellow">
-										Note: If you are on a remote machine, you may need to set up SSH port forwarding:
-									</Text>
-								</Box>
-								<Text color="gray">ssh -L 1455:localhost:1455 your-remote-host</Text>
-							</Box>
-						)}
-						<Text> </Text>
-						<Text color="gray">Requires ChatGPT Plus, Pro, or Team subscription.</Text>
-						<Text> </Text>
-						<Text color="gray">Esc to cancel</Text>
-					</Box>
-				)
-
-
 			case "bedrock":
 				return (
 					<BedrockSetup
@@ -701,7 +620,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ controller, onComplete, onEr
 
 	// Steps that allow going back with escape (apikey handled by ApiKeyInput component)
 	// OcaEmployeeCheck handles its own escape key, so oca_employee_check is not in this list
-	const canGoBack = ["provider", "modelid", "baseurl", "openai_codex_auth", "bedrock", "error"].includes(step)
+	const canGoBack = ["provider", "modelid", "baseurl", "bedrock", "error"].includes(step)
 
 	useInput(
 		(input, key) => {

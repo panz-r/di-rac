@@ -672,11 +672,6 @@ export class Controller {
 		const diracConfig = DiracEnv.config()
 		const environment = diracConfig.environment
 
-		// Check OpenAI Codex authentication status
-		const { openAiCodexOAuthManager } = await import("@/integrations/openai-codex/oauth")
-		const openAiCodexIsAuthenticated = await openAiCodexOAuthManager.isAuthenticated()
-		const openAiCodexEmail = (await openAiCodexOAuthManager.getEmail()) ?? undefined
-
 		return {
 			apiConfiguration,
 			currentTaskItem,
@@ -744,8 +739,6 @@ export class Controller {
 			backgroundEditEnabled: this.stateManager.getGlobalSettingsKey("backgroundEditEnabled"),
 			optOutOfRemoteConfig: this.stateManager.getGlobalSettingsKey("optOutOfRemoteConfig"),
 			doubleCheckCompletionEnabled,
-			openAiCodexIsAuthenticated,
-			openAiCodexEmail,
 			availableSkills,
 		}
 	}

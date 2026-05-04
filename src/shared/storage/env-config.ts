@@ -22,8 +22,6 @@ export const ENV_VAR_TO_SECRET_KEY: Record<string, keyof Secrets> = {
 	MINIMAX_API_KEY: "minimaxApiKey",
 	MINIMAX_CN_API_KEY: "minimaxApiKey",
 	HF_TOKEN: "huggingFaceApiKey",
-	OPENCODE_API_KEY: "openAiNativeApiKey",
-	KIMI_API_KEY: "openAiNativeApiKey",
 	DEEPSEEK_API_KEY: "deepSeekApiKey",
 	QWEN_API_KEY: "qwenApiKey",
 	TOGETHER_API_KEY: "togetherApiKey",
@@ -45,12 +43,6 @@ export function getSecretsFromEnv(): Partial<Secrets> {
 			secrets[secretKey] = value
 		}
 	}
-
-	// Special case: OPENAI_API_KEY also maps to openAiNativeApiKey if not already set by OPENCODE_API_KEY or KIMI_API_KEY
-	if (process.env.OPENAI_API_KEY && !secrets.openAiNativeApiKey) {
-		secrets.openAiNativeApiKey = process.env.OPENAI_API_KEY
-	}
-
 	// Map OPENAI_COMPATIBLE_CUSTOM_KEY to openAiApiKey if not already set
 	if (process.env.OPENAI_COMPATIBLE_CUSTOM_KEY && !secrets.openAiApiKey) {
 		secrets.openAiApiKey = process.env.OPENAI_COMPATIBLE_CUSTOM_KEY
@@ -66,7 +58,6 @@ export function getSecretsFromEnv(): Partial<Secrets> {
 export function getProviderFromEnv(): ApiProvider | undefined {
 	if (process.env.ANTHROPIC_API_KEY) return "anthropic"
 	if (process.env.OPENROUTER_API_KEY) return "openrouter"
-	if (process.env.OPENAI_API_KEY) return "openai-native"
 	if (process.env.GEMINI_API_KEY) return "gemini"
 	if (process.env.GROQ_API_KEY) return "groq"
 	if (process.env.XAI_API_KEY) return "xai"
@@ -77,7 +68,6 @@ export function getProviderFromEnv(): ApiProvider | undefined {
 	if (process.env.MINIMAX_API_KEY || process.env.MINIMAX_CN_API_KEY) return "minimax"
 	if (process.env.CEREBRAS_API_KEY) return "cerebras"
 	if (process.env.AI_GATEWAY_API_KEY) return "vercel-ai-gateway"
-	if (process.env.OPENCODE_API_KEY || process.env.KIMI_API_KEY) return "openai-native"
 	if (process.env.DEEPSEEK_API_KEY) return "deepseek"
 	if (process.env.QWEN_API_KEY) return "qwen"
 	if (process.env.TOGETHER_API_KEY) return "together"

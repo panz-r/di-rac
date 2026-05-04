@@ -100,8 +100,6 @@ export interface ExtensionState {
 	optOutOfRemoteConfig?: boolean
 	doubleCheckCompletionEnabled?: boolean
 	availableSkills?: SkillMetadata[]
-	openAiCodexIsAuthenticated?: boolean
-	openAiCodexEmail?: string
 }
 
 export interface DiracMessage {

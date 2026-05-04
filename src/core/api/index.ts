@@ -1,23 +1,13 @@
 import { ApiConfiguration, ModelInfo, openAiModelInfoSaneDefaults, QwenApiRegions } from "@shared/api"
 import { queryProviderInfo, type ProviderSetting } from "@/core/api/providers/api-gateway"
-import { getSettingsForMode } from "@shared/storage/provider-settings" 
+import { getSettingsForMode } from "@shared/storage/provider-settings"
 import { Mode } from "@shared/storage/types"
 import { getRoleStateKey } from "@shared/roles"
 import type { ModelRole } from "@shared/roles"
 import { DiracStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { DiracTool } from "@/shared/tools"
-import { AIhubmixHandler } from "./providers/aihubmix"
 import { ApiGatewayHandler } from "./providers/api-gateway"
-import { AskSageHandler } from "./providers/asksage"
-import { BasetenHandler } from "./providers/baseten"
-import { AwsBedrockHandler } from "./providers/bedrock"
-import { DifyHandler } from "./providers/dify"
-import { OpenAiCodexHandler } from "./providers/openai-codex"
-import { OpenAiNativeHandler } from "./providers/openai-native"
-import { QwenCodeHandler } from "./providers/qwen-code"
-import { SapAiCoreHandler } from "./providers/sapaicore"
-import { VertexHandler } from "./providers/vertex"
 import { ApiStream, ApiStreamUsageChunk } from "./transform/stream"
 
 export type CommonApiHandlerOptions = {
@@ -280,106 +270,6 @@ function createHandlerForProvider(
 				enableThinking: true,
 			})
 
-		// --- TypeScript-only providers (not yet migrated to Go gateway) ---
-		case "bedrock":
-			return new AwsBedrockHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-				awsAccessKey: options.awsAccessKey,
-				awsSecretKey: options.awsSecretKey,
-				awsSessionToken: options.awsSessionToken,
-				awsRegion: options.awsRegion,
-				awsAuthentication: options.awsAuthentication,
-				awsBedrockApiKey: options.awsBedrockApiKey,
-				awsUseCrossRegionInference: options.awsUseCrossRegionInference,
-				awsUseGlobalInference: options.awsUseGlobalInference,
-				awsBedrockUsePromptCache: options.awsBedrockUsePromptCache,
-				awsUseProfile: options.awsUseProfile,
-				awsProfile: options.awsProfile,
-				awsBedrockEndpoint: options.awsBedrockEndpoint,
-				awsBedrockCustomSelected:
-					mode === "plan" ? options.planModeAwsBedrockCustomSelected : options.actModeAwsBedrockCustomSelected,
-				awsBedrockCustomModelBaseId:
-					mode === "plan" ? options.planModeAwsBedrockCustomModelBaseId : options.actModeAwsBedrockCustomModelBaseId,
-				thinkingBudgetTokens,
-			})
-		case "vertex":
-			return new VertexHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				vertexProjectId: options.vertexProjectId,
-				vertexRegion: options.vertexRegion,
-				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-				thinkingBudgetTokens,
-				geminiApiKey: options.geminiApiKey,
-				geminiBaseUrl: options.geminiBaseUrl,
-				reasoningEffort: mode === "plan" ? options.planModeReasoningEffort : options.actModeReasoningEffort,
-				ulid: options.ulid,
-				geminiSearchEnabled: options.geminiSearchEnabled,
-			})
-		case "openai-native":
-			return new OpenAiNativeHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				openAiNativeApiKey: options.openAiNativeApiKey,
-				reasoningEffort: mode === "plan" ? options.planModeReasoningEffort : options.actModeReasoningEffort,
-				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-				thinkingBudgetTokens,
-			})
-		case "openai-codex":
-			return new OpenAiCodexHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				reasoningEffort: mode === "plan" ? options.planModeReasoningEffort : options.actModeReasoningEffort,
-				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-			})
-		case "qwen-code":
-			return new QwenCodeHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				qwenCodeOauthPath: options.qwenCodeOauthPath,
-				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-			})
-		case "asksage":
-			return new AskSageHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				asksageApiKey: options.asksageApiKey,
-				asksageApiUrl: options.asksageApiUrl,
-				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-			})
-		case "baseten":
-			return new BasetenHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				basetenApiKey: options.basetenApiKey,
-				basetenModelId: mode === "plan" ? options.planModeBasetenModelId : options.actModeBasetenModelId,
-				basetenModelInfo: mode === "plan" ? options.planModeBasetenModelInfo : options.actModeBasetenModelInfo,
-				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-			})
-		case "sapaicore":
-			return new SapAiCoreHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				sapAiCoreClientId: options.sapAiCoreClientId,
-				sapAiCoreClientSecret: options.sapAiCoreClientSecret,
-				sapAiCoreTokenUrl: options.sapAiCoreTokenUrl,
-				sapAiResourceGroup: options.sapAiResourceGroup,
-				sapAiCoreBaseUrl: options.sapAiCoreBaseUrl,
-				apiModelId: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-				thinkingBudgetTokens,
-				reasoningEffort: mode === "plan" ? options.planModeReasoningEffort : options.actModeReasoningEffort,
-				deploymentId: mode === "plan" ? options.planModeSapAiCoreDeploymentId : options.actModeSapAiCoreDeploymentId,
-				sapAiCoreUseOrchestrationMode: options.sapAiCoreUseOrchestrationMode,
-			})
-		case "dify":
-			return new DifyHandler({
-				difyApiKey: options.difyApiKey,
-				difyBaseUrl: options.difyBaseUrl,
-			})
-		case "aihubmix":
-			return new AIhubmixHandler({
-				onRetryAttempt: options.onRetryAttempt,
-				apiKey: options.aihubmixApiKey,
-				baseURL: options.aihubmixBaseUrl,
-				appCode: options.aihubmixAppCode,
-				modelId: mode === "plan" ? (options as any).planModeAihubmixModelId : (options as any).actModeAihubmixModelId,
-				modelInfo:
-					mode === "plan" ? (options as any).planModeAihubmixModelInfo : (options as any).actModeAihubmixModelInfo,
-			})
 		default:
 			return gatewayHandler("anthropic", {
 				apiKey: options.apiKey,

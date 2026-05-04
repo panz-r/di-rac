@@ -44,7 +44,7 @@ function transformToolCallIdForNativeApi(toolId: string, provider?: ApiProvider)
 		// Use the last 33 chars + "call_" (5 chars) to stay under the 40-char limit.
 		return `call_${toolId.slice(toolId.length - (MAX_TOOL_CALL_ID_LENGTH - 5))}`
 	}
-	if (provider !== "openai-native") {
+	if (provider !== "openai") {
 		return toolId
 	}
 	// Ensure ID doesn't exceed max length

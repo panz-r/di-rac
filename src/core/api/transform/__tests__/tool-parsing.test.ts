@@ -37,7 +37,7 @@ describe("Tool Call Parsing", () => {
 				},
 			]
 
-			const result = convertToOpenAiMessages(messages, "openai-native")
+			const result = convertToOpenAiMessages(messages, "openrouter")
 
 			result.should.have.length(1)
 			const msg = result[0] as any
@@ -64,7 +64,7 @@ describe("Tool Call Parsing", () => {
 				},
 			]
 
-			const result = convertToOpenAiMessages(messages, "openai-native")
+			const result = convertToOpenAiMessages(messages, "openai")
 
 			const msg = result[0] as any
 			msg.tool_calls[0].id.length.should.be.belowOrEqual(40)

@@ -5,7 +5,7 @@
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
-import { anthropicDefaultModelId, geminiDefaultModelId, openAiNativeDefaultModelId } from "@/shared/api"
+import { anthropicDefaultModelId } from "@/shared/api"
 import { PROVIDER_LIST } from "@/shared/providers/provider-registry"
 
 // Import source types
@@ -120,7 +120,6 @@ function findOpenCodeAuthPath(): string | null {
  * Map Codex key names to Dirac providers
  */
 const CODEX_KEY_MAP: Record<string, { provider: string; keyField: string; modelId?: string }> = {
-	OPENAI_API_KEY: { provider: "openai-native", keyField: "openAiNativeApiKey", modelId: openAiNativeDefaultModelId },
 	ANTHROPIC_API_KEY: { provider: "anthropic", keyField: "apiKey", modelId: anthropicDefaultModelId },
 }
 
@@ -128,9 +127,7 @@ const CODEX_KEY_MAP: Record<string, { provider: string; keyField: string; modelI
  * Map OpenCode provider IDs to Dirac providers
  */
 const OPENCODE_PROVIDER_MAP: Record<string, { provider: string; keyField: string; modelId?: string }> = {
-	openai: { provider: "openai-native", keyField: "openAiNativeApiKey", modelId: openAiNativeDefaultModelId },
 	anthropic: { provider: "anthropic", keyField: "apiKey", modelId: anthropicDefaultModelId },
-	gemini: { provider: "gemini", keyField: "geminiApiKey", modelId: geminiDefaultModelId },
 	mistral: { provider: "mistral", keyField: "mistralApiKey" },
 	groq: { provider: "groq", keyField: "groqApiKey" },
 	deepseek: { provider: "deepseek", keyField: "deepSeekApiKey" },

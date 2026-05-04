@@ -52,9 +52,6 @@ const ProviderBaseUrlMap: Partial<Record<string, string>> = {
 	lmstudio: "lmStudioBaseUrl",
 	requesty: "requestyBaseUrl",
 	nvidiaNim: "nvidiaNimBaseUrl",
-	sapaicore: "sapAiCoreBaseUrl",
-	dify: "difyBaseUrl",
-	aihubmix: "aihubmixBaseUrl",
 	"api-gateway": "apiGatewayBaseUrl",
 }
 
@@ -87,12 +84,10 @@ function extractProviderConfig(stateManager: StateManager, providerId: string): 
 
 	// If no API key found and this isn't a provider that uses environment variables, skip
 	if (!apiKey) {
-		const hasAwsCredentials = providerId === "bedrock" && (apiConfig.awsAccessKey || apiConfig.awsRegion)
-		const hasEnvFallback = providerId === "sapaicore" && (apiConfig.sapAiCoreClientId || apiConfig.sapAiCoreClientSecret)
 		const hasCustomEndpoint = providerId === "openai" && apiConfig.openAiBaseUrl
 		const noKeyNeeded = providerId === "lmstudio"
 
-		if (!hasAwsCredentials && !hasEnvFallback && !hasCustomEndpoint && !noKeyNeeded) {
+		if (!hasCustomEndpoint && !noKeyNeeded) {
 			return null
 		}
 	}
@@ -119,29 +114,6 @@ function extractProviderConfig(stateManager: StateManager, providerId: string): 
 		if (modelId) {
 			config.model = modelId
 		}
-	}
-
-	// Set region for AWS/Bedrock
-	if (providerId === "bedrock") {
-		const region = apiConfig.awsRegion as string | undefined
-		if (region) {
-			config.region = region
-		}
-		const accessKey = apiConfig.awsAccessKey as string | undefined
-		const secretKey = apiConfig.awsSecretKey as string | undefined
-		const sessionToken = apiConfig.awsSessionToken as string | undefined
-
-		if (accessKey) config["aws_access_key"] = accessKey
-		if (secretKey) config["aws_secret_key"] = secretKey
-		if (sessionToken) config["aws_session_token"] = sessionToken
-	}
-
-	// Set SAP AI Core credentials
-	if (providerId === "sapaicore") {
-		const clientId = apiConfig.sapAiCoreClientId as string | undefined
-		const clientSecret = apiConfig.sapAiCoreClientSecret as string | undefined
-		if (clientId) config["client_id"] = clientId
-		if (clientSecret) config["client_secret"] = clientSecret
 	}
 
 	// Set Azure API version
