@@ -647,7 +647,6 @@ export class Controller {
 		const shouldShowAnnouncement = lastShownAnnouncementId !== latestAnnouncementId
 		const platform = process.platform as Platform
 		const distinctId = getDistinctId()
-		const version = ExtensionRegistryInfo.version
 		const diracConfig = DiracEnv.config()
 		const environment = diracConfig.environment
 		const banners: any[] = []
@@ -659,7 +658,6 @@ export class Controller {
 		const openAiCodexEmail = (await openAiCodexOAuthManager.getEmail()) ?? undefined
 
 		return {
-			version,
 			apiConfiguration,
 			currentTaskItem,
 			diracMessages,
