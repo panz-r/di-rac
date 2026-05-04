@@ -5,7 +5,6 @@ import { ToolUse } from "@core/assistant-message"
 import { ContextManager } from "@core/context/context-management/ContextManager"
 import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
 
-import { EnvironmentContextTracker } from "@core/context/context-tracking/EnvironmentContextTracker"
 import { FileContextTracker } from "@core/context/context-tracking/FileContextTracker"
 import { ModelContextTracker } from "@core/context/context-tracking/ModelContextTracker"
 import {
@@ -186,7 +185,6 @@ export class Task {
 	// Metadata tracking
 	private fileContextTracker: FileContextTracker
 	private modelContextTracker: ModelContextTracker
-	private environmentContextTracker: EnvironmentContextTracker
 	private environmentManager: EnvironmentManager
 	private contextLoader: ContextLoader
 	private taskMessenger: TaskMessenger
@@ -312,7 +310,6 @@ export class Task {
 		// Initialize context trackers
 		this.fileContextTracker = new FileContextTracker(controller, this.taskId)
 		this.modelContextTracker = new ModelContextTracker(this.taskId)
-		this.environmentContextTracker = new EnvironmentContextTracker(this.taskId)
 
 		// Prepare effective API configuration
 		const apiConfiguration = this.stateManager.getApiConfiguration()
@@ -528,7 +525,6 @@ export class Task {
 			cwd: this.cwd,
 			hookManager: this.hookManager,
 			initiateTaskLoop: this.initiateTaskLoop.bind(this),
-			recordEnvironment: () => this.environmentContextTracker.recordEnvironment(),
 			getSessionSummaryData: () => ({ recoveryEngine: this.toolExecutor.recoveryEngine }),
 			observerOrchestrator: this.observerOrchestrator,
 		})

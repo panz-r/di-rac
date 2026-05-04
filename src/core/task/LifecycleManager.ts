@@ -129,13 +129,6 @@ export class LifecycleManager {
 			})
 		}
 
-		try {
-			await this.dependencies.recordEnvironment()
-		} catch (error) {
-			Logger.error("Failed to record environment metadata:", error)
-		}
-
-
 		await this.dependencies.initiateTaskLoop(userContent)
 	}
 
@@ -382,12 +375,6 @@ export class LifecycleManager {
 				type: "text",
 				text: `<hook_context source="UserPromptSubmit">\n${userPromptHookResult.contextModification}\n</hook_context>`,
 			})
-		}
-
-		try {
-			await this.dependencies.recordEnvironment()
-		} catch (error) {
-			Logger.error("Failed to record environment metadata on resume:", error)
 		}
 
 		await this.dependencies.messageStateHandler.overwriteApiConversationHistory(modifiedApiConversationHistory)

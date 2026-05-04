@@ -1,5 +1,5 @@
 import { Anthropic } from "@anthropic-ai/sdk"
-import { EnvironmentMetadataEntry, TaskMetadata } from "@core/context/context-tracking/ContextTrackerTypes"
+import { TaskMetadata } from "@core/context/context-tracking/ContextTrackerTypes"
 import { execa } from "@packages/execa"
 import { DiracMessage } from "@shared/ExtensionMessage"
 import { HistoryItem } from "@shared/HistoryItem"
@@ -283,37 +283,6 @@ export async function saveDiracMessages(taskId: string, uiMessages: DiracMessage
 		await atomicWriteFile(filePath, JSON.stringify(uiMessages))
 	} catch (error) {
 		Logger.error("Failed to save ui messages:", error)
-	}
-}
-
-/**
- * Collects environment metadata for the current system and host.
- * This information is used for debugging and task portability.
- * Returns metadata without timestamp - timestamp is added by EnvironmentContextTracker.
- */
-export async function collectEnvironmentMetadata(): Promise<Omit<EnvironmentMetadataEntry, "ts">> {
-	try {
-		const hostVersion = await HostProvider.env.getHostVersion({})
-
-		return {
-			os_name: os.platform(),
-			os_version: os.release(),
-			os_arch: os.arch(),
-			host_name: hostVersion.platform || "Unknown",
-			host_version: hostVersion.version || "Unknown",
-			dirac_version: ExtensionRegistryInfo.version,
-		}
-	} catch (error) {
-		Logger.error("Failed to collect environment metadata:", error)
-		// Return fallback values if collection fails
-		return {
-			os_name: os.platform(),
-			os_version: os.release(),
-			os_arch: os.arch(),
-			host_name: "Unknown",
-			host_version: "Unknown",
-			dirac_version: "Unknown",
-		}
 	}
 }
 
