@@ -268,6 +268,7 @@ function createHandlerForProvider(
 				apiKey: options.nvidiaNimApiKey,
 				baseUrl: options.nvidiaNimBaseUrl,
 				model: mode === "plan" ? options.planModeNvidiaNimModelId : options.actModeNvidiaNimModelId,
+				settings: providerSettings,
 			})
 		case "api-gateway":
 			return new ApiGatewayHandler({
