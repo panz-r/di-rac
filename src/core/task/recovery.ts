@@ -24,7 +24,7 @@ function extractReplacementText(toolName: string, params: any): string | null {
 	if (toolName === DiracDefaultTool.EDIT_FILE && params?.edits) {
 		return params.edits.map((e: any) => e.text || "").join("\n")
 	}
-	if (toolName === DiracDefaultTool.REPLACE_SYMBOL && params?.replacements) {
+	if (toolName === DiracDefaultTool.SYMBOLS && params?.replacements) {
 		return params.replacements.map((r: any) => r.text || "").join("\n")
 	}
 	if (toolName === DiracDefaultTool.FILE_NEW) {
@@ -35,7 +35,7 @@ function extractReplacementText(toolName: string, params: any): string | null {
 
 const MAX_ABSOLUTE_DELETION = 150
 
-const MUTATION_TOOLS = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.REPLACE_SYMBOL, DiracDefaultTool.RENAME_SYMBOL]
+const MUTATION_TOOLS = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.SYMBOLS]
 
 const MUTATION_BASH_PATTERNS = [
 	/\bsed\s+.*-i/, /\brm\s+-/, /\bmv\s+/, /\bcp\s+/,
@@ -413,7 +413,7 @@ export class RecoveryEngine {
 		// 0. Phase and Token Tracking (Phase 5)
 		if (taskState) {
 			const mutationTools = [DiracDefaultTool.EDIT_FILE, DiracDefaultTool.FILE_NEW, DiracDefaultTool.BASH]
-			const verificationTools = [DiracDefaultTool.BASH_RESTRICTED, DiracDefaultTool.DIAGNOSTICS_SCAN]
+			const verificationTools = [DiracDefaultTool.BASH]
 			
 			if (mutationTools.includes(toolName as any)) {
 				if (taskState.currentTaskPhase === "exploration") {
@@ -444,8 +444,8 @@ export class RecoveryEngine {
 		// Guard: only fire once per turn to prevent rapid re-triggering
 		if (taskState?.turnTokenEstimates > 150000 && !this._proactiveCondensedThisTurn) {
 			this._proactiveCondensedThisTurn = true
-			this.updateAuditChain("SYSTEM", "PROACTIVE_CONDENSE", "SILENT_FIX")
-			await dispatch(DiracDefaultTool.CONDENSE, {})
+			this.updateAuditChain("SYSTEM", "PROACTIVE_COMPACT", "SILENT_FIX")
+			await dispatch(DiracDefaultTool.COMPACT, {})
 			taskState.turnTokenEstimates = 0
 		}
 
@@ -663,7 +663,7 @@ export class RecoveryEngine {
 		}
 
 		// 5c. Per-file edit streak breaker
-		if ((toolName === DiracDefaultTool.EDIT_FILE || toolName === DiracDefaultTool.REPLACE_SYMBOL) && typeof filePath === "string" && taskState) {
+		if ((toolName === DiracDefaultTool.EDIT_FILE || toolName === DiracDefaultTool.SYMBOLS) && typeof filePath === "string" && taskState) {
 			// Reset streak for other files
 			const currentStreak = (taskState.editStreakCount.get(filePath) || 0) + 1
 			taskState.editStreakCount.set(filePath, currentStreak)
@@ -746,7 +746,7 @@ export class RecoveryEngine {
 		}
 
 		// 4. Symbol Freshness Check (Phase 8: Pre-flight -> Phase 10: Silent Re-parse)
-		if (toolName === DiracDefaultTool.EXPAND_SYMBOL && typeof filePath === "string") {
+		if (toolName === DiracDefaultTool.FILE_READ && typeof filePath === "string") {
 			try {
 				const fs = await import("fs/promises")
 				const stats = await fs.stat(filePath)
@@ -949,7 +949,7 @@ export class RecoveryEngine {
 					if (!symbolName) return null
 
 					// Re-run search_symbols to find the new handle
-					const searchResult = await execute(DiracDefaultTool.SEARCH_SYMBOLS, {
+					const searchResult = await execute(DiracDefaultTool.SYMBOLS, {
 						query: symbolName
 					})
 
@@ -961,7 +961,7 @@ export class RecoveryEngine {
 						if (handleMatch) {
 							const handle = handleMatch[1]
 							this.updateAuditChain(toolName, "SYMBOL_AUTO_EXPANDED", "SILENT_FIX")
-							return await execute(DiracDefaultTool.EXPAND_SYMBOL, {
+							return await execute(DiracDefaultTool.FILE_READ, {
 								handle
 							})
 						}
@@ -1225,10 +1225,10 @@ Some line numbers may have shifted. Please locate your target function in the ne
 					}
 
 					// Phase 14: Context Pressure Recovery
-					this.updateAuditChain(toolName, "CONTEXT_PRESSURE", "SILENT_CONDENSE")
+					this.updateAuditChain(toolName, "CONTEXT_PRESSURE", "SILENT_COMPACT")
 					
 					// Trigger automatic condensation
-					const condenseResult = await execute(DiracDefaultTool.CONDENSE, {})
+					const condenseResult = await execute(DiracDefaultTool.COMPACT, {})
 					
 					// If condensation succeeded (or even if it returned a summary), retry the original tool
 					// We check if the result looks like a success or a summary
@@ -1333,7 +1333,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 
 			// Reflection prompt on 2nd nudge: force the model to reason before hard block
 			if (currentCount === 2) {
-				const readOnlyReflectTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.GET_FUNCTION, DiracDefaultTool.EXPAND_SYMBOL]
+				const readOnlyReflectTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.FILE_READ]
 				const reflectMsg = this.formatStructuredEscalation(
 					toolName,
 					args,
@@ -1382,7 +1382,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 				nextSteps = "Circular strategy loop detected. Break the cycle: summarize what you've learned and pivot to a completely different approach."
 			} else if (isAlternating) {
 				nextSteps = "Alternating between tools without progress. Pick one approach and commit to it, or summarize your findings so far."
-			} else if (toolName === DiracDefaultTool.BASH || toolName === DiracDefaultTool.BASH_RESTRICTED) {
+			} else if (toolName === DiracDefaultTool.BASH) {
 				nextSteps = "Shell commands are looping. Try search_symbols or read_file --detail outline to gather information without the shell."
 			} else if (toolName === DiracDefaultTool.FILE_READ) {
 				nextSteps = "Repeated reads of the same region. Try read_file --detail skeleton for signatures, or use --page next to advance."
@@ -1405,7 +1405,7 @@ Some line numbers may have shifted. Please locate your target function in the ne
 			)
 
 			// If it's a read-only tool, we can allow it to proceed BUT prepend the hint
-			const readOnlyTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.GET_FUNCTION, DiracDefaultTool.EXPAND_SYMBOL]
+			const readOnlyTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.FILE_READ]
 			if (readOnlyTools.includes(toolName as any)) {
 				const actualResult = await dispatch(toolName, args)
 				if (Array.isArray(actualResult) && Array.isArray(hintResponse)) {
@@ -1447,11 +1447,11 @@ Some line numbers may have shifted. Please locate your target function in the ne
 					this.updateAuditChain("SYSTEM", "STAGNATION_HEALED", "PROGRESS")
 				}
 				// Feature 4: Record bash execution
-				if ((toolName === DiracDefaultTool.BASH || toolName === DiracDefaultTool.BASH_RESTRICTED) && taskState) {
+				if ((toolName === DiracDefaultTool.BASH) && taskState) {
 					const execId = "exec-" + (++taskState.bashExecutionCounter)
 					let exitCode: number | null = null
 					const command = (args as any)?.command || ""
-					if (toolName === DiracDefaultTool.BASH_RESTRICTED && Array.isArray(result)) {
+					if (toolName === DiracDefaultTool.BASH && Array.isArray(result)) {
 						const tb = (result as any[]).find((b: any) => b.type === "text")
 						if (tb?.text) {
 							try { exitCode = JSON.parse((tb as any).text).exitCode ?? null } catch { /* not JSON */ }
@@ -2282,7 +2282,7 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 
 		// 2. Non-progress File Loop Detection (Progress Awareness)
 		if (taskState && taskState.filesTouchedInCurrentTurn.size >= 1) {
-			const readOnlyTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.GET_FUNCTION, DiracDefaultTool.EXPAND_SYMBOL]
+			const readOnlyTools = [DiracDefaultTool.FILE_READ, DiracDefaultTool.LIST_FILES, DiracDefaultTool.SEARCH, DiracDefaultTool.FILE_READ]
 			const isReadOnly = readOnlyTools.includes(toolName as any)
 			
 			if (isReadOnly) {

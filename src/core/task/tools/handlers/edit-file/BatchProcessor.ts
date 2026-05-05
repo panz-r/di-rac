@@ -328,7 +328,7 @@ export class BatchProcessor {
         )
 
         const fileNames = batches.map((b) => path.basename(b.absolutePath)).join(", ")
-        const notificationMessage = `Dirac wants to edit ${fileNames} with ${totalRequestedEdits} anchored edits`
+        const notificationMessage = `di wants to edit ${fileNames} with ${totalRequestedEdits} anchored edits`
         showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
 
         const completeMessage = await this.buildEditMessage(config, batches)

@@ -65,7 +65,7 @@ class DiracEndpoint {
 		const endpointsConfig = await DiracEndpoint.loadEndpointsFile()
 		if (endpointsConfig) {
 			DiracEndpoint._instance.onPremiseConfig = endpointsConfig
-			Logger.log("Dirac running in self-hosted mode with custom endpoints")
+			Logger.log("divr running in self-hosted mode with custom endpoints")
 		}
 
 		DiracEndpoint._initialized = true

@@ -1,4 +1,3 @@
-import { diagnosticsToProblemsString } from "@integrations/diagnostics"
 import { extractTextFromFile } from "@integrations/misc/extract-text"
 import { openFile } from "@integrations/misc/open-file"
 import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
@@ -14,7 +13,6 @@ import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { getLatestTerminalOutput } from "@/integrations/terminal/standalone/get-latest-output"
 import { ShowMessageType } from "@/shared/proto/host/window"
-import { DiagnosticSeverity } from "@/shared/proto/index.dirac"
 import { Logger } from "@/shared/services/Logger"
 import { isDirectory } from "@/utils/fs"
 import { getCwd } from "@/utils/path"
@@ -277,9 +275,7 @@ export async function parseMentions(
 			}
 		} else if (mention === "problems") {
 			try {
-				const problems = await getWorkspaceProblems()
-				parsedText += `\n\n<workspace_diagnostics>\n${problems}\n</workspace_diagnostics>`
-				// Track successful problems mention
+				parsedText += `\n\n<workspace_diagnostics>\nDiagnostics not available in CLI mode.\n</workspace_diagnostics>`
 				telemetryService.captureMentionUsed("problems", problems.length)
 			} catch (error) {
 				parsedText += `\n\n<workspace_diagnostics>\nError fetching diagnostics: ${error.message}\n</workspace_diagnostics>`
@@ -389,18 +385,6 @@ async function getFileOrFolderContent(mentionPath: string, cwd: string): Promise
 		throw new Error(`Failed to access path "${mentionPath}": ${error.message}`)
 	}
 }
-
-async function getWorkspaceProblems(): Promise<string> {
-	const response = await HostProvider.workspace.getDiagnostics({ filePaths: [] })
-	if (response.fileDiagnostics.length === 0) {
-		return "No errors or warnings detected."
-	}
-	return diagnosticsToProblemsString(response.fileDiagnostics, [
-		DiagnosticSeverity.DIAGNOSTIC_ERROR,
-		DiagnosticSeverity.DIAGNOSTIC_WARNING,
-	])
-}
-
 /**
  * Parse a workspace mention to extract workspace hint and path
  * @param mention The raw mention string (e.g., "workspace:name/path/to/file")

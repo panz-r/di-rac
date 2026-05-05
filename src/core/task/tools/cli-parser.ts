@@ -169,8 +169,18 @@ export function parseCliCommand(toolName: string, input: string): Record<string,
 	// Empty input for zero-param tools
 	if (!input.trim()) return {}
 
-	// Custom parser override
-	if (schema.parse) return schema.parse(input)
+	// Custom parser override — but still extract universal flags first
+	if (schema.parse) {
+		const result = schema.parse(input)
+		// Extract universal flags from raw input
+		if (/\b--clarify\b/.test(input)) result.clarify = true
+		if (/\b--no-auto-correct\b/.test(input)) result.autoCorrect = false
+		if (/\b--dry-run\b/.test(input)) result.dryRun = true
+		if (/\b--verify\b/.test(input)) result.verify = true
+		const retryMatch = input.match(/\b--retry\s+(\d+)/)
+		if (retryMatch) result.retry = parseInt(retryMatch[1], 10)
+		return result
+	}
 
 	// Build lookup maps — tool flags + universal flags
 	const longFlags = new Map<string, CliFlag>()
@@ -202,6 +212,19 @@ export function parseCliCommand(toolName: string, input: string): Record<string,
 			i++
 			continue
 		}
+
+			// Universal flags: --clarify, --retry
+			if (token === "--clarify") {
+				result.clarify = true
+				i++
+				continue
+			}
+			if (token === "--retry" && i + 1 < tokens.length) {
+				const n = parseInt(tokens[i + 1], 10)
+				if (!isNaN(n) && n >= 1) result.retry = Math.min(n, 5)
+				i += 2
+				continue
+			}
 
 		let flag: CliFlag | undefined
 		if (isLongFlag(token)) {
@@ -275,45 +298,6 @@ export function shouldChainSplit(toolName: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Custom parser for execute_command
-// ---------------------------------------------------------------------------
-
-function parseExecuteCommand(input: string): Record<string, any> {
-	const result: Record<string, any> = {}
-
-	// Extract --language flag first
-	const langMatch = input.match(/--language\s+(['"]?)(.+?)\1(?:\s|$)/)
-	if (langMatch) {
-		result.language = langMatch[2].trim()
-	}
-
-	// Extract --script flag (quoted string or rest of line)
-	const scriptMatch = input.match(/--script\s+(['"])([\s\S]*?)\1/)
-	if (scriptMatch) {
-		result.script = scriptMatch[2]
-		return result
-	}
-	// Unquoted script (to end of line)
-	const scriptMatch2 = input.match(/--script\s+(.+)$/s)
-	if (scriptMatch2) {
-		result.script = scriptMatch2[1].trim()
-		return result
-	}
-
-	// Everything else (minus --language) is the command string
-	let cmdStr = input
-	if (langMatch) {
-		cmdStr = cmdStr.replace(langMatch[0], " ").trim()
-	}
-	cmdStr = cmdStr.trim()
-	if (cmdStr) {
-		result.commands = cmdStr
-	}
-
-	return result
-}
-
-// ---------------------------------------------------------------------------
 // Custom parser for subagent
 // ---------------------------------------------------------------------------
 
@@ -349,13 +333,88 @@ function parseSubagentCommand(input: string): Record<string, any> {
 }
 
 // ---------------------------------------------------------------------------
+// Custom parser for symbols subcommands
+// ---------------------------------------------------------------------------
+
+function parseSymbolsCommand(input: string): Record<string, any> {
+	const tokens = shellParse(input) as string[]
+	if (tokens.length === 0) return { subcommand: "search" }
+
+	const subcommand = tokens[0]
+	const rest = input.slice(input.indexOf(tokens[0]) + tokens[0].length).trim()
+
+	switch (subcommand) {
+		case "search": {
+			const result: Record<string, any> = { subcommand: "search" }
+			let i = 1
+			const paths: string[] = []
+			while (i < tokens.length) {
+				if (tokens[i] === "--name" && i + 1 < tokens.length) { result.query = tokens[++i]; i++ }
+				else if (tokens[i] === "--kind" && i + 1 < tokens.length) { result.kind = tokens[++i]; i++ }
+				else if (tokens[i] === "--max-results" && i + 1 < tokens.length) { result.max_results = parseInt(tokens[++i], 10); i++ }
+				else if (!tokens[i].startsWith("-")) { paths.push(tokens[i]); i++ }
+				else { i++ }
+			}
+			if (paths.length > 0) result.paths = paths
+			return result
+		}
+		case "replace": {
+			const result: Record<string, any> = { subcommand: "replace" }
+			let i = 1
+			const paths: string[] = []
+			while (i < tokens.length) {
+				if (tokens[i] === "--name" && i + 1 < tokens.length) { result.symbol = tokens[++i]; i++ }
+				else if (tokens[i] === "--text" && i + 1 < tokens.length) { result.text = tokens[++i]; i++ }
+				else if (tokens[i] === "--type" && i + 1 < tokens.length) { result.type = tokens[++i]; i++ }
+				else if (!tokens[i].startsWith("-")) { paths.push(tokens[i]); i++ }
+				else { i++ }
+			}
+			if (paths.length > 0) result.path = paths[0]
+			if (result.symbol && result.text) {
+				result.replacements = [{ path: result.path, symbol: result.symbol, text: result.text }]
+			}
+			return result
+		}
+		case "rename": {
+			const result: Record<string, any> = { subcommand: "rename" }
+			let i = 1
+			const paths: string[] = []
+			while (i < tokens.length) {
+				if (tokens[i] === "--old" && i + 1 < tokens.length) { result.existing_symbol = tokens[++i]; i++ }
+				else if (tokens[i] === "--new" && i + 1 < tokens.length) { result.new_symbol = tokens[++i]; i++ }
+				else if (!tokens[i].startsWith("-")) { paths.push(tokens[i]); i++ }
+				else { i++ }
+			}
+			if (paths.length > 0) result.paths = paths
+			return result
+		}
+		case "refs": {
+			const result: Record<string, any> = { subcommand: "refs" }
+			let i = 1
+			const paths: string[] = []
+			const names: string[] = []
+			while (i < tokens.length) {
+				if (tokens[i] === "--name" && i + 1 < tokens.length) { names.push(tokens[++i]); i++ }
+				else if (tokens[i] === "--find-type" && i + 1 < tokens.length) { result.find_type = tokens[++i]; i++ }
+				else if (!tokens[i].startsWith("-")) { paths.push(tokens[i]); i++ }
+				else { i++ }
+			}
+			if (paths.length > 0) result.paths = paths
+			if (names.length > 0) result.symbols = names
+			return result
+		}
+		default:
+			return { subcommand: "search", query: rest }
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Schema registry
 // ---------------------------------------------------------------------------
 
-const CLI_SCHEMAS: Partial<Record<DiracDefaultTool, CliSchema>> = {
-	// ── Batch 1 ──────────────────────────────────────────────────────────────
-
-	read_file: {
+const CLI_SCHEMAS: Partial<Record<string, CliSchema>> = {
+	// read <path>... [options]
+	read: {
 		positionals: [{ name: "path", param: "paths", required: true, multi: true }],
 		flags: [
 			{ name: "--detail", param: "detail", type: "string" },
@@ -365,117 +424,55 @@ const CLI_SCHEMAS: Partial<Record<DiracDefaultTool, CliSchema>> = {
 			{ name: "--page", param: "page", type: "string" },
 			{ name: "--section", param: "section", type: "string" },
 			{ name: "--ranges", param: "ranges", type: "string" },
+			{ name: "--range", param: "ranges", type: "string" },
 		],
 	},
 
-	search_files: {
+	// search <path>... --pattern PATTERN [options]
+	search: {
 		positionals: [{ name: "path", param: "paths", required: true, multi: true }],
 		flags: [
-			{ name: "--regex", param: "regex", type: "string", required: true },
+			{ name: "--pattern", param: "regex", type: "string", required: true },
+			{ name: "--regex", param: "regex", type: "string" },
+			{ name: "--glob", param: "file_pattern", type: "string" },
 			{ name: "--file-pattern", param: "file_pattern", type: "string" },
+			{ name: "--context", param: "context_lines", type: "integer" },
 			{ name: "--context-lines", param: "context_lines", type: "integer" },
 		],
 	},
 
-	list_files: {
-		positionals: [{ name: "path", param: "paths", required: true, multi: true }],
-		flags: [{ name: "--recursive", param: "recursive", type: "boolean" }],
-	},
-
-	search_symbols: {
-		positionals: [{ name: "query", param: "query", required: true }],
+	// repo [--detail LEVEL] [paths...]
+	repo: {
+		positionals: [{ name: "paths", param: "paths", required: false, multi: true }],
 		flags: [
-			{ name: "--kind", param: "kind", type: "string" },
-			{ name: "--max-results", param: "max_results", type: "integer" },
+			{ name: "--detail", param: "detail", type: "string" },
+			{ name: "--recursive", param: "recursive", type: "boolean" },
 		],
 	},
 
-	repo_map: {},
 	list_skills: {},
 
-	// ── Batch 2 ──────────────────────────────────────────────────────────────
-
-	// execute_command <command> [--script TEXT] [--language LANG]
-	// Shell operators (&&, ||, ;) are passed through — no chain splitting.
-	execute_command: {
+	// bash <command>
+	bash: {
 		noChainSplit: true,
-		parse: parseExecuteCommand,
+		parse: (input: string) => ({ command: input }),
 	},
 
-	// get_function <path>... --fn <name>...
-	get_function: {
-		positionals: [{ name: "path", param: "paths", required: true, multi: true }],
-		flags: [
-			{ name: "--fn", param: "function_names", type: "string", required: true, repeatable: true },
-		],
+	// symbols <subcommand> [args...]
+	symbols: {
+		noChainSplit: true,
+		parse: parseSymbolsCommand,
 	},
 
-	// get_file_skeleton <path>...
-	get_file_skeleton: {
-		positionals: [{ name: "path", param: "paths", required: true, multi: true }],
-	},
-
-	// diagnostics_scan <path>...
-	diagnostics_scan: {
-		positionals: [{ name: "path", param: "paths", required: true, multi: true }],
-	},
-
-	// expand_symbol <path> --symbol <handle>
-	expand_symbol: {
-		positionals: [{ name: "path", param: "path", required: true }],
-		flags: [
-			{ name: "--symbol", param: "symbol", type: "string", required: true },
-		],
-	},
-
-	// find_symbol_references <path>... --symbol <name>... [--find-type TYPE]
-	find_symbol_references: {
-		positionals: [{ name: "path", param: "paths", required: true, multi: true }],
-		flags: [
-			{ name: "--symbol", param: "symbols", type: "string", required: true, repeatable: true },
-			{ name: "--find-type", param: "find_type", type: "string" },
-		],
-	},
-
-	// rename_symbol <path>... --old <name> --new <name>
-	rename_symbol: {
-		positionals: [{ name: "path", param: "paths", required: true, multi: true }],
-		flags: [
-			{ name: "--old", param: "existing_symbol", type: "string", required: true },
-			{ name: "--new", param: "new_symbol", type: "string", required: true },
-		],
-	},
-
-	// replace_symbol <path> --symbol <name> --text <content> [--type KIND]
-	// Single replacement per call; use chain operators for multiple.
-	replace_symbol: {
-		positionals: [{ name: "path", param: "path", required: true }],
-		flags: [
-			{ name: "--symbol", param: "symbol", type: "string", required: true },
-			{ name: "--text", param: "text", type: "string", required: true },
-			{ name: "--type", param: "type", type: "string" },
-		],
-		transform: (raw) => ({
-			replacements: [{
-				path: raw.path,
-				symbol: raw.symbol,
-				text: raw.text,
-				...(raw.type ? { type: raw.type } : {}),
-			}],
-		}),
-	},
-
-	// ── Batch 3 ──────────────────────────────────────────────────────────────
-
-	// edit_file <path> --anchor <id> --content <text> [--end-anchor <id>] [--edit-type TYPE]
-	// Single edit per call; use chain operators for batch edits.
-	edit_file: {
+	// edit <path> --anchor <id> --content <text> [options]
+	edit: {
 		positionals: [{ name: "path", param: "path", required: true }],
 		flags: [
 			{ name: "--anchor", param: "anchor", type: "string", required: true },
 			{ name: "--content", param: "text", type: "string", required: true },
 			{ name: "--end-anchor", param: "end_anchor", type: "string" },
 			{ name: "--edit-type", param: "edit_type", type: "string" },
+			{ name: "--type", param: "edit_type", type: "string" },
 		],
 		transform: (raw) => ({
 			files: [{
@@ -490,15 +487,15 @@ const CLI_SCHEMAS: Partial<Record<DiracDefaultTool, CliSchema>> = {
 		}),
 	},
 
-	// write_to_file <path> --content <text>
-	write_to_file: {
+	// write <path> --content <text>
+	write: {
 		positionals: [{ name: "path", param: "path", required: true }],
 		flags: [
 			{ name: "--content", param: "content", type: "string", required: true },
 		],
 	},
 
-	// browser_action <action> [--url URL] [--coordinate X,Y] [--text TEXT]
+	// browser_action <action> [options]
 	browser_action: {
 		positionals: [{ name: "action", param: "action", required: true }],
 		flags: [
@@ -508,23 +505,24 @@ const CLI_SCHEMAS: Partial<Record<DiracDefaultTool, CliSchema>> = {
 		],
 	},
 
-	// use_subagents --prompt TEXT --prompt TEXT [--include-history] [--timeout SEC] [--max-turns N]
+	// use_subagents [options]
 	use_subagents: {
 		parse: parseSubagentCommand,
 	},
 
-	// ask_followup_question <question> [--options JSON]
-	ask_followup_question: {
+	// ask <question> [--options A,B,C]
+	ask: {
 		positionals: [{ name: "question", param: "question", required: true }],
 		flags: [
 			{ name: "--options", param: "options", type: "string" },
 		],
 	},
 
-	// attempt_completion <result> [--command CMD]
-	attempt_completion: {
+	// done <result> [--cmd COMMAND]
+	done: {
 		positionals: [{ name: "result", param: "result", required: true }],
 		flags: [
+			{ name: "--cmd", param: "command", type: "string" },
 			{ name: "--command", param: "command", type: "string" },
 		],
 	},
@@ -537,7 +535,7 @@ const CLI_SCHEMAS: Partial<Record<DiracDefaultTool, CliSchema>> = {
 		],
 	},
 
-	// web_search <query> [--allowed-domains JSON] [--blocked-domains JSON]
+	// web_search <query> [options]
 	web_search: {
 		positionals: [{ name: "query", param: "query", required: true }],
 		flags: [
@@ -546,41 +544,26 @@ const CLI_SCHEMAS: Partial<Record<DiracDefaultTool, CliSchema>> = {
 		],
 	},
 
-	// plan_mode_respond <response> [--needs-more-exploration]
-	plan_mode_respond: {
+	// plan <response> [--explore]
+	plan: {
 		positionals: [{ name: "response", param: "response", required: true }],
 		flags: [
+			{ name: "--explore", param: "needs_more_exploration", type: "boolean" },
 			{ name: "--needs-more-exploration", param: "needs_more_exploration", type: "boolean" },
 		],
 	},
 
-	// new_task <context>
-	new_task: {
+	// task <context>
+	task: {
 		positionals: [{ name: "context", param: "context", required: true }],
 	},
 
-	// summarize_task <context> [--required-files PATH...]
-	summarize_task: {
-		positionals: [{ name: "context", param: "context", required: true }],
-		flags: [
-			{ name: "--required-files", param: "required_files", type: "string", repeatable: true },
-		],
-	},
-
-	// compact <context> [--required-files PATH...]
+	// compact <context> [--keep PATH...]
 	compact: {
 		positionals: [{ name: "context", param: "context", required: true }],
 		flags: [
+			{ name: "--keep", param: "required_files", type: "string", repeatable: true },
 			{ name: "--required-files", param: "required_files", type: "string", repeatable: true },
-		],
-	},
-
-	// generate_explanation <title> --from-ref <ref> [--to-ref <ref>]
-	generate_explanation: {
-		positionals: [{ name: "title", param: "title", required: true }],
-		flags: [
-			{ name: "--from-ref", param: "from_ref", type: "string", required: true },
-			{ name: "--to-ref", param: "to_ref", type: "string" },
 		],
 	},
 
@@ -589,19 +572,19 @@ const CLI_SCHEMAS: Partial<Record<DiracDefaultTool, CliSchema>> = {
 		positionals: [{ name: "skill_name", param: "skill_name", required: true }],
 	},
 
-	// tool_search [query] [--capabilities] [--llms-brief]
-	tool_search: {
+	// tools [query]
+	tools: {
 		positionals: [{ name: "query", param: "query", required: false }],
 	},
 
-	// dirac_outputs [file] [--clear]
-	dirac_outputs: {
+	// memory [file] [--clear]
+	memory: {
 		positionals: [{ name: "file", param: "file", required: false }],
 		flags: [{ name: "--clear", param: "clear", type: "boolean" }],
 	},
 
-	// dirac_recall <query>
-	dirac_recall: {
+	// recall <query>
+	recall: {
 		positionals: [{ name: "query", param: "query", required: true }],
 	},
 }

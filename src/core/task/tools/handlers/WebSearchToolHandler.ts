@@ -104,7 +104,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 			} else {
 				// Manual approval flow
 				showNotificationForApproval(
-					`Dirac wants to search for: ${query}`,
+					`di wants to search for: ${query}`,
 					config.autoApprovalSettings.enableNotifications,
 				)
 				await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "tool")

@@ -127,7 +127,7 @@ async function showVersionUpdateAnnouncement(stateManager: StateManager) {
 	// Perform post-update actions if necessary
 	try {
 		if (!previousVersion || currentVersion !== previousVersion) {
-			Logger.log(`Dirac version changed: ${previousVersion} -> ${currentVersion}. First run or update detected.`)
+			Logger.log(`divr version changed: ${previousVersion} -> ${currentVersion}. First run or update detected.`)
 
 			// Check if there's a new announcement to show
 			// Update version key name if needed
@@ -142,8 +142,8 @@ async function showVersionUpdateAnnouncement(stateManager: StateManager) {
 			if (lastShownAnnouncementId !== latestAnnouncementId) {
 				// Show notification when there's a new announcement (major/minor updates or fresh installs)
 				const message = previousVersion
-					? `Dirac has been updated to v${currentVersion}`
-					: `Welcome to Dirac v${currentVersion}`
+					? `divr has been updated to v${currentVersion}`
+					: `Welcome to divr v${currentVersion}`
 				HostProvider.window.showMessage({
 					type: ShowMessageType.INFORMATION,
 					message,

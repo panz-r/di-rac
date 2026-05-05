@@ -53,16 +53,11 @@ export class AutoApprove {
 		if (this.stateManager.getGlobalSettingsKey("yoloModeToggled")) {
 			switch (toolName) {
 				case DiracDefaultTool.FILE_READ:
-				case DiracDefaultTool.GET_FUNCTION:
-				case DiracDefaultTool.GET_FILE_SKELETON:
-				case DiracDefaultTool.FIND_SYMBOL_REFERENCES:
-				case DiracDefaultTool.DIAGNOSTICS_SCAN:
 				case DiracDefaultTool.LIST_FILES:
 				case DiracDefaultTool.SEARCH:
 				case DiracDefaultTool.NEW_RULE:
 				case DiracDefaultTool.FILE_NEW:
 				case DiracDefaultTool.EDIT_FILE:
-				case DiracDefaultTool.REPLACE_SYMBOL:
 				case DiracDefaultTool.USE_SUBAGENTS:
 				case DiracDefaultTool.USE_SKILL:
 					return [true, true]
@@ -78,16 +73,11 @@ export class AutoApprove {
 		if (this.stateManager.getGlobalSettingsKey("autoApproveAllToggled")) {
 			switch (toolName) {
 				case DiracDefaultTool.FILE_READ:
-				case DiracDefaultTool.GET_FUNCTION:
-				case DiracDefaultTool.GET_FILE_SKELETON:
-				case DiracDefaultTool.FIND_SYMBOL_REFERENCES:
-				case DiracDefaultTool.DIAGNOSTICS_SCAN:
 				case DiracDefaultTool.LIST_FILES:
 				case DiracDefaultTool.SEARCH:
 				case DiracDefaultTool.NEW_RULE:
 				case DiracDefaultTool.FILE_NEW:
 				case DiracDefaultTool.EDIT_FILE:
-				case DiracDefaultTool.REPLACE_SYMBOL:
 				case DiracDefaultTool.USE_SUBAGENTS:
 				case DiracDefaultTool.USE_SKILL:
 					return [true, true]
@@ -104,10 +94,6 @@ export class AutoApprove {
 
 		switch (toolName) {
 			case DiracDefaultTool.FILE_READ:
-			case DiracDefaultTool.GET_FUNCTION:
-			case DiracDefaultTool.GET_FILE_SKELETON:
-			case DiracDefaultTool.FIND_SYMBOL_REFERENCES:
-			case DiracDefaultTool.DIAGNOSTICS_SCAN:
 			case DiracDefaultTool.LIST_FILES:
 			case DiracDefaultTool.SEARCH:
 			case DiracDefaultTool.USE_SUBAGENTS:
@@ -117,7 +103,6 @@ export class AutoApprove {
 			case DiracDefaultTool.NEW_RULE:
 			case DiracDefaultTool.FILE_NEW:
 			case DiracDefaultTool.EDIT_FILE:
-			case DiracDefaultTool.REPLACE_SYMBOL:
 				return [autoApprovalSettings.actions.editFiles, autoApprovalSettings.actions.editFilesExternally ?? false]
 
 			case DiracDefaultTool.BASH:

@@ -82,7 +82,6 @@ export interface WorkspaceServiceClientInterface {
 
 	saveOpenDocumentIfDirty(request: proto.host.SaveOpenDocumentIfDirtyRequest): Promise<proto.host.SaveOpenDocumentIfDirtyResponse>;
 
-	getDiagnostics(request: proto.host.GetDiagnosticsRequest): Promise<proto.host.GetDiagnosticsResponse>;
 
 	openProblemsPanel(request: proto.host.OpenProblemsPanelRequest): Promise<proto.host.OpenProblemsPanelResponse>;
 
@@ -96,5 +95,4 @@ export interface WorkspaceServiceClientInterface {
 
 	openFolder(request: proto.host.OpenFolderRequest): Promise<proto.host.OpenFolderResponse>;
 
-	prepareDiagnostics(request: proto.host.PrepareDiagnosticsRequest): Promise<proto.host.PrepareDiagnosticsResponse>;
 }

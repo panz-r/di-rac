@@ -5,24 +5,17 @@ const id = DiracDefaultTool.DIRAC_RECALL
 
 export const recall: DiracToolSpec = {
 	id,
-	name: "dirac_recall",
+	name: "recall",
 	description: `Search archived conversation observations.
 
-Usage: dirac_recall <query>
-
-Positional:
-  query            Keyword or phrase to search observation history
-
 Examples:
-  dirac_recall auth middleware decision
-  dirac_recall error in login
-  dirac_recall files modified`,
+  recall auth middleware
+  recall error in login`,
 	parameters: [
 		{
 			name: "command",
 			required: true,
 			type: "string",
-			instruction: "CLI arguments for dirac_recall.",
 			usage: "auth middleware",
 		},
 	],
@@ -32,7 +25,7 @@ Examples:
 		concurrency: "parallel-safe",
 		safety: ["read"],
 		outputSize: "medium",
-		llmsBrief: "Search archived conversation observations by keyword",
+		llmsBrief: "Search archived observations",
 		compactionSafety: "discardable",
 	},
 }

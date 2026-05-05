@@ -50,7 +50,7 @@ export class EditFileToolHandler implements IFullyManagedTool {
 	getDescription(block: ToolUse): string {
 		const relPath = block.params.path || (Array.isArray(block.params.files) && block.params.files[0]?.path) || ""
 		const pathText = relPath ? ` for '${relPath}'` : ""
-		return `[${block.name}${pathText}]`
+		return `${block.name}${pathText}`
 	}
 
 		async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {

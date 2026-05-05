@@ -66,7 +66,7 @@ export interface ProviderDescriptor {
 export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 	{
 		providerId: "dirac",
-		label: "Dirac",
+		label: "divr",
 		modelIdKeySuffix: "DiracModelId",
 		apiKeyFields: "diracApiKey",
 		defaultModelId: openRouterDefaultModelId,

@@ -41,9 +41,9 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 		const relPaths = this.getRelPaths(block.params)
 		const pathsStr = relPaths.length > 1 ? `${relPaths.length} paths` : `'${relPaths[0] || ""}'`
 		const contextLines = block.params.context_lines ? ` with ${block.params.context_lines} context lines` : ""
-		return `[${block.name} for '${block.params.regex}' in ${pathsStr}${
-			block.params.file_pattern ? ` in '${block.params.file_pattern}'` : ""
-		}${contextLines}]`
+		return `${block.name} '${block.params.regex}' in ${pathsStr}${
+			block.params.file_pattern ? ` matching '${block.params.file_pattern}'` : ""
+		}${contextLines}`
 	}
 
 	/**
@@ -389,7 +389,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 			)
 		} else {
 			// Manual approval flow
-			const notificationMessage = `Dirac wants to search files for ${regex}`
+			const notificationMessage = `di wants to search files for ${regex}`
 
 			// Show notification
 			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)

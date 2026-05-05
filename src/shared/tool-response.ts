@@ -99,6 +99,37 @@ export function createToolError(
 	}
 }
 
+// ── Output Envelope ─────────────────────────────────────────────────────────
+
+export interface ToolOutputMeta {
+	tool: string
+	lines?: number
+	totalLines?: number
+	tokens?: number
+	truncated?: boolean
+	cached?: boolean
+	autoCorrected?: boolean
+	dryRun?: boolean
+	cumulative_tokens?: number
+	read_count?: number
+	[key: string]: unknown
+}
+
+export interface ToolOutputError {
+	code: string
+	message: string
+	location?: string
+}
+
+export interface ToolOutputEnvelope {
+	status: "ok" | "error" | "truncated" | "empty"
+	data: string | null
+	hint: string | null
+	meta: ToolOutputMeta
+	type?: "file_content" | "search_results" | "command_output" | "symbol_list" | "directory_listing" | "acknowledgment"
+	error?: ToolOutputError
+}
+
 // ── Router ──────────────────────────────────────────────────────────────────
 
 /**

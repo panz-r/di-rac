@@ -203,7 +203,7 @@ export class ResponseProcessor {
 
 	public async presentAssistantMessage() {
 		if (this.dependencies.taskState.abort) {
-			throw new Error("Dirac instance aborted")
+			throw new Error("di instance aborted")
 		}
 
 		if (this.dependencies.taskState.presentAssistantMessageLocked) {

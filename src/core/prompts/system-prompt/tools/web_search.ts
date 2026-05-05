@@ -26,7 +26,7 @@ Examples:
   web_search "latest developments in AI"
   web_search "React documentation" --allowed-domains '["react.dev", "github.com"]'
   web_search "best practices" --blocked-domains '["ads.com"]'`,
-	contextRequirements: (context) => context.diracWebToolsEnabled === true,
+	contextRequirements: (ctx) => ctx.diracWebToolsEnabled === true && (ctx.toolCallCount ?? 99) >= 15,
 	parameters: [
 		{
 			name: "command",

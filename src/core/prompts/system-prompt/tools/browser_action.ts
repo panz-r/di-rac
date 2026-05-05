@@ -28,7 +28,7 @@ Examples:
   browser_action type --text "Hello, world!"
   browser_action scroll_down
   browser_action close`,
-	contextRequirements: (context) => context.supportsBrowserUse === true,
+	contextRequirements: (ctx) => ctx.supportsBrowserUse === true && (ctx.toolCallCount ?? 99) >= 15,
 	parameters: [
 		{
 			name: "command",

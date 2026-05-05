@@ -22,7 +22,7 @@ export class GetFileSkeletonToolHandler implements IFullyManagedTool {
 
 	getDescription(block: ToolUse): string {
 		const relPaths = Array.isArray(block.params.paths) ? block.params.paths : (block.params.paths ? [block.params.paths as string] : (block.params.path ? [block.params.path as string] : []))
-		return `[${block.name} for ${relPaths.map((p) => `'${p}'`).join(", ")}]`
+		return `${block.name} ${relPaths.join(" ")}`
 	}
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
@@ -145,7 +145,7 @@ export class GetFileSkeletonToolHandler implements IFullyManagedTool {
 				block.isNativeToolCall,
 			)
 		} else {
-			const notificationMessage = `Dirac wants to extract file skeleton from ${relPaths.length} file(s)`
+			const notificationMessage = `di wants to extract file skeleton from ${relPaths.length} file(s)`
 			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
 
 			await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "tool")

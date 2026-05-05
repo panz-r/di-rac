@@ -34,8 +34,8 @@ export class CondenseHandler implements IToolHandler, IPartialBlockHandler {
 		// Show notification if enabled
 		if (config.autoApprovalSettings.enableNotifications) {
 			showSystemNotification({
-				subtitle: "Dirac wants to condense the conversation...",
-				message: `Dirac is suggesting to condense your conversation with: ${context}`,
+				subtitle: "di wants to condense the conversation...",
+				message: `di is suggesting to condense your conversation with: ${context}`,
 			})
 		}
 

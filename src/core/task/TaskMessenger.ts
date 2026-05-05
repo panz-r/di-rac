@@ -139,7 +139,7 @@ export class TaskMessenger {
 	}> {
 		// Allow resume asks even when aborted to enable resume button after cancellation
 		if (this.dependencies.taskState.abort && type !== "resume_task" && type !== "resume_completed_task") {
-			throw new Error("Dirac instance aborted")
+			throw new Error("di instance aborted")
 		}
 
 		const askResponseSnapshot = () => ({
@@ -187,7 +187,7 @@ export class TaskMessenger {
 		)
 
 		if (this.dependencies.taskState.abort) {
-			throw new Error("Dirac instance aborted")
+			throw new Error("di instance aborted")
 		}
 
 		if (this.dependencies.taskState.lastMessageTs !== askTs) {
@@ -251,7 +251,7 @@ export class TaskMessenger {
 	): Promise<number | undefined> {
 		// Allow hook messages even when aborted to enable proper cleanup
 		if (this.dependencies.taskState.abort && type !== "hook_status" && type !== "hook_output_stream") {
-			throw new Error("Dirac instance aborted")
+			throw new Error("di instance aborted")
 		}
 
 		const providerInfo = this.dependencies.getCurrentProviderInfo()
@@ -279,7 +279,7 @@ export class TaskMessenger {
 
 		await this.say(
 			"error",
-			`Dirac tried to use ${toolName}${relPath ? ` for '${relPath.toPosix()}'` : ""} without providing a value for '${paramName}'. Retrying...`,
+			`di tried to use ${toolName}${relPath ? ` for '${relPath.toPosix()}'` : ""} without providing a value for '${paramName}'. Retrying...`,
 		)
 		return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", formatResponse.missingToolParameterError(paramName), "recoverable"))
 	}

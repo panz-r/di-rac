@@ -44,7 +44,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			block.params.start_line || block.params.end_line
 				? ` lines ${block.params.start_line || 1}-${block.params.end_line || "?"}`
 				: ""
-		return `[${block.name} for ${relPaths.map((p) => `'${p}'`).join(", ")}${range}]`
+		return `${block.name} ${relPaths.join(" ")}${range}`
 	}
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
@@ -341,6 +341,13 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 					const isSupported = SUPPORTED_EXTENSIONS.has(cleanExt)
 
 					switch (mode) {
+						case "hint": {
+							if (!isSupported) return "Hint not available for this file type."
+							const daemonSymbols = await config.services.analyzer.outline(absolutePath)
+							const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols)
+							if (definitions.length === 0) return "No definitions found."
+							return definitions.map(d => `${d.kind} ${d.name}`).join("\n")
+						}
 						case "outline": {
 							if (!isSupported) return "Outline not available for this file type."
 							const daemonSymbols = await config.services.analyzer.outline(absolutePath)
@@ -431,7 +438,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 				// Budget-aware degradation (only if not already an "unchanged" response)
 				if (maxTokens && !responseContent.includes("unchanged") && responseContent.length * TOKEN_ESTIMATE_RATIO > maxTokens) {
 					degraded = true
-					const degradationPath = ["full", "preview", "skeleton", "outline"]
+					const degradationPath = ["full", "preview", "skeleton", "outline", "hint"]
 					let currentIndex = degradationPath.indexOf(usedDetail)
 					while (currentIndex < degradationPath.length - 1 && responseContent.length * TOKEN_ESTIMATE_RATIO > maxTokens) {
 						currentIndex++
@@ -529,7 +536,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 		} else {
 			// Manual approval flow
 			const range = startLineNum || endLineNum ? ` lines ${startLineNum || 1}-${endLineNum || "?"}` : ""
-			const notificationMessage = `Dirac wants to read ${relPaths.length} file(s)${range}`
+			const notificationMessage = `di wants to read ${relPaths.length} file(s)${range}`
 			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
 
 			await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "tool")

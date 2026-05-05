@@ -30,7 +30,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 	constructor(private validator: ToolValidator) {}
 
 	getDescription(block: ToolUse): string {
-		return `[${block.name} for '${block.params.path}']`
+		return `${block.name} ${block.params.path}`
 	}
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
@@ -124,9 +124,9 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 
 			await config.callbacks.say(
 				"error",
-				`Dirac tried to use write_to_file for '${relPath}' without providing a value for 'content'. ${
+				`di tried to use write_to_file for '${relPath}' without providing a value for 'content'. ${
 					config.taskState.consecutiveMistakeCount >= 2
-						? "This has happened multiple times — Dirac will try a different approach."
+						? "This has happened multiple times — di will try a different approach."
 						: "Retrying..."
 				}`,
 			)
@@ -148,7 +148,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				return "" // can only happen if the sharedLogic adds an error to userMessages
 			}
 
-			const { relPath, absolutePath, fileExists, content, newContent, workspaceContext } = result
+			const { relPath, absolutePath, fileExists, content, newContent, workspaceContext, securityWarning } = result
 
 			// Handle approval flow
 			const sharedMessageProps: DiracSayTool = {
@@ -207,7 +207,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				})
 			} else {
 				// Manual approval flow with detailed feedback handling
-				const notificationMessage = `Dirac wants to ${fileExists ? "edit" : "create"} ${getWorkspaceBasename(relPath, "WriteToFile.notification")}`
+				const notificationMessage = `di wants to ${fileExists ? "edit" : "create"} ${getWorkspaceBasename(relPath, "WriteToFile.notification")}`
 
 				// Show notification
 				showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
@@ -325,6 +325,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 
 			// Mark the file as edited by Dirac
 			config.services.fileContextTracker.markFileAsEditedByDirac(relPath)
+			config.taskState.filesEditedInCurrentTurn.add(relPath)
 
 			// Save the changes and get the result
 			const { newProblemsMessage, userEdits, autoFormattingEdits, finalContent } =
@@ -366,9 +367,9 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 					modelId,
 				})
 
-				return formatResponse.fileEditWithUserChanges(relPath, userEdits, autoFormattingEdits, newProblemsMessage)
+				return formatResponse.fileEditWithUserChanges(relPath, userEdits, autoFormattingEdits, newProblemsMessage) + (securityWarning ? "\n" + securityWarning : "")
 			}
-			return formatResponse.fileEditWithoutUserChanges(relPath, autoFormattingEdits, newProblemsMessage)
+			return formatResponse.fileEditWithoutUserChanges(relPath, autoFormattingEdits, newProblemsMessage) + (securityWarning ? "\n" + securityWarning : "")
 		} catch (error) {
 			// Reset diff view on error
 			await config.services.diffViewProvider.revertChanges()
@@ -463,6 +464,29 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			return
 		}
 
-		return { relPath, absolutePath, fileExists, content, newContent, workspaceContext }
+			const securityWarning = WriteToFileToolHandler.scanContentSecurity(newContent, resolvedPath)
+			return { relPath, absolutePath, fileExists, content, newContent, workspaceContext, securityWarning }
+	}
+
+	private static DANGEROUS_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+		{ pattern: /curl\s*\|.*(?:bash|sh)/i, label: "curl piped to shell" },
+		{ pattern: /wget\s*\|.*(?:bash|sh)/i, label: "wget piped to shell" },
+		{ pattern: /rm\s+-rf\s+\//i, label: "recursive root delete" },
+		{ pattern: /nc\s+-.*-e\s+\/bin\/(?:bash|sh)/i, label: "reverse shell" },
+	]
+
+	private static scanContentSecurity(content: string, filePath: string): string | null {
+		const warnings: string[] = []
+		for (const { pattern, label } of WriteToFileToolHandler.DANGEROUS_PATTERNS) {
+			if (pattern.test(content)) warnings.push(label)
+		}
+		const sensitiveExts = [".env", "id_rsa", "credentials"]
+		for (const ext of sensitiveExts) {
+			if (filePath.endsWith(ext) || filePath.endsWith(ext + ".json")) {
+				warnings.push(`sensitive file: ${filePath}`)
+				break
+			}
+		}
+		return warnings.length > 0 ? `[SECURITY] Content flagged: ${warnings.join(", ")}` : null
 	}
 }

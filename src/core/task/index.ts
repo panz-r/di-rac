@@ -689,6 +689,19 @@ export class Task {
 			this.taskState.consecutiveMistakeCount++
 		}
 
+		// Final observer compression for any remaining unobserved messages.
+		// Only on normal completion (abort path calls dispose() without compression).
+		if (this.observerOrchestrator?.isEnabled && !this.taskState.abort) {
+			try {
+				await this.observerOrchestrator.finalCompression(
+					this.messageStateHandler.getApiConversationHistory(),
+				)
+			} catch (e) {
+				Logger.error("[Task] Final compression failed:", e)
+			}
+		}
+		await this.observerOrchestrator?.dispose()
+
 		printSessionSummary({
 			taskId: this.taskId,
 			messages: this.messageStateHandler.getDiracMessages(),
@@ -1669,7 +1682,7 @@ ${notice}`
 
 
 			if (this.taskState.abort) {
-				throw new Error("Dirac instance aborted")
+				throw new Error("di instance aborted")
 			}
 
 			const assistantHasContent = await this.processAssistantResponse({
@@ -1768,7 +1781,7 @@ ${notice}`
 		if (autoApprovalSettings.enableNotifications) {
 			showSystemNotification({
 				subtitle: "Error",
-				message: "Dirac is having trouble. Would you like to continue the task?",
+				message: "di is having trouble. Would you like to continue the task?",
 			}).catch(() => {})  // notifications are non-critical
 		}
 

@@ -1,4 +1,5 @@
 out
+command-daemon/build
 api-gateway/api-gateway
 dist
 dist-standalone

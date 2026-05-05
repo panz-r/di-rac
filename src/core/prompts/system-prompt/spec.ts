@@ -472,7 +472,8 @@ export function toOpenAIResponsesAPITool(openAITool: OpenAITool): OpenAIResponse
 /**
  * Replaces template placeholders in descriptions for native tool schemas.
  */
-function replacer(description: string, context: SystemPromptContext): string {
+function replacer(description: string | undefined, context: SystemPromptContext): string {
+	if (!description) return ""
 	const width = context.browserSettings?.viewport?.width || 900
 	const height = context.browserSettings?.viewport?.height || 600
 	const cwd = context.cwd || process.cwd()

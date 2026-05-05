@@ -224,7 +224,7 @@ export class ToolExecutor {
 		const bashToolEnabled = this.stateManager.getGlobalSettingsKey("bashToolEnabled")
 		// Register all tools via toolUseNames
 		for (const tool of toolUseNames) {
-			if (!bashToolEnabled && (tool === DiracDefaultTool.BASH || tool === DiracDefaultTool.BASH_RESTRICTED)) {
+			if (!bashToolEnabled && (tool === DiracDefaultTool.BASH)) {
 				continue
 			}
 			this.coordinator.registerByName(tool, validator)
@@ -285,6 +285,14 @@ export class ToolExecutor {
 	 * @param block The tool use block that generated this result
 	 */
 	private pushToolResult = (content: ToolResponse, block: ToolUse) => {
+		// Compute budget metrics for envelope
+		let readCount = 0
+		for (const count of this.taskState.readCounts.values()) readCount += count
+		const cumulativeTokens = Math.ceil(
+			(readCount * 300) + ((this.taskState.totalToolCallCount - readCount) * 200),
+		)
+		const metrics = { cumulativeTokens, readCount }
+
 		// Use the ToolResultUtils to properly format and push the tool result
 		ToolResultUtils.pushToolResult(
 			content,
@@ -293,6 +301,7 @@ export class ToolExecutor {
 			(block: ToolUse) => ToolDisplayUtils.getToolDescription(block),
 			this.coordinator,
 			this.taskState.toolUseIdMap,
+			metrics,
 		)
 	}
 
@@ -706,6 +715,38 @@ export class ToolExecutor {
 			// Increment tool call count and inject warning if needed
 			const count = ++this.taskState.totalToolCallCount
 			toolResult = this.maybeAppendToolCallWarning(count, toolResult)
+
+			// Log tool call metrics
+			if (typeof toolResult === "string") {
+				let status = "ok"
+				if (toolResult.includes("[truncated]") || toolResult.includes("... [Content reduced")) status = "truncated"
+				else if (toolResult.trimStart().startsWith("<tool_error")) status = "error"
+				this.taskState.toolCallLog.push({
+					tool: block.name,
+					status,
+					tokens: Math.ceil(toolResult.length / 4),
+					cached: toolResult.startsWith("[Cache Hit]"),
+					timestamp: Date.now(),
+				})
+			}
+
+			// Auto-snapshot every 10 tool calls
+			if (count - this.taskState.lastSnapshotAtCall >= 10) {
+				this.taskState.lastSnapshotAtCall = count
+				this.taskState.snapshotCount++
+				const snapshot = {
+					callCount: count,
+					snapshotIndex: this.taskState.snapshotCount,
+					toolLog: this.taskState.toolCallLog.slice(-10),
+					filesEdited: [...this.taskState.filesEditedInCurrentTurn],
+					timestamp: Date.now(),
+				}
+				config.services.outputManager.saveOutput(
+					`snapshot_${count}`,
+					JSON.stringify(snapshot, null, 2),
+					50 * 1024,
+				)
+			}
 
 			// Enforce per-message budget on large string outputs
 			if (typeof toolResult === "string" && toolResult.length > 8 * 1024) {

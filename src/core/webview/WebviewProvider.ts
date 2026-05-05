@@ -182,7 +182,7 @@ export abstract class DiracWebviewProvider {
 				HostProvider.window.showMessage({
 					type: ShowMessageType.ERROR,
 					message:
-						"Dirac: Local webview dev server is not running, HMR will not work. Please run 'npm run dev:webview' before launching the extension to enable HMR. Using bundled assets.",
+						"divr: Local webview dev server is not running, HMR will not work. Please run 'npm run dev:webview' before launching the extension to enable HMR. Using bundled assets.",
 				})
 			}
 

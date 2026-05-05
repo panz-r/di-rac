@@ -266,6 +266,20 @@ async function main() {
 		} catch (e: any) {
 			console.error("[cli esbuild] WARNING: Failed to build api-gateway:", e.stderr?.toString() || e.message)
 		}
+
+		// Build command daemon (C)
+		const cmdDaemonDir = path.join(__dirname, "command-daemon")
+		const cmdDaemonBuild = path.join(cmdDaemonDir, "build", "dirac-cmd")
+		const cmdDaemonDest = path.join(distDir, "dirac-cmd")
+		try {
+			execSync("cmake -B build -DCMAKE_BUILD_TYPE=Release", { cwd: cmdDaemonDir, stdio: "pipe" })
+			execSync("cmake --build build", { cwd: cmdDaemonDir, stdio: "pipe" })
+			fs.copyFileSync(cmdDaemonBuild, cmdDaemonDest)
+			fs.chmodSync(cmdDaemonDest, "755")
+			console.log("[cli esbuild] Built and copied dirac-cmd binary to dist/")
+		} catch (e: any) {
+			console.error("[cli esbuild] WARNING: Failed to build command daemon:", e.stderr?.toString() || e.message)
+		}
 	}
 }
 

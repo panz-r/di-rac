@@ -26,7 +26,7 @@ export class ExpandSymbolToolHandler implements IFullyManagedTool {
 	getDescription(block: ToolUse): string {
 		const relPath = block.params.path as string
 		const symbolId = block.params.symbol as string
-		return `[${block.name} for '${symbolId}' in '${relPath}']`
+		return `${block.name} ${symbolId} in ${relPath}`
 	}
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {

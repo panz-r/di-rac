@@ -81,6 +81,7 @@ export class TaskState {
 	symbolIndex: Map<string, SymbolIndexEntry[]> = new Map() // maps relative path to symbols
 	readCounts: Map<string, number> = new Map() // maps absolute path to number of times read
 	contentHashCache: Map<string, string> = new Map() // maps cache key to content hash
+	toolResultCache: Map<string, string> = new Map() // maps (tool:args) to cached result
 
 	// Queued user messages (injected during streaming, drained at next turn)
 	queuedUserMessages: Array<{ text: string; images?: string[] }> = []

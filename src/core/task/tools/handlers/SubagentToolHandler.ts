@@ -150,8 +150,8 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 		} else {
 			showNotificationForApproval(
 				prompts.length === 1
-					? `Dirac wants to use ${configuredSubagentName ? `the '${configuredSubagentName}' subagent` : "a subagent"}`
-					: `Dirac wants to use ${prompts.length} subagents`,
+					? `di wants to use ${configuredSubagentName ? `the '${configuredSubagentName}' subagent` : "a subagent"}`
+					: `di wants to use ${prompts.length} subagents`,
 				config.autoApprovalSettings.enableNotifications,
 			)
 			const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("use_subagents", approvalBody, config)

@@ -17,7 +17,7 @@ export async function isDiracCliInstalled(): Promise<boolean> {
 
 		// If we get here, the CLI is installed
 		// We could also validate the version if needed
-		return stdout.includes("Dirac CLI Version") || stdout.includes("Dirac Core Version")
+		return stdout.includes("divr CLI Version") || stdout.includes("divr Core Version")
 	} catch (error) {
 		// Command failed, which likely means CLI is not installed
 		// or not in PATH

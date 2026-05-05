@@ -3,6 +3,7 @@ import { hashLines } from "@utils/line-hashing"
 import * as diff from "diff"
 import * as path from "path"
 import { Mode } from "../../shared/storage/types"
+import { formatErrorGuidance } from "@/core/task/tools/utils/ToolHints"
 import { DiracIgnoreController, LOCK_TEXT_SYMBOL } from "../ignore/DiracIgnoreController"
 import type { FileInfo } from "../../services/glob/list-files"
 import type { ToolError } from "@shared/tool-response"
@@ -315,7 +316,7 @@ Otherwise, if you have not completed the task and do not need additional informa
 	 * Each error code maps to concrete, actionable recovery guidance.
 	 */
 	formatToolErrorForLLM: (error: ToolError): string => {
-		const guidance = formatToolErrorGuidance(error)
+		const guidance = formatErrorGuidance(error) || formatToolErrorGuidance(error)
 		const details = error.details
 			? "\nAdditional context: " + Object.entries(error.details)
 					.map(([k, v]) => `${k}: ${JSON.stringify(v)}`)

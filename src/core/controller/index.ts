@@ -39,6 +39,7 @@ import { sendStateUpdate } from "./state/subscribeToState"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
 import { SkillMetadata } from "@/shared/skills"
 	import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
+import { CommandClient } from "@/services/command/CommandClient"
 
 export class Controller {
 	public discoveredSkillsCache: SkillMetadata[] = []
@@ -55,6 +56,9 @@ export class Controller {
 
 	// Persistent analyzer daemon — lives across tasks, only shut down on process exit
 	private analyzer?: AnalyzerClient
+
+	// Persistent command daemon — lives across tasks, only shut down on process exit
+	private commandClient?: CommandClient
 
 	// Timer for periodic remote config fetching
 
@@ -120,6 +124,15 @@ export class Controller {
 			this.analyzer = undefined
 		}
 
+		if (this.commandClient) {
+			try {
+				await this.commandClient.shutdown()
+			} catch {
+				// non-fatal
+			}
+			this.commandClient = undefined
+		}
+
 		Logger.error("Controller disposed")
 	}
 
@@ -136,6 +149,17 @@ export class Controller {
 
 	getAnalyzer(): AnalyzerClient | undefined {
 		return this.analyzer
+	}
+
+	async ensureCommandClient(cwd: string): Promise<void> {
+		if (this.commandClient) return
+		const cmdBinary = path.join(__dirname, "dirac-cmd")
+		this.commandClient = new CommandClient(cmdBinary, cwd)
+		await this.commandClient.start()
+	}
+
+	getCommandClient(): CommandClient | undefined {
+		return this.commandClient
 	}
 
 	// Auth methods
@@ -318,7 +342,12 @@ export class Controller {
 
 				return true
 			}
-			this.cancelTask()
+			// Only cancel actively streaming tasks.
+			// If the task is idle (e.g. at completion_result ask), just store the mode
+			// for the next task - cancelling creates a race condition with stale UI state.
+			if (this.task.taskState.isStreaming) {
+				this.cancelTask()
+			}
 			return false
 		}
 

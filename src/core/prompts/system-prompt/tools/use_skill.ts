@@ -16,7 +16,7 @@ Positional:
 Examples:
   use_skill react-component
   use_skill database-migration`,
-	contextRequirements: (context) => context.skills !== undefined && context.skills.length > 0,
+	contextRequirements: (ctx) => ctx.skills !== undefined && ctx.skills.length > 0 && (ctx.toolCallCount ?? 99) >= 15,
 	parameters: [
 		{
 			name: "command",

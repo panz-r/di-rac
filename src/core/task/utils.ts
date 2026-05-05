@@ -211,6 +211,24 @@ export function printSessionSummary(deps: SessionSummaryDeps): void {
 		(hasMetrics && cost > 0 ? ' | cost=$' + cost.toFixed(4) : '') +
 		(hasRecovery
 			? ' | recovery: ' + (recoveryTelemetry!.interceptedCount as number) + ' intercepted (saved ~' + (recoveryTelemetry!.totalTurnSavings as number).toFixed(1) + ' turns), ' + (recoveryTelemetry!.escalatedCount as number) + ' escalated, rate=' + recoveryTelemetry!.recoveryRate
+			: '') +
+		(deps.toolCallLog && deps.toolCallLog.length > 0
+			? (() => {
+				const log = deps.toolCallLog!
+				const okRate = (log.filter(e => e.status === 'ok').length / log.length * 100).toFixed(0)
+				const cacheRate = (log.filter(e => e.cached).length / log.length * 100).toFixed(0)
+				let verified = 0, writes = 0
+				for (let i = 0; i < log.length; i++) {
+					if (log[i].tool === 'write' || log[i].tool === 'edit') {
+						writes++
+						for (let j = i + 1; j < Math.min(i + 4, log.length); j++) {
+							if (log[j].tool === 'read') { verified++; break }
+						}
+					}
+				}
+				const verifyRate = writes > 0 ? (verified / writes * 100).toFixed(0) : 'n/a'
+				return ' | tool_metrics: ' + log.length + ' calls, success=' + okRate + '%, cache=' + cacheRate + '%, verify=' + verifyRate + '%, ' + log.filter(e => e.status === 'error').length + ' errors, ' + log.reduce((s, e) => s + e.tokens, 0) + ' output_tokens'
+			})()
 			: ''),
 	)
 }

@@ -166,7 +166,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			} else {
 				// Manual approval flow - need to ask for approval
 				showNotificationForApproval(
-					`Dirac wants to execute a command: ${command}`,
+					`di wants to execute a command: ${command}`,
 					config.autoApprovalSettings.enableNotifications,
 				)
 

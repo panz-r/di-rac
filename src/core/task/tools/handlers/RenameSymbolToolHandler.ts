@@ -35,7 +35,7 @@ export class RenameSymbolToolHandler implements IFullyManagedTool {
 		const existingSymbol = block.params.existing_symbol as string
 		const newSymbol = block.params.new_symbol as string
 		const paths = Array.isArray(block.params.paths) ? block.params.paths : (block.params.paths ? [block.params.paths as string] : [])
-		return `[${block.name} for '${existingSymbol}' to '${newSymbol}' in ${paths.map((p) => `'${p}'`).join(", ")}]`
+		return `${block.name} ${existingSymbol} to ${newSymbol} in ${paths.join(" ")}`
 	}
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
@@ -244,7 +244,7 @@ export class RenameSymbolToolHandler implements IFullyManagedTool {
 				).then((results) => results.every(Boolean)))
 
 			if (!shouldAutoApprove) {
-				const notificationMessage = `Dirac wants to rename symbol '${existingSymbol}' to '${newSymbol}' (${totalReplacements} occurrences in ${fileResults.length} files)`
+				const notificationMessage = `di wants to rename symbol '${existingSymbol}' to '${newSymbol}' (${totalReplacements} occurrences in ${fileResults.length} files)`
 				showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
 
 				await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "tool")

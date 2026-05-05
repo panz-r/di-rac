@@ -192,7 +192,7 @@ function getPreToolUseTemplate(): string {
 #
 # PreToolUse Hook
 # 
-# Executes before any tool is used (read_file, write_to_file, execute_command, etc.)
+# Executes before any tool is used (read, write, edit, bash, etc.)
 # 
 # Input: { taskId, preToolUse: { tool: string, parameters: object }, ... }
 # Output: { cancel: boolean, contextModification?: string, errorMessage?: string }
@@ -216,7 +216,7 @@ else
 fi
 
 # Example: Block dangerous operations
-if [[ "$TOOL" == "execute_command" ]] && [[ "$COMMAND" == *"rm -rf /"* ]]; then
+if [[ "$TOOL" == "bash" ]] && [[ "$COMMAND" == *"rm -rf /"* ]]; then
   echo "{\"cancel\":true,\"errorMessage\":\"Dangerous command blocked by PreToolUse hook\"}"
   exit 0
 fi
@@ -284,7 +284,7 @@ function getUserPromptSubmitTemplate(): string {
 #
 # UserPromptSubmit Hook
 # 
-# Executes when the user submits a prompt to Dirac.
+# Executes when the user submits a prompt to di.
 # 
 # Input: { taskId, userPromptSubmit: { prompt: string }, diracVersion, timestamp, ... }
 # Output: { cancel: boolean, contextModification?: string, errorMessage?: string }
@@ -318,7 +318,7 @@ function getNotificationTemplate(): string {
 #
 # Notification Hook
 #
-# Executes when Dirac reaches a user-attention boundary or emits lifecycle notifications.
+# Executes when di reaches a user-attention boundary or emits lifecycle notifications.
 #
 # Input: {
 #   taskId,

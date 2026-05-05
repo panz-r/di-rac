@@ -10,13 +10,11 @@ export const vscodeHostBridgeClient = {
 		stat: async () => ({ type: 1, size: 0 }),
 		readDirectory: async () => [],
 		saveOpenDocumentIfDirty: noOp,
-		getDiagnostics: async () => ({ fileDiagnostics: [] }),
 		openProblemsPanel: noOp,
 		openInFileExplorerPanel: noOp,
 		openTerminalPanel: noOp,
 		executeCommandInTerminal: async () => ({ success: true }),
 		openFolder: async () => ({ success: true }),
-		prepareDiagnostics: async () => ({ success: true }),
 	},
 	envClient: {
 		clipboardWriteText: noOp,

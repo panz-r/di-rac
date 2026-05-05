@@ -118,7 +118,7 @@ export class UseSkillToolHandler implements IToolHandler, IPartialBlockHandler {
 					activationMessage += `\nDocumentation available:\n${docs.map((f) => `- ${skillDir}docs/${f}`).join("\n")}\n`
 				}
 				if (scripts.length > 0) {
-					activationMessage += `\nScripts available (run via execute_command):\n${scripts.map((f) => `- ${skillDir}scripts/${f}`).join("\n")}\n`
+					activationMessage += `\nScripts available (run via bash):\n${scripts.map((f) => `- ${skillDir}scripts/${f}`).join("\n")}\n`
 				}
 			} else {
 				activationMessage += `\nYou may access other files in the skill directory at: ${skillDir}`

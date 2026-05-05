@@ -17,7 +17,7 @@ export type DiracHeaderName = (typeof DiracHeaders)[keyof typeof DiracHeaders]
 
 export function buildExternalBasicHeaders(): Record<string, string> {
 	return {
-		"User-Agent": `Dirac/${ExtensionRegistryInfo.version}`,
+		"User-Agent": `divr/${ExtensionRegistryInfo.version}`,
 	}
 }
 

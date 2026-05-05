@@ -264,11 +264,6 @@ export class CliWorkspaceServiceClient implements WorkspaceServiceClientInterfac
 		return proto.host.SaveOpenDocumentIfDirtyResponse.create({})
 	}
 
-	async getDiagnostics(_request: proto.host.GetDiagnosticsRequest): Promise<proto.host.GetDiagnosticsResponse> {
-		// In CLI mode, we could run linters here
-		return proto.host.GetDiagnosticsResponse.create({ fileDiagnostics: [] })
-	}
-
 	async openProblemsPanel(_request: proto.host.OpenProblemsPanelRequest): Promise<proto.host.OpenProblemsPanelResponse> {
 		printInfo("Run linters to see problems")
 		return proto.host.OpenProblemsPanelResponse.create({})
@@ -298,10 +293,6 @@ export class CliWorkspaceServiceClient implements WorkspaceServiceClientInterfac
 	): Promise<proto.host.ExecuteCommandInTerminalResponse> {
 		printInfo(`⚙️  Executing: ${request.command}`)
 		return proto.host.ExecuteCommandInTerminalResponse.create({})
-	}
-
-	async prepareDiagnostics(_request: proto.host.PrepareDiagnosticsRequest): Promise<proto.host.PrepareDiagnosticsResponse> {
-		return proto.host.PrepareDiagnosticsResponse.create({ success: true })
 	}
 
 

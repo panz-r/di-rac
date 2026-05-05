@@ -22,7 +22,7 @@ export class GetFunctionToolHandler implements IFullyManagedTool {
 	getDescription(block: ToolUse): string {
 		const functionNames = Array.isArray(block.params.function_names) ? block.params.function_names : (block.params.function_names ? [block.params.function_names as string] : [])
 		const relPaths = Array.isArray(block.params.paths) ? block.params.paths : (block.params.paths ? [block.params.paths as string] : (block.params.path ? [block.params.path as string] : []))
-		return `[${block.name} for '${functionNames.join(", ")}' in ${relPaths.map((p) => `'${p}'`).join(", ")}]`
+		return `${block.name} ${functionNames.join(", ")} in ${relPaths.join(" ")}`
 	}
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		const relPaths = Array.isArray(block.params.paths) ? block.params.paths : (block.params.paths ? [block.params.paths as string] : (block.params.path ? [block.params.path as string] : []))
@@ -243,7 +243,7 @@ export class GetFunctionToolHandler implements IFullyManagedTool {
 				block.isNativeToolCall,
 			)
 		} else {
-			const notificationMessage = `Dirac wants to extract ${functionNames.length} function(s) from ${relPaths.length} file(s)`
+			const notificationMessage = `di wants to extract ${functionNames.length} function(s) from ${relPaths.length} file(s)`
 			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
 
 			await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "tool")

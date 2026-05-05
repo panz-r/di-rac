@@ -14,8 +14,10 @@ export class DiracUndoToolHandler implements IToolHandler {
 		return `[${this.name}]`
 	}
 
-	async execute(config: TaskConfig, _block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
 		const snapshotsDir = path.join(config.cwd, ".dirac-state", "snapshots")
+		const turnNum = block.params?.turn ? parseInt(block.params.turn, 10) : undefined
+
 		try {
 			const entries = await fs.readdir(snapshotsDir)
 			const turnDirs = entries
@@ -25,18 +27,32 @@ export class DiracUndoToolHandler implements IToolHandler {
 				.sort((a, b) => b.num - a.num)
 
 			if (turnDirs.length === 0) {
-				return "No turn snapshots found to undo."
+				return "No turn snapshots found."
 			}
 
-			const latest = turnDirs[0]
-			const manifestPath = path.join(snapshotsDir, latest.name, `turn-${latest.num}.json`)
+			// List mode: no turn specified
+			if (turnNum === undefined || isNaN(turnNum)) {
+				const listing = turnDirs
+					.slice(0, 10)
+					.map(t => `  turn-${t.num}`)
+					.join("\n")
+				return `Available snapshots (newest first):\n${listing}\nUse --turn N to restore a specific snapshot.`
+			}
+
+			// Restore specific turn
+			const target = turnDirs.find(t => t.num === turnNum)
+			if (!target) {
+				return `Snapshot turn-${turnNum} not found. Available: ${turnDirs.map(t => t.num).join(", ")}`
+			}
+
+			const manifestPath = path.join(snapshotsDir, target.name, `turn-${target.num}.json`)
 			const manifestRaw = await fs.readFile(manifestPath, "utf8")
 			const manifest = JSON.parse(manifestRaw) as { files: Array<{ path: string; hash: string }> }
 
 			const restored: string[] = []
 			for (const entry of manifest.files) {
 				const pathHash = createHash("sha256").update(entry.path).digest("hex").slice(0, 8)
-				const snapshotPath = path.join(snapshotsDir, latest.name, `${pathHash}-${path.basename(entry.path)}`)
+				const snapshotPath = path.join(snapshotsDir, target.name, `${pathHash}-${path.basename(entry.path)}`)
 				try {
 					await fs.copyFile(snapshotPath, entry.path)
 					restored.push(entry.path)
@@ -45,14 +61,9 @@ export class DiracUndoToolHandler implements IToolHandler {
 				}
 			}
 
-			// Clean up the snapshot directory
-			try {
-				await fs.rm(path.join(snapshotsDir, latest.name), { recursive: true })
-			} catch { /* ignore cleanup failure */ }
-
-			return `Undid turn ${latest.num}. Restored: ${restored.join(", ") || "no files"}`
+			return `Restored turn ${target.num}. Files: ${restored.join(", ") || "no files restored"}`
 		} catch {
-			return "No turn snapshots found to undo."
+			return "No turn snapshots found."
 		}
 	}
 }

@@ -19,7 +19,7 @@ Options:
 Examples:
   use_subagents --prompt "Research auth patterns in the codebase" --prompt "Check test coverage for auth module"
   use_subagents --prompt "Find all API endpoints" --prompt "Check for security issues" --prompt "Review error handling" --timeout 120`,
-	contextRequirements: (context) => context.subagentsEnabled === true,
+	contextRequirements: (ctx) => ctx.subagentsEnabled === true && (ctx.toolCallCount ?? 99) >= 15,
 	parameters: [
 		{
 			name: "command",

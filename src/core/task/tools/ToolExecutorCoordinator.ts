@@ -4,36 +4,26 @@ import type { ToolResponse } from "../index"
 import { AskFollowupQuestionToolHandler } from "./handlers/AskFollowupQuestionToolHandler"
 import { AttemptCompletionHandler } from "./handlers/AttemptCompletionHandler"
 import { BrowserToolHandler } from "./handlers/BrowserToolHandler"
-import { CondenseHandler } from "./handlers/CondenseHandler"
 import { EditFileToolHandler } from "./handlers/EditFileToolHandler"
-import { DiagnosticsScanToolHandler } from "./handlers/DiagnosticsScanToolHandler"
-import { ExecuteCommandToolHandler } from "./handlers/ExecuteCommandToolHandler"
-import { FindSymbolReferencesToolHandler } from "./handlers/FindSymbolReferencesToolHandler"
-import { GetFileSkeletonToolHandler } from "./handlers/GetFileSkeletonToolHandler"
-import { GetFunctionToolHandler } from "./handlers/GetFunctionToolHandler"
-import { ListFilesToolHandler } from "./handlers/ListFilesToolHandler"
+import { BashToolHandler } from "./handlers/BashToolHandler"
 import { NewTaskHandler } from "./handlers/NewTaskHandler"
 import { PlanModeRespondHandler } from "./handlers/PlanModeRespondHandler"
+import { getToolHint } from "./utils/ToolHints"
+import { computeAmbiguityScore } from "./utils/AmbiguityScorer"
 import { ReadFileToolHandler } from "./handlers/ReadFileToolHandler"
-import { ReplaceSymbolToolHandler } from "./handlers/ReplaceSymbolToolHandler"
-import { RenameSymbolToolHandler } from "./handlers/RenameSymbolToolHandler"
 import { SearchFilesToolHandler } from "./handlers/SearchFilesToolHandler"
 import { UseSubagentsToolHandler } from "./handlers/SubagentToolHandler"
-import { SummarizeTaskHandler } from "./handlers/SummarizeTaskHandler"
 import { UseSkillToolHandler } from "./handlers/UseSkillToolHandler"
 import { ListSkillsToolHandler } from "./handlers/ListSkillsToolHandler"
 import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
-import { ExpandSymbolToolHandler } from "./handlers/ExpandSymbolToolHandler"
-import { SearchSymbolsToolHandler } from "./handlers/SearchSymbolsToolHandler"
-import { RepoMapToolHandler } from "./handlers/RepoMapToolHandler"
-import { BashToolHandler } from "./handlers/BashToolHandler"
 import { CompactHandler } from "./handlers/CompactHandler"
 import { DiracUndoToolHandler } from "./handlers/DiracUndoToolHandler"
 import { ToolSearchToolHandler } from "./handlers/ToolSearchToolHandler"
 import { DiracOutputsToolHandler } from "./handlers/DiracOutputsToolHandler"
 import { RecallHandler } from "./handlers/RecallHandler"
-
+import { SymbolsToolHandler } from "./handlers/SymbolsToolHandler"
+import { RepoToolHandler } from "./handlers/RepoToolHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
 import { AgentConfigLoader } from "./subagent/AgentConfigLoader"
 import { ToolValidator } from "./ToolValidator"
@@ -89,38 +79,24 @@ export class ToolExecutorCoordinator {
 	private readonly toolHandlersMap: Record<DiracDefaultTool, (v: ToolValidator) => IToolHandler | undefined> = {
 		[DiracDefaultTool.ASK]: (_v: ToolValidator) => new AskFollowupQuestionToolHandler(),
 		[DiracDefaultTool.ATTEMPT]: (_v: ToolValidator) => new AttemptCompletionHandler(),
-		[DiracDefaultTool.BASH]: (v: ToolValidator) => new ExecuteCommandToolHandler(v),
+		[DiracDefaultTool.BASH]: (v: ToolValidator) => new BashToolHandler(v),
 		[DiracDefaultTool.FILE_READ]: (v: ToolValidator) => new ReadFileToolHandler(v),
 		[DiracDefaultTool.FILE_NEW]: (v: ToolValidator) => new WriteToFileToolHandler(v),
-		[DiracDefaultTool.SEARCH]: (v: ToolValidator) => new SearchFilesToolHandler(v),
-		[DiracDefaultTool.LIST_FILES]: (v: ToolValidator) => new ListFilesToolHandler(v),
-		[DiracDefaultTool.GET_FUNCTION]: (v: ToolValidator) => new GetFunctionToolHandler(v),
-		[DiracDefaultTool.GET_FILE_SKELETON]: (v: ToolValidator) => new GetFileSkeletonToolHandler(v),
-		[DiracDefaultTool.FIND_SYMBOL_REFERENCES]: (v: ToolValidator) => new FindSymbolReferencesToolHandler(v),
-
 		[DiracDefaultTool.EDIT_FILE]: (v: ToolValidator) => new EditFileToolHandler(v),
-		[DiracDefaultTool.DIAGNOSTICS_SCAN]: (v: ToolValidator) => new DiagnosticsScanToolHandler(v),
-		[DiracDefaultTool.REPLACE_SYMBOL]: (v: ToolValidator) => new ReplaceSymbolToolHandler(v),
-		[DiracDefaultTool.RENAME_SYMBOL]: (v: ToolValidator) => new RenameSymbolToolHandler(v),
+		[DiracDefaultTool.SYMBOLS]: (v: ToolValidator) => new SymbolsToolHandler(v),
+		[DiracDefaultTool.SEARCH]: (v: ToolValidator) => new SearchFilesToolHandler(v),
+		[DiracDefaultTool.LIST_FILES]: (v: ToolValidator) => new RepoToolHandler(v),
 		[DiracDefaultTool.BROWSER]: (_v: ToolValidator) => new BrowserToolHandler(),
-
+		[DiracDefaultTool.COMPACT]: (v: ToolValidator) => new CompactHandler(v),
 		[DiracDefaultTool.NEW_TASK]: (_v: ToolValidator) => new NewTaskHandler(),
 		[DiracDefaultTool.PLAN_MODE]: (_v: ToolValidator) => new PlanModeRespondHandler(),
 		[DiracDefaultTool.WEB_FETCH]: (_v: ToolValidator) => new WebFetchToolHandler(),
 		[DiracDefaultTool.WEB_SEARCH]: (_v: ToolValidator) => new WebSearchToolHandler(),
-		[DiracDefaultTool.CONDENSE]: (_v: ToolValidator) => new CondenseHandler(),
-		[DiracDefaultTool.SUMMARIZE_TASK]: (_v: ToolValidator) => new SummarizeTaskHandler(_v),
 		[DiracDefaultTool.NEW_RULE]: (v: ToolValidator) =>
 			new SharedToolHandler(DiracDefaultTool.NEW_RULE, new WriteToFileToolHandler(v)),
 		[DiracDefaultTool.USE_SKILL]: (_v: ToolValidator) => new UseSkillToolHandler(),
 		[DiracDefaultTool.LIST_SKILLS]: (_v: ToolValidator) => new ListSkillsToolHandler(),
 		[DiracDefaultTool.USE_SUBAGENTS]: (_v: ToolValidator) => new UseSubagentsToolHandler(),
-
-		[DiracDefaultTool.EXPAND_SYMBOL]: (v: ToolValidator) => new ExpandSymbolToolHandler(v),
-		[DiracDefaultTool.SEARCH_SYMBOLS]: (v: ToolValidator) => new SearchSymbolsToolHandler(v),
-		[DiracDefaultTool.REPO_MAP]: (v: ToolValidator) => new RepoMapToolHandler(v),
-		[DiracDefaultTool.COMPACT]: (v: ToolValidator) => new CompactHandler(v),
-		[DiracDefaultTool.BASH_RESTRICTED]: (v: ToolValidator) => new BashToolHandler(v),
 		[DiracDefaultTool.DIRAC_UNDO]: (_v: ToolValidator) => new DiracUndoToolHandler(),
 		[DiracDefaultTool.TOOL_SEARCH]: (_v: ToolValidator) => new ToolSearchToolHandler(),
 		[DiracDefaultTool.DIRAC_OUTPUTS]: (_v: ToolValidator) => new DiracOutputsToolHandler(),
@@ -197,35 +173,160 @@ export class ToolExecutorCoordinator {
 		return this.executeSingle(config, block, handler)
 	}
 
+	private static CACHEABLE_TOOLS = new Set(["read", "search", "repo", "symbols"])
+
 	private async executeSingle(
 		config: TaskConfig,
 		block: ToolUse,
 		handler: IToolHandler,
 	): Promise<ToolResponse> {
-		const result = await handler.execute(config, block)
-		if (typeof result === "string") {
-			const hint = this.buildExplorationHint(block.name, block.params)
-			if (hint) return result + hint
+		// Cache lookup for read-only tools
+		if (ToolExecutorCoordinator.CACHEABLE_TOOLS.has(block.name) && !block.params?.retry) {
+			const cacheKey = `${block.name}:${ToolExecutorCoordinator.normalizeCacheArgs(block.params)}`
+			const cached = config.taskState.toolResultCache.get(cacheKey)
+			if (cached) return `[Cache Hit]${cached}`
 		}
-		return result
+		// --dry-run: validate params without executing
+		if (block.params?.dryRun) {
+			const desc = handler.getDescription(block)
+			return JSON.stringify({ status: "ok", data: null, hint: `[DRY RUN] Would execute: ${desc}`, meta: { tool: block.name, dryRun: true } })
+		}
+
+
+			// --clarify: detect ambiguity before executing
+			if (block.params?.clarify) {
+				const ambiguity = computeAmbiguityScore(block.name, block.params, config.taskState)
+				if (ambiguity > 0.4) {
+					const parsed = { ...block.params }
+					delete parsed.clarify
+					delete parsed.retry
+					delete parsed.command
+					if (ambiguity > 0.6) {
+						return `[Clarify] Ambiguity: ${ambiguity.toFixed(2)} (High). P(success) < 0.3 — consider delegating to subagent or breaking task down. Parsed args: ${JSON.stringify(parsed)}`
+					}
+					return `[Clarify] Ambiguity: ${ambiguity.toFixed(2)} (Moderate). Parsed args: ${JSON.stringify(parsed)}`
+				}
+			}
+
+		const maxRetries = block.params?.retry ? Math.min(Number(block.params.retry), 5) : 0
+		let lastResult: ToolResponse = ""
+		let attempts = 0
+
+		while (attempts <= maxRetries) {
+			const result = await handler.execute(config, block)
+			lastResult = result
+
+			// Only retry on string results that look like errors
+			if (typeof result !== "string" || attempts >= maxRetries) break
+			const trimmed = result.trimStart()
+			if (!trimmed.startsWith("<tool_error")) break
+
+			attempts++
+			if (attempts <= maxRetries) {
+				const delay = Math.min(500 * Math.pow(2, attempts - 1), 4000)
+				await new Promise(r => setTimeout(r, delay))
+			}
+		}
+
+		// Auto-correct truncated results
+		if (typeof lastResult === "string" && block.params?.autoCorrect !== false) {
+			const acResult = await this.autoCorrectIfTruncated(config, block, handler, lastResult)
+			if (acResult !== null) lastResult = acResult
+		}
+
+		if (typeof lastResult === "string") {
+			const hint = this.buildExplorationHint(block.name, block.params)
+			let output = hint ? lastResult + hint : lastResult
+			if (attempts > 0) {
+				output = `[Retry] ${attempts} attempt${attempts > 1 ? "s" : ""}\n${output}`
+			}
+			// --clarify: prepend parsed params so LLM can verify interpretation
+			if (block.params?.clarify) {
+				const parsed = { ...block.params }
+				delete parsed.clarify
+				delete parsed.retry
+				delete parsed.command
+				output = `[Clarify] Parsed args: ${JSON.stringify(parsed)}\n${output}`
+			}
+			// --verify: re-read target file after write/edit
+			if (block.params?.verify && !lastResult.trimStart().startsWith("<tool_error")) {
+				const verifyPath = ToolExecutorCoordinator.extractTargetPath(block.name, block.params)
+				if (verifyPath) {
+					const readHandler = this.handlers.get("read")
+					if (readHandler) {
+						const verifyBlock = { ...block, params: { paths: [verifyPath], detail: "hint" } }
+						const verifyResult = await readHandler.execute(config, verifyBlock as any)
+						if (typeof verifyResult === "string") output += `\n[Verify] ${verifyResult}`
+					}
+				}
+			}
+			// Proactive ambiguity hint on non-clarify calls
+			if (!block.params?.clarify) {
+				const score = computeAmbiguityScore(block.name, block.params, config.taskState)
+				if (score > 0.7) {
+					output += `
+[HINT] This call had high ambiguity (${score.toFixed(2)}). Consider using --clarify next time.`
+				}
+			}
+			// Store in cache for read-only tools
+			if (ToolExecutorCoordinator.CACHEABLE_TOOLS.has(block.name) && !output.startsWith("[Cache Hit]")) {
+				const cacheKey = `${block.name}:${ToolExecutorCoordinator.normalizeCacheArgs(block.params)}`
+				config.taskState.toolResultCache.set(cacheKey, lastResult)
+			}
+			return output
+		}
+		return lastResult
 	}
 
-	private buildExplorationHint(tool: string, params: Record<string, any>): string | undefined {
-		const path = params.path ?? (Array.isArray(params.paths) ? params.paths[0] : undefined)
-		switch (tool) {
-			case "read_file":
-				return path
-					? "\n---\nFollow-up: expand_symbol " + path + " --symbol <handle> | get_function " + path + " --fn <name>"
-					: undefined
-			case "search_files":
-				return "\n---\nFollow-up: read_file <matched-path> | get_file_skeleton <matched-path>"
-			case "repo_map":
-				return "\n---\nFollow-up: read_file <path> | search_symbols <query> | search_files <path> --regex <pattern>"
-			case "search_symbols":
-				return "\n---\nFollow-up: expand_symbol <path> --symbol <handle> | find_symbol_references <path> --symbol <name>"
-			default:
-				return undefined
+	private async autoCorrectIfTruncated(
+		config: TaskConfig,
+		block: ToolUse,
+		handler: IToolHandler,
+		result: string,
+	): Promise<string | null> {
+		const degradationStrategies: Record<string, Record<string, any>> = {
+			read: { detail: "skeleton" },
+			search: { context_lines: 0 },
 		}
+		const strategy = degradationStrategies[block.name]
+		if (!strategy) return null
+		if (!result.includes("[truncated]") && !result.includes("... [Content reduced")) return null
+		const degradedBlock = { ...block, params: { ...block.params, ...strategy } }
+		try {
+			const corrected = await handler.execute(config, degradedBlock)
+			if (typeof corrected === "string") {
+				return corrected + "\n[Auto-corrected: output was truncated, degraded params applied]"
+			}
+		} catch {
+			// Fall through to original result
+		}
+		return null
+	}
+
+	private static extractTargetPath(tool: string, params: Record<string, any>): string | null {
+		if (tool === "write") return params.path || null
+		if (tool === "edit") return params.path || params.files?.[0]?.path || null
+		return null
+	}
+
+	private static normalizeCacheArgs(params: Record<string, any>): string {
+		const skipKeys = new Set(["clarify", "retry", "command", "call_id", "autoCorrect", "dryRun", "verify"])
+		const clean: Record<string, any> = {}
+		for (const key of Object.keys(params).sort()) {
+			if (skipKeys.has(key)) continue
+			let val = params[key]
+			if (key === "path" && typeof val === "string") val = val.replace(/^\.\//, "")
+			else if (key === "paths" && Array.isArray(val)) val = val.map((p: string) => p.replace(/^\.\//, ""))
+			clean[key] = val
+		}
+		return JSON.stringify(clean)
+	}
+
+
+
+	private buildExplorationHint(tool: string, params: Record<string, any>): string | undefined {
+		const hint = getToolHint(tool, "success", undefined, params)
+		return hint ? "\n---\n" + hint : undefined
 	}
 
 	private async executeChain(

@@ -1,0 +1,37 @@
+import { DiracDefaultTool } from "@/shared/tools"
+import type { DiracToolSpec } from "../spec"
+
+const id = DiracDefaultTool.FILE_READ
+
+export const read: DiracToolSpec = {
+	id,
+	name: "read",
+	description: `Read files with detail levels: hint (kind+name only), preview (auto for large files), outline (defs with handles like fn:Name), skeleton (signatures only), full. Use --section fn:Name to jump to a symbol.
+
+Examples:
+  read src/auth.ts --detail hint
+  read src/auth.ts --detail outline
+  read src/auth.ts src/db.ts --detail skeleton
+  read src/auth.ts --range "1-50,200-250"
+  read src/auth.ts --section fn:login
+
+Returns: hint (symbol list), outline (defs+handles), skeleton (signatures), preview (200 lines for large files), full (entire file).
+Typical: read src/file.ts --detail outline`,
+	parameters: [
+		{
+			name: "command",
+			required: true,
+			type: "string",
+			usage: "src/auth.ts --detail outline",
+		},
+	],
+	metadata: {
+		tags: ["file", "read", "code"],
+		category: "file",
+		concurrency: "parallel-safe",
+		safety: ["read"],
+		outputSize: "large",
+		llmsBrief: "Read files with detail levels",
+		compactionSafety: "discardable",
+	},
+}

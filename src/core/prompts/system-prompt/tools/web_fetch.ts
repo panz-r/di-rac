@@ -24,7 +24,7 @@ Options:
 Examples:
   web_fetch https://example.com/docs --prompt "Summarize the main points and key takeaways"
   web_fetch https://api.example.com --prompt "List all available endpoints"`,
-	contextRequirements: (context) => context.diracWebToolsEnabled === true,
+	contextRequirements: (ctx) => ctx.diracWebToolsEnabled === true && (ctx.toolCallCount ?? 99) >= 15,
 	parameters: [
 		{
 			name: "command",

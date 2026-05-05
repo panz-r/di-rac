@@ -50,9 +50,9 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 		if (replacements.length > 0) {
 			const symbols = replacements.map((r) => r.symbol).join(", ")
 			const paths = Array.from(new Set(replacements.map((r) => r.path))).join(", ")
-			return `[${block.name} for symbols '${symbols}' in '${paths}']`
+			return `${block.name} symbols ${symbols} in ${paths}`
 		}
-		return `[${block.name} for '${block.params.symbol}' in '${block.params.path}']`
+		return `${block.name} ${block.params.symbol} in ${block.params.path}`
 	}
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
@@ -233,7 +233,7 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 				const fileNames = Array.from(batches.values())
 					.map((b) => path.basename(b.absolutePath))
 					.join(", ")
-				const notificationMessage = `Dirac wants to replace symbols [${symbolNames}] in [${fileNames}]`
+				const notificationMessage = `di wants to replace symbols [${symbolNames}] in [${fileNames}]`
 				showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
 
 				await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "tool")

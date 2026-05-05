@@ -169,7 +169,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		// Create new terminal
 		const newTerminalInfo = this.registry.createTerminal({
 			cwd: cwd,
-			name: `Dirac Terminal ${this.registry.size + 1}`,
+			name: `divr Terminal ${this.registry.size + 1}`,
 			env: env,
 		})
 		this.terminalIds.add(newTerminalInfo.id)

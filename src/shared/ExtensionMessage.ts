@@ -219,7 +219,6 @@ export interface DiracSayTool {
 	| "browser_action"
 	| "browser_action_result"
 	| "diagnosticsScan"
-	| "diagnostics_scan"
 	| "executeCommand"
 	| "execute_command"
 	| "expand_symbol"

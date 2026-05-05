@@ -61,7 +61,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 		// Show notification if enabled
 		if (config.autoApprovalSettings.enableNotifications) {
 			showSystemNotification({
-				subtitle: "Dirac has a question...",
+				subtitle: "di has a question...",
 				message: question.replace(/\n/g, " "),
 			})
 		}

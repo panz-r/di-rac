@@ -44,8 +44,8 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 		// Show notification if enabled
 		if (config.autoApprovalSettings.enableNotifications) {
 			showSystemNotification({
-				subtitle: "Dirac wants to start a new task...",
-				message: `Dirac is suggesting to start a new task with: ${context}`,
+				subtitle: "di wants to start a new task...",
+				message: `di is suggesting to start a new task with: ${context}`,
 			})
 		}
 

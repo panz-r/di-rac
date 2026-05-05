@@ -96,7 +96,7 @@ export class WebFetchToolHandler implements IFullyManagedTool {
 			} else {
 				// Manual approval flow
 				showNotificationForApproval(
-					`Dirac wants to fetch content from ${url}`,
+					`di wants to fetch content from ${url}`,
 					config.autoApprovalSettings.enableNotifications,
 				)
 				await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "tool")

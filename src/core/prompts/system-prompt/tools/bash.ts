@@ -1,29 +1,41 @@
 import { DiracDefaultTool } from "@/shared/tools"
 import type { DiracToolSpec } from "../spec"
 
-const id = DiracDefaultTool.BASH_RESTRICTED
+const id = DiracDefaultTool.BASH
 
 export const bash: DiracToolSpec = {
 	id,
 	name: "bash",
-	description:
-		"Executes a composed shell command in a restricted environment (rbash). Composition like 'grep | head' or 'find | xargs grep' is encouraged to minimize round-trips. Always use absolute or relative paths within the project root. Composition is much more token-efficient than multiple specialized tool calls.",
+	description: `Execute shell commands. Composition (pipes, &&, ||) is encouraged to minimize round-trips. Use heredocs for multi-line scripts.
+
+Examples:
+  bash "git diff --cached"
+  bash "grep -r 'TODO' src/ | wc -l"
+  bash "npm test && npm run build"
+  bash "python3 << 'EOF'
+import os
+print(os.getcwd())
+EOF"
+
+Returns: JSON {ok, exitCode, stdout, stderr}. Output truncated at 8KB.
+Typical: bash 'npm test && npm run build'`,
 	parameters: [
 		{
 			name: "command",
 			required: true,
 			type: "string",
-			instruction: "The full shell command to execute. Only allowed binaries are: git, grep, find, cat, head, tail, jq, wc, sort, uniq, curl, sed, awk, python3, node, ls.",
-			usage: '"grep -r \'function login\' src/ | head -n 20"',
+			instruction: "The full shell command to execute. Pipes, &&, ||, heredocs, and subshells all work.",
+			usage: '"npm test && npm run build"',
 		},
 	],
 	metadata: {
-		tags: ["shell", "restricted", "sandboxed"],
+		tags: ["shell", "execution"],
 		category: "execution",
 		concurrency: "sequential",
-		safety: ["read", "write"],
-		outputSize: "medium",
-		llmsBrief: "Execute restricted/sandboxed bash commands",
+		safety: ["destructive", "network"],
+		supportsForce: true,
+		outputSize: "large",
+		llmsBrief: "Execute shell commands with full bash support",
 		compactionSafety: "discardable",
 	},
 }

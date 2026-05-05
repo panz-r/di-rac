@@ -27,7 +27,7 @@ export class FindSymbolReferencesToolHandler implements IFullyManagedTool {
 		const relPaths = Array.isArray(block.params.paths) ? block.params.paths : (block.params.paths ? [block.params.paths as string] : (block.params.path ? [block.params.path as string] : []))
 		const symbols = Array.isArray(block.params.symbols) ? block.params.symbols : (block.params.symbols ? [block.params.symbols as string] : (block.params.symbol ? [block.params.symbol as string] : []))
 		const findType = (block.params.find_type as string) || "both"
-		return `[${block.name} for ${symbols.map((s) => `'${s}'`).join(", ")} in ${relPaths.map((p) => `'${p}'`).join(", ")}${findType !== "both" ? ` (type: ${findType})` : ""}]`
+		return `${block.name} ${symbols.join(", ")} in ${relPaths.join(" ")}${findType !== "both" ? ` (type: ${findType})` : ""}`
 	}
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
@@ -250,7 +250,7 @@ export class FindSymbolReferencesToolHandler implements IFullyManagedTool {
 				block.isNativeToolCall,
 			)
 		} else {
-			const notificationMessage = `Dirac wants to find ${findType === "both" ? "references" : findType + "s"} for ${symbols.length} symbol(s) in ${relPaths.length} path(s)`
+			const notificationMessage = `di wants to find ${findType === "both" ? "references" : findType + "s"} for ${symbols.length} symbol(s) in ${relPaths.length} path(s)`
 			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
 
 			await config.callbacks.removeLastPartialMessageIfExistsWithType("say", "tool")

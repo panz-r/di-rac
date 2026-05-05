@@ -35,10 +35,10 @@ Remember:
 
 # Tool Descriptions and XML Formats
 
-1. execute_command:
-<execute_command>
+1. bash:
+<read>
 <command>Your command here</command>
-</execute_command>
+</read>
 Description: Execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does. Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands will be executed in the current working directory.
 
 2. list_files:
@@ -96,9 +96,9 @@ Example 1: Using a single tool
 
 Let's run the test suite for our project. This will help us ensure that all our components are functioning correctly.
 
-<execute_command>
+<read>
 <command>npm test</command>
-</execute_command>
+</read>
 
 Example 2: Using multiple tools
 
@@ -231,13 +231,13 @@ interface ToolCall {
 }
 
 const toolNames = [
-	"execute_command",
-	"list_files",
-	"search_files",
-	"read_file",
-	"write_to_file",
-	"ask_followup_question",
-	"attempt_completion",
+	"read", "write", "edit", "symbols", "search", "repo", "bash",
+	
+	
+	
+	
+	
+	
 ]
 
 function parseAIResponse(response: string): {
@@ -324,33 +324,32 @@ function validateToolInput(toolName: string, tool_input: Record<string, string>)
 	// All CLI-migrated tools use a single "command" string parameter.
 	// The o1-format XML parser extracts <command>...</command> tags.
 	const CLI_TOOLS = new Set([
-		"execute_command",
-		"read_file",
-		"list_files",
-		"search_files",
-		"write_to_file",
-		"edit_file",
-		"ask_followup_question",
-		"attempt_completion",
-		"search_symbols",
-		"get_function",
-		"get_file_skeleton",
-		"diagnostics_scan",
-		"expand_symbol",
-		"find_symbol_references",
-		"rename_symbol",
-		"replace_symbol",
+		"read", "write", "edit", "symbols", "search", "repo", "bash",
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
 		"browser_action",
 		"use_subagents",
 		"web_fetch",
 		"web_search",
-		"plan_mode_respond",
-		"new_task",
-		"summarize_task",
-		"condense",
+		
+		
+		
+		
 		"compact",
-		"generate_explanation",
-		"use_skill",
+		
+		"read", "write", "edit", "symbols", "search", "repo", "ask", "done", "task", "plan", "tools", "memory", "recall", "use_skill",
 	])
 
 	if (CLI_TOOLS.has(toolName)) {
@@ -363,9 +362,9 @@ function validateToolInput(toolName: string, tool_input: Record<string, string>)
 // Example usage:
 // const aiResponse = `Here's my analysis of the situation...
 
-// <execute_command>
+// <read>
 //   <command>ls -la</command>
-// </execute_command>
+// </read>
 
 // <write_to_file>
 //   <command>./example.txt --content "Hello, World!"</command>
@@ -442,7 +441,7 @@ export function convertO1ResponseToAnthropicMessage(
 //     choices: [{
 //         message: {
 //             role: "assistant",
-//             content: "Here's my analysis...\n\n<execute_command>\n  <command>ls -la</command>\n</execute_command>"
+//             content: "Here's my analysis...\n\n<read>\n  <command>ls -la</command>\n</read>"
 //         },
 //         finish_reason: "stop"
 //     }],

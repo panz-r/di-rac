@@ -4,49 +4,32 @@ import { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completi
 
 export type DiracTool = OpenAITool | AnthropicTool | GoogleTool
 
-// Define available tool ids
 export enum DiracDefaultTool {
-	ASK = "ask_followup_question",
-	ATTEMPT = "attempt_completion",
-	BASH = "execute_command",
-	BASH_RESTRICTED = "bash",
-	FILE_READ = "read_file",
-	FILE_NEW = "write_to_file",
-	SEARCH = "search_files",
-	LIST_FILES = "list_files",
+	ASK = "ask",
+	ATTEMPT = "done",
+	BASH = "bash",
+	FILE_READ = "read",
+	FILE_NEW = "write",
+	SEARCH = "search",
+	LIST_FILES = "repo",
+	EDIT_FILE = "edit",
+	SYMBOLS = "symbols",
+	COMPACT = "compact",
+	NEW_TASK = "task",
+	PLAN_MODE = "plan",
 	BROWSER = "browser_action",
-	NEW_TASK = "new_task",
-	PLAN_MODE = "plan_mode_respond",
-	WEB_FETCH = "web_fetch",
-	WEB_SEARCH = "web_search",
-	CONDENSE = "condense",
-	SUMMARIZE_TASK = "summarize_task",
-	NEW_RULE = "new_rule",
 	USE_SKILL = "use_skill",
 	LIST_SKILLS = "list_skills",
 	USE_SUBAGENTS = "use_subagents",
-	GET_FUNCTION = "get_function",
-	GET_FILE_SKELETON = "get_file_skeleton",
-	FIND_SYMBOL_REFERENCES = "find_symbol_references",
-
-	EDIT_FILE = "edit_file",
-	DIAGNOSTICS_SCAN = "diagnostics_scan",
-	REPLACE_SYMBOL = "replace_symbol",
-	RENAME_SYMBOL = "rename_symbol",
-
-	EXPAND_SYMBOL = "expand_symbol",
-	SEARCH_SYMBOLS = "search_symbols",
-	REPO_MAP = "repo_map",
-	COMPACT = "compact",
+	WEB_FETCH = "web_fetch",
+	WEB_SEARCH = "web_search",
+	TOOL_SEARCH = "tools",
+	DIRAC_OUTPUTS = "memory",
+	DIRAC_RECALL = "recall",
+	NEW_RULE = "new_rule",
 	DIRAC_UNDO = "dirac_undo",
-
-	TOOL_SEARCH = "tool_search",
-	DIRAC_OUTPUTS = "dirac_outputs",
-	DIRAC_RECALL = "dirac_recall",
 }
 
-// Array of all tool names for compatibility
-// Automatically generated from the enum values
 export const toolUseNames = Object.values(DiracDefaultTool) as DiracDefaultTool[]
 
 const dynamicToolUseNamesByNamespace = new Map<string, Set<string>>()
@@ -61,27 +44,19 @@ export function getToolUseNames(): string[] {
 	return Array.from(new Set([...defaults, ...dynamic]))
 }
 
-// Tools that do not modify the workspace state
 export const READ_ONLY_TOOLS = [
 	DiracDefaultTool.LIST_FILES,
 	DiracDefaultTool.FILE_READ,
 	DiracDefaultTool.SEARCH,
 	DiracDefaultTool.BROWSER,
 	DiracDefaultTool.ASK,
-	DiracDefaultTool.GET_FUNCTION,
-	DiracDefaultTool.GET_FILE_SKELETON,
-	DiracDefaultTool.FIND_SYMBOL_REFERENCES,
-	DiracDefaultTool.DIAGNOSTICS_SCAN,
-
-	DiracDefaultTool.WEB_SEARCH,
-	DiracDefaultTool.WEB_FETCH,
 	DiracDefaultTool.USE_SKILL,
 	DiracDefaultTool.LIST_SKILLS,
 	DiracDefaultTool.USE_SUBAGENTS,
-
-	DiracDefaultTool.EXPAND_SYMBOL,
-	DiracDefaultTool.SEARCH_SYMBOLS,
-	DiracDefaultTool.REPO_MAP,
-	DiracDefaultTool.BASH_RESTRICTED,
+	DiracDefaultTool.TOOL_SEARCH,
+	DiracDefaultTool.WEB_SEARCH,
+	DiracDefaultTool.WEB_FETCH,
+	DiracDefaultTool.SYMBOLS,
+	DiracDefaultTool.DIRAC_RECALL,
+	DiracDefaultTool.BASH,
 ] as const
-

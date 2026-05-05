@@ -23,7 +23,7 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 
 		getDescription(block: ToolUse): string {
 		const relPaths = Array.isArray(block.params.paths) ? block.params.paths : (block.params.paths ? [block.params.paths as string] : [])
-		return `[${block.name} for ${relPaths.map((p) => `'${p}'`).join(", ")}]`
+		return `${block.name} ${relPaths.join(" ")}`
 	}
 
 		async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
@@ -82,7 +82,7 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 			} else {
 				await config.callbacks.say(
 					"error",
-					`Dirac tried to use ${this.name} without providing any paths. Retrying...`
+					`di tried to use ${this.name} without providing any paths. Retrying...`
 				)
 				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", validation.error!, "recoverable"))
 			}
@@ -195,8 +195,8 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 			// Manual approval flow
 			const notificationMessage =
 				relPaths.length > 1
-					? `Dirac wants to view ${relPaths.length} directories`
-					: `Dirac wants to view directory ${getWorkspaceBasename(absolutePaths[0], "ListFilesToolHandler.notification")}/`
+					? `di wants to view ${relPaths.length} directories`
+					: `di wants to view directory ${getWorkspaceBasename(absolutePaths[0], "ListFilesToolHandler.notification")}/`
 
 			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
 
