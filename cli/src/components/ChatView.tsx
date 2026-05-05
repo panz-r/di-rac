@@ -1005,7 +1005,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
 				const updatedHistory = [expandedText.trim(), ...workspaceMessageHistory.filter(h => h !== expandedText.trim())].slice(0, MAX_HISTORY_ITEMS)
 				await writeWorkspaceMessageHistory(workspacePath, updatedHistory).catch(err => Logger.error("[ChatView] Failed to write message to history:", err))
 				setWorkspaceMessageHistory(updatedHistory)
-			} catch (_error) {
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error)
+				console.error(`\nFailed to start task: ${message}\n`)
 				onError?.()
 			} finally {
 				setSubmitting(false)
@@ -1063,7 +1065,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
 						initialImages && initialImages.length > 0 ? initialImages : undefined,
 					)
 				}
-			} catch (_error) {
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error)
+				console.error(`\nFailed to start task: ${message}\n`)
 				onError?.()
 			}
 		}

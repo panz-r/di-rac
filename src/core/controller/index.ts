@@ -141,7 +141,6 @@ export class Controller {
 		const analyzerBinary = path.join(__dirname, "dirac-analyzer")
 		this.analyzer = new AnalyzerClient(analyzerBinary, cwd)
 		await this.analyzer.start()
-
 		// Wire analyzer to symbol index service
 		const { SymbolIndexService } = require("@/services/symbol-index/SymbolIndexService")
 		SymbolIndexService.getInstance().setAnalyzer(this.analyzer)
