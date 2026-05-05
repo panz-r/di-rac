@@ -6,11 +6,13 @@ const id = DiracDefaultTool.SYMBOLS
 export const symbols: DiracToolSpec = {
 	id,
 	name: "symbols",
-	description: `Symbol ops. For text/regex patterns, use search instead.
-  search --name PATTERN [--kind function|class]    Find defs
-  replace --name SYMBOL --text CODE                Replace def
-  rename --old NAME --new NAME                     Rename def
-  refs --name SYMBOL                               Find refs
+	description: `AST symbol operations. For text/regex patterns, use search instead.
+
+Subcommands:
+  search --name PATTERN [--kind function|class]    Find definitions
+  replace --name SYMBOL --text CODE                Replace definition body
+  rename --old NAME --new NAME                     Rename across files
+  refs --name SYMBOL                               Find all references
 
 Examples:
   symbols search src/ --name AuthService --kind class
@@ -18,9 +20,9 @@ Examples:
   symbols rename src/ --old calcTotal --new calcGrandTotal
   symbols refs src/ --name login
 
-Returns: up to 50 matches (search). Replace/rename: affected file count.
+Response: OK | matches:N | hint:alternatives | tokens:N
+Universal flags: --dry-run (preview changes without applying), --retry N.
 Typical: symbols search src/ --name AuthService --kind class`,
-	contextRequirements: (ctx) => (ctx.toolCallCount ?? 99) >= 5,
 	parameters: [
 		{
 			name: "command",

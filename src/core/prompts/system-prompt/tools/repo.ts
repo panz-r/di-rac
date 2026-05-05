@@ -13,7 +13,7 @@ Examples:
   repo --detail files src/
   repo --detail skeleton
 
-Returns: top 7 symbols/file (summary), all files+line counts (files), all defs (skeleton).
+Response: OK | files:N | lines:N | symbols:N | detail:<summary|files|skeleton> | tokens:N
 Typical: repo --detail files src/`,
 	parameters: [
 		{

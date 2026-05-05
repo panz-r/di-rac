@@ -15,7 +15,9 @@ Examples:
   read src/auth.ts --range "1-50,200-250"
   read src/auth.ts --section fn:login
 
-Returns: hint (symbol list), outline (defs+handles), skeleton (signatures), preview (200 lines for large files), full (entire file).
+Response: OK | detail:<level> | handles:N | tokens:N. Content follows header line. Handles like fn:Name work with --section.
+Note: --detail full auto-downgrades to preview for files over 50KB. Response starts with TRUNCATED if so.
+Note: repeated reads of the same file at the same detail level are cached and instant.
 Typical: read src/file.ts --detail outline`,
 	parameters: [
 		{

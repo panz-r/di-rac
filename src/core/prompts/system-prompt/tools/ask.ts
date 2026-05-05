@@ -12,9 +12,8 @@ Examples:
   ask "JWT or session?" --options JWT,Session,OAuth
   ask "Which database?"
 
-Returns: user response text.
+Response: OK | <user_response> | tokens:N
 Typical: ask 'Which approach?' --options A,B,C`,
-		contextRequirements: (ctx) => (ctx.toolCallCount ?? 99) >= 15,
 	parameters: [
 		{
 			name: "command",

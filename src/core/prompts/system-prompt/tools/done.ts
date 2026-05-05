@@ -12,9 +12,8 @@ Examples:
   done "Fixed auth bug by updating middleware"
   done "Added caching layer" --cmd "npm test"
 
-Returns: confirmation + optional command output.
+Response: OK | summary:<text> | tokens:N
 Typical: done 'Fixed the bug'`,
-		contextRequirements: (ctx) => (ctx.toolCallCount ?? 99) >= 15,
 	parameters: [
 		{
 			name: "command",

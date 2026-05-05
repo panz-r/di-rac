@@ -6,7 +6,7 @@ const id = DiracDefaultTool.BASH
 export const bash: DiracToolSpec = {
 	id,
 	name: "bash",
-	description: `Execute shell commands. Composition (pipes, &&, ||) is encouraged to minimize round-trips. Use heredocs for multi-line scripts.
+	description: `Execute shell commands. Composition (pipes, &&, ||) is encouraged to minimize round-trips. Use heredocs for multi-line scripts. Dangerous commands (recursive deletes, reverse shells) are blocked; blocked will name the pattern.
 
 Examples:
   bash "git diff --cached"
@@ -17,7 +17,9 @@ import os
 print(os.getcwd())
 EOF"
 
-Returns: JSON {ok, exitCode, stdout, stderr}. Output truncated at 8KB.
+Response: OK | exit:N | out:<stdout> | err:<stderr> | truncated:yes/no | blocked:yes/no | tokens:N
+Note: stdout truncated at ~8KB, stderr at ~2KB (head+tail preserved). Use redirects to file for larger output.
+Universal flags: --dry-run (preview without executing), --retry N (retry on error, max 5).
 Typical: bash 'npm test && npm run build'`,
 	parameters: [
 		{

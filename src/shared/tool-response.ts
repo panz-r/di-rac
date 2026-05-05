@@ -115,10 +115,18 @@ export interface ToolOutputMeta {
 	[key: string]: unknown
 }
 
+export interface ConstraintViolation {
+	path: string
+	constraint: string
+	detected_pattern?: string
+	alternatives?: string[]
+}
+
 export interface ToolOutputError {
 	code: string
 	message: string
 	location?: string
+	constraint_violations?: ConstraintViolation[]
 }
 
 export interface ToolOutputEnvelope {

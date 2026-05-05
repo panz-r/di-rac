@@ -4,12 +4,21 @@ import { ToolResponse } from "@core/task"
 import { processFilesIntoText } from "@/integrations/misc/extract-text"
 import { DiracAsk, MultiCommandState } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
-import type { ToolOutputEnvelope } from "@/shared/tool-response"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { TaskConfig } from "../types/TaskConfig"
 
 /**
- * Utility functions for handling tool results and feedback
+ * Utility functions for handling tool results and feedback.
+ *
+ * Response format: compact pipe-delimited text (CLI-native).
+ *   OK        | field1 | field2 | hint:text | tokens:N | cached:yes/no
+ *   ERROR     | code | message | hint:text | tokens:N
+ *   TRUNCATED | hint:text | tokens:N  (+ content body follows)
+ *   EMPTY     | hint:text | tokens:N
+ *
+ * For tools with multi-line content (read, bash), the header line is followed
+ * by the content body on subsequent lines. The LLM parses the header for
+ * status/hint/tokens, then reads the content.
  */
 export class ToolResultUtils {
 	/**
@@ -88,17 +97,22 @@ export class ToolResultUtils {
 	}
 
 	/**
-	 * Wrap a string tool result in a JSON envelope for structured LLM consumption.
-	 * Passes through content that is already a JSON envelope (e.g. bash output).
+	 * Wrap a string tool result in compact pipe-delimited format.
+	 * Passes through content that is already wrapped (starts with OK|/ERROR|/TRUNCATED|/EMPTY|).
 	 *
-	 * Envelope shape: { status, data, hint, meta, error? }
-	 *   status: "ok" | "error" | "truncated" | "empty"
-	 *   hint: top-level, present on ALL response types
-	 *   meta: tokens (estimate), truncated, lines, tool-specific extras
+	 * Format:
+	 *   Header: STATUS | field1 | field2 | hint:text | tokens:N | cached:yes/no
+	 *   Body:   multi-line content follows header (for tools with data)
 	 */
 	private static wrapInEnvelope(content: string, toolName: string, metrics?: { cumulativeTokens: number; readCount: number }): string | null {
-		// Skip wrapping if content looks like it\'s already structured JSON
 		const trimmed = content.trimStart()
+
+		// Skip wrapping if content is already wrapped in compact format
+		if (/^(OK|ERROR|TRUNCATED|EMPTY)\s*\|/.test(trimmed)) {
+			return null
+		}
+
+		// Also skip if content is already structured JSON with status/ok fields
 		if (trimmed.startsWith("{")) {
 			try {
 				const parsed = JSON.parse(trimmed)
@@ -130,45 +144,33 @@ export class ToolResultUtils {
 			return ToolResultUtils.buildErrorEnvelope(content, toolName, lines, tokens)
 		}
 
-		const metricsMeta = metrics ? { cumulative_tokens: metrics.cumulativeTokens, read_count: metrics.readCount } : {}
-		const toolTypeMap: Record<string, string> = { read: "file_content", search: "search_results", bash: "command_output", symbols: "symbol_list", repo: "directory_listing" }
-		const outputType = toolTypeMap[toolName]
+		// Build common header fields
+		const cachedField = isCached ? " | cached:yes" : ""
+		const metricsField = metrics ? ` | cumulative:${metrics.cumulativeTokens}` : ""
+		const metricsReadField = metrics ? ` | reads:${metrics.readCount}` : ""
 
-		// Truncated response
+		// Truncated response — header + content body
 		if (isTruncated) {
-			const envelope: ToolOutputEnvelope = {
-				status: "truncated",
-				data: content,
-				hint: "Output truncated. Use --range or --detail for targeted reads.",
-				meta: { tool: toolName, lines, tokens, truncated: true },
-			}
-			return JSON.stringify(envelope, null, 2)
+			const hint = "Output truncated. Use --range or --detail for targeted reads."
+			return `TRUNCATED | hint:${hint} | tokens:${tokens}${cachedField}${metricsField}\n${workingContent}`
 		}
 
-		// Empty result (not an error \u2014 the tool ran fine, found nothing)
+		// Empty result
 		if (isEmpty) {
 			const hint = ToolResultUtils.getEmptyHint(toolName)
-			const envelope: ToolOutputEnvelope = {
-				status: "empty",
-				data: content || "",
-				hint,
-				meta: { tool: toolName, lines, tokens, truncated: false },
-			}
-			return JSON.stringify(envelope, null, 2)
+			return `EMPTY | hint:${hint} | tokens:${tokens}${metricsField}`
 		}
 
-		// Normal success
-		const envelope: ToolOutputEnvelope = {
-			status: "ok",
-			data: workingContent,
-			hint: null,
-			meta: { tool: toolName, lines, tokens, truncated: false, cached: isCached || undefined, ...metricsMeta },
-			...(outputType ? { type: outputType as ToolOutputEnvelope["type"] } : {}),
+		// Normal success — header + content body
+		const header = `OK | tokens:${tokens}${cachedField}${metricsField}${metricsReadField}`
+		// Single-line content goes on same line as header; multi-line follows header
+		if (!workingContent.includes("\n")) {
+			return `${header}\n${workingContent}`
 		}
-		return JSON.stringify(envelope, null, 2)
+		return `${header}\n${workingContent}`
 	}
 
-		private static buildErrorEnvelope(content: string, toolName: string, lines: number, tokens: number): string {
+	private static buildErrorEnvelope(content: string, toolName: string, lines: number, tokens: number): string {
 		// Parse <tool_error severity="recoverable">message\nSuggested next steps:\n...</tool_error>
 		const severityMatch = content.match(/severity="([^"]+)"/)
 		const bodyMatch = content.match(/severity="[^"]+">\n?([\s\S]*?)<\/tool_error>/)
@@ -187,17 +189,13 @@ export class ToolResultUtils {
 		else if (message.includes("anchor")) code = "ANCHOR_MISS"
 		else if (message.includes("argument") || message.includes("parameter")) code = "EINVAL"
 
-		const envelope: ToolOutputEnvelope = {
-			status: "error",
-			data: null,
-			hint: suggestion || null,
-			meta: { tool: toolName, lines, tokens, truncated: false },
-			error: {
-				code,
-				message: message.slice(0, 500),
-			},
+		// Compact error format: ERROR | code | message | hint:text | tokens:N
+		let result = `ERROR | ${code} | ${message.slice(0, 300)}`
+		if (suggestion) {
+			result += ` | hint:${suggestion.slice(0, 200)}`
 		}
-		return JSON.stringify(envelope, null, 2)
+		result += ` | tokens:${tokens}`
+		return result
 	}
 
 	private static getEmptyHint(toolName: string): string {

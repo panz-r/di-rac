@@ -10,6 +10,8 @@ export const list_skills: DiracToolSpec = {
 
 Usage: list_skills
 
+Response: OK | skills:N | <list> | tokens:N
+
 No arguments required.`,
 	parameters: [
 		{

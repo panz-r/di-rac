@@ -10,7 +10,9 @@ export const plan: DiracToolSpec = {
 
 Examples:
   plan "Refactor auth first, then update tests."
-  plan "Need to check database layer." --explore`,
+  plan "Need to check database layer." --explore
+
+Response: OK | plan:<text> | tokens:N`,
 	parameters: [
 		{
 			name: "command",

@@ -18,8 +18,11 @@ Options:
 
 Examples:
   use_subagents --prompt "Research auth patterns in the codebase" --prompt "Check test coverage for auth module"
-  use_subagents --prompt "Find all API endpoints" --prompt "Check for security issues" --prompt "Review error handling" --timeout 120`,
-	contextRequirements: (ctx) => ctx.subagentsEnabled === true && (ctx.toolCallCount ?? 99) >= 15,
+  use_subagents --prompt "Find all API endpoints" --prompt "Check for security issues" --prompt "Review error handling" --timeout 120
+
+Response: OK | results:N | turns:N | tokens:N
+Typical: use_subagents --prompt "Research auth patterns" --prompt "Check test coverage"`,
+	contextRequirements: (ctx) => ctx.subagentsEnabled === true,
 	parameters: [
 		{
 			name: "command",

@@ -11,7 +11,9 @@ export const memory: DiracToolSpec = {
 Examples:
   memory
   memory output.txt
-  memory --clear`,
+  memory --clear
+
+Response: OK | items:N | <list> | tokens:N`,
 	parameters: [
 		{
 			name: "command",

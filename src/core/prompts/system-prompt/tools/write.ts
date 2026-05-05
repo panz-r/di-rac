@@ -13,7 +13,8 @@ Examples:
   write config.json --content '{"key": "value"}'
 
 Chain: write a.ts --content '...'; write b.ts --content '...'
-Returns: success/failure with line count.
+Response: OK | lines:N | path:<path> | tokens:N
+Universal flags: --dry-run (write to temp file, show diff), --retry N.
 Typical: write src/new.ts --content 'export const X = ...'`,
 	parameters: [
 		{

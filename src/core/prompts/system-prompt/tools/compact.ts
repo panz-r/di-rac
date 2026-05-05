@@ -12,9 +12,8 @@ Examples:
   compact "Fixed auth bug. Changed middleware to JWT." --keep src/auth.ts
   compact "Investigated N+1 issue. Root cause found."
 
-Returns: confirmation.
+Response: OK | summary:<text> | reloaded:N | tokens:N
 Typical: compact 'Summary of work so far' --keep src/file.ts`,
-	contextRequirements: (ctx) => (ctx.toolCallCount ?? 99) >= 5,
 	parameters: [
 		{
 			name: "command",

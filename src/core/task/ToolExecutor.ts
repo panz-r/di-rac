@@ -718,15 +718,21 @@ export class ToolExecutor {
 
 			// Log tool call metrics
 			if (typeof toolResult === "string") {
-				let status = "ok"
-				if (toolResult.includes("[truncated]") || toolResult.includes("... [Content reduced")) status = "truncated"
-				else if (toolResult.trimStart().startsWith("<tool_error")) status = "error"
+				const status: "ok" | "error" | "truncated" = toolResult.includes("[truncated]") || toolResult.includes("... [Content reduced")
+					? "truncated"
+					: toolResult.trimStart().startsWith("<tool_error") ? "error" : "ok"
+				const retries = toolResult.match(/^\[Retry\] (\d+) attempts/m)?.[1]
+				// Extract hint from compact pipe-delimited format: hint:text
+				// or from legacy JSON format: "hint": "text"
+				const hintMatch = toolResult.match(/(?:\| |^)hint:([^|]+)/m) || toolResult.match(/"hint":\s*"([^"]+)"/)
 				this.taskState.toolCallLog.push({
 					tool: block.name,
 					status,
 					tokens: Math.ceil(toolResult.length / 4),
 					cached: toolResult.startsWith("[Cache Hit]"),
 					timestamp: Date.now(),
+					hint: hintMatch?.[1]?.trim(),
+					retries: retries ? parseInt(retries) : undefined,
 				})
 			}
 

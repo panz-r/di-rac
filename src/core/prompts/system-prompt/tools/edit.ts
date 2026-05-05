@@ -13,7 +13,8 @@ Examples:
   edit src/auth.ts --anchor "b2|class Auth:" --content "  def foo():\\n    pass" --type insert_after
 
 Chain: edit a.ts --anchor 'a3|...' --content '...'; edit b.ts --anchor 'b2|...' --content '...'
-Returns: diff summary + diagnostics per edit.
+Anchor format: hash|content (e.g. "a3|def foo():"). Use read --detail outline or symbols search to get anchors before editing. Response: OK | edits:N | tokens:N.
+Universal flags: --dry-run (edit temp file, show diff), --retry N.
 Typical: edit src/file.ts --anchor 'a3|def foo' --content 'new body'`,
 	parameters: [
 		{

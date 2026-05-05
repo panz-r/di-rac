@@ -128,6 +128,19 @@ export class TaskState {
 	// Round 4 strengthened completion gate
 	verificationTrivialCount: number = 0
 
+	// Tool usage metrics
+	toolCallLog: Array<{
+		tool: string
+		status: "ok" | "error" | "truncated"
+		tokens: number
+		cached: boolean
+		timestamp: number
+		hint?: string
+		retries?: number
+	}> = []
+	lastSnapshotAtCall: number = 0
+	snapshotCount: number = 0
+
 	resetTurnState(): void {
 		this.previousTurnFiles = new Set(this.filesEditedInCurrentTurn)
 		this.lastResponseWasTruncated = false

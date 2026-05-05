@@ -11,7 +11,9 @@ export const tools: DiracToolSpec = {
 Examples:
   tools
   tools file
-  tools edit`,
+  tools edit
+
+Response: OK | tools:N | <list> | tokens:N`,
 	parameters: [
 		{
 			name: "command",

@@ -708,6 +708,7 @@ export class Task {
 			totalToolCallCount: this.taskState.totalToolCallCount,
 			taskStartTimeMs: this.taskState.taskStartTimeMs,
 			recoveryEngine: this.toolExecutor.recoveryEngine,
+			toolCallLog: this.taskState.toolCallLog,
 		})
 	}
 

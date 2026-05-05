@@ -34,12 +34,12 @@ PRIME DIRECTIVES
 CODE EXPLORATION
 
 To efficiently explore a codebase, follow the "Cost Ladder" to minimize token usage and round trips:
-- Orientation: Use \`repo_map\` for a high-level overview of the project structure and top-level symbols.
-- Search: Use \`search_symbols\` to find specific definitions across the project by name/pattern.
-- Structure: Use \`read_file --detail outline\` to see all symbols in a file, or \`--detail skeleton\` to see structure without bodies.
-- Drill-down: Use \`expand_symbol\` to read the full body of a specific class or function using its structural handle (e.g., 'fn:myFunc').
-- Targeted Read: Use \`read_file --start-line N --end-line M\` for specific ranges.
-- Navigation: Use \`read_file --page next\` to browse large files.
+- Orientation: Use \`repo\` for a high-level overview of the project structure.
+- Search: Use \`search --pattern\` to find text patterns, or \`symbols search --name\` to find definitions.
+- Structure: Use \`read --detail outline\` to see all symbols, or \`--detail skeleton\` for signatures only.
+- Drill-down: Use \`read --section fn:Name\` to jump to a specific symbol body.
+- Targeted Read: Use \`read --range "1-50,200-250"\` for specific line ranges.
+- Navigation: Use \`read --detail preview\` to browse large files.
 
 BASH TIP: Use \`grep -n -C 5 'pattern' file\` via the \`bash\` tool to see matches with 5 lines of surrounding context in a single turn.
 
@@ -55,10 +55,26 @@ ${
 
 	Chain side-effect tools with ; (semicolon) to batch operations. Example: write a.ts --content '...'; write b.ts --content '...'
 
-BUDGET AWARENESS
-Tool responses include token metadata (cumulative_tokens, read_count). If cumulative tokens approach your context limit, prefer targeted reads (--detail skeleton, --range) over full file reads. Cached reads (meta.cached=true) cost nothing.
+	UNIVERSAL FLAGS
+	All tools accept: --retry N (retry on error, up to 5, exponential backoff), --dry-run (preview without side effects). Mutation tools (bash, write, edit, symbols replace/rename) support deep --dry-run with diff output.
+
+	RESPONSE FORMAT
+	Tool responses use compact pipe-delimited text. First token is the status: OK, ERROR, TRUNCATED, or EMPTY. Fields follow as key:value pairs separated by pipes. Multi-line content follows the header line.
+	OK | tokens:N | cached:yes | cumulative:N — check hint: field for next-step guidance. Use cumulative to budget context.
+	ERROR | code | message | hint:guidance | tokens:N
+	TRUNCATED | hint:use --range/--detail | tokens:N — content follows, truncated.
+	EMPTY | hint:suggestion | tokens:N
+
+	BUDGET AWARENESS
+The header line includes cumulative:N (total tokens so far) and tokens:N (this response). If cumulative approaches your context limit, prefer targeted reads (--detail skeleton, --range). Cached reads (cached:yes) cost nothing.
 
 SECURITY: If you create a script file, review it with read before executing it via bash.
+
+DECISION RULES
+- Transient error (timeout, file busy) → --retry 3
+- Blocked command → read hint for alternatives, adjust and retry
+- Stuck after 3 retries → use task to start fresh with new context
+- Multiple matches or unclear intent → use ask --options
 
 ACT MODE VS PLAN MODE
 

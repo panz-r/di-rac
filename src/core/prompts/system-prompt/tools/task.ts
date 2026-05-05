@@ -9,7 +9,9 @@ export const task: DiracToolSpec = {
 	description: `Create a new task with preloaded context. Use for major context switches.
 
 Examples:
-  task "Refactoring auth. Done: middleware. Next: tests."`,
+  task "Refactoring auth. Done: middleware. Next: tests."
+
+Response: OK | task_id:<id> | tokens:N`,
 	parameters: [
 		{
 			name: "command",

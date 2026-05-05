@@ -183,12 +183,23 @@ export function extractProviderDomainFromUrl(url: string | undefined): string | 
 	}
 }
 
+type ToolCallEntry = {
+	tool: string
+	status: "ok" | "error" | "truncated"
+	tokens: number
+	cached: boolean
+	timestamp: number
+	hint?: string
+	retries?: number
+}
+
 type SessionSummaryDeps = {
 	taskId: string
 	messages: DiracMessage[]
 	totalToolCallCount: number
 	taskStartTimeMs: number
 	recoveryEngine?: { getTelemetry(): Record<string, unknown> }
+	toolCallLog?: ToolCallEntry[]
 }
 
 export function printSessionSummary(deps: SessionSummaryDeps): void {
@@ -215,8 +226,12 @@ export function printSessionSummary(deps: SessionSummaryDeps): void {
 		(deps.toolCallLog && deps.toolCallLog.length > 0
 			? (() => {
 				const log = deps.toolCallLog!
-				const okRate = (log.filter(e => e.status === 'ok').length / log.length * 100).toFixed(0)
+				const errors = log.filter(e => e.status === 'error').length
+				const okRate = ((log.length - errors) / log.length * 100).toFixed(0)
 				const cacheRate = (log.filter(e => e.cached).length / log.length * 100).toFixed(0)
+				const totalRetries = log.reduce((s, e) => s + (e.retries ?? 0), 0)
+				const hintCount = log.filter(e => e.hint).length
+				// Write\u2192read verification
 				let verified = 0, writes = 0
 				for (let i = 0; i < log.length; i++) {
 					if (log[i].tool === 'write' || log[i].tool === 'edit') {
@@ -227,7 +242,27 @@ export function printSessionSummary(deps: SessionSummaryDeps): void {
 					}
 				}
 				const verifyRate = writes > 0 ? (verified / writes * 100).toFixed(0) : 'n/a'
-				return ' | tool_metrics: ' + log.length + ' calls, success=' + okRate + '%, cache=' + cacheRate + '%, verify=' + verifyRate + '%, ' + log.filter(e => e.status === 'error').length + ' errors, ' + log.reduce((s, e) => s + e.tokens, 0) + ' output_tokens'
+				// Per-tool breakdown (top 5)
+				const byTool = new Map<string, { ok: number; err: number; retried: number }>()
+				for (const e of log) {
+					const t = byTool.get(e.tool) ?? { ok: 0, err: 0, retried: 0 }
+					if (e.status === 'ok') t.ok++; else t.err++
+					if (e.retries) t.retried++
+					byTool.set(e.tool, t)
+				}
+				const topTools = [...byTool.entries()]
+					.sort((a, b) => (b[1].ok + b[1].err) - (a[1].ok + a[1].err))
+					.slice(0, 5)
+					.map(([name, t]) => name + ':' + (t.ok + t.err) + (t.err ? '(' + t.err + 'err)' : ''))
+					.join(' ')
+				const outputTokens = log.reduce((s, e) => s + e.tokens, 0)
+				let m = ' | tools: ' + log.length + ' calls, success=' + okRate + '%, cache=' + cacheRate + '%, verify=' + verifyRate + '%'
+				if (errors) m += ', errors=' + errors
+				if (totalRetries) m += ', retries=' + totalRetries
+				if (hintCount) m += ', hints=' + hintCount
+				m += ', output_tokens=' + outputTokens
+				m += ' | top: ' + topTools
+				return m
 			})()
 			: ''),
 	)

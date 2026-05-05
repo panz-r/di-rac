@@ -9,7 +9,7 @@ import { getLastApiReqTotalTokens } from "@shared/getApiMetrics"
 import { fileExistsAtPath } from "@utils/fs"
 import { stripHashes } from "@utils/line-hashing"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
-import { createToolError } from "@shared/tool-response"
+import { createToolError, type ConstraintViolation } from "@shared/tool-response"
 import { applyPatch } from "diff"
 import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
@@ -148,7 +148,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				return "" // can only happen if the sharedLogic adds an error to userMessages
 			}
 
-			const { relPath, absolutePath, fileExists, content, newContent, workspaceContext, securityWarning } = result
+			const { relPath, absolutePath, fileExists, content, newContent, workspaceContext, securityViolations } = result
 
 			// Handle approval flow
 			const sharedMessageProps: DiracSayTool = {
@@ -367,9 +367,9 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 					modelId,
 				})
 
-				return formatResponse.fileEditWithUserChanges(relPath, userEdits, autoFormattingEdits, newProblemsMessage) + (securityWarning ? "\n" + securityWarning : "")
+				return formatResponse.fileEditWithUserChanges(relPath, userEdits, autoFormattingEdits, newProblemsMessage) + (securityViolations.length > 0 ? "\n[SECURITY_CONSTRAINTS]\n" + JSON.stringify(securityViolations) : "")
 			}
-			return formatResponse.fileEditWithoutUserChanges(relPath, autoFormattingEdits, newProblemsMessage) + (securityWarning ? "\n" + securityWarning : "")
+			return formatResponse.fileEditWithoutUserChanges(relPath, autoFormattingEdits, newProblemsMessage) + (securityViolations.length > 0 ? "\n[SECURITY_CONSTRAINTS]\n" + JSON.stringify(securityViolations) : "")
 		} catch (error) {
 			// Reset diff view on error
 			await config.services.diffViewProvider.revertChanges()
@@ -464,8 +464,8 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			return
 		}
 
-			const securityWarning = WriteToFileToolHandler.scanContentSecurity(newContent, resolvedPath)
-			return { relPath, absolutePath, fileExists, content, newContent, workspaceContext, securityWarning }
+			const securityViolations = WriteToFileToolHandler.scanContentSecurity(newContent, resolvedPath)
+			return { relPath, absolutePath, fileExists, content, newContent, workspaceContext, securityViolations }
 	}
 
 	private static DANGEROUS_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
@@ -475,18 +475,20 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 		{ pattern: /nc\s+-.*-e\s+\/bin\/(?:bash|sh)/i, label: "reverse shell" },
 	]
 
-	private static scanContentSecurity(content: string, filePath: string): string | null {
-		const warnings: string[] = []
+	private static scanContentSecurity(content: string, filePath: string): ConstraintViolation[] {
+		const violations: ConstraintViolation[] = []
 		for (const { pattern, label } of WriteToFileToolHandler.DANGEROUS_PATTERNS) {
-			if (pattern.test(content)) warnings.push(label)
+			if (pattern.test(content)) {
+				violations.push({ path: "$.content", constraint: label })
+			}
 		}
 		const sensitiveExts = [".env", "id_rsa", "credentials"]
 		for (const ext of sensitiveExts) {
 			if (filePath.endsWith(ext) || filePath.endsWith(ext + ".json")) {
-				warnings.push(`sensitive file: ${filePath}`)
+				violations.push({ path: "$.path", constraint: "sensitive file extension", detected_pattern: filePath })
 				break
 			}
 		}
-		return warnings.length > 0 ? `[SECURITY] Content flagged: ${warnings.join(", ")}` : null
+		return violations
 	}
 }

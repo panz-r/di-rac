@@ -9,6 +9,7 @@ import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { ToolResultUtils } from "../utils/ToolResultUtils"
+import type { ConstraintViolation } from "@shared/tool-response"
 
 export class BashToolHandler implements IFullyManagedTool {
 	readonly name = DiracDefaultTool.BASH
@@ -34,26 +35,27 @@ export class BashToolHandler implements IFullyManagedTool {
 		}).catch(() => {})
 	}
 
-	private checkWriteExecuteRisk(command: string, writtenFiles: Set<string>): string | null {
-		if (writtenFiles.size === 0) return null
+	private checkWriteExecuteRisk(command: string, writtenFiles: Set<string>): ConstraintViolation[] {
+		if (writtenFiles.size === 0) return []
+		const violations: ConstraintViolation[] = []
 		const scriptPattern = /\b(\S+\.(sh|py|rb|js|ts|pl))\b/g
 		let match: RegExpExecArray | null
 		while ((match = scriptPattern.exec(command)) !== null) {
 			const candidate = match[1]
 			for (const written of writtenFiles) {
 				if (written.endsWith(candidate) || candidate.endsWith(written)) {
-					return `[SECURITY] Executing AI-written file '${candidate}'. Consider reviewing with read first.`
+					violations.push({ path: "$.command", constraint: "executing AI-written file", detected_pattern: candidate, alternatives: ["read the file first, then execute"] })
 				}
 			}
 		}
-		return null
+		return violations
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
 		const command = (block.params.command as string) || ""
 
 		// Security: check if command references a file written this turn
-		const securityWarning = this.checkWriteExecuteRisk(command, config.taskState.filesEditedInCurrentTurn)
+		const securityViolations = this.checkWriteExecuteRisk(command, config.taskState.filesEditedInCurrentTurn)
 
 		if (!command) {
 			config.taskState.consecutiveMistakeCount++
@@ -115,7 +117,7 @@ export class BashToolHandler implements IFullyManagedTool {
 
 		const result = await client.execute(command)
 
-		const resultObj = {
+		const resultObj: Record<string, any> = {
 			ok: result.exit_code === 0,
 			exitCode: result.exit_code,
 			stdout: result.stdout || undefined,
@@ -123,12 +125,15 @@ export class BashToolHandler implements IFullyManagedTool {
 			truncated: result.meta.truncated || undefined,
 			timedOut: result.meta.timed_out || undefined,
 			cwd: result.meta.cwd,
+			...(result.meta.blocked ? { blocked: result.meta.blocked } : {}),
+			...(result.meta.detected_patterns?.length ? { detected_patterns: result.meta.detected_patterns } : {}),
+			...(securityViolations.length > 0 ? { security_warnings: securityViolations } : {}),
 		}
 
 		config.taskState.consecutiveMistakeCount = result.exit_code === 0 ? 0 : config.taskState.consecutiveMistakeCount + 1
 
 		let output = JSON.stringify(resultObj, null, 2)
-		if (securityWarning) output = securityWarning + '\n' + output
+		// Security violations already included in resultObj
 		return formatResponse.toolResult(output)
 	}
 }

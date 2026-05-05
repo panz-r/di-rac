@@ -470,6 +470,7 @@ export class LifecycleManager {
 						totalToolCallCount: this.dependencies.taskState.totalToolCallCount,
 						taskStartTimeMs: this.dependencies.taskState.taskStartTimeMs,
 						recoveryEngine: summaryData.recoveryEngine,
+						toolCallLog: this.dependencies.taskState.toolCallLog,
 					})
 				}
 			} catch {
