@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
+	"time"
 )
 
 // Request represents a standardized API request
@@ -215,15 +217,24 @@ type ProviderError struct {
 	Code    int    `json:"code,omitempty"`
 }
 
+// modelsCacheEntry holds cached model list results with expiry.
+type modelsCacheEntry struct {
+	models []ModelEntry
+	expiry time.Time
+}
+
 // Registry manages provider handlers
 type Registry struct {
-	handlers map[string]Handler
+	handlers    map[string]Handler
+	modelsCache map[string]modelsCacheEntry
+	modelsMu    sync.RWMutex
 }
 
 // NewRegistry creates a new provider registry
 func NewRegistry() *Registry {
 	r := &Registry{
-		handlers: make(map[string]Handler),
+		handlers:    make(map[string]Handler),
+		modelsCache: make(map[string]modelsCacheEntry),
 	}
 	r.registerProviders()
 	return r
@@ -292,6 +303,45 @@ func (r *Registry) ValidateSettings(providerID string, settings map[string]inter
 	return result
 }
 
+// ListModels returns available models for a provider. Uses ModelLister if
+// implemented, with an in-memory TTL cache (1 hour). Returns nil if the
+// provider doesn't support model discovery.
+func (r *Registry) ListModels(ctx context.Context, providerID string, cfg ProviderConfig) ([]ModelEntry, error) {
+	handler, ok := r.handlers[providerID]
+	if !ok {
+		return nil, errors.New("unsupported provider: " + providerID)
+	}
+	ml, ok := handler.(ModelLister)
+	if !ok {
+		return nil, nil
+	}
+
+	// Check cache
+	cacheKey := providerID + ":" + cfg.BaseURL
+	r.modelsMu.RLock()
+	if entry, hit := r.modelsCache[cacheKey]; hit && time.Now().Before(entry.expiry) {
+		r.modelsMu.RUnlock()
+		return entry.models, nil
+	}
+	r.modelsMu.RUnlock()
+
+	// Fetch from provider
+	models, err := ml.ListModels(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache for 1 hour
+	r.modelsMu.Lock()
+	r.modelsCache[cacheKey] = modelsCacheEntry{
+		models: models,
+		expiry: time.Now().Add(1 * time.Hour),
+	}
+	r.modelsMu.Unlock()
+
+	return models, nil
+}
+
 // toFloat converts an interface{} to float64.
 func toFloat(v interface{}) float64 {
 	if v == nil {
@@ -350,6 +400,9 @@ func (r *Registry) registerProviders() {
 	r.Register("nvidia-nim", NewNvidiaNimHandler())
 	r.Register("nebius", NewNebiusHandler())
 	r.Register("huggingface", NewHuggingFaceHandler())
+	r.Register("opencode_go", NewOpenCodeGoHandler())
+	r.Register("opencode_zen", NewOpenCodeZenHandler())
+	r.Register("kilocode", NewKiloCodeHandler())
 }
 
 // ValidateRequest validates a request before processing

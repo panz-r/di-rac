@@ -1,11 +1,13 @@
 /**
  * Model picker component for model selection
- * Supports static model lists and async loading for OpenRouter
+ * Supports static model lists, dynamic loading via the API gateway, and custom text entry.
+ * Tab on a model field opens this picker; Enter opens inline text editor.
  */
 
 import { Box, Text } from "ink"
 import Spinner from "ink-spinner"
-import React, { useEffect, useMemo, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useState } from "react"
+import { queryModels } from "@/core/api/providers/api-gateway"
 import { refreshOpenRouterModels } from "@/core/controller/models/refreshOpenRouterModels"
 import {
 	type ApiProvider,
@@ -42,13 +44,11 @@ import {
 } from "@/shared/api"
 import { filterOpenRouterModelIds } from "@/shared/utils/model-filters"
 import { COLORS } from "../constants/colors"
-import { getOpenRouterDefaultModelId, usesOpenRouterModels } from "../utils/openrouter-models"
+import { getOpenRouterDefaultModelId } from "../utils/openrouter-models"
 import { SearchableList, SearchableListItem } from "./SearchableList"
 
-// Special ID used to indicate the user wants to enter a custom model ID / ARN
 export const CUSTOM_MODEL_ID = "__custom__"
 
-// Map providers to their static model lists and defaults
 export const providerModels: Record<string, { models: Record<string, unknown>; defaultId: string }> = {
 	anthropic: { models: anthropicModels, defaultId: anthropicDefaultModelId },
 	cerebras: { models: cerebrasModels, defaultId: cerebrasDefaultModelId },
@@ -67,16 +67,18 @@ export const providerModels: Record<string, { models: Record<string, unknown>; d
 	zai: { models: internationalZAiModels, defaultId: internationalZAiDefaultModelId },
 }
 
+const gatewayModelsCache = new Map<string, string[]>()
+
 export function hasStaticModels(provider: string): boolean {
 	return provider in providerModels
 }
 
 export function hasModelPicker(provider: string): boolean {
-	return hasStaticModels(provider) || usesOpenRouterModels(provider)
+	return hasStaticModels(provider) || provider === "openrouter" || provider === "opencode_go" || provider === "opencode_zen" || provider === "kilocode"
 }
 
 export function getDefaultModelId(provider: string): string {
-	if (usesOpenRouterModels(provider)) {
+	if (provider === "openrouter") {
 		return getOpenRouterDefaultModelId()
 	}
 	return providerModels[provider]?.defaultId || ""
@@ -97,55 +99,82 @@ interface ModelPickerProps {
 
 export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, onChange, onSubmit, isActive = true }) => {
 	const [isLoading, setIsLoading] = useState(false)
-	const [asyncModels, setAsyncModels] = useState<string[]>([])
+	const [dynamicModels, setDynamicModels] = useState<string[]>([])
 
-	// Fetch async models (OpenRouter) when needed
 	useEffect(() => {
-		if (usesOpenRouterModels(provider)) {
-			setIsLoading(true)
-			refreshOpenRouterModels(controller)
-				.then((models) => {
-					const modelIds = Object.keys(models).sort((a, b) => a.localeCompare(b))
-					const filtered = filterOpenRouterModelIds(modelIds, provider as ApiProvider)
-					setAsyncModels(filtered)
-				})
-				.finally(() => {
-					setIsLoading(false)
-				})
+		if (provider !== "openrouter" && provider !== "opencode_go" && provider !== "opencode_zen" && provider !== "kilocode") return
+
+		const cached = gatewayModelsCache.get(provider)
+		if (cached && cached.length > 0) {
+			setDynamicModels(cached)
+			return
 		}
+
+		let cancelled = false
+		setIsLoading(true)
+
+		const fetchModels = async () => {
+			// Try gateway first
+			try {
+				const gwModels = await queryModels(provider)
+				if (cancelled) return
+				if (gwModels && gwModels.length > 0) {
+					const ids = gwModels.map((m) => m.id).sort((a, b) => a.localeCompare(b))
+					gatewayModelsCache.set(provider, ids)
+					setDynamicModels(ids)
+					return
+				}
+			} catch {
+				// Gateway unavailable
+			}
+
+			if (cancelled) return
+
+			// Fallback: TS-side fetch (openrouter only)
+			if (provider === "openrouter") {
+				try {
+					const tsModels = await refreshOpenRouterModels(controller)
+					if (cancelled) return
+					if (tsModels) {
+						const ids = Object.keys(tsModels).sort((a, b) => a.localeCompare(b))
+						const filtered = filterOpenRouterModelIds(ids, provider as ApiProvider)
+						if (filtered.length > 0) {
+							gatewayModelsCache.set(provider, filtered)
+						}
+						setDynamicModels(filtered)
+					}
+				} catch {
+					// Both paths failed
+				}
+			}
+		}
+
+		fetchModels().finally(() => {
+			if (!cancelled) setIsLoading(false)
+		})
+
+		return () => { cancelled = true }
 	}, [provider, controller])
 
 	const modelList = useMemo(() => {
-		if (usesOpenRouterModels(provider)) {
-			return asyncModels
+		if (provider === "openrouter" || provider === "opencode_go" || provider === "opencode_zen" || provider === "kilocode") {
+			return dynamicModels
 		}
 		return getModelList(provider)
-	}, [provider, asyncModels])
-
-	// Providers that support custom model IDs (e.g., Bedrock Application Inference Profiles)
-	const supportsCustomModel = provider === "bedrock"
+	}, [provider, dynamicModels])
 
 	const items: SearchableListItem[] = useMemo(() => {
-		const list = modelList.map((modelId) => ({
+		return modelList.map((modelId) => ({
 			id: modelId,
 			label: modelId,
 		}))
-		// Add "Custom" option at the end for providers that support it
-		if (supportsCustomModel) {
-			list.push({
-				id: CUSTOM_MODEL_ID,
-				label: "Custom (ARN / Inference Profile)",
-			})
-		}
-		return list
-	}, [modelList, supportsCustomModel])
+	}, [modelList])
 
-	// For providers without a model picker, render nothing
-	if (!hasModelPicker(provider)) {
-		return null
-	}
+	const handleSelect = useCallback((item: SearchableListItem) => {
+		onChange(item.id)
+		onSubmit(item.id)
+	}, [onChange, onSubmit])
 
-	// Show loading state for async providers
 	if (isLoading) {
 		return (
 			<Box>
@@ -157,19 +186,19 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, 
 		)
 	}
 
-	// If async fetch returned no models, render nothing
-	if (usesOpenRouterModels(provider) && modelList.length === 0) {
-		return null
+	if (modelList.length === 0) {
+		return (
+			<Box flexDirection="column">
+				<Text color="gray">No models available. Press Esc, then Enter to type a model ID.</Text>
+			</Box>
+		)
 	}
 
 	return (
 		<SearchableList
 			isActive={isActive}
 			items={items}
-			onSelect={(item) => {
-				onChange(item.id)
-				onSubmit(item.id)
-			}}
+			onSelect={handleSelect}
 		/>
 	)
 }

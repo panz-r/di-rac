@@ -203,6 +203,24 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		isConfiguredOverride: (c) =>
 			!!(c.nvidiaNimApiKey || c.nvidiaNimBaseUrl || c.planModeNvidiaNimModelId || c.actModeNvidiaNimModelId),
 	},
+	{
+		providerId: "opencode_go",
+		label: "OpenCode Go",
+		apiKeyFields: "openCodeGoApiKey",
+		defaultModelId: "opencode-go/deepseek-v4-flash",
+	},
+	{
+		providerId: "opencode_zen",
+		label: "OpenCode Zen",
+		apiKeyFields: "openCodeZenApiKey",
+		defaultModelId: "opencode/gpt-4",
+	},
+	{
+		providerId: "kilocode",
+		label: "Kilo Code",
+		apiKeyFields: "kiloCodeApiKey",
+		defaultModelId: "anthropic/claude-3-7-sonnet",
+	}
 ]
 
 // ---------------------------------------------------------------------------

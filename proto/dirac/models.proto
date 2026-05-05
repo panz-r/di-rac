@@ -434,6 +434,9 @@ enum ApiProvider {
   NOUSRESEARCH = 39;
   OPENAI_CODEX = 40;
   WANDB = 41;
+  OPENCODE_GO = 42;
+  OPENCODE_ZEN = 43;
+  KILOCODE = 44;
 }
 
 enum ApiFormat {

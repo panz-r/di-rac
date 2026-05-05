@@ -26,6 +26,9 @@ export type ApiProvider =
 	| "oca"
 	| "minimax"
 	| "nvidia-nim"
+	| "opencode_go"
+	| "opencode_zen"
+	| "kilocode"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
 	"anthropic",
@@ -52,6 +55,9 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"oca",
 	"minimax",
 	"nvidia-nim",
+	"opencode_go",
+	"opencode_zen",
+	"kilocode",
 ]
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider

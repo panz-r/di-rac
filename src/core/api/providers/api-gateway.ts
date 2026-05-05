@@ -666,6 +666,35 @@ export function queryValidateSettings(
 	})
 }
 
+export interface GatewayModelEntry {
+	id: string
+	name?: string
+	description?: string
+	context_window?: number
+	max_tokens?: number
+	supports_images?: boolean
+	supports_prompt_cache?: boolean
+	input_price?: number
+	output_price?: number
+	cache_writes_price?: number
+	cache_reads_price?: number
+	supports_thinking?: boolean
+	thinking_max_budget?: number
+}
+
+export function queryModels(
+	providerId: string,
+	config?: { api_key?: string; base_url?: string },
+	socketPath?: string,
+): Promise<GatewayModelEntry[] | null> {
+	const sock = socketPath || process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
+	return gatewayQuery<{ models: GatewayModelEntry[] | null }>(sock, {
+		type: "models",
+		provider: providerId,
+		config: config || {},
+	}).then((r) => r?.models ?? null)
+}
+
 export function createApiGatewayHandler(
 	providerId: string,
 	options: {

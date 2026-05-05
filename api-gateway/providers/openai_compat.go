@@ -203,11 +203,9 @@ func (h *openaiCompatHandler) buildRequest(req *Request, stream bool) map[string
 		tools := openaiBuildTools(req.Tools, h.config.StrictTools)
 		if len(tools) > 0 {
 			result["tools"] = tools
-			choice := h.config.ToolChoice
-			if choice == "" {
-				choice = "auto"
+			if h.config.ToolChoice != "" {
+				result["tool_choice"] = h.config.ToolChoice
 			}
-			result["tool_choice"] = choice
 		}
 	}
 

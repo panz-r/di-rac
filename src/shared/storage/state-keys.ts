@@ -253,6 +253,9 @@ const SECRETS_KEYS = [
 	"openAiCompatibleCustomApiKey",
 	"minimaxApiKey",
 	"nvidiaNimApiKey",
+	"openCodeGoApiKey",
+	"openCodeZenApiKey",
+	"kiloCodeApiKey",
 ] as const
 
 // WARNING, these are not ALL of the local state keys in practice. For example, FileContextTracker

@@ -1,9 +1,12 @@
 /**
  * Shared provider metadata utilities
- * Used by both UI components and CLI commands
+ * Provider list is discovered from the api-gateway (source of truth for
+ * which providers are actually implemented). Falls back to the hardcoded
+ * PROVIDER_REGISTRY when the gateway is unavailable.
  */
 
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { queryProviderList } from "@/core/api/providers/api-gateway"
 import { PROVIDER_LIST } from "@/shared/providers/provider-registry"
 
 // Create a lookup map from provider value to display label
@@ -11,14 +14,18 @@ const providerLabels: Record<string, string> = Object.fromEntries(
 	PROVIDER_LIST.map((p) => [p.value, p.label]),
 )
 
-// Get provider order from registry (same order as webview)
-const providerOrder: string[] = PROVIDER_LIST.map((p) => p.value)
+// Fallback order from registry (used when gateway is unavailable)
+const fallbackProviderOrder: string[] = PROVIDER_LIST.map((p) => p.value)
 
 /**
  * Providers that are not supported in CLI.
- * - vscode-lm: Requires VS Code's Language Model API (see ENG-1490 for OAuth-based support)
+ * - vscode-lm: Requires VS Code's Language Model API
+ * - dirac: This is the app itself, not a selectable provider
  */
-const CLI_EXCLUDED_PROVIDERS = new Set<string>(["vscode-lm"])
+const CLI_EXCLUDED_PROVIDERS = new Set<string>(["vscode-lm", "dirac"])
+
+// Module-level cache for gateway-discovered providers
+let gatewayProvidersCache: string[] | null = null
 
 /**
  * Get the display label for a provider ID
@@ -28,28 +35,45 @@ export function getProviderLabel(providerId: string): string {
 }
 
 /**
- * Get the ordered list of all provider IDs (from registry)
- */
-function getProviderOrder(): string[] {
-	return providerOrder
-}
-
-/**
- * Get the list of valid CLI provider IDs (excluding unsupported providers)
+ * Get the list of valid CLI provider IDs (excluding unsupported providers).
+ * Uses cached gateway-discovered list if available, falls back to registry.
  */
 export function getValidCliProviders(): string[] {
-	return providerOrder.filter((p) => !CLI_EXCLUDED_PROVIDERS.has(p))
+	const order = gatewayProvidersCache || fallbackProviderOrder
+	return order.filter((p) => !CLI_EXCLUDED_PROVIDERS.has(p))
 }
 
 /**
  * Check if a provider ID is valid for CLI use
  */
 export function isValidCliProvider(providerId: string): boolean {
-	return providerOrder.includes(providerId) && !CLI_EXCLUDED_PROVIDERS.has(providerId)
+	const order = gatewayProvidersCache || fallbackProviderOrder
+	return order.includes(providerId) && !CLI_EXCLUDED_PROVIDERS.has(providerId)
 }
 
 export const useValidProviders = () => {
-	return useMemo(() => {
-		return getProviderOrder().filter((p: string) => !CLI_EXCLUDED_PROVIDERS.has(p))
+	const [providers, setProviders] = useState<string[]>(() => {
+		if (gatewayProvidersCache) {
+			return gatewayProvidersCache.filter((p) => !CLI_EXCLUDED_PROVIDERS.has(p))
+		}
+		return fallbackProviderOrder.filter((p) => !CLI_EXCLUDED_PROVIDERS.has(p))
+	})
+
+	useEffect(() => {
+		if (gatewayProvidersCache) return
+
+		let cancelled = false
+		queryProviderList().then((gatewayList) => {
+			if (cancelled) return
+			if (gatewayList && gatewayList.length > 0) {
+				gatewayProvidersCache = gatewayList
+				setProviders(gatewayList.filter((p) => !CLI_EXCLUDED_PROVIDERS.has(p)))
+			}
+		})
+		return () => {
+			cancelled = true
+		}
 	}, [])
+
+	return useMemo(() => providers, [providers])
 }

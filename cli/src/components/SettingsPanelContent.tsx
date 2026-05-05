@@ -676,7 +676,8 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	)
 
 	// Handle toggle/edit for selected item
-	const handleAction = useCallback(() => {
+	// source: "tab" or "enter" — Tab opens model list, Enter opens text editor for model fields
+	const handleAction = useCallback((source?: "tab" | "enter") => {
 		const item = items[selectedIndex]
 		if (!item || item.type === "readonly" || item.type === "separator" || item.type === "header" || item.type === "spacer" || item.disabled)
 			return
@@ -733,13 +734,13 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 					const roleProvider = (stateManager as any).getGlobalSettingsKey(roleDesc.providerKey) as string
 					const actProvider = stateManager.getApiConfiguration().actModeApiProvider || ""
 					const effectiveProvider = roleProvider || (roleDesc.providerInheritsFromAct ? actProvider : "")
-					if (effectiveProvider && hasModelPicker(effectiveProvider)) {
+					if (source !== "enter" && effectiveProvider && hasModelPicker(effectiveProvider)) {
 						setPickingModelRole(modelRole)
 						setIsPickingModel(true)
 						return
 					}
 				}
-				// No model picker — fall through to inline edit
+				// Enter or no model list — fall through to inline edit
 			}
 
 			// Language field
@@ -1244,8 +1245,12 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				navigateItems("down")
 				return
 			}
-			if (key.tab || key.return) {
-				handleAction()
+			if (key.tab) {
+				handleAction("tab")
+				return
+			}
+			if (key.return) {
+				handleAction("enter")
 				return
 			}
 		},

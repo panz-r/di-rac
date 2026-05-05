@@ -1,5 +1,7 @@
 package providers
 
+import "context"
+
 // SettingType determines the UI widget for a provider setting.
 type SettingType string
 
@@ -81,6 +83,23 @@ type ValidateSettingsResult struct {
 	Errors   []string                     `json:"errors,omitempty"` // cross-parameter errors
 }
 
+// ModelEntry describes a model available from a provider, used for model discovery.
+type ModelEntry struct {
+	ID                  string  `json:"id"`
+	Name                string  `json:"name,omitempty"`
+	Description         string  `json:"description,omitempty"`
+	ContextWindow       int     `json:"context_window,omitempty"`
+	MaxTokens           int     `json:"max_tokens,omitempty"`
+	SupportsImages      bool    `json:"supports_images,omitempty"`
+	SupportsPromptCache bool    `json:"supports_prompt_cache,omitempty"`
+	InputPrice          float64 `json:"input_price,omitempty"`            // per million tokens
+	OutputPrice         float64 `json:"output_price,omitempty"`           // per million tokens
+	CacheWritesPrice    float64 `json:"cache_writes_price,omitempty"`
+	CacheReadsPrice     float64 `json:"cache_reads_price,omitempty"`
+	SupportsThinking    bool    `json:"supports_thinking,omitempty"`
+	ThinkingMaxBudget   int     `json:"thinking_max_budget,omitempty"`
+}
+
 // CapableHandler is an optional interface for providers that expose capabilities.
 // Handlers that don't implement it return nil from Registry.GetCapabilities.
 type CapableHandler interface {
@@ -92,4 +111,11 @@ type CapableHandler interface {
 type SettingsValidator interface {
 	CapableHandler
 	ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult
+}
+
+// ModelLister is an optional interface for providers that can discover available models.
+// Providers that don't implement it return nil from Registry.ListModels.
+type ModelLister interface {
+	CapableHandler
+	ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error)
 }

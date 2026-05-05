@@ -326,6 +326,57 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
+		// Handle models (model discovery)
+		if typeCheck.Type == "models" {
+			var modelsReq struct {
+				Provider string                  `json:"provider"`
+				Config   providers.ProviderConfig `json:"config,omitempty"`
+			}
+			if err := json.Unmarshal(rawMsg, &modelsReq); err != nil || modelsReq.Provider == "" {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 400,
+					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: "models requires 'provider' field"},
+				})
+				continue
+			}
+
+			// Merge stored provider config
+			cfg := modelsReq.Config
+			cfg.ID = modelsReq.Provider
+			s.configMu.RLock()
+			if stored, ok := s.providerConfigs[modelsReq.Provider]; ok {
+				if cfg.APIKey == "" {
+					cfg.APIKey = stored.APIKey
+				}
+				if cfg.BaseURL == "" {
+					cfg.BaseURL = stored.BaseURL
+				}
+			}
+			s.configMu.RUnlock()
+
+			models, err := s.providerRegistry.ListModels(s.ctx, modelsReq.Provider, cfg)
+			if err != nil {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 500,
+					Error:  &ErrorDetail{Code: "FETCH_ERROR", Message: fmt.Sprintf("Failed to fetch models: %v", err)},
+				})
+				continue
+			}
+			if models == nil {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 200,
+					Body:   json.RawMessage(`{"models":null}`),
+				})
+				continue
+			}
+			body, _ := json.Marshal(map[string]interface{}{"models": models})
+			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			continue
+		}
+
 		// Regular API request
 		var req Request
 		if err := json.Unmarshal(rawMsg, &req); err != nil {

@@ -216,6 +216,21 @@ function createHandlerForProvider(
 				model: mode === "plan" ? options.planModeNvidiaNimModelId : options.actModeNvidiaNimModelId,
 				settings: providerSettings,
 			})
+		case "opencode_go":
+			return gatewayHandler("opencode_go", {
+				apiKey: options.openCodeGoApiKey,
+				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+			})
+		case "opencode_zen":
+			return gatewayHandler("opencode_zen", {
+				apiKey: options.openCodeZenApiKey,
+				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+			})
+		case "kilocode":
+			return gatewayHandler("kilocode", {
+				apiKey: options.kiloCodeApiKey,
+				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+			})
 		case "api-gateway":
 			return new ApiGatewayHandler({
 				providerId: options.apiGatewayProviderId || "anthropic",
