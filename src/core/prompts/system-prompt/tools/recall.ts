@@ -10,7 +10,10 @@ export const recall: DiracToolSpec = {
 
 Examples:
   recall auth middleware
-  recall error in login`,
+  recall error in login
+
+Response: OK | matches:N | tokens:N
+Note: Results are from past task observations, not current codebase.`,
 	parameters: [
 		{
 			name: "command",

@@ -59,11 +59,12 @@ ${
 	All tools accept: --retry N (retry on error, up to 5, exponential backoff), --dry-run (preview without side effects). Mutation tools (bash, write, edit, symbols replace/rename) support deep --dry-run with diff output.
 
 	RESPONSE FORMAT
-	Tool responses use compact pipe-delimited text. First token is the status: OK, ERROR, TRUNCATED, or EMPTY. Fields follow as key:value pairs separated by pipes. Multi-line content follows the header line.
-	OK | tokens:N | cached:yes | cumulative:N — check hint: field for next-step guidance. Use cumulative to budget context.
+	Most tools use compact pipe-delimited text. First token is status: OK, ERROR, TRUNCATED, or EMPTY. Multi-line content follows the header; lines:N tells you how many.
+	OK | tokens:N | lines:N | cached:yes | cumulative:N — hint: field is always present for guidance. Use cumulative to budget context.
 	ERROR | code | message | hint:guidance | tokens:N
-	TRUNCATED | hint:use --range/--detail | tokens:N — content follows, truncated.
+	TRUNCATED | lines:N | hint:use --range/--detail | tokens:N — content follows, truncated.
 	EMPTY | hint:suggestion | tokens:N
+	Some tools return structured JSON instead (e.g. bash). See per-tool Response: lines for format.
 
 	BUDGET AWARENESS
 The header line includes cumulative:N (total tokens so far) and tokens:N (this response). If cumulative approaches your context limit, prefer targeted reads (--detail skeleton, --range). Cached reads (cached:yes) cost nothing.

@@ -13,6 +13,7 @@ Examples:
   search config/ --pattern "API_KEY" --glob "*.env"
 
 Response: OK | matches:N | files:N | hint:refinements | tokens:N
+	Matches follow: file:line:context (one per line, max 30).
 Note: --context 0-5. Results auto-truncated at 30 matches; narrow your pattern or path if partial.
 Typical: search src/ --pattern 'TODO|FIXME'`,
 	parameters: [

@@ -14,6 +14,7 @@ Examples:
   repo --detail skeleton
 
 Response: OK | files:N | lines:N | symbols:N | detail:<summary|files|skeleton> | tokens:N
+	Content follows. Structure varies by detail level.
 Typical: repo --detail files src/`,
 	parameters: [
 		{

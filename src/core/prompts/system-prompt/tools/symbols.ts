@@ -20,7 +20,7 @@ Examples:
   symbols rename src/ --old calcTotal --new calcGrandTotal
   symbols refs src/ --name login
 
-Response: OK | matches:N | hint:alternatives | tokens:N
+Response: OK | matches:N | hint:Try --kind function/class or different name | tokens:N
 Universal flags: --dry-run (preview changes without applying), --retry N.
 Typical: symbols search src/ --name AuthService --kind class`,
 	parameters: [

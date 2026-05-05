@@ -17,7 +17,7 @@ import os
 print(os.getcwd())
 EOF"
 
-Response: OK | exit:N | out:<stdout> | err:<stderr> | truncated:yes/no | blocked:yes/no | tokens:N
+Response: {ok, exitCode, stdout, stderr, truncated?, timedOut?, blocked?, detected_patterns?[]}
 Note: stdout truncated at ~8KB, stderr at ~2KB (head+tail preserved). Use redirects to file for larger output.
 Universal flags: --dry-run (preview without executing), --retry N (retry on error, max 5).
 Typical: bash 'npm test && npm run build'`,

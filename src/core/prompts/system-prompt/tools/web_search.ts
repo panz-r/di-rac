@@ -28,6 +28,7 @@ Examples:
   web_search "best practices" --blocked-domains '["ads.com"]'
 
 Response: OK | results:N | query:<text> | tokens:N
+	Results follow: title | url | snippet (one per line, max 30).
 Typical: web_search "React documentation"`,
 	contextRequirements: (ctx) => ctx.diracWebToolsEnabled === true,
 	parameters: [

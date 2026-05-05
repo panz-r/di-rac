@@ -15,7 +15,7 @@ Examples:
   read src/auth.ts --range "1-50,200-250"
   read src/auth.ts --section fn:login
 
-Response: OK | detail:<level> | handles:N | tokens:N. Content follows header line. Handles like fn:Name work with --section.
+Response: OK | detail:<level> | handles:N | lines:N | tokens:N. Content follows. Handles like fn:Name work with --section.
 Note: --detail full auto-downgrades to preview for files over 50KB. Response starts with TRUNCATED if so.
 Note: repeated reads of the same file at the same detail level are cached and instant.
 Typical: read src/file.ts --detail outline`,

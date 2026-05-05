@@ -722,9 +722,9 @@ export class ToolExecutor {
 					? "truncated"
 					: toolResult.trimStart().startsWith("<tool_error") ? "error" : "ok"
 				const retries = toolResult.match(/^\[Retry\] (\d+) attempts/m)?.[1]
-				// Extract hint from compact pipe-delimited format: hint:text
-				// or from legacy JSON format: "hint": "text"
-				const hintMatch = toolResult.match(/(?:\| |^)hint:([^|]+)/m) || toolResult.match(/"hint":\s*"([^"]+)"/)
+				// Extract hint from compact pipe-delimited header: | hint:text
+				// Matches hint field which may contain spaces but not pipes/newlines
+				const hintMatch = toolResult.match(/\| hint:([^\n|]+)/m) || toolResult.match(/"hint":\s*"([^"]+)"/)
 				this.taskState.toolCallLog.push({
 					tool: block.name,
 					status,

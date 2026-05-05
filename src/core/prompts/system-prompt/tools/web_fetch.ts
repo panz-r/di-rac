@@ -26,6 +26,7 @@ Examples:
   web_fetch https://api.example.com --prompt "List all available endpoints"
 
 Response: OK | url:<url> | tokens:N
+	Analyzed content follows header line.
 Typical: web_fetch https://example.com/docs --prompt "Summarize key points"`,
 	contextRequirements: (ctx) => ctx.diracWebToolsEnabled === true,
 	parameters: [

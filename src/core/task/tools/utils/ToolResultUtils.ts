@@ -152,7 +152,7 @@ export class ToolResultUtils {
 		// Truncated response — header + content body
 		if (isTruncated) {
 			const hint = "Output truncated. Use --range or --detail for targeted reads."
-			return `TRUNCATED | hint:${hint} | tokens:${tokens}${cachedField}${metricsField}\n${workingContent}`
+			return `TRUNCATED | lines:${lines} | hint:${hint} | tokens:${tokens}${cachedField}${metricsField}\n${workingContent}`
 		}
 
 		// Empty result
@@ -162,7 +162,8 @@ export class ToolResultUtils {
 		}
 
 		// Normal success — header + content body
-		const header = `OK | tokens:${tokens}${cachedField}${metricsField}${metricsReadField}`
+		const linesField = lines > 1 ? ` | lines:${lines}` : ""
+		const header = `OK | tokens:${tokens}${linesField}${cachedField}${metricsField}${metricsReadField}`
 		// Single-line content goes on same line as header; multi-line follows header
 		if (!workingContent.includes("\n")) {
 			return `${header}\n${workingContent}`
