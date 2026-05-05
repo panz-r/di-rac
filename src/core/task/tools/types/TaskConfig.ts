@@ -25,6 +25,7 @@ import type { AutoApprove } from "../../tools/autoApprove"
 import type { HookExecution } from "../../types/HookExecution"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import type { RecoveryEngine } from "../../recovery"
+import type { Controller } from "@/core/controller"
 import { TASK_CALLBACKS_KEYS, TASK_CONFIG_KEYS, TASK_SERVICES_KEYS } from "../utils/ToolConstants"
 
 /**
@@ -66,6 +67,7 @@ export interface TaskConfig {
 	// Tool coordination
 	coordinator: ToolExecutorCoordinator
 	recoveryEngine: RecoveryEngine
+	controller: Controller
 }
 
 /**

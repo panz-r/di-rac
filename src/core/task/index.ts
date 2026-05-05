@@ -448,6 +448,7 @@ export class Task {
 		// Use the persistent analyzer daemon from Controller (lives across tasks)
 		this.analyzer = this.controller.getAnalyzer()!
 		this.toolExecutor.analyzer = this.analyzer
+		this.toolExecutor.controller = this.controller
 
 		this.environmentManager = new EnvironmentManager({
 			cwd: this.cwd,

@@ -49,6 +49,7 @@ export class ToolExecutor {
 	public get analyzer(): AnalyzerClient | null {
 		return this._analyzer
 	}
+	public controller!: import("@/core/controller").Controller
 
 	private readonly noopReinit = async () => {}
 	private readonly noopUpdateHistory = async () => []
@@ -209,6 +210,7 @@ export class ToolExecutor {
 			},
 			coordinator: this.coordinator,
 			recoveryEngine: this.recoveryEngine,
+			controller: this.controller,
 		}
 
 		// Validate the config at runtime to catch any missing properties

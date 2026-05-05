@@ -2215,9 +2215,16 @@ NEXT: ${nextSteps || "Please analyze the error and try a different approach or t
 				fingerprintStr += `file_path=${argObj.file_path}`
 			} else if (toolName === DiracDefaultTool.BASH && argObj.command) {
 				fingerprintStr += `command=${argObj.command}`
+			} else if (toolName === DiracDefaultTool.FILE_READ && argObj.path) {
+				// Include path + detail/range/section values to distinguish different reads
+				const parts = [argObj.path]
+				if (argObj.detail) parts.push(`detail=${argObj.detail}`)
+				if (argObj.range) parts.push(`range=${argObj.range}`)
+				if (argObj.section) parts.push(`section=${argObj.section}`)
+				fingerprintStr += parts.join("&")
 			} else {
-				// Fallback: shallow hash of keys
-				fingerprintStr += Object.keys(argObj).sort().join(",")
+				// Fallback: shallow hash of keys AND values
+				fingerprintStr += Object.entries(argObj).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join("&")
 			}
 		} else {
 			fingerprintStr += String(args)

@@ -28,6 +28,7 @@ export const TASK_CONFIG_KEYS = [
 	"autoApprover",
 	"browserSettings",
 	"callbacks",
+	"controller",
 	"coordinator",
 	"recoveryEngine",
 ] as const
