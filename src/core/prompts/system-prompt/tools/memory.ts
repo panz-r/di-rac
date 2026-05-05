@@ -6,10 +6,11 @@ const id = DiracDefaultTool.DIRAC_OUTPUTS
 export const memory: DiracToolSpec = {
 	id,
 	name: "memory",
-	description: `Manage saved tool outputs. --clear: delete all.
+	description: `Manage saved tool outputs. No args or --list: list files. Filename: read file. --clear: delete all.
 
 Examples:
   memory
+  memory --list
   memory output.txt
   memory --clear
 
@@ -19,7 +20,7 @@ Response: OK | items:N | <list> | tokens:N`,
 			name: "command",
 			required: true,
 			type: "string",
-			instruction: "CLI arguments for memory. Subcommands: save, recall, list, delete.",
+			instruction: "CLI arguments for memory. Use --list to list files, filename to read, --clear to delete.",
 			usage: "--clear",
 		},
 	],

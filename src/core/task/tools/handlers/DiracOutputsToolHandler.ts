@@ -17,15 +17,20 @@ export class DiracOutputsToolHandler implements IToolHandler {
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
 		const om = config.services.outputManager
-		const file = block.params.file as string | undefined
+		const rawFile = block.params.file as string | undefined
+		// Strip path prefixes so both "file.txt" and ".dirac/outputs/file.txt" work
+		const file = rawFile
+			? rawFile.replace(/^.dirac\/outputs\//, "").replace(/^.dirac\\outputs\\/, "")
+			: undefined
 		const clear = block.params.clear as boolean | undefined
+		const list = block.params.list as boolean | undefined
 
 		if (clear) {
 			const count = om.clearOutputs()
 			return `Cleared ${count} output file${count !== 1 ? "s" : ""}.`
 		}
 
-		if (file) {
+		if (file && !list) {
 			const content = om.readOutput(file)
 			if (!content) return `File not found: ${file}`
 			return content

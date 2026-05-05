@@ -577,10 +577,13 @@ const CLI_SCHEMAS: Partial<Record<string, CliSchema>> = {
 		positionals: [{ name: "query", param: "query", required: false }],
 	},
 
-	// memory [file] [--clear]
+	// memory [file] [--list] [--clear]
 	memory: {
 		positionals: [{ name: "file", param: "file", required: false }],
-		flags: [{ name: "--clear", param: "clear", type: "boolean" }],
+		flags: [
+			{ name: "--list", param: "list", type: "boolean" },
+			{ name: "--clear", param: "clear", type: "boolean" },
+		],
 	},
 
 	// recall <query>
