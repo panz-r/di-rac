@@ -126,11 +126,20 @@ export class CommandClient {
 				if (msg.id !== undefined) {
 					const pending = this.pending.get(msg.id)
 					if (pending) {
-						clearTimeout(pending.timer)
-						this.pending.delete(msg.id)
-						if (msg.type === "error") {
+						if (msg.type === "ack") {
+							// Ack received \u2014 reset the timeout timer
+							clearTimeout(pending.timer)
+							pending.timer = setTimeout(() => {
+								this.pending.delete(msg.id)
+								pending.reject(new Error(`Request ${msg.id} timed out after no response following ack`))
+							}, 10000)
+						} else if (msg.type === "error") {
+							clearTimeout(pending.timer)
+							this.pending.delete(msg.id)
 							pending.reject(new Error(msg.message || "Daemon error"))
 						} else {
+							clearTimeout(pending.timer)
+							this.pending.delete(msg.id)
 							pending.resolve(msg)
 						}
 					}
@@ -142,6 +151,8 @@ export class CommandClient {
 	}
 
 	private handleCrash(): void {
+		// Guard against double-fire from both 'error' and 'exit' events
+		if (this.crashed && !this.process) return
 		this.crashed = true
 		// Reject all pending requests
 		for (const [id, pending] of this.pending) {
@@ -153,13 +164,18 @@ export class CommandClient {
 
 		if (this.shuttingDown) return
 
+		// Clear any existing restart timer before scheduling a new one
+		if (this.restartTimer) {
+			clearTimeout(this.restartTimer)
+			this.restartTimer = null
+		}
+
 		// Schedule restart with exponential backoff
-		const delay = Math.min(2000 * Math.pow(2, Math.min(this.restartCount, 5)), 60000)
 		this.restartCount++
-		Logger.info("CommandClient", `Scheduling daemon restart in ${delay}ms`)
+		const delay = Math.min(2000 * Math.pow(2, Math.min(this.restartCount, 5)), 60000)
+		Logger.info("CommandClient", `Scheduling daemon restart in ${delay}ms (attempt ${this.restartCount})`)
 
 		this.restartTimer = setTimeout(() => {
-			this.restartCount++
 			this.start().then(() => {
 				Logger.info("CommandClient", "Daemon restarted")
 				this.crashed = false
@@ -202,7 +218,7 @@ export class CommandClient {
 		})
 	}
 
-	private send(payload: Record<string, unknown>, timeoutMs = 120000): Promise<any> {
+	private send(payload: Record<string, unknown>, timeoutMs = 10000): Promise<any> {
 		return new Promise((resolve, reject) => {
 			if (this.shuttingDown) {
 				reject(new Error("Daemon shut down"))

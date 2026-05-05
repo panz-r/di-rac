@@ -1,4 +1,4 @@
-//! Dirac analyzer binary — re-exports from the library.
+//! di analyzer binary — re-exports from the library.
 mod cache;
 mod commands;
 mod context;
@@ -20,9 +20,9 @@ use std::path::PathBuf;
 use crate::cache::ParseCache;
 use crate::db::IndexDatabase;
 
-/// Dirac Analyzer – persistent tree-sitter structural analysis daemon.
+/// di Analyzer – persistent tree-sitter structural analysis daemon.
 #[derive(Parser)]
-#[command(name = "dirac-analyzer", version = env!("CARGO_PKG_VERSION"))]
+#[command(name = "di-rvv-analyzer", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     /// Run a single request and exit (default: daemon mode reading stdin line-by-line)
     #[arg(short = '1', long = "oneshot")]
@@ -113,9 +113,9 @@ fn main() {
     let cli = Cli::parse();
 
     // Pre-load all grammars at startup to keep them warm
-    eprintln!("dirac-analyzer: pre-loading grammars...");
+    eprintln!("di-rvv-analyzer: pre-loading grammars...");
     preload_grammars();
-    eprintln!("dirac-analyzer: ready");
+    eprintln!("di-rvv-analyzer: ready");
 
     let workspace_root = cli.workspace_root.as_ref().map(PathBuf::from);
 
@@ -128,11 +128,11 @@ fn main() {
     let index_db: Option<IndexDatabase> = db_path.as_ref().and_then(|p| {
         match IndexDatabase::open(p) {
             Ok(db) => {
-                eprintln!("dirac-analyzer: opened index database at {:?}", p);
+                eprintln!("di-rvv-analyzer: opened index database at {:?}", p);
                 Some(db)
             }
             Err(e) => {
-                eprintln!("dirac-analyzer: warning: could not open index database at {:?}: {}", p, e);
+                eprintln!("di-rvv-analyzer: warning: could not open index database at {:?}: {}", p, e);
                 None
             }
         }
@@ -178,7 +178,7 @@ fn preload_grammars() {
         let mut parser = match lang.try_parser() {
             Ok(p) => p,
             Err(_) => {
-                eprintln!("dirac-analyzer: warning: failed to load grammar for {}", lang.as_str());
+                eprintln!("di-rvv-analyzer: warning: failed to load grammar for {}", lang.as_str());
                 continue;
             }
         };
@@ -261,7 +261,7 @@ fn run_daemon(workspace_root: Option<&PathBuf>, index_db: Option<IndexDatabase>)
         }
     }
 
-    eprintln!("dirac-analyzer: shutting down");
+    eprintln!("di-rvv-analyzer: shutting down");
 }
 
 /// Core processing: parse, dispatch, return JSON string.

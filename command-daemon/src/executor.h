@@ -2,35 +2,44 @@
 #define EXECUTOR_H
 
 #include <stddef.h>
+#include <sys/types.h>
 
 #define EXEC_MAX_OUTPUT 10240   /* 10KB */
-#define EXEC_HEAD_SIZE 4096
-#define EXEC_TAIL_SIZE 4096
 #define EXEC_CWD_MARKER "DIRAC_CWD:"
+#define EXEC_MAX_CHILDREN 8
 
 /* Long-running command patterns (regex-free, simple substring match) */
 #define LONG_RUNNING_MAX 16
 
+/* A running child process tracked by the event loop */
 typedef struct {
-    int exit_code;
+    pid_t pid;
+    char *id;              /* request ID (malloc'd) */
+    int stdout_fd;
+    int stderr_fd;
     char *stdout_buf;
-    char *stderr_buf;
     size_t stdout_len;
+    char *stderr_buf;
     size_t stderr_len;
+    int stdout_done;       /* stdout pipe closed */
+    int stderr_done;       /* stderr pipe closed */
+    int exited;
+    int exit_code;
     int timed_out;
-    int truncated;
-    char cwd[4096];     /* working directory after command */
-} ExecResult;
+    long start_ms;         /* monotonic start time in ms */
+    int timeout_ms;        /* command timeout */
+    char cwd[4096];        /* resolved cwd after command */
+    int active;            /* slot in use */
+} ExecChild;
 
 /* Detect if a command is likely long-running (build/test/etc) */
 int executor_is_long_running(const char *command);
 
-/* Execute a command via /bin/bash -c. cwd is the working directory.
-   timeout_ms is the timeout in milliseconds.
-   Returns 0 on success, -1 on spawn error. */
-int executor_run(const char *command, const char *cwd, int timeout_ms, ExecResult *result);
+/* Fork a command (non-blocking). Returns 0 on success, -1 on error.
+   Child is tracked in *out. */
+int executor_fork(const char *command, const char *cwd, ExecChild *out);
 
-/* Free buffers in ExecResult */
-void executor_result_free(ExecResult *result);
+/* Free buffers and close fds in ExecChild */
+void exec_child_cleanup(ExecChild *child);
 
 #endif

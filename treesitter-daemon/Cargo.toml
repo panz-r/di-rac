@@ -1,17 +1,17 @@
 [package]
-name = "dirac-analyzer"
+name = "di-rvv-analyzer"
 version = "0.1.0"
 edition = "2021"
-description = "Standalone tree-sitter analysis binary for Dirac"
-authors = ["Dirac Team"]
+description = "Standalone tree-sitter analysis binary for di"
+authors = ["di Team"]
 license = "MIT"
 
 [[bin]]
-name = "dirac-analyzer"
+name = "di-rvv-analyzer"
 path = "src/main.rs"
 
 [lib]
-name = "dirac_analyzer"
+name = "di_rvv_analyzer"
 path = "src/lib.rs"
 
 [dependencies]

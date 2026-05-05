@@ -280,6 +280,19 @@ async function main() {
 		} catch (e: any) {
 			console.error("[cli esbuild] WARNING: Failed to build command daemon:", e.stderr?.toString() || e.message)
 		}
+		
+		// Build tree-sitter analyzer daemon (Rust)
+		const analyzerDir = path.join(__dirname, "treesitter-daemon")
+		const analyzerSource = path.join(analyzerDir, "target", "release", "di-rvv-analyzer")
+		const analyzerDest = path.join(distDir, "di-rvv-analyzer")
+		try {
+			execSync("cargo build --release", { cwd: analyzerDir, stdio: "pipe" })
+			fs.copyFileSync(analyzerSource, analyzerDest)
+			fs.chmodSync(analyzerDest, "755")
+			console.log("[cli esbuild] Built and copied di-rvv-analyzer binary to dist/")
+		} catch (e: any) {
+			console.error("[cli esbuild] WARNING: Failed to build analyzer daemon:", e.stderr?.toString() || e.message)
+		}
 	}
 }
 

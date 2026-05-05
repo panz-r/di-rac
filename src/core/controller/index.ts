@@ -138,7 +138,7 @@ export class Controller {
 
 	private async ensureAnalyzer(cwd: string): Promise<void> {
 		if (this.analyzer) return // already initialized — persists across tasks
-		const analyzerBinary = path.join(__dirname, "dirac-analyzer")
+		const analyzerBinary = path.join(__dirname, "di-rvv-analyzer")
 		this.analyzer = new AnalyzerClient(analyzerBinary, cwd)
 		await this.analyzer.start()
 		// Wire analyzer to symbol index service
