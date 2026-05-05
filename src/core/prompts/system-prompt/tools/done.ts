@@ -13,6 +13,7 @@ Examples:
   done "Added caching layer" --cmd "npm test"
 
 Response: OK | summary:<text> | tokens:N
+	Summary follows header line.
 Typical: done 'Fixed the bug'`,
 	parameters: [
 		{

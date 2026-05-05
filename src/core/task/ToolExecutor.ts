@@ -733,6 +733,7 @@ export class ToolExecutor {
 					tokens: Math.ceil(toolResult.length / 4),
 					cached: toolResult.startsWith("[Cache Hit]"),
 					timestamp: Date.now(),
+					durationMs: Date.now() - executionStartTime,
 					hint: hintMatch?.[1]?.trim(),
 					retries: retries ? parseInt(retries) : undefined,
 				})

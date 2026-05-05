@@ -471,6 +471,7 @@ export class LifecycleManager {
 						taskStartTimeMs: this.dependencies.taskState.taskStartTimeMs,
 						recoveryEngine: summaryData.recoveryEngine,
 						toolCallLog: this.dependencies.taskState.toolCallLog,
+						modelId: this.dependencies.api?.getModel?.()?.id,
 					})
 				}
 			} catch {

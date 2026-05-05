@@ -12,7 +12,8 @@ Examples:
   plan "Refactor auth first, then update tests."
   plan "Need to check database layer." --explore
 
-Response: OK | plan:<text> | tokens:N`,
+Response: OK | plan:<text> | tokens:N
+	Plan text follows header line.`,
 	parameters: [
 		{
 			name: "command",

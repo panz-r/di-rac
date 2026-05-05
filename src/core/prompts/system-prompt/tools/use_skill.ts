@@ -17,7 +17,8 @@ Examples:
   use_skill react-component
   use_skill database-migration
 
-Response: OK | skill:<name> | tokens:N`,
+Response: OK | skill:<name> | tokens:N
+	Skill instructions follow header line.`,
 	contextRequirements: (ctx) => ctx.skills !== undefined && ctx.skills.length > 0,
 	parameters: [
 		{

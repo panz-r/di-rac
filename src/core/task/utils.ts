@@ -189,6 +189,7 @@ type ToolCallEntry = {
 	tokens: number
 	cached: boolean
 	timestamp: number
+	durationMs: number
 	hint?: string
 	retries?: number
 }
@@ -200,6 +201,7 @@ type SessionSummaryDeps = {
 	taskStartTimeMs: number
 	recoveryEngine?: { getTelemetry(): Record<string, unknown> }
 	toolCallLog?: ToolCallEntry[]
+	modelId?: string
 }
 
 export function printSessionSummary(deps: SessionSummaryDeps): void {
@@ -207,6 +209,7 @@ export function printSessionSummary(deps: SessionSummaryDeps): void {
 	const durationMs = Date.now() - deps.taskStartTimeMs
 	const durationStr = formatDuration(durationMs)
 	const taskPrefix = deps.taskId.slice(0, 8)
+	const modelTag = deps.modelId ? ' | model=' + deps.modelId : ''
 
 	const tokensIn = metrics.totalTokensIn
 	const tokensOut = metrics.totalTokensOut
@@ -217,7 +220,7 @@ export function printSessionSummary(deps: SessionSummaryDeps): void {
 	const hasRecovery = recoveryTelemetry && (recoveryTelemetry.interceptedCount as number) > 0
 
 	Logger.info(
-		'[Session Summary] task=' + taskPrefix + ' | duration=' + durationStr + ' | tools=' + deps.totalToolCallCount +
+		'[Session Summary] task=' + taskPrefix + modelTag + ' | duration=' + durationStr + ' | tools=' + deps.totalToolCallCount +
 		(hasMetrics ? ' | tokens=' + tokensIn + ' in / ' + tokensOut + ' out' : ' | tokens=n/a') +
 		(hasMetrics && cost > 0 ? ' | cost=$' + cost.toFixed(4) : '') +
 		(hasRecovery
@@ -242,21 +245,23 @@ export function printSessionSummary(deps: SessionSummaryDeps): void {
 					}
 				}
 				const verifyRate = writes > 0 ? (verified / writes * 100).toFixed(0) : 'n/a'
-				// Per-tool breakdown (top 5)
-				const byTool = new Map<string, { ok: number; err: number; retried: number }>()
+				// Per-tool breakdown (top 5) with avg duration
+				const byTool = new Map<string, { ok: number; err: number; retried: number; totalMs: number }>()
 				for (const e of log) {
-					const t = byTool.get(e.tool) ?? { ok: 0, err: 0, retried: 0 }
+					const t = byTool.get(e.tool) ?? { ok: 0, err: 0, retried: 0, totalMs: 0 }
 					if (e.status === 'ok') t.ok++; else t.err++
 					if (e.retries) t.retried++
+					t.totalMs += e.durationMs || 0
 					byTool.set(e.tool, t)
 				}
 				const topTools = [...byTool.entries()]
 					.sort((a, b) => (b[1].ok + b[1].err) - (a[1].ok + a[1].err))
 					.slice(0, 5)
-					.map(([name, t]) => name + ':' + (t.ok + t.err) + (t.err ? '(' + t.err + 'err)' : ''))
+					.map(([name, t]) => name + ':' + (t.ok + t.err) + (t.err ? '(' + t.err + 'err)' : '') + '[' + Math.round(t.totalMs / (t.ok + t.err)) + 'ms]')
 					.join(' ')
 				const outputTokens = log.reduce((s, e) => s + e.tokens, 0)
-				let m = ' | tools: ' + log.length + ' calls, success=' + okRate + '%, cache=' + cacheRate + '%, verify=' + verifyRate + '%'
+				const avgDuration = Math.round(log.reduce((s, e) => s + (e.durationMs || 0), 0) / log.length)
+				let m = ' | tools: ' + log.length + ' calls, success=' + okRate + '%, cache=' + cacheRate + '%, verify=' + verifyRate + '%, avg=' + avgDuration + 'ms'
 				if (errors) m += ', errors=' + errors
 				if (totalRetries) m += ', retries=' + totalRetries
 				if (hintCount) m += ', hints=' + hintCount
@@ -266,6 +271,38 @@ export function printSessionSummary(deps: SessionSummaryDeps): void {
 			})()
 			: ''),
 	)
+
+		// Structured metrics for cross-session analysis (machine-parseable JSON in logs)
+		if (deps.toolCallLog && deps.toolCallLog.length > 0) {
+			const log = deps.toolCallLog
+			const byTool = new Map<string, { calls: number; ok: number; err: number; truncated: number; cached: number; retried: number; totalMs: number }>()
+			for (const e of log) {
+				const t = byTool.get(e.tool) ?? { calls: 0, ok: 0, err: 0, truncated: 0, cached: 0, retried: 0, totalMs: 0 }
+				t.calls++
+				if (e.status === 'ok') t.ok++; else if (e.status === 'error') t.err++; else t.truncated++
+				if (e.cached) t.cached++
+				if (e.retries) t.retried++
+				t.totalMs += e.durationMs || 0
+				byTool.set(e.tool, t)
+			}
+			const perTool: Record<string, { calls: number; ok: number; err: number; truncated: number; cached: number; retried: number; avgMs: number }> = {}
+			for (const [name, t] of byTool) {
+				perTool[name] = { calls: t.calls, ok: t.ok, err: t.err, truncated: t.truncated, cached: t.cached, retried: t.retried, avgMs: Math.round(t.totalMs / t.calls) }
+			}
+			Logger.info('[Tool Metrics]', {
+				taskId: taskPrefix,
+				model: deps.modelId,
+				durationMs,
+				totalCalls: log.length,
+				successRate: parseFloat(((log.filter(e => e.status === 'ok').length / log.length) * 100).toFixed(1)),
+				cacheHitRate: parseFloat(((log.filter(e => e.cached).length / log.length) * 100).toFixed(1)),
+				avgDurationMs: Math.round(log.reduce((s, e) => s + (e.durationMs || 0), 0) / log.length),
+				totalErrors: log.filter(e => e.status === 'error').length,
+				totalRetries: log.reduce((s, e) => s + (e.retries ?? 0), 0),
+				totalHints: log.filter(e => e.hint).length,
+				perTool,
+			})
+		}
 }
 
 function formatDuration(ms: number): string {

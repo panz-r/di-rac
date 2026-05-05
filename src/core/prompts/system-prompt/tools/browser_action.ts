@@ -30,6 +30,7 @@ Examples:
   browser_action close
 
 Response: OK | screenshot:<base64> | logs:N | tokens:N
+	Screenshot and console logs follow header line.
 Typical: browser_action launch --url http://localhost:3000`,
 	contextRequirements: (ctx) => ctx.supportsBrowserUse === true,
 	parameters: [

@@ -135,6 +135,7 @@ export class TaskState {
 		tokens: number
 		cached: boolean
 		timestamp: number
+		durationMs: number
 		hint?: string
 		retries?: number
 	}> = []

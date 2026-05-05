@@ -706,6 +706,7 @@ export class Task {
 			taskStartTimeMs: this.taskState.taskStartTimeMs,
 			recoveryEngine: this.toolExecutor.recoveryEngine,
 			toolCallLog: this.taskState.toolCallLog,
+			modelId: this.api.getModel().id,
 		})
 	}
 

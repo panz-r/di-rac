@@ -13,6 +13,7 @@ Examples:
   compact "Investigated N+1 issue. Root cause found."
 
 Response: OK | summary:<text> | reloaded:N | tokens:N
+	Summary follows header line.
 Typical: compact 'Summary of work so far' --keep src/file.ts`,
 	parameters: [
 		{

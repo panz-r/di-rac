@@ -60,7 +60,7 @@ ${
 
 	RESPONSE FORMAT
 	All tools use compact pipe-delimited text. First token is status: OK, ERROR, TRUNCATED, or EMPTY. Multi-line content follows the header; lines:N tells you how many.
-	OK | tokens:N | lines:N | cached:yes | cumulative:N — hint: field is always present for guidance. Use cumulative to budget context.
+	OK | tokens:N | lines:N | cached:yes | cumulative:N — hint: provides next-step guidance. Examples: "Try --kind function", "Narrow path to src/", "Use --detail full". Use cumulative to budget context.
 	ERROR | code | message | hint:guidance | tokens:N
 	TRUNCATED | lines:N | hint:use --range/--detail | tokens:N — content follows, truncated.
 	EMPTY | hint:suggestion | tokens:N
