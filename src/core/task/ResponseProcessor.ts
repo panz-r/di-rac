@@ -36,15 +36,6 @@ export class ResponseProcessor {
 			params.assistantMessage.length > 0 || this.dependencies.taskState.useNativeToolCalls || !!thinkingBlock?.thinking
 
 		if (assistantHasContent) {
-			telemetryService.captureConversationTurnEvent(
-				this.dependencies.ulid,
-				params.providerId,
-				params.modelId,
-				"assistant",
-				params.mode as any,
-				params.taskMetrics,
-				this.dependencies.taskState.useNativeToolCalls,
-			)
 
 
 			const redactedThinkingContent = reasonsHandler.getRedactedThinking()
@@ -124,14 +115,6 @@ export class ResponseProcessor {
 	}): Promise<boolean> {
 		const reqId = this.dependencies.getApiRequestIdSafe()
 
-		telemetryService.captureProviderApiError({
-			ulid: this.dependencies.ulid,
-			model: params.model.id,
-			provider: params.providerId,
-			errorMessage: "empty_assistant_message",
-			requestId: reqId,
-			isNativeToolCall: this.dependencies.taskState.useNativeToolCalls,
-		})
 
 		const baseErrorMessage =
 			"Invalid API Response: The provider returned an empty or unparsable response. This is a provider-side issue where the model failed to generate valid output or returned tool calls that Dirac cannot process. Retrying the request may help resolve this issue."

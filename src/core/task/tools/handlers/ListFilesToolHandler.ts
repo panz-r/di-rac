@@ -5,7 +5,6 @@ import { getWorkspaceBasename, resolveWorkspacePath } from "@core/workspace"
 import { listFiles } from "@services/glob/list-files"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { createToolError } from "@shared/tool-response"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import { showNotificationForApproval } from "../../utils"
@@ -181,16 +180,6 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 				await config.callbacks.say("tool", completeMessage, undefined, undefined, false)
 			}
 
-			telemetryService.captureToolUsage(
-				config.ulid,
-				block.name,
-				config.api.getModel().id,
-				provider,
-				true,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
 		} else {
 			// Manual approval flow
 			const notificationMessage =
@@ -205,28 +194,8 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 
 			const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config)
 			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid,
-					block.name,
-					config.api.getModel().id,
-					provider,
-					false,
-					false,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
 				return formatResponse.toolDenied()
 			}
-			telemetryService.captureToolUsage(
-				config.ulid,
-				block.name,
-				config.api.getModel().id,
-				provider,
-				false,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
 		}
 
 		// Run PreToolUse hook after approval but before execution

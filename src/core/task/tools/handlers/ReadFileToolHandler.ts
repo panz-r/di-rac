@@ -10,7 +10,6 @@ import type { ParsedDefinition } from "@services/tree-sitter"
 import { contentHash, hashLines, stripHashes, generateFullAnchoredContent } from "@utils/line-hashing"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { countFileLines, readFirstNLines } from "@utils/fs"
-import { telemetryService } from "@/services/telemetry"
 import { DiracSayTool } from "@/shared/ExtensionMessage"
 import { DiracAssistantToolUseBlock, DiracStorageMessage, DiracUserToolResultContentBlock } from "@/shared/messages"
 import { DiracDefaultTool } from "@/shared/tools"
@@ -533,16 +532,6 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 
 			// Capture telemetry for each path
 			for (let i = 0; i < relPaths.length; i++) {
-				telemetryService.captureToolUsage(
-					config.ulid,
-					block.name,
-					config.api.getModel().id,
-					provider,
-					true,
-					true,
-					workspaceContexts[i],
-					block.isNativeToolCall,
-				)
 			}
 		} else {
 			// Manual approval flow
@@ -555,31 +544,11 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config)
 			if (!didApprove) {
 				for (let i = 0; i < relPaths.length; i++) {
-					telemetryService.captureToolUsage(
-						config.ulid,
-						block.name,
-						config.api.getModel().id,
-						provider,
-						false,
-						false,
-						workspaceContexts[i],
-						block.isNativeToolCall,
-					)
 				}
 				return formatResponse.toolDenied()
 			}
 
 			for (let i = 0; i < relPaths.length; i++) {
-				telemetryService.captureToolUsage(
-					config.ulid,
-					block.name,
-					config.api.getModel().id,
-					provider,
-					false,
-					true,
-					workspaceContexts[i],
-					block.isNativeToolCall,
-				)
 			}
 		}
 

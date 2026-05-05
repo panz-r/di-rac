@@ -4,7 +4,6 @@ import { createToolError } from "@shared/tool-response"
 import axios from "axios"
 import { DiracEnv } from "@/config"
 import { buildDiracExtraHeaders } from "@/services/EnvUtils"
-import { telemetryService } from "@/services/telemetry"
 import { parsePartialArrayString } from "@/shared/array"
 import { DIRAC_ACCOUNT_AUTH_ERROR_MESSAGE } from "@/shared/DiracAccount"
 import { getAxiosSettings } from "@/shared/net"
@@ -91,16 +90,6 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 				// Auto-approve flow
 				await config.callbacks.removeLastPartialMessageIfExistsWithType("ask", "tool")
 				await config.callbacks.say("tool", completeMessage, undefined, undefined, false)
-				telemetryService.captureToolUsage(
-					config.ulid,
-					"web_search",
-					config.api.getModel().id,
-					provider,
-					true,
-					true,
-					undefined,
-					block.isNativeToolCall,
-				)
 			} else {
 				// Manual approval flow
 				showNotificationForApproval(
@@ -111,28 +100,8 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 
 				const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config)
 				if (!didApprove) {
-					telemetryService.captureToolUsage(
-						config.ulid,
-						block.name,
-						config.api.getModel().id,
-						provider,
-						false,
-						false,
-						undefined,
-						block.isNativeToolCall,
-					)
 					return formatResponse.toolDenied()
 				}
-				telemetryService.captureToolUsage(
-					config.ulid,
-					block.name,
-					config.api.getModel().id,
-					provider,
-					false,
-					true,
-					undefined,
-					block.isNativeToolCall,
-				)
 			}
 
 			// Run PreToolUse hook after approval but before execution

@@ -8,7 +8,6 @@ import {
 	DiracSubagentUsageInfo,
 	SubagentStatusItem,
 } from "@shared/ExtensionMessage"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import { showNotificationForApproval } from "../../utils"
@@ -137,16 +136,6 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 		const didAutoApprove = !!autoApproveSafe
 
 		if (didAutoApprove) {
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider,
-				true,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 		} else {
 			showNotificationForApproval(
 				prompts.length === 1
@@ -156,28 +145,8 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			)
 			const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("use_subagents", approvalBody, config)
 			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid,
-					this.name,
-					config.api.getModel().id,
-					provider,
-					false,
-					false,
-					undefined,
-					block.isNativeToolCall,
-				)
 				return formatResponse.toolDenied()
 			}
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider,
-				false,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 		}
 
 		config.taskState.consecutiveMistakeCount = 0

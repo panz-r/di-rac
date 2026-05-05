@@ -11,7 +11,6 @@ import { stripHashes } from "@utils/line-hashing"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { createToolError, type ConstraintViolation } from "@shared/tool-response"
 import { applyPatch } from "diff"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import { showNotificationForApproval } from "../../utils"
@@ -184,16 +183,6 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				await config.callbacks.say("tool", completeMessage, undefined, undefined, false)
 
 				// Capture telemetry
-				telemetryService.captureToolUsage(
-					config.ulid,
-					block.name,
-					modelId,
-					providerId,
-					true,
-					true,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
 				// Capture AI output accepted telemetry with line diff stats (auto-approval)
 				captureAccepted({
 					ulid: config.ulid,
@@ -243,16 +232,6 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 					}
 
 					config.taskState.didRejectTool = true
-					telemetryService.captureToolUsage(
-						config.ulid,
-						block.name,
-						modelId,
-						providerId,
-						false,
-						false,
-						workspaceContext,
-						block.isNativeToolCall,
-					)
 
 					// Capture AI output rejected telemetry with line diff stats
 					captureRejected({
@@ -286,16 +265,6 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 					await config.callbacks.say("user_feedback", text, images, files)
 				}
 
-				telemetryService.captureToolUsage(
-					config.ulid,
-					block.name,
-					modelId,
-					providerId,
-					false,
-					true,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
 
 				// Capture AI output accepted telemetry with line diff stats (manual approval)
 				captureAccepted({

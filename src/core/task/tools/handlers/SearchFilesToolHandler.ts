@@ -10,7 +10,6 @@ import { formatResponse } from "@/core/prompts/responses"
 import { parseWorkspaceInlinePath } from "@/core/workspace/utils/parseWorkspaceInlinePath"
 import { WorkspacePathAdapter } from "@/core/workspace/WorkspacePathAdapter"
 import { resolveWorkspacePath } from "@/core/workspace/WorkspaceResolver"
-import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
@@ -301,15 +300,6 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 				: allSearchPaths.length > 1
 					? "cross_workspace_search"
 					: "fallback_to_primary"
-			telemetryService.captureWorkspacePathResolved(
-				config.ulid,
-				"SearchFilesToolHandler",
-				resolutionType,
-				anyUsedWorkspaceHint ? "workspace_name" : undefined,
-				allSearchPaths.length > 0, // resolution success = found paths to search
-				undefined, // TODO: could calculate primary workspace index
-				true,
-			)
 		}
 
 		// Execute searches in all relevant workspaces in parallel
@@ -343,14 +333,6 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 			const searchType = anyUsedWorkspaceHint ? "targeted" : allSearchPaths.length > 1 ? "cross_workspace" : "primary_only"
 			const resultsFound = searchResults.some((result) => result.resultCount > 0)
 
-			telemetryService.captureWorkspaceSearchPattern(
-				config.ulid,
-				searchType,
-				allSearchPaths.length,
-				anyUsedWorkspaceHint,
-				resultsFound,
-				searchDurationMs,
-			)
 		}
 
 		const sharedMessageProps = {
@@ -377,16 +359,6 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 			}
 
 			// Capture telemetry
-			telemetryService.captureToolUsage(
-				config.ulid,
-				block.name,
-				config.api.getModel().id,
-				provider,
-				true,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
 		} else {
 			// Manual approval flow
 			const notificationMessage = `di wants to search files for ${regex}`
@@ -398,28 +370,8 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 
 			const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config)
 			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid,
-					block.name,
-					config.api.getModel().id,
-					provider,
-					false,
-					false,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
 				return formatResponse.toolDenied()
 			}
-			telemetryService.captureToolUsage(
-				config.ulid,
-				block.name,
-				config.api.getModel().id,
-				provider,
-				false,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
 		}
 
 		// Run PreToolUse hook after approval but before execution

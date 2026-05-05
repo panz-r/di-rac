@@ -8,7 +8,6 @@ import * as fs from "fs/promises"
 import * as path from "path"
 import { formatResponse } from "@/core/prompts/responses"
 import { SymbolIndexService } from "@/services/symbol-index/SymbolIndexService"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import { showNotificationForApproval } from "../../utils"
@@ -239,16 +238,6 @@ export class FindSymbolReferencesToolHandler implements IFullyManagedTool {
 				await config.callbacks.say("tool", completeMessage, undefined, undefined, false)
 			}
 
-			telemetryService.captureToolUsage(
-				config.ulid,
-				block.name,
-				config.api.getModel().id,
-				provider,
-				true,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 		} else {
 			const notificationMessage = `di wants to find ${findType === "both" ? "references" : findType + "s"} for ${symbols.length} symbol(s) in ${relPaths.length} path(s)`
 			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
@@ -258,28 +247,8 @@ export class FindSymbolReferencesToolHandler implements IFullyManagedTool {
 
 			const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config)
 			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid,
-					block.name,
-					config.api.getModel().id,
-					provider,
-					false,
-					false,
-					undefined,
-					block.isNativeToolCall,
-				)
 				return formatResponse.toolDenied()
 			}
-			telemetryService.captureToolUsage(
-				config.ulid,
-				block.name,
-				config.api.getModel().id,
-				provider,
-				false,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 		}
 
 		return result

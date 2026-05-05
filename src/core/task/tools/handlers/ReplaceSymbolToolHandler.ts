@@ -12,7 +12,6 @@ import { formatResponse } from "@/core/prompts/responses"
 import { createToolError } from "@shared/tool-response"
 import { HostProvider } from "@/hosts/host-provider"
 import { getDiagnosticsProviders } from "@/integrations/diagnostics/getDiagnosticsProviders"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import { showNotificationForApproval } from "../../utils"
@@ -240,16 +239,6 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 				await config.callbacks.removeLastPartialMessageIfExistsWithType("ask", "tool")
 				const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config)
 				if (!didApprove) {
-					telemetryService.captureToolUsage(
-						config.ulid,
-						this.name,
-						config.api.getModel().id,
-						provider,
-						false,
-						false,
-						undefined,
-						block.isNativeToolCall,
-					)
 					return formatResponse.toolDenied()
 				}
 			} else {
@@ -326,16 +315,6 @@ export class ReplaceSymbolToolHandler implements IFullyManagedTool {
 				}
 			}
 
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider,
-				true,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 
 			const summaries = appliedResults.map((ar) => {
 				const symbolList = ar.batch.replacements.map((r) => `'${r.symbol}'`).join(", ")

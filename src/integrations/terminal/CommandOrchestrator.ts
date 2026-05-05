@@ -142,7 +142,6 @@ export async function orchestrateCommandExecution(
 		if (!didContinue) {
 			// Start timer to detect if buffer gets stuck
 			bufferStuckTimer = setTimeout(() => {
-				telemetryService.captureTerminalHang(TerminalHangStage.BUFFER_STUCK, terminalType)
 				bufferStuckTimer = null
 			}, BUFFER_STUCK_TIMEOUT_MS)
 
@@ -157,10 +156,6 @@ export async function orchestrateCommandExecution(
 
 				if (response === "yesButtonClicked") {
 					// Track when user clicks "Proceed While Running"
-					telemetryService.captureTerminalUserIntervention(
-						TerminalUserInterventionAction.PROCESS_WHILE_RUNNING,
-						terminalType,
-					)
 					// Proceed while running - but still capture user feedback if provided
 					if (text || (images && images.length > 0) || (files && files.length > 0)) {
 						userFeedback = { text, images, files }
@@ -209,7 +204,6 @@ export async function orchestrateCommandExecution(
 
 					process.continue()
 				} else if (response === "noButtonClicked" && text === COMMAND_CANCEL_TOKEN) {
-					telemetryService.captureTerminalUserIntervention(TerminalUserInterventionAction.CANCELLED, terminalType)
 					// Set flags BEFORE resuming the process to prevent new lines from being processed
 					didCancelViaUi = true
 					userFeedback = undefined

@@ -12,11 +12,8 @@ import { StateManager } from "./core/storage/StateManager";
 import { AgentConfigLoader } from "./core/task/tools/subagent/AgentConfigLoader";
 import { ExtensionRegistryInfo } from "./registry";
 import { ErrorService } from "./services/error";
-import { featureFlagsService } from "./services/feature-flags";
 import { getDistinctId } from "./services/logging/distinctId";
 import { SymbolIndexService } from "./services/symbol-index/SymbolIndexService";
-import { telemetryService } from "./services/telemetry";
-// Legacy telemetry removed
 import { DiracTempManager } from "./services/temp";
 import { ShowMessageType } from "./shared/proto/host/window";
 import { syncWorker } from "./shared/services/worker/sync";
@@ -95,8 +92,6 @@ export async function initialize(storageContext: StorageContext): Promise<DiracW
 	DiracTempManager.startPeriodicCleanup()
 	// Clean up orphaned file context warnings (startup cleanup)
 	FileContextTracker.cleanupOrphanedWarnings(stateManager)
-
-	telemetryService.captureExtensionActivated()
 
 	// =============== Symbol Index Service ===============
 	// Initialize symbol index for the project in background with a delay to avoid blocking startup
@@ -210,10 +205,7 @@ export async function tearDown(): Promise<void> {
 	workspaceLogHandle = null
 
 	AgentConfigLoader.getInstance()?.dispose()
-	// Legacy telemetry removed
-	telemetryService.dispose()
 	ErrorService.get().dispose()
-	featureFlagsService.dispose()
 	// Dispose all webview instances
 	await DiracWebviewProvider.disposeAllInstances()
 	syncWorker().dispose()

@@ -137,19 +137,8 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 				// haven't sent a command message yet so first send completion_result then command
 				await config.callbacks.say("completion_result", finalResult, undefined, undefined, false)
 				await addNewChangesFlagToLastCompletionResultMessage()
-				telemetryService.captureTaskCompleted(config.ulid, getTaskCompletionTelemetry(config))
 				const apiConfig = config.services.stateManager.getApiConfiguration()
 				const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
-				telemetryService.captureToolUsage(
-					config.ulid,
-					this.name,
-					config.api.getModel().id,
-					provider,
-					false,
-					true,
-					undefined,
-					block.isNativeToolCall,
-				)
 			} else {
 				// we already sent a command message, meaning the complete completion message has also been sent
 			}
@@ -191,19 +180,8 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			// Send the complete completion_result message (partial was already removed above)
 			await config.callbacks.say("completion_result", finalResult, undefined, undefined, false)
 			await addNewChangesFlagToLastCompletionResultMessage()
-			telemetryService.captureTaskCompleted(config.ulid, getTaskCompletionTelemetry(config))
 			const apiConfig = config.services.stateManager.getApiConfiguration()
 			const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider,
-				false,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 		}
 
 		// we already sent completion_result says, an empty string asks relinquishes control over button and field
@@ -295,16 +273,6 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		const apiConfig = config.services.stateManager.getApiConfiguration()
 		const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-		telemetryService.captureToolUsage(
-			config.ulid,
-			this.name,
-			config.api.getModel().id,
-			provider,
-			false, // autoApproved - attempt_completion is never auto-approved
-			false, // success=false because we reached here (user provided feedback instead of clicking "Yes")
-			undefined,
-			block.isNativeToolCall,
-		)
 
 
 

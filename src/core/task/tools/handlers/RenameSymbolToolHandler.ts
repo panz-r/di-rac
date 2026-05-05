@@ -10,7 +10,6 @@ import { formatResponse } from "@/core/prompts/responses"
 import { HostProvider } from "@/hosts/host-provider"
 import { getDiagnosticsProviders } from "@/integrations/diagnostics/getDiagnosticsProviders"
 import { SymbolIndexService, SymbolLocation } from "@/services/symbol-index/SymbolIndexService"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import { showNotificationForApproval } from "../../utils"
@@ -251,16 +250,6 @@ export class RenameSymbolToolHandler implements IFullyManagedTool {
 				await config.callbacks.removeLastPartialMessageIfExistsWithType("ask", "tool")
 				const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config)
 				if (!didApprove) {
-					telemetryService.captureToolUsage(
-						config.ulid,
-						this.name,
-						config.api.getModel().id,
-						provider,
-						false,
-						false,
-						undefined,
-						block.isNativeToolCall,
-					)
 					return formatResponse.toolDenied()
 				}
 			} else {
@@ -324,16 +313,6 @@ export class RenameSymbolToolHandler implements IFullyManagedTool {
 			}
 
 			config.taskState.consecutiveMistakeCount = 0
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider,
-				true,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 
 			const summaries = appliedResults.map((ar) => {
 				let summary = `Successfully renamed symbol in ${ar.displayPath}.`

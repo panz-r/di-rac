@@ -3,7 +3,6 @@ import { resolveWorkspacePath } from "@core/workspace"
 import { ASTAnchorBridge } from "@utils/ASTAnchorBridge"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { formatResponse } from "@/core/prompts/responses"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import { DiracAssistantToolUseBlock, DiracStorageMessage, DiracUserToolResultContentBlock } from "@/shared/messages"
 import type { ToolResponse } from "../../index"
@@ -232,16 +231,6 @@ export class GetFunctionToolHandler implements IFullyManagedTool {
 				await config.callbacks.say("tool", completeMessage, undefined, undefined, false)
 			}
 
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider,
-				true,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 		} else {
 			const notificationMessage = `di wants to extract ${functionNames.length} function(s) from ${relPaths.length} file(s)`
 			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
@@ -251,28 +240,8 @@ export class GetFunctionToolHandler implements IFullyManagedTool {
 
 			const { didApprove } = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config)
 			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid,
-					this.name,
-					config.api.getModel().id,
-					provider,
-					false,
-					false,
-					undefined,
-					block.isNativeToolCall,
-				)
 				return formatResponse.toolDenied()
 			}
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider,
-				false,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 		}
 
 		return finalResult

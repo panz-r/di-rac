@@ -1,13 +1,6 @@
-import { DiracEndpoint } from "@/config"
-import {
-	isDiracTelemetryConfigValid,
-	DiracTelemetryClientConfig,
-	diracTelemetryConfig,
-} from "@/shared/services/config/dirac-telemetry-config"
 import { Logger } from "@/shared/services/Logger"
 import { DiracError } from "./DiracError"
 import { IErrorProvider } from "./providers/IErrorProvider"
-import { DiracErrorProvider } from "./providers/DiracErrorProvider"
 
 /**
  * Supported error provider types
@@ -19,7 +12,6 @@ export type ErrorProviderType = "dirac" | "no-op"
  */
 export interface ErrorProviderConfig {
 	type: ErrorProviderType
-	config: DiracTelemetryClientConfig
 }
 
 /**
@@ -34,19 +26,7 @@ export class ErrorProviderFactory {
 	 */
 	public static async createProvider(config: ErrorProviderConfig): Promise<IErrorProvider> {
 		switch (config.type) {
-			case "dirac": {
-				const hasValidDiracConfig = isDiracTelemetryConfigValid(config.config)
-				const errorTrackingApiKey = config.config.errorTrackingApiKey
-				return hasValidDiracConfig && errorTrackingApiKey
-					? await new DiracErrorProvider({
-							apiKey: errorTrackingApiKey,
-							errorTrackingApiKey: errorTrackingApiKey,
-							host: config.config.host,
-							uiHost: config.config.uiHost,
-							enableExceptionAutocapture: !!config.config.enableErrorAutocapture,
-						}).initialize()
-					: new NoOpErrorProvider() // Fallback to no-op provider
-			}
+			case "dirac":
 			default:
 				return new NoOpErrorProvider()
 		}
@@ -54,19 +34,11 @@ export class ErrorProviderFactory {
 
 	/**
 	 * Gets the default error provider configuration
-	 * @returns Default configuration using Dirac, or no-op for self-hosted mode
+	 * @returns Default configuration - no-op since telemetry is removed
 	 */
 	public static getDefaultConfig(): ErrorProviderConfig {
-		// Use no-op provider in self-hosted mode to avoid external network calls
-		if (DiracEndpoint.isSelfHosted()) {
-			return {
-				type: "no-op",
-				config: diracTelemetryConfig,
-			}
-		}
 		return {
-			type: "dirac",
-			config: diracTelemetryConfig,
+			type: "no-op",
 		}
 	}
 }

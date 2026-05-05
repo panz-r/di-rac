@@ -6,7 +6,6 @@ import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { readFirstNLines } from "@utils/fs"
 import { formatResponse } from "@/core/prompts/responses"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
@@ -117,7 +116,6 @@ export class RepoMapToolHandler implements IFullyManagedTool {
 				await config.callbacks.say("tool", completeMessage, undefined, undefined, false)
 			}
 
-			telemetryService.captureToolUsage(config.ulid, this.name, config.api.getModel().id, provider, true, true, undefined, block.isNativeToolCall)
 
 			config.taskState.consecutiveMistakeCount = 0
 			return `Repository Structure Summary:\n\n${output}\n\nUse read_file --detail outline to see full symbol tables for specific files.`

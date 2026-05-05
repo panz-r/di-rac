@@ -1,7 +1,6 @@
 import { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { createToolError } from "@shared/tool-response"
-import { telemetryService } from "@/services/telemetry"
 
 import { DiracDefaultTool } from "@/shared/tools"
 import { ToolResponse } from "../../index"
@@ -178,16 +177,6 @@ export class EditFileToolHandler implements IFullyManagedTool {
 		const apiConfig = config.services.stateManager.getApiConfiguration()
 		const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-		telemetryService.captureToolUsage(
-			config.ulid,
-			this.name,
-			config.api.getModel().id,
-			provider,
-			false, // autoApproved - edit_file is never auto-approved in the current implementation
-			isSuccess,
-			undefined,
-			block.isNativeToolCall,
-		)
 
 
 		return result

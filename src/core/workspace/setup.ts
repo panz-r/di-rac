@@ -1,6 +1,5 @@
 import type { WorkspaceRoot } from "@shared/multi-root/types"
 import { HostProvider } from "@/hosts/host-provider"
-import { telemetryService } from "@/services/telemetry"
 import type { HistoryItem } from "@/shared/HistoryItem"
 import { ShowMessageType } from "@/shared/proto/host/window"
 import { Logger } from "@/shared/services/Logger"
@@ -38,12 +37,6 @@ export async function setupWorkspaceManager({
 			Logger.log(`[WorkspaceManager] Multi-root mode: ${roots.length} roots detected`)
 
 			// Telemetry
-			telemetryService.captureWorkspaceInitialized(
-				roots.length,
-				roots.map((r) => r.vcs.toString()),
-				performance.now() - startTime,
-				true,
-			)
 
 			// Persist
 			stateManager.setGlobalState("workspaceRoots", manager.getRoots())
@@ -76,12 +69,6 @@ export async function setupWorkspaceManager({
 		// }
 
 		manager = await WorkspaceRootManager.fromLegacyCwd(cwd)
-		telemetryService.captureWorkspaceInitialized(
-			1,
-			[manager.getRoots()[0].vcs.toString()],
-			performance.now() - startTime,
-			false,
-		)
 
 		Logger.log(`[WorkspaceManager] Single-root mode: ${cwd}`)
 		const roots = manager.getRoots()
@@ -91,7 +78,6 @@ export async function setupWorkspaceManager({
 	} catch (error) {
 		// Telemetry + graceful fallback to single-root from cwd
 		const workspaceCount = (await HostProvider.workspace.getWorkspacePaths({})).paths?.length
-		telemetryService.captureWorkspaceInitError(error as Error, true, workspaceCount)
 
 		Logger.error("[WorkspaceManager] Initialization failed:", error)
 		const manager = await WorkspaceRootManager.fromLegacyCwd(cwd)

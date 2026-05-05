@@ -1,6 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import { showNotificationForApproval } from "../../utils"
@@ -90,16 +89,6 @@ export class BashToolHandler implements IFullyManagedTool {
 		const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
 		const provider = (currentMode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-		telemetryService.captureToolUsage(
-			config.ulid,
-			this.name,
-			config.api.getModel().id,
-			provider,
-			false,
-			true,
-			undefined,
-			block.isNativeToolCall
-		)
 
 		// Execute via command daemon
 		await config.controller.ensureCommandClient(config.cwd)

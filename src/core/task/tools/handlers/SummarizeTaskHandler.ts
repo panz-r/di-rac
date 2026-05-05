@@ -8,7 +8,6 @@ import { StateManager } from "@core/storage/StateManager"
 import { resolveWorkspacePath } from "@core/workspace"
 import { extractFileContent } from "@integrations/misc/extract-file-content"
 import { DiracSayTool } from "@shared/ExtensionMessage"
-import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
@@ -252,24 +251,7 @@ export class SummarizeTaskHandler implements IToolHandler, IPartialBlockHandler 
 				const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
 				const provider = (currentMode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-				telemetryService.captureSummarizeTask(
-					config.ulid,
-					config.api.getModel().id,
-					provider,
-					telemetryData.tokensUsed,
-					telemetryData.maxContextWindow,
-				)
 
-				telemetryService.captureToolUsage(
-					config.ulid,
-					this.name,
-					config.api.getModel().id,
-					provider,
-					true, // autoApproved - summarize_task is auto-approved
-					true,
-					undefined,
-					block.isNativeToolCall,
-				)
 			}
 
 			return toolResult

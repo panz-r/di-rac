@@ -1,7 +1,6 @@
 import { getWorkspaceBasename } from "@core/workspace"
 import type { ToggleDiracRuleRequest } from "@shared/proto/dirac/file"
 import { RuleScope, ToggleDiracRules } from "@shared/proto/dirac/file"
-import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import type { Controller } from "../index"
 
@@ -45,14 +44,6 @@ export async function toggleDiracRule(controller: Controller, request: ToggleDir
 		}
 		default:
 			throw new Error(`Invalid scope: ${scope}`)
-	}
-
-	// Track rule toggle telemetry with current task context
-	if (controller.task?.ulid) {
-		// Extract just the filename for privacy (no full paths)
-		const ruleFileName = getWorkspaceBasename(rulePath, "Controller.toggleDiracRule")
-		const isGlobal = scope === RuleScope.GLOBAL
-		telemetryService.captureDiracRuleToggled(controller.task.ulid, ruleFileName, enabled, isGlobal)
 	}
 
 	// Get the current state to return in the response

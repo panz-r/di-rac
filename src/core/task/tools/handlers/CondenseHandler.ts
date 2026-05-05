@@ -1,5 +1,4 @@
 import type { ToolUse } from "@core/assistant-message"
-import { telemetryService } from "@/services/telemetry"
 
 import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
@@ -53,16 +52,6 @@ export class CondenseHandler implements IToolHandler, IPartialBlockHandler {
 			const apiConfig = config.services.stateManager.getApiConfiguration()
 			const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider,
-				false, // autoApproved - condense is never auto-approved
-				false, // success=false because user provided feedback instead
-				undefined,
-				block.isNativeToolCall,
-			)
 
 
 			return formatResponse.toolResult(
@@ -90,16 +79,6 @@ export class CondenseHandler implements IToolHandler, IPartialBlockHandler {
 		const apiConfig = config.services.stateManager.getApiConfiguration()
 		const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-		telemetryService.captureToolUsage(
-			config.ulid,
-			this.name,
-			config.api.getModel().id,
-			provider,
-			false, // autoApproved - condense is never auto-approved
-			true,
-			undefined,
-			block.isNativeToolCall,
-		)
 
 
 		return formatResponse.toolResult(formatResponse.condense())

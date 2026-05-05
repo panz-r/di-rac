@@ -5,7 +5,6 @@ import {
 	listSupportingFiles
 } from "@core/context/instructions/user-instructions/skills"
 import type { SkillMetadata } from "@shared/skills"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
@@ -80,32 +79,7 @@ export class UseSkillToolHandler implements IToolHandler, IPartialBlockHandler {
 				return `Error: Skill "${skillName}" not found. Available skills: ${availableNames || "none"}`
 			}
 
-			telemetryService.safeCapture(
-				() =>
-					telemetryService.captureSkillUsed({
-						ulid: config.ulid,
-						skillName,
-						skillSource: skillContent.source === "global" ? "global" : "project",
-						skillsAvailableGlobal: globalCount,
-						skillsAvailableProject: projectCount,
-						provider,
-						modelId: config.api.getModel().id,
-					}),
-				"UseSkillToolHandler.execute",
-			)
 
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider as string,
-
-				true, // autoApproved - use_skill is auto-approved
-				true,
-				undefined,
-				block.isNativeToolCall,
-
-			)
 
 			const { docs, scripts } = await listSupportingFiles(skillContent.path)
 			let activationMessage = `# Skill "${skillContent.name}" is now active\n\n${skillContent.instructions}\n\n---\n`

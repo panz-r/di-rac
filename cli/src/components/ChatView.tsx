@@ -117,7 +117,6 @@ import { showTaskWithId } from "@/core/controller/task/showTaskWithId"
 import { StateManager } from "@/core/storage/StateManager"
 import { readWorkspaceMessageHistory, writeWorkspaceMessageHistory } from "@/core/storage/disk"
 import { observerFailing } from "@/core/observer"
-import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { Session } from "@/shared/services/Session"
 import { COLORS } from "../constants/colors"
@@ -480,9 +479,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
 	// Listen for shutdown event (Ctrl+C) to hide UI before exit
 	useEffect(() => {
 		const subscription = shutdownEvent.event(() => {
-			const session = Session.get()
-			const summary = session.getStats()
-			telemetryService.captureHostEvent("exit", JSON.stringify(summary))
 			setIsExiting(true)
 		})
 		return () => subscription.dispose()

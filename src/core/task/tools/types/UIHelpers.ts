@@ -1,7 +1,6 @@
 import type { DiracAsk, DiracSay, MultiCommandState } from "@shared/ExtensionMessage"
 import type { DiracDefaultTool } from "@shared/tools"
 import type { DiracAskResponse } from "@shared/WebviewMessage"
-import { telemetryService } from "@/services/telemetry"
 import type { ToolParamName, ToolUse } from "../../../assistant-message"
 import { showNotificationForApproval } from "../../utils"
 import { removeClosingTag } from "../utils/ToolConstants"
@@ -64,16 +63,6 @@ export function createUIHelpers(config: TaskConfig): StronglyTypedUIHelpers {
 			const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
 			const provider = (currentMode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-			telemetryService.captureToolUsage(
-				config.ulid,
-				toolName,
-				config.api.getModel().id,
-				provider,
-				autoApproved,
-				approved,
-				undefined,
-				isNativeToolCall,
-			)
 		},
 		showNotificationIfEnabled: (message: string) => {
 			showNotificationForApproval(message, config.autoApprovalSettings.enableNotifications)

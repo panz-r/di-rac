@@ -1,6 +1,5 @@
 import { EmptyRequest } from "@shared/proto/dirac/common"
 import { State } from "@shared/proto/dirac/state"
-import { telemetryService } from "@/services/telemetry"
 import { ExtensionState } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { getRequestRegistry, StreamingResponseHandler } from "../grpc-handler"
@@ -39,8 +38,6 @@ export async function subscribeToState(
 	const initialState = await controller.getStateToPostToWebview()
 	const initialStateJson = JSON.stringify(initialState)
 
-	recordStateSizeTelemetry(Buffer.byteLength(initialStateJson, "utf8"))
-
 	try {
 		await responseStream(
 			{
@@ -67,8 +64,6 @@ export async function sendStateUpdate(state: ExtensionState): Promise<void> {
 		return
 	}
 
-	recordStateSizeTelemetry(Buffer.byteLength(stateJson, "utf8"))
-
 	const promises = Array.from(activeStateSubscriptions).map(async (responseStream) => {
 		try {
 			await responseStream(
@@ -84,8 +79,4 @@ export async function sendStateUpdate(state: ExtensionState): Promise<void> {
 	})
 
 	await Promise.all(promises)
-}
-
-function recordStateSizeTelemetry(sizeBytes: number): void {
-	telemetryService.captureGrpcResponseSize(sizeBytes, "dirac.StateService", "subscribeToState")
 }

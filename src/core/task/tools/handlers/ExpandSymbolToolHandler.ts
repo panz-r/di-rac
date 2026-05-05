@@ -6,7 +6,6 @@ import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import { contentHash, hashLines, formatLineWithHash } from "@utils/line-hashing"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { formatResponse } from "@/core/prompts/responses"
-import { telemetryService } from "@/services/telemetry"
 import { DiracDefaultTool } from "@/shared/tools"
 import { FileAnchorIndex } from "@/shared/utils/file-anchor-index"
 import type { ToolResponse } from "../../index"
@@ -114,7 +113,6 @@ export class ExpandSymbolToolHandler implements IFullyManagedTool {
 				if (!config.isSubagentExecution) {
 					await config.callbacks.say("tool", completeMessage, undefined, undefined, false)
 				}
-				telemetryService.captureToolUsage(config.ulid, this.name, config.api.getModel().id, provider, true, true, undefined, block.isNativeToolCall)
 			} else {
 				await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config)
 				// Telemetry handled in askApproval...

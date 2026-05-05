@@ -2,7 +2,6 @@ import { ChildProcess, spawn } from "child_process"
 import * as path from "path"
 import * as fs from "fs"
 import { Logger } from "@/shared/services/Logger"
-import { telemetryService } from "@services/telemetry"
 import type { ParsedDefinition } from "./index"
 
 export interface DaemonSymbol {
@@ -225,14 +224,6 @@ export class AnalyzerClient {
 		this.lastCrashTime = Date.now()
 		this.consecutiveFailures++
 
-		// Track telemetry for crash
-		telemetryService.recordEvent({
-			category: "analyzer",
-			action: "daemon_crash",
-			label: `consecutive_failures:${this.consecutiveFailures}`,
-			value: this.restartCount,
-		})
-
 		if (!this.shuttingDown) {
 			// Exponential backoff (no cap on attempts — long-running sessions need resilience)
 			const delay = Math.min(
@@ -256,12 +247,6 @@ export class AnalyzerClient {
 			this.fallback = false
 			this.startTime = Date.now()
 			Logger.info("AnalyzerClient", "Daemon restarted")
-
-			telemetryService.recordEvent({
-				category: "analyzer",
-				action: "daemon_restarted",
-				label: `attempt:${this.restartCount}`,
-			})
 
 			// Notify any callers waiting for the daemon to become ready
 			const resolvers = this.readyResolvers

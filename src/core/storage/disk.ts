@@ -11,7 +11,6 @@ import os from "os"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
-import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { syncWorker } from "@/shared/services/worker/sync"
 import { reconstructTaskHistory } from "../commands/reconstructTaskHistory"
@@ -443,8 +442,6 @@ export async function readTaskHistoryFromState(): Promise<HistoryItem[]> {
 		try {
 			return JSON.parse(contents)
 		} catch (parseError) {
-			telemetryService.captureExtensionStorageError(parseError, "parseError_attemptingRecovery")
-
 			const result = await reconstructTaskHistory(false)
 			if (result && result.reconstructedTasks > 0) {
 				// Read the reconstructed file
@@ -458,7 +455,6 @@ export async function readTaskHistoryFromState(): Promise<HistoryItem[]> {
 		}
 	} catch (error) {
 		// Filesystem or other errors - throw them for the caller to handle
-		telemetryService.captureExtensionStorageError(error, "readTaskHistoryFromState")
 		throw error
 	}
 }

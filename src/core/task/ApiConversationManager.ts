@@ -219,22 +219,10 @@ export class ApiConversationManager {
 			ts: Date.now(),
 		})
 
-		telemetryService.captureConversationTurnEvent(
-			this.dependencies.ulid,
-			params.providerId,
-			params.modelId,
-			"user",
-			params.mode as Mode,
-		)
 
 		// Capture task initialization timing telemetry for the first API request
 		if (params.isFirstRequest) {
 			const durationMs = Math.round(performance.now() - this.dependencies.taskInitializationStartTime)
-			telemetryService.captureTaskInitialization(
-				this.dependencies.ulid,
-				this.dependencies.taskId,
-				durationMs,
-			)
 		}
 
 		// since we sent off a placeholder api_req_started message to update the webview while waiting to actually start the API request (to load potential details for example), we need to update the text of that message

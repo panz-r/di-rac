@@ -1,7 +1,6 @@
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { findLast, parsePartialArrayString } from "@shared/array"
-import { telemetryService } from "@/services/telemetry"
 import { DiracPlanModeResponse } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { DiracDefaultTool } from "@/shared/tools"
@@ -110,7 +109,6 @@ export class PlanModeRespondHandler implements IToolHandler, IPartialBlockHandle
 		}
 		// Check if options contains the text response
 		if (optionsRaw && text && parsePartialArrayString(optionsRaw).includes(text)) {
-			telemetryService.captureOptionSelected(config.ulid, options.length, "plan")
 			// Valid option selected, don't show user message in UI
 			// Update last plan message with selected option
 			const lastPlanMessage = findLast(config.messageState.getDiracMessages(), (m: any) => m.ask === this.name)
@@ -124,7 +122,6 @@ export class PlanModeRespondHandler implements IToolHandler, IPartialBlockHandle
 		} else {
 			// Option not selected, send user feedback
 			if (text || (images && images.length > 0) || (planResponseFiles && planResponseFiles.length > 0)) {
-				telemetryService.captureOptionsIgnored(config.ulid, options.length, "plan")
 				await config.callbacks.say("user_feedback", text ?? "", images, planResponseFiles)
 			}
 		}
@@ -135,7 +132,6 @@ export class PlanModeRespondHandler implements IToolHandler, IPartialBlockHandle
 			fileContentString = await processFilesIntoText(planResponseFiles)
 		}
 
-		telemetryService.captureTaskCompleted(config.ulid, getTaskCompletionTelemetry(config))
 
 		// Handle mode switching response
 		if (config.taskState.didRespondToPlanAskBySwitchingMode) {
@@ -152,16 +148,6 @@ export class PlanModeRespondHandler implements IToolHandler, IPartialBlockHandle
 			const apiConfig = config.services.stateManager.getApiConfiguration()
 			const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-			telemetryService.captureToolUsage(
-				config.ulid,
-				this.name,
-				config.api.getModel().id,
-				provider,
-				false, // autoApproved - plan_mode_respond is never auto-approved
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
 
 
 			return result
@@ -170,16 +156,6 @@ export class PlanModeRespondHandler implements IToolHandler, IPartialBlockHandle
 		const apiConfig = config.services.stateManager.getApiConfiguration()
 		const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-		telemetryService.captureToolUsage(
-			config.ulid,
-			this.name,
-			config.api.getModel().id,
-			provider,
-			false, // autoApproved - plan_mode_respond is never auto-approved
-			true,
-			undefined,
-			block.isNativeToolCall,
-		)
 
 
 		return formatResponse.toolResult(`<user_message>\n${text}\n</user_message>`, images, fileContentString)

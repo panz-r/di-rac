@@ -3,7 +3,6 @@ import { showSystemNotification } from "@integrations/notifications"
 import { findLast, parsePartialArrayString } from "@shared/array"
 import { DiracAsk, DiracAskQuestion } from "@shared/ExtensionMessage"
 import { DiracDefaultTool } from "@shared/tools"
-import { telemetryService } from "@/services/telemetry"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
 import { ToolResponse } from "../.."
@@ -83,7 +82,6 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 
 		// Check if options contains the text response
 		if (optionsRaw && text && options.includes(text)) {
-			telemetryService.captureOptionSelected(config.ulid, options.length, "act")
 
 			// Valid option selected, update last followup message with selected option
 			const diracMessages = config.messageState.getDiracMessages()
@@ -97,7 +95,6 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 			}
 		} else {
 			// Option not selected, send user feedback
-			telemetryService.captureOptionsIgnored(config.ulid, options.length, "act")
 			await config.callbacks.say("user_feedback", text ?? "", images, followupFiles)
 		}
 
@@ -110,16 +107,6 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 		const apiConfig = config.services.stateManager.getApiConfiguration()
 		const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-		telemetryService.captureToolUsage(
-			config.ulid,
-			this.name,
-			config.api.getModel().id,
-			provider,
-			false, // autoApproved - ask_followup_question is never auto-approved
-			true,
-			undefined,
-			block.isNativeToolCall,
-		)
 
 
 		return formatResponse.toolResult(`<answer>\n${text}\n</answer>`, images, fileContentString)

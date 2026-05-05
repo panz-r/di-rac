@@ -51,8 +51,6 @@ import { ITerminalManager } from "@integrations/terminal/types"
 import { BrowserSession } from "@services/browser/BrowserSession"
 import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import { DiracError, DiracErrorType, ErrorService } from "@services/error"
-import { featureFlagsService } from "@services/feature-flags"
-import { telemetryService } from "@services/telemetry"
 import { ApiConfiguration } from "@shared/api"
 import { findLastIndex } from "@shared/array"
 import { DiracApiReqCancelReason, DiracApiReqInfo, DiracAsk, DiracSay, MultiCommandState } from "@shared/ExtensionMessage"
@@ -368,10 +366,8 @@ export class Task {
 
 		if (historyItem) {
 			// Open task from history
-			telemetryService.captureTaskRestarted(this.ulid, currentProvider, openAiCompatibleDomain)
 		} else {
 			// New task started
-			telemetryService.captureTaskCreated(this.ulid, currentProvider, openAiCompatibleDomain)
 		}
 
 		// Initialize command executor with config and callbacks
@@ -1342,14 +1338,6 @@ ${notice}`
 
 						await updateApiReqMsgFromMetrics()
 						await this.postStateToWebview()
-						await telemetryService.captureTokenUsage(
-							this.ulid,
-							usageInputTokens,
-							usageOutputTokens,
-							providerId,
-							model.id,
-							chunkOptions,
-						)
 					})
 					.catch((error) => {
 						Logger.debug(`[Task ${this.taskId}] Failed to process usage chunk side effects: ${error}`)
@@ -1404,15 +1392,6 @@ ${notice}`
 					ts: Date.now(),
 				})
 
-				telemetryService.captureConversationTurnEvent(
-					this.ulid,
-					providerId,
-					modelInfo.modelId,
-					"assistant",
-					modelInfo.mode,
-					undefined,
-					this.taskState.useNativeToolCalls,
-				)
 
 				this.taskState.didFinishAbortingStream = true
 			}

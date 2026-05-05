@@ -1,6 +1,5 @@
 import { BrowserAction, BrowserActionResult, browserActions, DiracSayBrowserAction } from "@shared/ExtensionMessage"
 import { DiracDefaultTool } from "@/shared/tools"
-import { telemetryService } from "@/services/telemetry"
 
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
@@ -202,16 +201,6 @@ export class BrowserToolHandler implements IFullyManagedTool {
 					const apiConfig = config.services.stateManager.getApiConfiguration()
 					const provider = (config.mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
-					telemetryService.captureToolUsage(
-						config.ulid,
-						this.name,
-						config.api.getModel().id,
-						provider,
-						false, // autoApproved - browser is never auto-approved
-						true,
-						undefined,
-						block.isNativeToolCall,
-					)
 
 
 
@@ -224,16 +213,6 @@ export class BrowserToolHandler implements IFullyManagedTool {
 					const apiConfigClose = config.services.stateManager.getApiConfiguration()
 					const providerClose = (config.mode === "plan" ? apiConfigClose.planModeApiProvider : apiConfigClose.actModeApiProvider) as string
 
-					telemetryService.captureToolUsage(
-						config.ulid,
-						this.name,
-						config.api.getModel().id,
-						providerClose,
-						false, // autoApproved - browser is never auto-approved
-						true,
-						undefined,
-						block.isNativeToolCall,
-					)
 
 
 

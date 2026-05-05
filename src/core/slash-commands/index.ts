@@ -1,7 +1,6 @@
 import type { ApiProviderInfo } from "@core/api"
 import { DiracRulesToggles } from "@shared/dirac-rules"
 import fs from "fs/promises"
-import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import {
 	condenseToolResponse,
@@ -113,7 +112,6 @@ export async function parseSlashCommands(
 				const processedText = commandReplacements[commandName] + textWithoutSlashCommand
 
 				// Track telemetry for builtin slash command usage
-				telemetryService.captureSlashCommandUsed(ulid, commandName, "builtin")
 
 				return { processedText: processedText, needsDiracrulesFileCheck: commandName === "newrule" }
 			}
@@ -152,7 +150,6 @@ export async function parseSlashCommands(
 						textWithoutSlashCommand
 
 					// Track telemetry for workflow command usage
-					telemetryService.captureSlashCommandUsed(ulid, commandName, "workflow")
 
 					return { processedText, needsDiracrulesFileCheck: false }
 				} catch (error) {
@@ -181,7 +178,6 @@ export async function parseSlashCommands(
 						processedText += textWithoutSlashCommand
 
 						// Track telemetry for skill command usage
-						telemetryService.captureSlashCommandUsed(ulid, commandName, "skill")
 
 						return { processedText, needsDiracrulesFileCheck: false }
 					}

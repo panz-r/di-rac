@@ -1,4 +1,3 @@
-import { telemetryService } from "@/services/telemetry"
 import type { TaskConfig } from "../types/TaskConfig"
 import { computeLineDiffStats } from "./lineDiffStats"
 
@@ -35,17 +34,6 @@ export function captureAccepted(args: {
 	filesMoved?: number
 }): void {
 	const diffStats = computeLineDiffStats(args.beforeContent, args.afterContent)
-	telemetryService.captureAiOutputAccepted({
-		ulid: args.ulid,
-		tool: args.tool,
-		provider: args.providerId,
-		model: args.modelId,
-		source: args.source,
-		...diffStats,
-		filesCreated: args.filesCreated,
-		filesDeleted: args.filesDeleted,
-		filesMoved: args.filesMoved,
-	})
 }
 
 /**
@@ -65,15 +53,4 @@ export function captureRejected(args: {
 	filesMoved?: number
 }): void {
 	const diffStats = computeLineDiffStats(args.beforeContent, args.afterContent)
-	telemetryService.captureAiOutputRejected({
-		ulid: args.ulid,
-		tool: args.tool,
-		provider: args.providerId,
-		model: args.modelId,
-		source: args.source,
-		...diffStats,
-		filesCreated: args.filesCreated,
-		filesDeleted: args.filesDeleted,
-		filesMoved: args.filesMoved,
-	})
 }

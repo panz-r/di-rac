@@ -23,7 +23,6 @@ import type { FolderLockWithRetryResult } from "@/core/locks/types"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import { getDistinctId } from "@/services/logging/distinctId"
-import { telemetryService } from "@/services/telemetry"
 import { getAxiosSettings } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
 import { Session } from "@/shared/services/Session"
@@ -34,7 +33,6 @@ import { ensureCacheDirectoryExists, GlobalFileNames } from "../storage/disk"
 import { type PersistenceErrorEvent, StateManager } from "../storage/StateManager"
 import { Task } from "../task"
 import { getOrDiscoverSkills } from "../context/instructions/user-instructions/skills"
-import { appendDiracStealthModels } from "./models/refreshOpenRouterModels"
 import { sendStateUpdate } from "./state/subscribeToState"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
 import { SkillMetadata } from "@/shared/skills"
@@ -269,17 +267,12 @@ export class Controller {
 		const wasOptedIn = previousSetting !== "disabled"
 		const isOptedIn = telemetrySetting !== "disabled"
 
-		// Capture opt-out event BEFORE updating (so it gets sent while telemetry is still enabled)
 		if (wasOptedIn && !isOptedIn) {
-			telemetryService.captureUserOptOut()
 		}
 
 		this.stateManager.setGlobalState("telemetrySetting", telemetrySetting)
-		telemetryService.updateTelemetryState(isOptedIn)
 
-		// Capture opt-in event AFTER updating (so telemetry is enabled to receive it)
 		if (!wasOptedIn && isOptedIn) {
-			telemetryService.captureUserOptIn()
 		}
 
 		await this.postStateToWebview()
@@ -314,8 +307,6 @@ export class Controller {
 		this.stateManager.setGlobalState("mode", modeToSwitchTo)
 		this.stateManager.setSessionOverride("mode", modeToSwitchTo)
 
-		// Capture mode switch telemetry | Capture regardless of if we know the taskId
-		telemetryService.captureModeSwitch(this.task?.ulid ?? "0", modeToSwitchTo)
 
 		// Update API handler with new mode (buildApiHandler now selects provider based on mode)
 		if (this.task) {
@@ -480,25 +471,6 @@ export class Controller {
 		}
 		// Dont send settingsButtonClicked because its bad ux if user is on welcome
 	}
-
-	// Task history
-
-	// Read OpenRouter models from disk cache
-	async readOpenRouterModels(): Promise<Record<string, ModelInfo> | undefined> {
-		const openRouterModelsFilePath = path.join(await ensureCacheDirectoryExists(), GlobalFileNames.openRouterModels)
-		try {
-			if (await fileExistsAtPath(openRouterModelsFilePath)) {
-				const fileContents = await fs.readFile(openRouterModelsFilePath, "utf8")
-				const models = JSON.parse(fileContents)
-				// Append stealth models
-				return appendDiracStealthModels(models)
-			}
-		} catch (error) {
-			Logger.error("Error reading cached OpenRouter models:", error)
-		}
-		return undefined
-	}
-
 
 	// Task history
 
