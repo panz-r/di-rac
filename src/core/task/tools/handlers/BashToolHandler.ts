@@ -106,34 +106,30 @@ export class BashToolHandler implements IFullyManagedTool {
 		const client = config.controller.getCommandClient()
 
 		if (!client || client.fallback) {
-			const resultObj = {
-				ok: false,
-				error: "DAEMON_UNAVAILABLE",
-				message: "Command daemon is not available. Ensure dirac-cmd binary exists in the dist directory."
-			}
 			config.taskState.consecutiveMistakeCount++
-			return formatResponse.toolResult(JSON.stringify(resultObj, null, 2))
+			return '<tool_error severity="unrecoverable">Command daemon is not available. Ensure dirac-cmd binary exists in the dist directory.</tool_error>'
 		}
 
 		const result = await client.execute(command)
 
-		const resultObj: Record<string, any> = {
-			ok: result.exit_code === 0,
-			exitCode: result.exit_code,
-			stdout: result.stdout || undefined,
-			stderr: result.stderr || undefined,
-			truncated: result.meta.truncated || undefined,
-			timedOut: result.meta.timed_out || undefined,
-			cwd: result.meta.cwd,
-			...(result.meta.blocked ? { blocked: result.meta.blocked } : {}),
-			...(result.meta.detected_patterns?.length ? { detected_patterns: result.meta.detected_patterns } : {}),
-			...(securityViolations.length > 0 ? { security_warnings: securityViolations } : {}),
-		}
-
 		config.taskState.consecutiveMistakeCount = result.exit_code === 0 ? 0 : config.taskState.consecutiveMistakeCount + 1
 
-		let output = JSON.stringify(resultObj, null, 2)
-		// Security violations already included in resultObj
+		// Build plain-text output so the envelope wraps it in pipe format
+		let output = `exit:${result.exit_code}`
+		if (result.stdout) output += `
+${result.stdout}`
+		if (result.stderr) output += `
+[stderr]
+${result.stderr}`
+		if (result.meta.truncated) output += `\n[truncated]`
+		if (result.meta.timed_out) output += `\n[timed out]`
+		if (result.meta.blocked) output += `
+[blocked: ${result.meta.blocked}]`
+		if (result.meta.detected_patterns?.length) output += `
+[detected_patterns: ${result.meta.detected_patterns.join(", ")}]`
+		if (securityViolations.length > 0) output += `
+[security: ${securityViolations.map(v => v.constraint).join(", ")}]`
+
 		return formatResponse.toolResult(output)
 	}
 }
