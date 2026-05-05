@@ -119,9 +119,7 @@ export class AnalyzerClient {
 		if (this.shuttingDown) return
 		if (this.process && !this.process.killed && !this.crashed) return
 		if (!fs.existsSync(this.binaryPath)) {
-			Logger.warn("AnalyzerClient", `Binary not found: ${this.binaryPath}`)
-			this.fallback = true
-			return
+			throw new Error(`Analyzer binary not found: ${this.binaryPath}. Cannot start without it.`)
 		}
 		try {
 			await this.spawnDaemon()
@@ -129,8 +127,7 @@ export class AnalyzerClient {
 			this.startTime = Date.now()
 			Logger.info("AnalyzerClient", "Daemon started")
 		} catch (e) {
-			Logger.warn("AnalyzerClient", `Failed to start daemon: ${e}`)
-			this.fallback = true
+			throw new Error(`Analyzer daemon failed to start: ${e}`)
 		}
 	}
 
@@ -316,6 +313,15 @@ export class AnalyzerClient {
 		return new Promise((resolve, reject) => {
 			if (this.shuttingDown) {
 				reject(new Error("Daemon shut down"))
+				return
+			}
+			if (this.fallback && (!this.process || this.process.killed)) {
+				// Daemon never started - attempt recovery
+				this.restart().then(() => {
+					this.doSend(payload, timeoutMs).then(resolve, reject)
+				}).catch(() => {
+					reject(new Error("Analyzer daemon unavailable"))
+				})
 				return
 			}
 			if (!this.process || this.process.killed || this.crashed) {

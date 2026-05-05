@@ -61,17 +61,14 @@ export class CommandClient {
 		if (this.shuttingDown) return
 		if (this.process && !this.process.killed && !this.crashed) return
 		if (!fs.existsSync(this.binaryPath)) {
-			Logger.warn("CommandClient", `Binary not found: ${this.binaryPath}`)
-			this.fallback = true
-			return
+			throw new Error(`Command daemon binary not found: ${this.binaryPath}. Cannot start without it.`)
 		}
 		try {
 			await this.spawnDaemon()
 			this.fallback = false
 			Logger.info("CommandClient", "Daemon started")
 		} catch (e) {
-			Logger.warn("CommandClient", `Failed to start daemon: ${e}`)
-			this.fallback = true
+			throw new Error(`Command daemon failed to start: ${e}`)
 		}
 	}
 
