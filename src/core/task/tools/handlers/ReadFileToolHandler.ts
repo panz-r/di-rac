@@ -260,6 +260,17 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 				absolutePaths.push(absolutePath)
 				displayPaths.push(displayPath)
 
+				// Skip anchoring for cached tool outputs — already formatted
+				if (relPath.replace("\\", "/").startsWith(".dirac/outputs/")) {
+					const rawContent = (await extractFileContent(absolutePath, false)).text
+					const currentHash = contentHash(rawContent)
+					results.push(`${header}[File Hash: ${currentHash}]\n${rawContent}`)
+					readFileResults.push({ path: displayPath, status: "success", label: "Read raw output" })
+					await config.services.fileContextTracker.trackFileContext(relPath, "read_tool")
+					anySucceeded = true
+					continue
+				}
+
 				// Determine workspace context for telemetry
 				const fallbackAbsolutePath = path.resolve(config.cwd, relPath)
 				workspaceContexts.push({

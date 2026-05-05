@@ -99,8 +99,7 @@ export class CliEnvServiceClient implements EnvServiceClientInterface {
 	async getHostVersion(_request: proto.dirac.EmptyRequest): Promise<proto.host.GetHostVersionResponse> {
 		return proto.host.GetHostVersionResponse.create({
 			version: CLI_VERSION,
-			platform: "Dirac CLI - Node.js",
-			diracType: "CLI",
+			platform: "di-vrr CLI - Node.js",
 		})
 	}
 
