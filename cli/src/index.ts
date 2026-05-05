@@ -760,7 +760,7 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 	})
 
 	// Set up output channel and Logger early so DiracEndpoint.initialize logs are captured
-	const outputChannel = window.createOutputChannel("Dirac CLI")
+	const outputChannel = window.createOutputChannel("di CLI")
 	const logToChannel = (message: string, record?: any) => outputChannel.appendLine(message, record)
 
 	// Configure the shared Logging class early to capture all initialization logs
@@ -1215,7 +1215,7 @@ async function runAuth(options: {
 // Setup CLI commands
 const program = new Command()
 
-program.name("dirac").description("Dirac CLI - AI coding assistant in your terminal").version(CLI_VERSION)
+program.name("dirac").description("di - AI coding agent in your terminal").version(CLI_VERSION)
 
 // Enable positional options to avoid conflicts between root and subcommand options with the same name
 program.enablePositionalOptions()

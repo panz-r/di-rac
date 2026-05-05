@@ -633,7 +633,7 @@ export const ConfigView: React.FC<ConfigViewProps> = ({
 	return (
 		<Box flexDirection="column">
 			<Text bold color="white">
-				⚙️ Dirac Configuration
+				⚙️ di Configuration
 			</Text>
 			<Text color="gray">{SEPARATOR}</Text>
 

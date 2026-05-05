@@ -58,7 +58,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 			// Check if Dirac web tools are enabled
 			const diracWebToolsEnabled = config.services.stateManager.getGlobalSettingsKey("diracWebToolsEnabled")
 			if (provider !== "dirac" || !diracWebToolsEnabled) {
-				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Dirac web tools are currently disabled.", "unrecoverable"))
+				return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Web tools are currently disabled.", "unrecoverable"))
 			}
 
 			// Validate required parameters

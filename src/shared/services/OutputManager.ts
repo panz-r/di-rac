@@ -30,7 +30,7 @@ export class OutputManager {
 	 * Save full output to disk if it exceeds the threshold.
 	 * Returns a reference string + preview for context, or null if below threshold.
 	 */
-	saveOutput(toolName: string, content: string, threshold = DEFAULT_THRESHOLD): { reference: string; preview: string } | null {
+	saveOutput(toolName: string, content: string, threshold = DEFAULT_THRESHOLD): { reference: string; preview: string; filename: string } | null {
 		if (content.length < threshold) {
 			return null
 		}
@@ -50,7 +50,7 @@ export class OutputManager {
 		const reference = `[Output saved to .dirac/outputs/${filename} (${sizeKB}KB)]`
 		const preview = content.slice(0, DEFAULT_PREVIEW_SIZE)
 
-		return { reference, preview }
+		return { reference, preview, filename }
 	}
 
 	/**
@@ -67,7 +67,7 @@ export class OutputManager {
 	enforceBudget(content: string, maxBytes: number, toolName = "tool"): string {
 		const result = this.saveOutput(toolName, content, maxBytes)
 		if (result) {
-			return `${result.reference}\n\n${result.preview}\n\n--- [Output truncated. Read full output with: head/tail/cat .dirac/outputs/${toolName}_*.txt] ---`
+			return `${result.reference}\n\n${result.preview}\n\n--- [Output truncated. Use bash to view: bash "cat .dirac/outputs/${result.filename}"] ---`
 		}
 		return content
 	}

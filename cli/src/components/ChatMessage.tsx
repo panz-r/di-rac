@@ -259,7 +259,7 @@ function getToolMainArg(_toolName: string, args: Record<string, unknown>): strin
 }
 
 /**
- * Render a tool call in webview style: "Dirac wants to read this file:" / "Dirac read this file:"
+ * Render a tool call in webview style: "di wants to read this file:" / "di read this file:"
  */
 const ToolCallText: React.FC<{
 	toolName: string
@@ -274,7 +274,7 @@ const ToolCallText: React.FC<{
 
 	return (
 		<Text>
-			<Text color={toolColor}>Dirac {actionText}</Text>
+			<Text color={toolColor}>di {actionText}</Text>
 			{mainArg && (
 				<Text>
 					<Text color={toolColor}>: </Text>
@@ -424,7 +424,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode, isStrea
 		const output = outputIndex === -1 ? "" : text.slice(outputIndex + COMMAND_OUTPUT_STRING.length).trim()
 
 		const isAsk = type === "ask"
-		const label = isAsk ? "Dirac wants to execute this command: " : "Dirac executed this command: "
+		const label = isAsk ? "di wants to execute this command: " : "di executed this command: "
 
 		return (
 			<Box flexDirection="column" marginBottom={1} width="100%">
@@ -473,7 +473,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode, isStrea
 			<Box flexDirection="column" marginBottom={1} width="100%">
 				<DotRow color="red">
 					<Text color="red" wrap="wrap">
-						Dirac tried to access <Text bold>{text}</Text> which is blocked by the .diracignore file.
+						di tried to access <Text bold>{text}</Text> which is blocked by the .diracignore file.
 					</Text>
 				</DotRow>
 			</Box>
@@ -596,7 +596,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode, isStrea
 			<Box flexDirection="column" marginBottom={1} width="100%">
 				<DotRow color={toolColor} flashing={partial === true && isStreaming}>
 					<Text>
-						<Text color={toolColor}>Dirac used the browser</Text>
+						<Text color={toolColor}>di used the browser</Text>
 						{text && (
 							<Text>
 								<Text color={toolColor}>: </Text>
@@ -694,7 +694,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode, isStrea
 			<Box flexDirection="column" marginBottom={1} width="100%">
 				<DotRow color={COLORS.primaryBlue}>
 					<Text bold color={COLORS.primaryBlue}>
-						Dirac wants to start a new task:
+						di wants to start a new task:
 					</Text>
 				</DotRow>
 				<Box flexDirection="column" paddingLeft={2}>
@@ -710,7 +710,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode, isStrea
 			<Box flexDirection="column" marginBottom={1} width="100%">
 				<DotRow color={COLORS.primaryBlue} flashing={partial === true && isStreaming}>
 					<Text bold color={COLORS.primaryBlue}>
-						Dirac wants to condense your conversation:
+						di wants to condense your conversation:
 					</Text>
 				</DotRow>
 				<Box flexDirection="column" paddingLeft={2}>
@@ -726,7 +726,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode, isStrea
 			<Box flexDirection="column" marginBottom={1} width="100%">
 				<DotRow color={COLORS.primaryBlue} flashing={partial === true && isStreaming}>
 					<Text bold color={COLORS.primaryBlue}>
-						Dirac wants to summarize the task:
+						di wants to summarize the task:
 					</Text>
 				</DotRow>
 				<Box flexDirection="column" paddingLeft={2}>
@@ -742,7 +742,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode, isStrea
 			<Box flexDirection="column" marginBottom={1} width="100%">
 				<DotRow color={COLORS.primaryBlue} flashing={partial === true && isStreaming}>
 					<Text bold color={COLORS.primaryBlue}>
-						Dirac wants to create a Github issue:
+						di wants to create a Github issue:
 					</Text>
 				</DotRow>
 				<Box flexDirection="column" paddingLeft={2}>

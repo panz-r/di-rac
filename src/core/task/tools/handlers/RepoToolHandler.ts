@@ -31,9 +31,11 @@ export class RepoToolHandler implements IFullyManagedTool {
 		const detail = (block.params.detail as string) || "summary"
 
 		if (detail === "files") {
-			// Delegate to list_files handler
+			// Delegate to list_files handler, defaulting paths to cwd root
+			if (!block.params.paths || (Array.isArray(block.params.paths) && block.params.paths.length === 0)) {
+				block = { ...block, params: { ...block.params, paths: ["."] } }
+			}
 			const handler = new ListFilesToolHandler(this.validator)
-			// If paths provided, set recursive based on whether specific dirs given
 			return handler.execute(config, block)
 		}
 

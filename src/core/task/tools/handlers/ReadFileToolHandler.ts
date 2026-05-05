@@ -428,7 +428,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 							}
 							
 							config.taskState.contentHashCache.set(cacheKey, currentHash)
-							return `[File Hash: ${currentHash}]\n${hashLines(fullContent)}`
+							return hashLines(fullContent)
 						}
 					}
 				}
