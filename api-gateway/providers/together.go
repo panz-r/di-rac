@@ -38,3 +38,15 @@ func (h *TogetherHandler) Stream(ctx context.Context, req *Request, callback fun
 }
 
 var _ Handler = (*TogetherHandler)(nil)
+
+func (h *TogetherHandler) Capabilities() *ProviderInfo {
+	return h.inner.Capabilities()
+}
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+func (h *TogetherHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ CapableHandler = (*TogetherHandler)(nil)
+var _ ModelLister = (*TogetherHandler)(nil)

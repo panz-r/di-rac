@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -473,3 +476,59 @@ func (h *AnthropicHandler) convertStreamEvent(event anthropic.MessageStreamEvent
 		return StreamChunk{Type: "unknown"}
 	}
 }
+
+// ListModels fetches available models from the Anthropic API.
+func (h *AnthropicHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	base := "https://api.anthropic.com"
+	if cfg.BaseURL != "" {
+		base = cfg.BaseURL
+	}
+	apiKey := cfg.APIKey
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", base+"/v1/models?limit=1000", nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("x-api-key", apiKey)
+	}
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Anthropic /models returned status %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"display_name,omitempty"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	entries := make([]ModelEntry, 0, len(result.Data))
+	for _, m := range result.Data {
+		entries = append(entries, ModelEntry{
+			ID:   m.ID,
+			Name: m.Name,
+		})
+	}
+	return entries, nil
+}
+
+var _ ModelLister = (*AnthropicHandler)(nil)

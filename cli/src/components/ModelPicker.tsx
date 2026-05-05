@@ -1,6 +1,6 @@
 /**
- * Model picker component for model selection
- * Supports static model lists, dynamic loading via the API gateway, and custom text entry.
+ * Model picker component for model selection.
+ * All providers use gateway model discovery. Static models are fallback.
  * Tab on a model field opens this picker; Enter opens inline text editor.
  */
 
@@ -15,8 +15,6 @@ import {
 	anthropicModels,
 	cerebrasDefaultModelId,
 	cerebrasModels,
-	claudeCodeDefaultModelId,
-	claudeCodeModels,
 	deepSeekDefaultModelId,
 	deepSeekModels,
 	fireworksDefaultModelId,
@@ -52,7 +50,6 @@ export const CUSTOM_MODEL_ID = "__custom__"
 export const providerModels: Record<string, { models: Record<string, unknown>; defaultId: string }> = {
 	anthropic: { models: anthropicModels, defaultId: anthropicDefaultModelId },
 	cerebras: { models: cerebrasModels, defaultId: cerebrasDefaultModelId },
-	"claude-code": { models: claudeCodeModels, defaultId: claudeCodeDefaultModelId },
 	deepseek: { models: deepSeekModels, defaultId: deepSeekDefaultModelId },
 	fireworks: { models: fireworksModels, defaultId: fireworksDefaultModelId },
 	groq: { models: groqModels, defaultId: groqDefaultModelId },
@@ -74,7 +71,14 @@ export function hasStaticModels(provider: string): boolean {
 }
 
 export function hasModelPicker(provider: string): boolean {
-	return hasStaticModels(provider) || provider === "openrouter" || provider === "opencode_go" || provider === "opencode_zen" || provider === "kilocode"
+	// All gateway-backed providers support model discovery.
+	// Static-only providers (claude-code) also have a picker.
+	return true
+}
+
+export function getModelList(provider: string): string[] {
+	if (!hasStaticModels(provider)) return []
+	return Object.keys(providerModels[provider].models)
 }
 
 export function getDefaultModelId(provider: string): string {
@@ -82,11 +86,6 @@ export function getDefaultModelId(provider: string): string {
 		return getOpenRouterDefaultModelId()
 	}
 	return providerModels[provider]?.defaultId || ""
-}
-
-export function getModelList(provider: string): string[] {
-	if (!hasStaticModels(provider)) return []
-	return Object.keys(providerModels[provider].models)
 }
 
 interface ModelPickerProps {
@@ -99,14 +98,13 @@ interface ModelPickerProps {
 
 export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, onChange, onSubmit, isActive = true }) => {
 	const [isLoading, setIsLoading] = useState(false)
-	const [dynamicModels, setDynamicModels] = useState<string[]>([])
+	const [gatewayModels, setGatewayModels] = useState<string[] | null>(null)
 
 	useEffect(() => {
-		if (provider !== "openrouter" && provider !== "opencode_go" && provider !== "opencode_zen" && provider !== "kilocode") return
-
+		// Check cache first
 		const cached = gatewayModelsCache.get(provider)
 		if (cached && cached.length > 0) {
-			setDynamicModels(cached)
+			setGatewayModels(cached)
 			return
 		}
 
@@ -121,7 +119,7 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, 
 				if (gwModels && gwModels.length > 0) {
 					const ids = gwModels.map((m) => m.id).sort((a, b) => a.localeCompare(b))
 					gatewayModelsCache.set(provider, ids)
-					setDynamicModels(ids)
+					setGatewayModels(ids)
 					return
 				}
 			} catch {
@@ -141,11 +139,17 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, 
 						if (filtered.length > 0) {
 							gatewayModelsCache.set(provider, filtered)
 						}
-						setDynamicModels(filtered)
+						setGatewayModels(filtered)
+						return
 					}
 				} catch {
 					// Both paths failed
 				}
+			}
+
+			// No gateway models — fall through to static list
+			if (!cancelled) {
+				setGatewayModels([])
 			}
 		}
 
@@ -157,11 +161,16 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, 
 	}, [provider, controller])
 
 	const modelList = useMemo(() => {
-		if (provider === "openrouter" || provider === "opencode_go" || provider === "opencode_zen" || provider === "kilocode") {
-			return dynamicModels
+		// Gateway models take priority
+		if (gatewayModels && gatewayModels.length > 0) {
+			return gatewayModels
 		}
-		return getModelList(provider)
-	}, [provider, dynamicModels])
+		// Fallback to static models
+		if (hasStaticModels(provider)) {
+			return Object.keys(providerModels[provider].models)
+		}
+		return gatewayModels || []
+	}, [provider, gatewayModels])
 
 	const items: SearchableListItem[] = useMemo(() => {
 		return modelList.map((modelId) => ({

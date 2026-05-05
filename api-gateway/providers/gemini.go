@@ -465,3 +465,39 @@ func mapJSONTypeToGemini(t string) genai.Type {
 		return genai.TypeObject
 	}
 }
+
+// ListModels fetches available Gemini models via the Google Genai SDK.
+func (h *GeminiHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	client, err := h.getClient(&Request{Provider: cfg})
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	iter := client.ListModels(ctx)
+	entries := make([]ModelEntry, 0)
+	for {
+		m, err := iter.Next()
+		if err != nil {
+			break
+		}
+		hasGen := false
+		for _, method := range m.SupportedGenerationMethods {
+			if method == "generateContent" {
+				hasGen = true
+				break
+			}
+		}
+		if hasGen {
+			entries = append(entries, ModelEntry{
+				ID:            m.Name,
+				Name:          m.DisplayName,
+				ContextWindow: int(m.InputTokenLimit),
+				MaxTokens:     int(m.OutputTokenLimit),
+			})
+		}
+	}
+	return entries, nil
+}
+
+var _ ModelLister = (*GeminiHandler)(nil)

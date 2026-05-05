@@ -350,3 +350,14 @@ func (h *ZAIHandler) ValidateSettings(settings map[string]interface{}, thinking 
 }
 
 var _ SettingsValidator = (*ZAIHandler)(nil)
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+// Uses cfg.BaseURL if set, otherwise the default international endpoint.
+func (h *ZAIHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.z.ai/api/paas/v4"
+	}
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ ModelLister = (*ZAIHandler)(nil)

@@ -235,3 +235,10 @@ func (h *MistralHandler) ValidateSettings(settings map[string]interface{}, think
 }
 
 var _ SettingsValidator = (*MistralHandler)(nil)
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+func (h *MistralHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ ModelLister = (*MistralHandler)(nil)

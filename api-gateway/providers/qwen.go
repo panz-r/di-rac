@@ -518,3 +518,16 @@ func (h *QwenHandler) convertResponse(resp map[string]interface{}) *SendResult {
 
 // Ensure QwenHandler satisfies Handler
 var _ Handler = (*QwenHandler)(nil)
+
+func (h *QwenHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	base := h.baseURL
+	if cfg.BaseURL != "" {
+		base = cfg.BaseURL
+	}
+	if base == "" {
+		base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+	}
+	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", h.apiKey)
+}
+
+var _ ModelLister = (*QwenHandler)(nil)

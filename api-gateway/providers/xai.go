@@ -385,3 +385,13 @@ func (h *XAIHandler) convertResponse(resp map[string]interface{}) *SendResult {
 
 // Ensure XAIHandler satisfies Handler
 var _ Handler = (*XAIHandler)(nil)
+
+func (h *XAIHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	base := h.baseURL
+	if cfg.BaseURL != "" {
+		base = cfg.BaseURL
+	}
+	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", h.apiKey)
+}
+
+var _ ModelLister = (*XAIHandler)(nil)

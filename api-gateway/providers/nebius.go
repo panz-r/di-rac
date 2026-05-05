@@ -38,3 +38,15 @@ func (h *NebiusHandler) Stream(ctx context.Context, req *Request, callback func(
 }
 
 var _ Handler = (*NebiusHandler)(nil)
+
+func (h *NebiusHandler) Capabilities() *ProviderInfo {
+	return h.inner.Capabilities()
+}
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+func (h *NebiusHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ CapableHandler = (*NebiusHandler)(nil)
+var _ ModelLister = (*NebiusHandler)(nil)

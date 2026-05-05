@@ -408,3 +408,13 @@ func (h *GroqHandler) convertResponse(resp map[string]interface{}) *SendResult {
 
 // Ensure GroqHandler satisfies Handler
 var _ Handler = (*GroqHandler)(nil)
+
+func (h *GroqHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	base := h.baseURL
+	if cfg.BaseURL != "" {
+		base = cfg.BaseURL
+	}
+	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", h.apiKey)
+}
+
+var _ ModelLister = (*GroqHandler)(nil)

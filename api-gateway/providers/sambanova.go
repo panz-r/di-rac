@@ -39,3 +39,15 @@ func (h *SambaNovaHandler) Stream(ctx context.Context, req *Request, callback fu
 }
 
 var _ Handler = (*SambaNovaHandler)(nil)
+
+func (h *SambaNovaHandler) Capabilities() *ProviderInfo {
+	return h.inner.Capabilities()
+}
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+func (h *SambaNovaHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ CapableHandler = (*SambaNovaHandler)(nil)
+var _ ModelLister = (*SambaNovaHandler)(nil)

@@ -54,3 +54,15 @@ func (h *MoonshotHandler) applyDefaults(req *Request) {
 }
 
 var _ Handler = (*MoonshotHandler)(nil)
+
+func (h *MoonshotHandler) Capabilities() *ProviderInfo {
+	return h.inner.Capabilities()
+}
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+func (h *MoonshotHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ CapableHandler = (*MoonshotHandler)(nil)
+var _ ModelLister = (*MoonshotHandler)(nil)

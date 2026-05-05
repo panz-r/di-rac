@@ -116,6 +116,5 @@ type SettingsValidator interface {
 // ModelLister is an optional interface for providers that can discover available models.
 // Providers that don't implement it return nil from Registry.ListModels.
 type ModelLister interface {
-	CapableHandler
 	ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error)
 }

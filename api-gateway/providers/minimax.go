@@ -411,3 +411,9 @@ func extractToolCallsFromResult(result *SendResult, counter *atomic.Int64) *Send
 	result.Content = newBlocks
 	return result
 }
+
+func (h *MiniMaxHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ ModelLister = (*MiniMaxHandler)(nil)

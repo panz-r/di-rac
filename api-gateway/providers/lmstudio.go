@@ -27,3 +27,15 @@ func (h *LmStudioHandler) Stream(ctx context.Context, req *Request, callback fun
 }
 
 var _ Handler = (*LmStudioHandler)(nil)
+
+func (h *LmStudioHandler) Capabilities() *ProviderInfo {
+	return h.inner.Capabilities()
+}
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+func (h *LmStudioHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ CapableHandler = (*LmStudioHandler)(nil)
+var _ ModelLister = (*LmStudioHandler)(nil)

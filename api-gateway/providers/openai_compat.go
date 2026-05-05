@@ -9,7 +9,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 )
 
 // OpenAICompatConfig configures an OpenAI-compatible provider.
@@ -203,9 +205,11 @@ func (h *openaiCompatHandler) buildRequest(req *Request, stream bool) map[string
 		tools := openaiBuildTools(req.Tools, h.config.StrictTools)
 		if len(tools) > 0 {
 			result["tools"] = tools
-			if h.config.ToolChoice != "" {
-				result["tool_choice"] = h.config.ToolChoice
+			choice := h.config.ToolChoice
+			if choice == "" {
+				choice = "auto"
 			}
+			result["tool_choice"] = choice
 		}
 	}
 
@@ -747,4 +751,67 @@ func extractContentString(raw json.RawMessage) string {
 		return strings.Join(texts, "")
 	}
 	return ""
+}
+
+// fetchModelsHTTP fetches models from any OpenAI-compatible /models endpoint.
+// The caller provides the full URL and optional API key with Bearer auth.
+func fetchModelsHTTP(ctx context.Context, modelsURL, apiKey string) ([]ModelEntry, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("/models returned status %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"name,omitempty"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	entries := make([]ModelEntry, 0, len(result.Data))
+	for _, m := range result.Data {
+		entries = append(entries, ModelEntry{
+			ID:   m.ID,
+			Name: m.Name,
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].ID < entries[j].ID
+	})
+	return entries, nil
+}
+
+// ListModels provides default model discovery for openaiCompatHandler-based providers.
+// It fetches from BaseURL + "/models" using the standard OpenAI response format.
+// Prefers cfg.BaseURL over the built-in default when set (e.g. LM Studio, NVIDIA NIM).
+func (h *openaiCompatHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	base := h.config.BaseURL
+	if cfg.BaseURL != "" {
+		base = cfg.BaseURL
+	}
+	url := strings.TrimRight(base, "/") + "/models"
+	return fetchModelsHTTP(ctx, url, cfg.APIKey)
 }

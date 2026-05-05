@@ -272,3 +272,10 @@ func coerceAssistantMessages(messages []map[string]interface{}) []map[string]int
 	}
 	return result
 }
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+func (h *DeepSeekHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ ModelLister = (*DeepSeekHandler)(nil)

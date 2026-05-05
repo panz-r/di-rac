@@ -27,3 +27,15 @@ func (h *HuggingFaceHandler) Stream(ctx context.Context, req *Request, callback 
 }
 
 var _ Handler = (*HuggingFaceHandler)(nil)
+
+func (h *HuggingFaceHandler) Capabilities() *ProviderInfo {
+	return h.inner.Capabilities()
+}
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+func (h *HuggingFaceHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ CapableHandler = (*HuggingFaceHandler)(nil)
+var _ ModelLister = (*HuggingFaceHandler)(nil)

@@ -206,3 +206,10 @@ func (h *NvidiaNimHandler) ValidateSettings(settings map[string]interface{}, thi
 }
 
 var _ SettingsValidator = (*NvidiaNimHandler)(nil)
+
+// ListModels delegates to the shared openaiCompatHandler model discovery.
+func (h *NvidiaNimHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ ModelLister = (*NvidiaNimHandler)(nil)

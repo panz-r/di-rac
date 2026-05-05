@@ -286,3 +286,13 @@ func stripThinkTags(content string) string {
 }
 
 var _ Handler = (*CerebrasHandler)(nil)
+
+func (h *CerebrasHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	base := h.baseURL
+	if cfg.BaseURL != "" {
+		base = cfg.BaseURL
+	}
+	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", h.apiKey)
+}
+
+var _ ModelLister = (*CerebrasHandler)(nil)
