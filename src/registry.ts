@@ -17,32 +17,7 @@ export const ExtensionRegistryInfo = {
  * @deprecated This interface is kept for backwards compatibility but host info
  * is now obtained dynamically from the HostBridge service.
  */
-export interface HostInfo {
-	/**
-	 * The name of the host platform, e.g VSCode, IntelliJ Ultimate Edition, etc.
-	 */
-	platform: string
-	/**
-	 * The operating system platform, e.g. linux, darwin, win32
-	 */
-	os: string
-	/**
-	 * The type of the dirac host environment, e.g. 'CLI', 'Standalone'
-	 */
-	ide: string
-	/**
-	 * A distinct ID for this installation of the host client
-	 */
-	distinctId: string
-	/**
-	 * The version of the host platform
-	 */
-	hostVersion?: string
-	/**
-	 * The version of Dirac that the host client is running
-	 */
-	extensionVersion: string
-}
+export interface HostInfo {}
 
 let hostInfo = null as HostInfo | null
 

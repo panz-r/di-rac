@@ -73,7 +73,6 @@ export async function initialize(storageContext: StorageContext): Promise<DiracW
 
 	// =============== External services ===============
 	await ErrorService.initialize()
-	// Legacy telemetry removed
 
 	// =============== Webview services ===============
 	const webview = HostProvider.get().createDiracWebviewProvider()

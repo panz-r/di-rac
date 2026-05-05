@@ -11,16 +11,6 @@ import type { ToolError } from "@shared/tool-response"
 const CONTEXT_WINDOW_WARNING_THRESHOLD_PERCENT = 50
 
 export const formatResponse = {
-	duplicateFileReadNotice: () =>
-		`[[NOTE] This file read has been removed to save space in the context window. Refer to the latest file read for the most up to date version of this file.]`,
-
-	contextTruncationNotice: () =>
-		`[NOTE] Some previous conversation history with the user has been removed to maintain optimal context window length. The initial user task has been retained for continuity, while intermediate conversation history has been removed. Keep this in mind as you continue assisting the user. Pay special attention to the user's latest messages.`,
-
-	processFirstUserMessageForTruncation: () => {
-		return "[Continue assisting the user!]"
-	},
-
 	condense: () =>
 		`The user has accepted the condensed conversation summary you generated. This summary covers important details of the historical conversation with the user which has been truncated.\n<explicit_instructions type="condense_response">It's crucial that you respond by ONLY asking the user what you should work on next. You should NOT take any initiative or make any assumptions about continuing with work. For example you should NOT suggest file changes or attempt to read any files.\nWhen asking the user what you should work on next, you can reference information in the summary which was just generated. However, you should NOT reference information outside of what's contained in the summary for this response. Keep this response CONCISE.</explicit_instructions>`,
 
