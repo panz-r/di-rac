@@ -12,6 +12,9 @@ Example: edit src/auth.ts --anchor "a3|def login():" --end-anchor "k7|  pass" --
 
 Chain: edit a.ts --anchor 'a3|...' --content '...'; edit b.ts --anchor 'b2|...' --content '...'
 Anchor format: hash|content (e.g. "a3|def foo():"). Use read --detail outline or symbols search to get anchors before editing. Response: OK | edits:N | tokens:N. Diffs follow. Verify with read after editing.
+Fails when: anchor not found (file changed since last read), end-anchor before start-anchor.
+If fails: re-read the file to get current anchors, then retry. Use --dry-run to preview changes.
+Don't use for: creating new files (use write), reading content (use read).
 Universal flags: --dry-run (edit temp file, show diff), --retry N.
 Typical: edit src/file.ts --anchor 'a3|def foo' --content 'new body'`,
 	parameters: [

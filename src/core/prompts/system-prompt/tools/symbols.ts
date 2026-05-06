@@ -17,6 +17,10 @@ Subcommands:
 Example: symbols search src/ --name AuthService --kind class
 
 Response: OK | matches:N | hint:Try --kind function/class or different name | tokens:N
+Fails when: no matches (typo, wrong --kind), file type not supported by tree-sitter.
+If fails: try without --kind, use search for text patterns, check file extension support.
+After results: use read --section <handle> to see full body. Use refs to find usages.
+Don't use for: text/regex patterns across files (use search), file overview (use repo).
 Universal flags: --dry-run (preview changes without applying), --retry N.
 Typical: symbols search src/ --name AuthService --kind class`,
 	parameters: [

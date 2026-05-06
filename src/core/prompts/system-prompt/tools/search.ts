@@ -13,6 +13,10 @@ Example: search --pattern "TODO|FIXME" --context 2
 Response: OK | matches:N | files:N | hint:refinements | tokens:N
 	Matches follow: file:line:context (one per line, max 30).
 Note: path is optional (defaults to cwd). --context 0-5. Results auto-truncated at 30 matches; narrow your pattern or path if partial.
+Fails when: 0 matches (pattern too specific or wrong path), 100+ matches (too broad).
+If fails: broaden pattern with .*, narrow with path, or try symbols search for code structure.
+After results: read the specific file:line from matches. If too many, narrow path or pattern.
+Don't use for: code navigation (use symbols), full-file content (use read).
 Typical: search --pattern 'TODO|FIXME'`,
 	parameters: [
 		{

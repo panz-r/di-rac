@@ -58,7 +58,7 @@ ${
 	All tools accept: --retry N (retry on error, up to 5, exponential backoff), --dry-run (preview without side effects). Mutation tools (bash, write, edit, symbols replace/rename) support deep --dry-run with diff output.
 
 	RESPONSE FORMAT
-	All tools use compact pipe-delimited text. First token is status: OK, ERROR, TRUNCATED, or EMPTY. Multi-line content follows the header; lines:N tells you how many.
+	Parse: split header on " | " — first token is status (OK/ERROR/TRUNCATED/EMPTY), rest are key:value. Multi-line content follows the header; lines:N tells you how many.
 	OK | tokens:N | lines:N | cached:yes | cumulative:N — hint: provides next-step guidance. Use cumulative to budget context.
 	ERROR | code | message | hint:guidance | tokens:N — common codes: blocked (safety), timeout (retry narrower), not_found (check path), permission_denied.
 	TRUNCATED | lines:N | hint:use --range/--detail | tokens:N — content follows, truncated.

@@ -26,6 +26,10 @@ Example: web_fetch https://example.com/docs --prompt "Summarize the main points 
 
 Response: OK | url:<url> | tokens:N
 	Analyzed content follows header line.
+Fails when: URL unreachable (timeout, DNS), content behind auth or JS rendering, invalid URL.
+If fails: check URL format, try web_search to find content elsewhere, use a different URL.
+After results: extract key facts. For follow-up, fetch related URLs or search for more context.
+Don't use for: searching multiple sources (use web_search), reading local files (use read).
 Typical: web_fetch https://example.com/docs --prompt "Summarize key points"`,
 	contextRequirements: (ctx) => ctx.diracWebToolsEnabled === true,
 	parameters: [
