@@ -16,6 +16,8 @@ Fails when: file >50KB auto-downgrades, binary files show minimal content, --sec
 If fails: for large files use --detail outline first then --section or --range. For binary use bash file.
 After results: if outline, use --section fn:Name to jump to body. If preview, use --range for specific lines.
 Don't use for: searching patterns (use search), code structure across files (use symbols or repo).
+Output example (outline): OK | detail:outline | handles:3 | lines:42 | tokens:120
+  fn:login (line 42)  fn:logout (line 58)  class:AuthService (line 10)
 Typical: read src/file.ts --detail outline`,
 	parameters: [
 		{

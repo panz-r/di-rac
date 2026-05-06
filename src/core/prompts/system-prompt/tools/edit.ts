@@ -15,6 +15,7 @@ Anchor format: hash|content (e.g. "a3|def foo():"). Use read --detail outline or
 Fails when: anchor not found (file changed since last read), end-anchor before start-anchor.
 If fails: re-read the file to get current anchors, then retry. Use --dry-run to preview changes.
 Don't use for: creating new files (use write), reading content (use read).
+Output example: OK | edits:1 | tokens:12  - a3|old line  + new line
 Universal flags: --dry-run (edit temp file, show diff), --retry N.
 Typical: edit src/file.ts --anchor 'a3|def foo' --content 'new body'`,
 	parameters: [

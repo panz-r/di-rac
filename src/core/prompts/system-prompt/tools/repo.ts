@@ -12,6 +12,8 @@ Example: repo --detail files src/
 
 Response: OK | files:N | lines:N | symbols:N | detail:<summary|files|skeleton> | tokens:N
 	Content follows. Structure varies by detail level.
+Don't use for: file content (use read), text search (use search), specific definitions (use symbols).
+Tip: use path filter to limit scope (e.g. repo --detail files src/auth/).
 Typical: repo --detail files src/`,
 	parameters: [
 		{

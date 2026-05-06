@@ -27,6 +27,8 @@ Example: web_search "React documentation" --allowed-domains '["react.dev", "gith
 
 Response: OK | results:N | query:<text> | tokens:N
 	Results follow: title | url | snippet (one per line, max 30).
+Don't use for: fetching specific URLs (use web_fetch), reading local files (use read).
+Tip: use --allowed-domains to narrow results and reduce noise.
 Typical: web_search "React documentation"`,
 	contextRequirements: (ctx) => ctx.diracWebToolsEnabled === true,
 	parameters: [

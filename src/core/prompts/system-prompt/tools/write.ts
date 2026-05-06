@@ -13,6 +13,7 @@ Example: write src/new.ts --content "export function foo() { ... }"
 Chain: write a.ts --content '...'; write b.ts --content '...'
 Response: OK | lines:N | path:<path> | tokens:N
 Universal flags: --dry-run (write to temp file, show diff), --retry N.
+Don't use for: editing existing files (use edit), reading content (use read).
 Typical: write src/new.ts --content 'export const X = ...'`,
 	parameters: [
 		{

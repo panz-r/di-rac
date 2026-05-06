@@ -21,6 +21,9 @@ Fails when: no matches (typo, wrong --kind), file type not supported by tree-sit
 If fails: try without --kind, use search for text patterns, check file extension support.
 After results: use read --section <handle> to see full body. Use refs to find usages.
 Don't use for: text/regex patterns across files (use search), file overview (use repo).
+Output example: OK | matches:2 | tokens:35
+  src/auth.ts:10 class AuthService (fn:login, fn:logout)
+  src/auth.ts:42 fn login()
 Universal flags: --dry-run (preview changes without applying), --retry N.
 Typical: symbols search src/ --name AuthService --kind class`,
 	parameters: [

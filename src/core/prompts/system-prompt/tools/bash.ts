@@ -15,6 +15,9 @@ Note: stdout truncated at ~8KB, stderr at ~2KB (head+tail preserved). Use redire
 Fails when: timeout (>30s default), exit≠0 (check stderr), output truncated, blocked:pattern.
 If fails: --timeout 60 for slow commands; redirect large output to file; blocked shows the pattern.
 After results: check exit code. If non-zero, read stderr. If truncated, redirect to file then read.
+Output example: exit:0
+  src/auth.ts  42 | a3|def login():
+  src/auth.ts  58 | k7|  return token
 Universal flags: --timeout N (max seconds to wait, default 30s, max 600s), --retry N (retry on error, max 5).
 Typical: bash 'npm test && npm run build'`,
 	parameters: [

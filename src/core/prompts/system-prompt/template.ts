@@ -66,8 +66,13 @@ ${
 
 	HINT examples by context:
 	After read --detail outline → "Use --section fn:Name to jump to symbol body"
-	After search 0 matches → "Broaden pattern or try different path"
+	After read truncated → "Use --range or redirect to file"
+	After search 0 matches → "Broaden pattern, try symbols, or check path"
+	After search many matches → "Narrow with path or --context 0"
+	After bash timed_out → "Use --timeout N for slow commands"
 	After bash blocked → "Check hint for allowed alternative"
+	After edit anchor not found → "Re-read file to get current anchors"
+	After symbols no matches → "Try without --kind or use search"
 
 	BUDGET AWARENESS
 The header line includes cumulative:N (total tokens so far) and tokens:N (this response). If cumulative approaches your context limit, prefer targeted reads (--detail skeleton, --range). Cached reads (cached:yes) cost nothing.
