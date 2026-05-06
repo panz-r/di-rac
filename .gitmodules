@@ -1,0 +1,3 @@
+[submodule "draugr"]
+	path = draugr
+	url = https://github.com/panz-r/draugr-repo
