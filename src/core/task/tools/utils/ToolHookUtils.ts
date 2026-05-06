@@ -1,3 +1,4 @@
+import { DiracDefaultTool } from "@/shared/tools"
 import type { ToolUse } from "@core/assistant-message"
 import { getHookModelContext } from "@core/hooks/hook-model-context"
 import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
@@ -27,7 +28,7 @@ export class ToolHookUtils {
 			return true // Hooks disabled, continue execution
 		}
 
-		if (block.name == "attempt_completion") {
+		if (block.name == DiracDefaultTool.ATTEMPT) {
 			return true // Skip this hook
 		}
 

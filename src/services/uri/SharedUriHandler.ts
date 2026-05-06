@@ -63,15 +63,6 @@ export class SharedUriHandler {
 					Logger.warn("SharedUriHandler: Missing code parameter for OpenRouter callback")
 					return false
 				}
-				case "/requesty": {
-					const code = query.get("code")
-					if (code) {
-						await controller.handleRequestyCallback(code)
-						return true
-					}
-					Logger.warn("SharedUriHandler: Missing code parameter for Requesty callback")
-					return false
-				}
 				case TASK_URI_PATH: {
 					const prompt = query.get("prompt")
 					if (prompt) {
@@ -79,15 +70,6 @@ export class SharedUriHandler {
 						return true
 					}
 					Logger.warn("SharedUriHandler: Missing prompt parameter for task creation")
-					return false
-				}
-				case "/hicap": {
-					const code = query.get("code")
-					if (code) {
-						await controller.handleHicapCallback(code)
-						return true
-					}
-					Logger.warn("SharedUriHandler: Missing code parameter for Hicap callback")
 					return false
 				}
 				default:

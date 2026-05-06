@@ -592,7 +592,7 @@ export class ToolExecutor {
 		}
 
 		// Skip for attempt_completion since it marks task completion, not actual work
-		if (!hooksEnabled || block.name === "attempt_completion") {
+		if (!hooksEnabled || block.name === DiracDefaultTool.ATTEMPT) {
 			return false
 		}
 
