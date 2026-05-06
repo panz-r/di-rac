@@ -12,7 +12,7 @@ Example: bash "npm test && npm run build"
 
 Response: OK | tokens:N | lines:N | exit:N followed by stdout. [stderr], [truncated], [timed out], [blocked:pattern], [security:violation] appended as applicable.
 Note: stdout truncated at ~8KB, stderr at ~2KB (head+tail preserved). Use redirects to file for larger output.
-Universal flags: --dry-run (preview without executing), --retry N (retry on error, max 5).
+Universal flags: --timeout N (max seconds to wait, default 30s, max 600s), --retry N (retry on error, max 5).
 Typical: bash 'npm test && npm run build'`,
 	parameters: [
 		{

@@ -19,12 +19,13 @@ static void send_error(const char *id, const char *code, const char *message) {
     jsonw_flush(&w);
 }
 
-static void send_ack(const char *id) {
+static void send_ack(const char *id, int timeout_ms) {
     struct jsonw w;
     jsonw_init(&w, stdout);
     jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "ack");
     jsonw_kv_str_or_null(&w, "id", id);
+    jsonw_kv_int(&w, "timeout_ms", timeout_ms);
     jsonw_object_close(&w);
     jsonw_flush(&w);
 }
@@ -106,6 +107,7 @@ static ExecChild *alloc_child(ExecChild *children, int max_children) {
 static void handle_execute(const char *line, int line_len,
                            struct proto_ctx *ctx) {
     char id[64] = "", command[PROTO_MAX_LINE] = "", session_id[128] = "";
+    int client_timeout_s = -1;
     struct json j;
     if (json_enter_object(&j, line, line_len) < 0) {
         send_error("", "INVALID_REQUEST", "Malformed JSON");
@@ -118,6 +120,7 @@ static void handle_execute(const char *line, int line_len,
         if (strcmp(key, "id") == 0) json_get_str(val, vlen, id, (int)sizeof(id));
         else if (strcmp(key, "command") == 0) json_get_str(val, vlen, command, (int)sizeof(command));
         else if (strcmp(key, "session_id") == 0) json_get_str(val, vlen, session_id, (int)sizeof(session_id));
+        else if (strcmp(key, "timeout") == 0) json_get_int(val, vlen, &client_timeout_s);
     }
 
     if (!command[0]) {
@@ -147,6 +150,18 @@ static void handle_execute(const char *line, int line_len,
     }
     session_cleanup_expired(ctx->sessions);
 
+    /* Compute effective timeout in ms */
+    int timeout_ms;
+    if (client_timeout_s > 0) {
+        /* Clamp client-requested timeout to [1s, 600s] */
+        int requested_ms = client_timeout_s * 1000;
+        if (requested_ms > 600000) requested_ms = 600000;
+        if (requested_ms < 1000) requested_ms = 1000;
+        timeout_ms = requested_ms;
+    } else {
+        timeout_ms = executor_is_long_running(command) ? 300000 : 30000;
+    }
+
     /* Fork the command */
     if (executor_fork(command, cwd, slot) < 0) {
         send_error(id, "FORK_FAILED", "Failed to start command");
@@ -155,9 +170,9 @@ static void handle_execute(const char *line, int line_len,
 
     /* Transfer id ownership to slot */
     slot->id = strdup(id);
-    slot->timeout_ms = executor_is_long_running(command) ? 300000 : 30000;
+    slot->timeout_ms = timeout_ms;
 
-    send_ack(id);
+    send_ack(id, timeout_ms);
 }
 
 /* ---- dispatch ---- */

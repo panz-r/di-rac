@@ -127,12 +127,14 @@ export class CommandClient {
 					const pending = this.pending.get(msg.id)
 					if (pending) {
 						if (msg.type === "ack") {
-							// Ack received \u2014 reset the timeout timer
+							// Ack received \u2014 set post-ack timer based on daemon timeout_ms
 							clearTimeout(pending.timer)
+							const daemonTimeout = typeof msg.timeout_ms === "number" ? msg.timeout_ms : 30000
+							const postAckMs = daemonTimeout + 15000 // buffer for process cleanup
 							pending.timer = setTimeout(() => {
 								this.pending.delete(msg.id)
 								pending.reject(new Error(`Request ${msg.id} timed out after no response following ack`))
-							}, 10000)
+							}, postAckMs)
 						} else if (msg.type === "error") {
 							clearTimeout(pending.timer)
 							this.pending.delete(msg.id)
@@ -251,11 +253,12 @@ export class CommandClient {
 		})
 	}
 
-	async execute(command: string, sessionId?: string): Promise<CommandResult> {
+	async execute(command: string, sessionId?: string, timeoutSeconds?: number): Promise<CommandResult> {
 		return this.send({
 			type: "execute",
 			command,
 			session_id: sessionId || undefined,
+			timeout: timeoutSeconds || undefined,
 		})
 	}
 

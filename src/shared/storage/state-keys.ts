@@ -184,6 +184,7 @@ const USER_SETTINGS_FIELDS = {
 	rewritePaths: { default: false as boolean },
 	bashToolEnabled: { default: false as boolean },
 	bashAutoApproveAll: { default: false as boolean },
+	bashMaxTimeout: { default: 120 as number }, // max seconds for --timeout flag
 	toolRecoveryEnabled: { default: false as boolean },
 	redirectTmpEnabled: { default: false as boolean },
 	customPrompt: { default: undefined as "compact" | undefined },

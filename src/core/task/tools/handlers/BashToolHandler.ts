@@ -99,7 +99,17 @@ export class BashToolHandler implements IFullyManagedTool {
 			return '<tool_error severity="unrecoverable">Command daemon is not available. Ensure dirac-cmd binary exists in the dist directory.</tool_error>'
 		}
 
-		const result = await client.execute(command)
+		// Parse --timeout N from command (stripped before execution)
+		let timeoutSeconds: number | undefined
+		let execCommand = command
+		const timeoutMatch = command.match(/\s--timeout\s+(\d+)\s*$/)
+		if (timeoutMatch) {
+			const maxTimeout = config.services.stateManager.getGlobalSettingsKey("bashMaxTimeout") || 120
+			timeoutSeconds = Math.min(parseInt(timeoutMatch[1], 10), maxTimeout)
+			execCommand = command.slice(0, timeoutMatch.index).trimEnd()
+		}
+
+		const result = await client.execute(execCommand, undefined, timeoutSeconds)
 
 		config.taskState.consecutiveMistakeCount = result.exit_code === 0 ? 0 : config.taskState.consecutiveMistakeCount + 1
 
