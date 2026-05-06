@@ -1,13 +1,7 @@
 package providers
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"strings"
 )
 
@@ -15,258 +9,185 @@ import (
 // Cerebras uses a text-only message format (no images/tool_calls in history).
 // Qwen reasoning models emit <think/> tags that are tracked for reasoning extraction.
 type CerebrasHandler struct {
-	httpClient *http.Client
-	baseURL    string
-	apiKey     string
+	inner *openaiCompatHandler
 }
 
 func NewCerebrasHandler() *CerebrasHandler {
+	const defaultModel = "zai-glm-4.7"
 	return &CerebrasHandler{
-		httpClient: &http.Client{},
-		baseURL:    "https://api.cerebras.ai/v1",
+		inner: newOpenAICompatHandler(OpenAICompatConfig{
+			BaseURL:      "https://api.cerebras.ai/v1",
+			DefaultModel: defaultModel,
+			NoStreamOptions: true,
+			ExtraHeaders: map[string]string{
+				"X-Cerebras-3rd-Party-Integration": "dirac",
+			},
+			Capabilities: &ProviderInfo{
+				ID:           "cerebras",
+				DefaultModel: defaultModel,
+				Features: ProviderFeatures{
+					SupportsThinking:        false,
+					SupportsReasoningEffort: false,
+					SupportsTools:           true,
+					SupportsImages:          false,
+					SupportsPromptCache:     false,
+					SupportsStreaming:       true,
+				},
+				Settings: []ProviderSetting{
+					{
+						Key:         "temperature",
+						Label:       "Temperature",
+						Type:        SettingSlider,
+						Min:         fPtr(0),
+						Max:         fPtr(2),
+						Step:        fPtr(0.01),
+						Default:     0,
+						Group:       "sampling",
+						Description: "Controls randomness (0 = deterministic, 2 = creative).",
+						ValidRange:  "0 – 2",
+					},
+					{
+						Key:         "top_p",
+						Label:       "Top P",
+						Type:        SettingSlider,
+						Min:         fPtr(0),
+						Max:         fPtr(1),
+						Step:        fPtr(0.01),
+						Default:     1.0,
+						Group:       "sampling",
+						Description: "Nucleus sampling threshold.",
+						ValidRange:  "0 – 1",
+					},
+					{
+						Key:         "max_tokens",
+						Label:       "Max Tokens",
+						Type:        SettingNumber,
+						Min:         fPtr(1),
+						Default:     16384,
+						Group:       "sampling",
+						Description: "Maximum number of tokens to generate.",
+					},
+				},
+			},
+			ModifyMessages: func(messages []map[string]interface{}, req *Request) []map[string]interface{} {
+				return cerebrasConvertTextMessages(messages, req)
+			},
+			ModifyRequest: func(req *Request, result map[string]interface{}) {
+				// Cerebras default max_tokens
+				if req.MaxTokens == 0 {
+					result["max_tokens"] = 16384
+				}
+			},
+		}),
 	}
-}
-
-func (h *CerebrasHandler) getConfig(req *Request) (baseURL, apiKey string) {
-	baseURL = h.baseURL
-	apiKey = h.apiKey
-	if req.Provider.BaseURL != "" {
-		baseURL = req.Provider.BaseURL
-	}
-	if req.Provider.APIKey != "" {
-		apiKey = req.Provider.APIKey
-	}
-	return
 }
 
 func (h *CerebrasHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
-	baseURL, apiKey := h.getConfig(req)
-	payload := h.buildRequest(req, false)
-
-	reqBody, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/chat/completions", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	h.setHeaders(httpReq, apiKey)
-
-	resp, err := h.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var raw map[string]interface{}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return openaiConvertResponse(raw, nil), nil
+	return h.inner.Send(ctx, req)
 }
 
+// Stream delegates to inner but wraps the callback to intercept <think/> tags
+// for reasoning model tracking. Qwen reasoning models emit <think/> tags in
+// content that need to be classified as Thinking deltas rather than TextDelta.
 func (h *CerebrasHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	baseURL, apiKey := h.getConfig(req)
-	payload := h.buildRequest(req, true)
-
-	reqBody, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/chat/completions", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	h.setHeaders(httpReq, apiKey)
-	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("Cache-Control", "no-cache")
-
-	resp, err := h.httpClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	return h.parseSSEStream(resp.Body, callback, req)
-}
-
-func (h *CerebrasHandler) setHeaders(httpReq *http.Request, apiKey string) {
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Cerebras-3rd-Party-Integration", "dirac")
-	if apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-}
-
-func (h *CerebrasHandler) buildRequest(req *Request, stream bool) map[string]interface{} {
-	model := req.Provider.Model
-	if req.ModelOverride != "" {
-		model = req.ModelOverride
-	}
-	if model == "" {
-		model = "zai-glm-4.7"
-	}
-
-	// Cerebras uses text-only messages (no images, no tool_calls)
-	messages := h.convertTextMessages(req)
-
-	result := map[string]interface{}{
-		"model":       model,
-		"messages":    messages,
-		"temperature": 0,
-		"max_tokens":  16384,
-	}
-
-	if stream {
-		result["stream"] = true
-	}
-
-	return result
-}
-
-// convertTextMessages produces simple {role, content} string messages.
-// Images are replaced with "[Image content not supported in Cerebras]".
-// Thinking tags are stripped from assistant messages for reasoning models.
-func (h *CerebrasHandler) convertTextMessages(req *Request) []map[string]interface{} {
-	var messages []map[string]interface{}
-	isReasoning := strings.Contains(strings.ToLower(req.Provider.Model), "qwen")
-
-	if req.System != "" {
-		messages = append(messages, map[string]interface{}{
-			"role":    "system",
-			"content": req.System,
-		})
-	}
-
-	for _, msg := range req.Messages {
-		var content string
-		if len(msg.ContentBlocks) > 0 {
-			var parts []string
-			for _, block := range msg.ContentBlocks {
-				switch block.Type {
-				case "text":
-					parts = append(parts, block.Text)
-				case "image":
-					parts = append(parts, "[Image content not supported in Cerebras]")
-				}
-			}
-			content = strings.Join(parts, "\n")
-		} else {
-			content = msg.Content
-		}
-
-		// Strip <think/> tags from assistant messages for reasoning models
-		if msg.Role == "assistant" && isReasoning {
-			content = stripThinkTags(content)
-		}
-
-		messages = append(messages, map[string]interface{}{
-			"role":    msg.Role,
-			"content": content,
-		})
-	}
-
-	return messages
-}
-
-func (h *CerebrasHandler) parseSSEStream(body io.Reader, callback func(StreamChunk) error, req *Request) error {
 	model := strings.ToLower(req.Provider.Model)
 	if req.ModelOverride != "" {
 		model = strings.ToLower(req.ModelOverride)
 	}
 	isReasoning := strings.Contains(model, "qwen")
 
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	if !isReasoning {
+		return h.inner.Stream(ctx, req, callback)
+	}
 
-	var reasoning *strings.Builder
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			callback(StreamChunk{Type: "complete"})
-			return nil
-		}
-
-		var chunk struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-				FinishReason *string `json:"finish_reason"`
-			} `json:"choices"`
-			Usage struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-		}
-
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
-		}
-
-		if len(chunk.Choices) == 0 {
-			if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-				callback(StreamChunk{Type: "stop", Usage: &Usage{
-					InputTokens:  chunk.Usage.PromptTokens,
-					OutputTokens: chunk.Usage.CompletionTokens,
-				}})
-			}
-			continue
-		}
-
-		choice := chunk.Choices[0]
-		content := choice.Delta.Content
-
-		if isReasoning && content != "" {
-			// Track <think/> blocks for reasoning models
-			if reasoning != nil || strings.Contains(content, "<think") {
-				if reasoning == nil {
-					reasoning = &strings.Builder{}
+	// Wrap callback for <think/> tag tracking on reasoning models
+	var reasoningAccum *strings.Builder
+	return h.inner.Stream(ctx, req, func(chunk StreamChunk) error {
+		if chunk.Type == "delta" && chunk.TextDelta != "" && chunk.Thinking == "" {
+			content := chunk.TextDelta
+			if reasoningAccum != nil || strings.Contains(content, "<think") {
+				if reasoningAccum == nil {
+					reasoningAccum = &strings.Builder{}
 				}
-				reasoning.WriteString(content)
+				reasoningAccum.WriteString(content)
 				clean := strings.ReplaceAll(content, "<think", "")
 				clean = strings.ReplaceAll(clean, "</think", "")
 				clean = strings.TrimSpace(clean)
 				if clean != "" {
-					callback(StreamChunk{Type: "delta", Thinking: clean})
+					return callback(StreamChunk{Type: "delta", Thinking: clean})
 				}
-				if strings.Contains(reasoning.String(), "</think") {
-					reasoning = nil
-				}
-			} else {
-				callback(StreamChunk{Type: "delta", TextDelta: content})
+				return nil
 			}
-		} else if content != "" {
-			callback(StreamChunk{Type: "delta", TextDelta: content})
+		}
+		return callback(chunk)
+	})
+}
+
+func (h *CerebrasHandler) Capabilities() *ProviderInfo {
+	return h.inner.Capabilities()
+}
+
+var _ Handler = (*CerebrasHandler)(nil)
+var _ CapableHandler = (*CerebrasHandler)(nil)
+
+func (h *CerebrasHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
+	return h.inner.ListModels(ctx, cfg)
+}
+
+var _ ModelLister = (*CerebrasHandler)(nil)
+
+// cerebrasConvertTextMessages flattens OpenAI-format messages to text-only.
+// Images in content arrays are replaced with "[Image content not supported in Cerebras]".
+// For reasoning models (Qwen), <think/> tags are stripped from assistant messages.
+func cerebrasConvertTextMessages(messages []map[string]interface{}, req *Request) []map[string]interface{} {
+	isReasoning := strings.Contains(strings.ToLower(req.Provider.Model), "qwen")
+
+	result := make([]map[string]interface{}, 0, len(messages))
+	for _, msg := range messages {
+		role, _ := msg["role"].(string)
+
+		// Flatten content to a plain string
+		var content string
+		switch v := msg["content"].(type) {
+		case string:
+			content = v
+		case []interface{}:
+			var parts []string
+			for _, item := range v {
+				if part, ok := item.(map[string]interface{}); ok {
+					switch part["type"] {
+					case "text":
+						if t, ok := part["text"].(string); ok {
+							parts = append(parts, t)
+						}
+					case "image_url":
+						parts = append(parts, "[Image content not supported in Cerebras]")
+					}
+				}
+			}
+			content = strings.Join(parts, "\n")
 		}
 
-		if choice.FinishReason != nil {
-			callback(StreamChunk{Type: "stop", FinishReason: *choice.FinishReason, Usage: &Usage{}})
+		// Strip <think/> tags from assistant messages for reasoning models
+		if role == "assistant" && isReasoning {
+			content = stripThinkTags(content)
 		}
+
+		m := map[string]interface{}{
+			"role": role,
+		}
+		if content != "" || role != "assistant" {
+			m["content"] = content
+		}
+		// Preserve tool_calls, tool_call_id, etc. for non-text fields
+		for k, v := range msg {
+			if k != "content" && k != "role" {
+				m[k] = v
+			}
+		}
+		result = append(result, m)
 	}
-
-	return nil
+	return result
 }
 
 // stripThinkTags removes <think...</think...> blocks from content.
@@ -284,67 +205,3 @@ func stripThinkTags(content string) string {
 	}
 	return strings.TrimSpace(content)
 }
-
-var _ Handler = (*CerebrasHandler)(nil)
-
-func (h *CerebrasHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
-	base := h.baseURL
-	if cfg.BaseURL != "" {
-		base = cfg.BaseURL
-	}
-	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", h.apiKey)
-}
-
-func (h *CerebrasHandler) Capabilities() *ProviderInfo {
-	return &ProviderInfo{
-		ID:           "cerebras",
-		DefaultModel: "zai-glm-4.7",
-		Features: ProviderFeatures{
-			SupportsThinking:        false,
-			SupportsReasoningEffort: false,
-			SupportsTools:           true,
-			SupportsImages:          false,
-			SupportsPromptCache:     false,
-			SupportsStreaming:       true,
-		},
-		Settings: []ProviderSetting{
-			{
-				Key:         "temperature",
-				Label:       "Temperature",
-				Type:        SettingSlider,
-				Min:         fPtr(0),
-				Max:         fPtr(2),
-				Step:        fPtr(0.01),
-				Default:     0,
-				Group:       "sampling",
-				Description: "Controls randomness (0 = deterministic, 2 = creative).",
-				ValidRange:  "0 – 2",
-			},
-			{
-				Key:         "top_p",
-				Label:       "Top P",
-				Type:        SettingSlider,
-				Min:         fPtr(0),
-				Max:         fPtr(1),
-				Step:        fPtr(0.01),
-				Default:     1.0,
-				Group:       "sampling",
-				Description: "Nucleus sampling threshold.",
-				ValidRange:  "0 – 1",
-			},
-			{
-				Key:         "max_tokens",
-				Label:       "Max Tokens",
-				Type:        SettingNumber,
-				Min:         fPtr(1),
-				Default:     16384,
-				Group:       "sampling",
-				Description: "Maximum number of tokens to generate.",
-			},
-		},
-	}
-}
-
-var _ CapableHandler = (*CerebrasHandler)(nil)
-
-var _ ModelLister = (*CerebrasHandler)(nil)

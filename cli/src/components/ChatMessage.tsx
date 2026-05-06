@@ -182,7 +182,7 @@ function renderToken(token: Token, key: number, color?: string): React.ReactNode
  * each token to the appropriate Ink component.
  */
 const MarkdownText: React.FC<{ children: string; color?: string }> = ({ children, color }) => {
-	const safe = typeof children === "string" ? children : children != null ? String(children) : ""
+	const safe = typeof children === "string" ? children : String(children ?? "")
 	const tokens = React.useMemo(() => lexer(safe), [safe])
 	return <Box flexDirection="column">{renderTokens(tokens, color)}</Box>
 }
@@ -309,8 +309,7 @@ function formatToolResult(result: string, maxLines = 5): string[] {
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode, isStreaming }) => {
 	const { type, ask, say, partial } = message
-	// Guard: ensure text is always a string (non-string values crash Ink's <Text> component)
-	const text = typeof message.text === "string" ? message.text : message.text != null ? String(message.text) : undefined
+	const text = typeof message.text === "string" ? message.text : message.text != null ? String(message.text) : ""
 	const toolColor = mode === "plan" ? "yellow" : COLORS.primaryBlue
 	const { columns: terminalWidth } = useTerminalSize()
 

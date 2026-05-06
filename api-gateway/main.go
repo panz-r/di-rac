@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -372,7 +371,71 @@ func (s *Server) handleConnection(conn net.Conn) {
 				})
 				continue
 			}
+			// Enrich with default capabilities from provider's ProviderInfo
+			enrichModelCapabilities(models, s.providerRegistry.GetCapabilities(modelsReq.Provider))
+
 			body, _ := json.Marshal(map[string]interface{}{"models": models})
+			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			continue
+		}
+
+		// Handle model-info (single model lookup)
+		if typeCheck.Type == "model-info" {
+			var modelInfoReq struct {
+				Provider string                  `json:"provider"`
+				Model    string                  `json:"model"`
+				Config   providers.ProviderConfig `json:"config,omitempty"`
+			}
+			if err := json.Unmarshal(rawMsg, &modelInfoReq); err != nil || modelInfoReq.Provider == "" || modelInfoReq.Model == "" {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 400,
+					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: "model-info requires 'provider' and 'model' fields"},
+				})
+				continue
+			}
+
+			cfg := modelInfoReq.Config
+			cfg.ID = modelInfoReq.Provider
+			s.configMu.RLock()
+			if stored, ok := s.providerConfigs[modelInfoReq.Provider]; ok {
+				if cfg.APIKey == "" {
+					cfg.APIKey = stored.APIKey
+				}
+				if cfg.BaseURL == "" {
+					cfg.BaseURL = stored.BaseURL
+				}
+			}
+			s.configMu.RUnlock()
+
+			models, err := s.providerRegistry.ListModels(s.ctx, modelInfoReq.Provider, cfg)
+			if err != nil {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 500,
+					Error:  &ErrorDetail{Code: "FETCH_ERROR", Message: fmt.Sprintf("Failed to fetch models: %v", err)},
+				})
+				continue
+			}
+
+			var found *providers.ModelEntry
+			for i := range models {
+				if models[i].ID == modelInfoReq.Model {
+					found = &models[i]
+					break
+				}
+			}
+			if found == nil {
+				encoder.Encode(&Response{
+					ID:     0,
+					Status: 404,
+					Error:  &ErrorDetail{Code: "NOT_FOUND", Message: fmt.Sprintf("Model '%s' not found for provider '%s'", modelInfoReq.Model, modelInfoReq.Provider)},
+				})
+				continue
+			}
+
+			enrichModelCapabilities([]providers.ModelEntry{*found}, s.providerRegistry.GetCapabilities(modelInfoReq.Provider))
+			body, _ := json.Marshal(map[string]interface{}{"model": found})
 			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
 			continue
 		}
@@ -424,7 +487,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 }
 
-// mergeProviderConfig fills in missing provider config from stored set-provider configs
+// mergeProviderConfig fills in missing fields from the stored set-provider config.
+// Precedence: request fields > stored config > handler defaults (resolved by the handler itself).
 func (s *Server) mergeProviderConfig(req *Request) {
 	if req.Provider.ID == "" {
 		return
@@ -449,6 +513,28 @@ func (s *Server) mergeProviderConfig(req *Request) {
 	}
 	if req.Provider.ProjectID == "" {
 		req.Provider.ProjectID = stored.ProjectID
+	}
+}
+
+// enrichModelCapabilities fills in missing capability fields on ModelEntry
+// using the provider's declared features as defaults. Per-model overrides
+// (e.g., from a static table or API metadata) take precedence since we only
+// set fields that are still at zero values.
+func enrichModelCapabilities(models []providers.ModelEntry, info *providers.ProviderInfo) {
+	if info == nil {
+		return
+	}
+	for i := range models {
+		m := &models[i]
+		if !m.SupportsImages && info.Features.SupportsImages {
+			m.SupportsImages = true
+		}
+		if !m.SupportsPromptCache && info.Features.SupportsPromptCache {
+			m.SupportsPromptCache = true
+		}
+		if !m.SupportsThinking && info.Features.SupportsThinking {
+			m.SupportsThinking = true
+		}
 	}
 }
 
@@ -523,7 +609,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 			encoder.Encode(&Response{
 				ID:     id,
 				Status: 500,
-				Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error()},
+				Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error(), Retriable: providers.IsRetriable(streamErr)},
 			})
 			return
 		case <-ctx.Done():
@@ -546,7 +632,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 				encoder.Encode(&Response{
 					ID:     id,
 					Status: 500,
-					Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error()},
+					Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error(), Retriable: providers.IsRetriable(streamErr)},
 				})
 				return
 			default:
@@ -567,7 +653,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 						encoder.Encode(&Response{
 							ID:     id,
 							Status: 500,
-							Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error()},
+							Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error(), Retriable: providers.IsRetriable(streamErr)},
 						})
 						return
 					default:
@@ -624,7 +710,7 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 
 		lastErr = err
 
-		if !isRetriableError(err) {
+		if !providers.IsRetriable(err) {
 			log.Printf("Non-retriable error, giving up: %v", err)
 			break
 		}
@@ -639,17 +725,6 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 			Retriable: true,
 		},
 	}
-}
-
-func isRetriableError(err error) bool {
-	msg := err.Error()
-	if strings.Contains(msg, "429") || strings.Contains(msg, "rate_limit") || strings.Contains(msg, "rate limit") {
-		return true
-	}
-	if strings.Contains(msg, "500") || strings.Contains(msg, "502") || strings.Contains(msg, "503") || strings.Contains(msg, "504") {
-		return true
-	}
-	return false
 }
 
 func mustMarshal(v interface{}) json.RawMessage {

@@ -136,6 +136,50 @@ export class ApiGatewayHandler implements ApiHandler {
 		this.socketPath = process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
 	}
 
+	private async *connectAndStreamWithRetry(request: GatewayRequest): AsyncGenerator<GatewayResponse> {
+		const maxRetries = 3
+		let lastError: Error | null = null
+		for (let attempt = 0; attempt < maxRetries; attempt++) {
+			if (this.abortController?.signal.aborted) return
+			let streamStarted = false
+			try {
+				const stream = this.connectAndStream(request)
+				for await (const response of stream) {
+					if (this.abortController?.signal.aborted) return
+					if (response.error) {
+						const retriable = response.error.retriable
+						Logger.error("[Gateway:stream]", `Error from gateway: status=${response.status} code=${response.error.code} msg=${response.error.message} retriable=${retriable} attempt=${attempt + 1}/${maxRetries}`)
+						const err = new Error(response.error.message)
+						;(err as any).status = response.status
+						;(err as any).retriable = retriable
+						if (retriable && attempt < maxRetries - 1 && !streamStarted) {
+							lastError = err
+							break // retry
+						}
+						throw err
+					}
+					streamStarted = true
+					yield response
+					if (response.body?.type === "complete") return
+				}
+				if (!streamStarted && attempt < maxRetries - 1) {
+					lastError = lastError || new Error("Empty response from gateway")
+					continue // retry
+				}
+				return
+			} catch (err: any) {
+				if ((err as any).retriable && attempt < maxRetries - 1) {
+					lastError = err
+					const delay = Math.min(10000, 1000 * Math.pow(2, attempt))
+					await new Promise((resolve) => setTimeout(resolve, delay))
+					continue
+				}
+				throw err
+			}
+		}
+		throw lastError || new Error("Gateway request failed after retries")
+	}
+
 	async *createMessage(
 		systemPrompt: string,
 		messages: DiracStorageMessage[],
@@ -185,18 +229,10 @@ export class ApiGatewayHandler implements ApiHandler {
 			{ id: string; name: string; inputJson: string; callId?: string; streamed?: boolean }
 		>()
 
-		const stream = this.connectAndStream(request)
+		const stream = this.connectAndStreamWithRetry(request)
 
 		for await (const response of stream) {
 			if (this.abortController?.signal.aborted) return
-
-			if (response.error) {
-				Logger.error("[Gateway:stream]", `Error from gateway: status=${response.status} code=${response.error.code} msg=${response.error.message} retriable=${response.error.retriable}`)
-				const err = new Error(response.error.message)
-				;(err as any).status = response.status
-				;(err as any).retriable = response.error.retriable
-				throw err
-			}
 
 			const chunk = response.body
 			if (!chunk) continue
@@ -705,6 +741,21 @@ export function queryModels(
 		provider: providerId,
 		config: config || {},
 	}).then((r) => r?.models ?? null)
+}
+
+export function queryModelInfo(
+	providerId: string,
+	modelId: string,
+	config?: { api_key?: string; base_url?: string },
+	socketPath?: string,
+): Promise<GatewayModelEntry | null> {
+	const sock = socketPath || process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
+	return gatewayQuery<{ model: GatewayModelEntry }>(sock, {
+		type: "model-info",
+		provider: providerId,
+		model: modelId,
+		config: config || {},
+	}).then((r) => r?.model ?? null)
 }
 
 export function createApiGatewayHandler(

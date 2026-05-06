@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -215,6 +216,40 @@ type ProviderError struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 	Code    int    `json:"code,omitempty"`
+}
+
+// ProviderAPIError is a structured error from a provider HTTP API call.
+// Providers should return this for HTTP-level errors so the gateway can
+// make informed retry decisions via IsRetriable.
+type ProviderAPIError struct {
+	StatusCode int
+	Message    string
+	Retriable  bool
+}
+
+func (e *ProviderAPIError) Error() string {
+	return e.Message
+}
+
+// IsRetriable checks whether an error should be retried.
+// Recognizes ProviderAPIError by type; falls back to substring matching
+// for untyped fmt.Errorf errors from providers that haven't migrated yet.
+func IsRetriable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pae *ProviderAPIError
+	if errors.As(err, &pae) {
+		return pae.Retriable
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "429") || strings.Contains(msg, "rate_limit") || strings.Contains(msg, "rate limit") {
+		return true
+	}
+	if strings.Contains(msg, "500") || strings.Contains(msg, "502") || strings.Contains(msg, "503") || strings.Contains(msg, "504") {
+		return true
+	}
+	return false
 }
 
 // ProviderMeta is a lightweight descriptor returned by list-providers.

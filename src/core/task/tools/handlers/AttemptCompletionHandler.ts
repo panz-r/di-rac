@@ -21,6 +21,16 @@ import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 const TASK_PREVIEW_MAX_CHARS = 8000
 
+function coerceToString(v: unknown): string {
+	if (typeof v === "string") return v
+	if (v == null) return ""
+	try {
+		return JSON.stringify(v)
+	} catch {
+		return String(v)
+	}
+}
+
 function getInitialTaskPreview(config: TaskConfig): string | undefined {
 	const firstTaskMessage = config.messageState
 		.getDiracMessages()
@@ -48,8 +58,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 
 
-		const raw = typeof block.params.result === "string" ? block.params.result : block.params.result != null ? String(block.params.result) : undefined
-		const result = uiHelpers.removeClosingTag(block, "result", raw)
+		const result = uiHelpers.removeClosingTag(block, "result", coerceToString(block.params.result))
 		if (result) {
 			await uiHelpers.say("completion_result", result, undefined, undefined, block.partial)
 		}
@@ -57,10 +66,8 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
-		let result: string | undefined = typeof block.params.result === "string"
-			? block.params.result
-			: block.params.result != null ? String(block.params.result) : undefined
-		const command: string | undefined = block.params.command
+		const result: string | undefined = coerceToString(block.params.result) || undefined
+		const command: string | undefined = coerceToString(block.params.command) || undefined
 
 		// Validate required parameters
 		if (!result) {
@@ -308,8 +315,8 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 						taskMetadata: {
 							taskId: config.taskId,
 							ulid: config.ulid,
-							result: block.params.result || "",
-							command: block.params.command || "",
+							result: coerceToString(block.params.result),
+							command: coerceToString(block.params.command),
 						},
 					},
 				},

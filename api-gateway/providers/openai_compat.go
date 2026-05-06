@@ -81,7 +81,11 @@ func (h *openaiCompatHandler) Send(ctx context.Context, req *Request) (*SendResu
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+		return nil, &ProviderAPIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("API error (status %d): %s", resp.StatusCode, string(body)),
+			Retriable:  resp.StatusCode == 429 || resp.StatusCode >= 500,
+		}
 	}
 
 	var raw map[string]interface{}
@@ -116,7 +120,11 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+		return &ProviderAPIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("API error (status %d): %s", resp.StatusCode, string(body)),
+			Retriable:  resp.StatusCode == 429 || resp.StatusCode >= 500,
+		}
 	}
 
 	return openaiParseSSE(resp.Body, callback, h.config.FinishReasonMap, h.config.ContentArraySupport)
@@ -773,7 +781,11 @@ func fetchModelsHTTP(ctx context.Context, modelsURL, apiKey string) ([]ModelEntr
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("/models returned status %d: %s", resp.StatusCode, string(errBody))
+		return nil, &ProviderAPIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("/models returned status %d: %s", resp.StatusCode, string(errBody)),
+			Retriable:  resp.StatusCode == 429 || resp.StatusCode >= 500,
+		}
 	}
 
 	body, err := io.ReadAll(resp.Body)
