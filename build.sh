@@ -5,42 +5,52 @@ cd "$(dirname "$0")"
 
 mkdir -p dist
 
+# Helper to check for command existence
+check_tool() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "ERROR: Tool '$1' is required but not found."
+        return 1
+    fi
+}
+
+echo "==> Checking build dependencies..."
+MISSING_TOOLS=0
+check_tool cmake || MISSING_TOOLS=1
+check_tool cc || MISSING_TOOLS=1
+check_tool go || MISSING_TOOLS=1
+check_tool cargo || MISSING_TOOLS=1
+check_tool npm || MISSING_TOOLS=1
+
+if [ $MISSING_TOOLS -ne 0 ]; then
+    echo "ERROR: Some build dependencies are missing. Please install them and try again."
+    exit 1
+fi
+echo "    OK"
+
 echo "==> Building C command daemon..."
 (cd command-daemon && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build)
-cp command-daemon/build/di-rvv-cmd dist/di-rvv-cmd 2>/dev/null || true
+cp command-daemon/build/di-rvv-cmd dist/di-rvv-cmd
 echo "    OK"
 
 echo "==> Building C central coordination daemon..."
 (cd central-deamon && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build)
-cp central-deamon/build/di-vrr-central-deamon dist/di-vrr-central-deamon 2>/dev/null || true
+cp central-deamon/build/di-vrr-central-deamon dist/di-vrr-central-deamon
 echo "    OK"
 
 echo "==> Building Go api-gateway..."
-if command -v go >/dev/null 2>&1; then
-    (cd api-gateway && go build -o api-gateway .)
-    cp api-gateway/api-gateway dist/api-gateway 2>/dev/null || true
-    echo "    OK"
-else
-    echo "    SKIPPED (go not found)"
-fi
+(cd api-gateway && go build -o api-gateway .)
+cp api-gateway/api-gateway dist/api-gateway
+echo "    OK"
 
 echo "==> Building Rust tree-sitter analyzer..."
-if command -v cargo >/dev/null 2>&1; then
-    (cd treesitter-daemon && cargo build --release)
-    cp treesitter-daemon/target/release/di-rvv-analyzer dist/di-rvv-analyzer 2>/dev/null || true
-    echo "    OK"
-else
-    echo "    SKIPPED (cargo not found)"
-fi
+(cd treesitter-daemon && cargo build --release)
+cp treesitter-daemon/target/release/di-rvv-analyzer dist/di-rvv-analyzer
+echo "    OK"
 
 echo "==> Building TypeScript CLI..."
-if [ -f "package.json" ]; then
-    npm install --silent
-    npm run build
-    echo "    OK"
-else
-    echo "    SKIPPED (package.json not found)"
-fi
+npm install --silent
+npm run build
+echo "    OK"
 
 echo "==> Build complete. Binaries are in dist/"
 ls -l dist/
