@@ -37,11 +37,11 @@ import {
 	nebiusModels,
 	sambanovaDefaultModelId,
 	sambanovaModels,
+	openRouterDefaultModelId,
 	xaiDefaultModelId,
 	xaiModels,
 } from "@/shared/api"
 import { COLORS } from "../constants/colors"
-import { getOpenRouterDefaultModelId } from "../utils/openrouter-models"
 import { SearchableList, SearchableListItem } from "./SearchableList"
 
 export const CUSTOM_MODEL_ID = "__custom__"
@@ -82,7 +82,7 @@ export function getModelList(provider: string): string[] {
 
 export function getDefaultModelId(provider: string): string {
 	if (provider === "openrouter") {
-		return getOpenRouterDefaultModelId()
+		return openRouterDefaultModelId
 	}
 	return providerModels[provider]?.defaultId || getProviderDefaultModelId(provider)
 }
