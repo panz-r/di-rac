@@ -32,9 +32,8 @@ static void jsonw_id(struct jsonw *w, const char *raw_id, int id_len) {
     if (!raw_id || id_len <= 0) {
         jsonw_null(w);
     } else {
-        /* Write raw JSON value (could be number or string) */
         fwrite(raw_id, 1, id_len, w->f);
-        w->need_comma = true; /* Signal that a value was written */
+        w->need_comma = true;
     }
 }
 
@@ -171,8 +170,7 @@ static void handle_repo_map(pthread_mutex_t *lock, const char *raw_id, int id_le
     pthread_mutex_unlock(lock);
 }
 
-static void handle_search_symbols(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *dir, const char *query, const char *kind, int limit, AnalyzerCtx *ctx) {
-    (void)dir;
+static void handle_search_symbols(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *query, const char *kind, int limit, AnalyzerCtx *ctx) {
     pthread_mutex_lock(lock);
     struct jsonw w;
     jsonw_init(&w, stdout);
@@ -239,6 +237,26 @@ static void handle_index_file(pthread_mutex_t *lock, const char *raw_id, int id_
     analyzer_free_imports(ir);
     analyzer_free_source(ps);
     free(content);
+}
+
+static void handle_invalidate_file(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *file, AnalyzerCtx *ctx) {
+    if (ctx->db) db_invalidate_file((IndexDB*)ctx->db, file);
+    pthread_mutex_lock(lock);
+    printf("{\"type\":\"ok\",\"id\":");
+    if (raw_id) fwrite(raw_id, 1, id_len, stdout); else printf("null");
+    printf("}\n");
+    fflush(stdout);
+    pthread_mutex_unlock(lock);
+}
+
+static void handle_clear_index(pthread_mutex_t *lock, const char *raw_id, int id_len, AnalyzerCtx *ctx) {
+    if (ctx->db) db_clear((IndexDB*)ctx->db);
+    pthread_mutex_lock(lock);
+    printf("{\"type\":\"ok\",\"id\":");
+    if (raw_id) fwrite(raw_id, 1, id_len, stdout); else printf("null");
+    printf("}\n");
+    fflush(stdout);
+    pthread_mutex_unlock(lock);
 }
 
 static void* request_worker(void *arg) {
@@ -313,9 +331,13 @@ static void* request_worker(void *arg) {
     } else if (strcmp(command, "repo-map") == 0) {
         handle_repo_map(&task->gctx->stdout_lock, raw_id, id_len, dir, &task->gctx->base);
     } else if (strcmp(command, "search-symbols") == 0 || strcmp(command, "search-index") == 0) {
-        handle_search_symbols(&task->gctx->stdout_lock, raw_id, id_len, dir, query, kind[0] ? kind : NULL, limit, &task->gctx->base);
+        handle_search_symbols(&task->gctx->stdout_lock, raw_id, id_len, query, kind[0] ? kind : NULL, limit, &task->gctx->base);
     } else if (strcmp(command, "index-file") == 0) {
         handle_index_file(&task->gctx->stdout_lock, raw_id, id_len, file, &task->gctx->base);
+    } else if (strcmp(command, "invalidate-file") == 0) {
+        handle_invalidate_file(&task->gctx->stdout_lock, raw_id, id_len, file, &task->gctx->base);
+    } else if (strcmp(command, "clear-index") == 0) {
+        handle_clear_index(&task->gctx->stdout_lock, raw_id, id_len, &task->gctx->base);
     } else if (strcmp(command, "shutdown") == 0) {
         pthread_mutex_lock(&task->gctx->stdout_lock);
         printf("{\"ok\": true, \"id\": ");

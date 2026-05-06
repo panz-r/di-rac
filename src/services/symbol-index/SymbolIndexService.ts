@@ -420,34 +420,30 @@ export class SymbolIndexService {
 		}
 	}
 
-	public getSymbols(
+	public async getSymbols(
 		symbol: string,
 		type?: "definition" | "reference" | "declaration",
 		limit?: number,
-	): SymbolLocation[] {
-		return this.db?.getSymbolsByName(symbol, type, limit) || []
+	): Promise<SymbolLocation[]> {
+		return this.searchSymbolsDaemon(symbol, type, limit)
 	}
 
-	public getReferences(symbol: string, limit?: number): SymbolLocation[] {
+	public async getReferences(symbol: string, limit?: number): Promise<SymbolLocation[]> {
 		return this.getSymbols(symbol, "reference", limit)
 	}
 
-	public getDefinitions(symbol: string, limit?: number): SymbolLocation[] {
+	public async getDefinitions(symbol: string, limit?: number): Promise<SymbolLocation[]> {
 		return this.getSymbols(symbol, "definition", limit)
 	}
 
 	public getDependencies(_relPath: string): string[] {
-		// Dependencies are tracked via the C/C++ include resolution in the daemon's indexer.
-		// For now, return an empty array. This is used by ContextLoader for header/source
-		// file heuristics which can be re-added to the daemon's db schema if needed.
 		return []
 	}
 
-	// ── Daemon-backed async queries (Phase 3: replacing sql.js) ──────────────
+	// ── Daemon-backed async queries ──────────────
 
 	/**
 	 * Search symbols by name using the persistent daemon index.
-	 * Returns SymbolLocation[] matching the sync interface, converting from DaemonSearchResult.
 	 */
 	async searchSymbolsDaemon(
 		symbol: string,
@@ -455,22 +451,19 @@ export class SymbolIndexService {
 		limit?: number,
 	): Promise<SymbolLocation[]> {
 		if (!this.analyzer) return []
-		const kindMap: Record<string, string> = {
-			definition: "function",
-			reference: "function",
-			declaration: "function",
-		}
-		const kind = type ? kindMap[type] : undefined
-		const results = await this.analyzer.searchIndex(symbol, kind, limit || 100)
-		return results.map((r) => ({
-			path: r.file,
-			startLine: r.start_line,
-			startColumn: r.start_col ?? 1,
-			endLine: r.end_line,
-			endColumn: r.end_col ?? 1,
-			type: (r.type === "d" ? "definition" : r.type === "r" ? "reference" : "declaration") as "definition" | "reference" | "declaration",
-			kind: r.kind || undefined,
-		}))
+		const typeFilter = type === "definition" ? "d" : type === "reference" ? "r" : undefined
+		const results = await this.analyzer.searchIndex(symbol, undefined, limit || 100)
+		return results
+			.filter((r) => !typeFilter || r.type === typeFilter)
+			.map((r) => ({
+				path: r.file,
+				startLine: r.start_line,
+				startColumn: r.start_col ?? 1,
+				endLine: r.end_line,
+				endColumn: r.end_col ?? 1,
+				type: (r.type === "d" ? "definition" : r.type === "r" ? "reference" : "declaration") as "definition" | "reference" | "declaration",
+				kind: r.kind || undefined,
+			}))
 	}
 
 	/**
