@@ -1026,26 +1026,6 @@ export class Task {
 			// saves task history item which we use to keep track of conversation history deleted range
 		}
 
-		// If we're not using auto-condense, we should explicitly notify the model that history was truncated
-		const useAutoCondense = this.stateManager.getGlobalSettingsKey("useAutoCondense")
-		if (!useAutoCondense) {
-			const lastMessage = contextManagementMetadata.truncatedConversationHistory[contextManagementMetadata.truncatedConversationHistory.length - 1]
-			if (lastMessage && lastMessage.role === "user") {
-				const notice = formatResponse.contextTruncationNotice()
-				if (typeof lastMessage.content === "string") {
-					lastMessage.content += `
-
-${notice}`
-				} else if (Array.isArray(lastMessage.content)) {
-					lastMessage.content.push({
-						type: "text",
-						text: notice,
-					})
-				}
-			}
-		}
-
-
 		// Response API requires native tool calls to be enabled
 		const stream = this.api.createMessage(enrichedSystemPrompt, contextManagementMetadata.truncatedConversationHistory as any, tools)
 

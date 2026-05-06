@@ -8,7 +8,6 @@
  * Implements ITerminalProcess interface for polymorphic usage with CommandExecutor.
  */
 
-import { } from "@services/telemetry"
 import { detectBestShell, getShellArgs, ShellInfo } from "@/utils/shell-detection"
 import { ChildProcess, spawn } from "child_process"
 import { EventEmitter } from "events"

@@ -9,8 +9,6 @@ import { getCwd, getDesktopDir, isLocatedInPath, isLocatedInWorkspace } from "@/
 const WRITE_TOOLS: DiracDefaultTool[] = [
 	DiracDefaultTool.FILE_NEW,
 	DiracDefaultTool.EDIT_FILE,
-	DiracDefaultTool.REPLACE_SYMBOL,
-	DiracDefaultTool.RENAME_SYMBOL,
 	DiracDefaultTool.NEW_RULE,
 ]
 

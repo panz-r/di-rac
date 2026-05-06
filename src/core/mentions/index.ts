@@ -1,7 +1,6 @@
 import { extractTextFromFile } from "@integrations/misc/extract-text"
 import { openFile } from "@integrations/misc/open-file"
 import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
-import { telemetryService } from "@services/telemetry"
 import { mentionRegexGlobal } from "@shared/context-mentions"
 import { WorkspaceRoot } from "@shared/multi-root/types"
 import { openExternal } from "@utils/env"

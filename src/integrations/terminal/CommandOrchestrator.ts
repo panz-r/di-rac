@@ -16,7 +16,6 @@
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
-import { TerminalHangStage, TerminalUserInterventionAction, telemetryService } from "@services/telemetry"
 import { DiracTempManager } from "@services/temp"
 import { findLastIndex } from "@shared/array"
 import { COMMAND_CANCEL_TOKEN } from "@shared/ExtensionMessage"

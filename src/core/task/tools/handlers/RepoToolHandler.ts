@@ -5,7 +5,6 @@ import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { RepoMapToolHandler } from "./RepoMapToolHandler"
 import { ListFilesToolHandler } from "./ListFilesToolHandler"
 
 export class RepoToolHandler implements IFullyManagedTool {
@@ -24,7 +23,6 @@ export class RepoToolHandler implements IFullyManagedTool {
 		if (detail === "files") {
 			return new ListFilesToolHandler(this.validator).handlePartialBlock(block, uiHelpers)
 		}
-		// repo_map has no partial handling
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -39,8 +37,7 @@ export class RepoToolHandler implements IFullyManagedTool {
 			return handler.execute(config, block)
 		}
 
-		// Default: repo_map behavior
-		const handler = new RepoMapToolHandler(this.validator)
-		return handler.execute(config, block)
+		// repo_map is no longer available
+		return `repo tool '${detail}' is no longer available.`
 	}
 }

@@ -5,10 +5,6 @@ import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { SearchSymbolsToolHandler } from "./SearchSymbolsToolHandler"
-import { ReplaceSymbolToolHandler } from "./ReplaceSymbolToolHandler"
-import { RenameSymbolToolHandler } from "./RenameSymbolToolHandler"
-import { FindSymbolReferencesToolHandler } from "./FindSymbolReferencesToolHandler"
 
 export class SymbolsToolHandler implements IFullyManagedTool {
 	readonly name = DiracDefaultTool.SYMBOLS
@@ -16,37 +12,20 @@ export class SymbolsToolHandler implements IFullyManagedTool {
 	constructor(private validator: ToolValidator) {}
 
 	getDescription(block: ToolUse): string {
-		const sub = (block.params.subcommand as string) || "search"
-		const name = block.params.symbol || block.params.existing_symbol || block.params.query || block.params.symbols?.[0] || ""
-		const paths = Array.isArray(block.params.paths) ? block.params.paths.join(" ") : (block.params.path || "")
+		const params = block.params as Record<string, unknown>
+		const sub = (params.subcommand as string) || "search"
+		const name = (params.symbol as string) || (params.existing_symbol as string) || (params.query as string) || ""
+		const paths = Array.isArray(params.paths) ? (params.paths as string[]).join(" ") : ((params.path as string) || "")
 		return `symbols ${sub}${name ? ` ${name}` : ""}${paths ? ` in ${paths}` : ""}`
 	}
 
-	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-		// Delegate to sub-handler for partial UI
-		const sub = (block.params.subcommand as string) || "search"
-		const handler = this.getSubHandler(sub)
-		if (handler && "handlePartialBlock" in handler) {
-			return (handler as any).handlePartialBlock(block, uiHelpers)
-		}
+	async handlePartialBlock(_block: ToolUse, _uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+		// No partial handling for symbols
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
-		const sub = (block.params.subcommand as string) || "search"
-		const handler = this.getSubHandler(sub)
-		if (!handler) {
-			return `Unknown symbols subcommand: "${sub}". Use: search, replace, rename, refs`
-		}
-		return handler.execute(config, block)
-	}
-
-	private getSubHandler(sub: string): IFullyManagedTool | null {
-		switch (sub) {
-			case "search": return new SearchSymbolsToolHandler(this.validator)
-			case "replace": return new ReplaceSymbolToolHandler(this.validator)
-			case "rename": return new RenameSymbolToolHandler(this.validator)
-			case "refs": return new FindSymbolReferencesToolHandler(this.validator)
-			default: return null
-		}
+	async execute(_config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+		const params = block.params as Record<string, unknown>
+		const sub = (params.subcommand as string) || "search"
+		return `Symbol tool '${sub}' is no longer available.`
 	}
 }

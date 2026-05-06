@@ -1,7 +1,6 @@
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { parseAssistantMessageV2, ToolUse } from "@core/assistant-message"
 import { sendPartialMessageEvent } from "@core/controller/ui/subscribeToPartialMessage"
-import { telemetryService } from "@services/telemetry"
 import { DiracAssistantContent } from "@shared/messages/content"
 import { Session } from "@shared/services/Session"
 import { READ_ONLY_TOOLS } from "@shared/tools"
