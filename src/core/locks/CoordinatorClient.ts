@@ -102,6 +102,12 @@ export class CoordinatorClient extends EventEmitter {
 								if (pathWaiters.length === 0) this.waiters.delete(targetPath)
 							}
 						}
+					} else if (msg.status === "config_update") {
+						this.emit("config_update", {
+							path: msg.path,
+							key: msg.key,
+							value: msg.value,
+						})
 					} else {
 						// Regular request response
 						const resolver = this.responseQueue.shift()
@@ -162,6 +168,44 @@ export class CoordinatorClient extends EventEmitter {
 				}
 			})
 			this.socket?.write(JSON.stringify({ method: "acquire", path, wait }) + "\n")
+		})
+	}
+
+	/**
+	 * Set a configuration value in the daemon.
+	 * @param path Associative path (e.g. workspace root)
+	 * @param key Key name
+	 * @param value Value string (null to delete)
+	 * @param transient Whether this is a per-connection override
+	 */
+	async setConfig(path: string, key: string, value: string | null, transient = false): Promise<boolean> {
+		await this.connect()
+		return new Promise((resolve) => {
+			this.responseQueue.push((msg) => {
+				resolve(msg.status === "ok")
+			})
+			this.socket?.write(JSON.stringify({ method: "set_config", path, key, value, transient }) + "\n")
+		})
+	}
+
+	/**
+	 * Get a merged configuration value from the daemon.
+	 * Performs lookup: Transient -> Project -> Global.
+	 * @param path Associative path
+	 * @param key Key name
+	 * @returns The effective value string, or null if not set.
+	 */
+	async getConfig(path: string, key: string): Promise<string | null> {
+		await this.connect()
+		return new Promise((resolve) => {
+			this.responseQueue.push((msg) => {
+				if (msg.status === "ok") {
+					resolve(msg.value)
+				} else {
+					resolve(null)
+				}
+			})
+			this.socket?.write(JSON.stringify({ method: "get_config", path, key }) + "\n")
 		})
 	}
 

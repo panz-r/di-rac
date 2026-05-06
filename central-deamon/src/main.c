@@ -21,6 +21,8 @@ typedef struct {
     size_t len;
 } client_ctx_t;
 
+static client_ctx_t *all_clients[MAX_EVENTS];
+
 static int set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) return -1;
@@ -31,6 +33,18 @@ static void send_json(int fd, const char *json) {
     size_t len = strlen(json);
     if (write(fd, json, len) < (ssize_t)len && errno != EPIPE) {
         /* Ignore */
+    }
+}
+
+static void broadcast_config_update(int sender_fd, const char *path, const char *key, const char *value) {
+    char msg[4096 + 512];
+    snprintf(msg, sizeof(msg), "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
+             path, key, value ? "\"" : "", value ? value : "null", value ? "\"" : "");
+    
+    for (int i = 0; i < MAX_EVENTS; i++) {
+        if (all_clients[i] && all_clients[i]->fd != sender_fd) {
+            send_json(all_clients[i]->fd, msg);
+        }
     }
 }
 
@@ -67,7 +81,7 @@ static bool find_bool_val(const char *json, const char *key, bool default_val) {
 }
 
 static void process_single_object(int fd, const char *json, trie_t *trie) {
-    char method[64] = {0}, path[4096] = {0};
+    char method[64] = {0}, path[8192] = {0};
     
     if (!find_string_val(json, "method", method, sizeof(method)) ||
         !find_string_val(json, "path", path, sizeof(path))) {
@@ -90,9 +104,39 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
         int next_fd = trie_release_lock(trie, path, fd);
         send_json(fd, "{\"status\": \"ok\"}\n");
         if (next_fd != -1) {
-            char resp[4096 + 128];
+            char resp[8192 + 128];
             snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", path);
             send_json(next_fd, resp);
+        }
+    } else if (strcmp(method, "set_config") == 0) {
+        char key[256] = {0}, value[4096] = {0}, *val_ptr = NULL;
+        if (!find_string_val(json, "key", key, sizeof(key))) {
+            send_json(fd, "{\"status\": \"error\", \"message\": \"missing key\"}\n");
+            return;
+        }
+        if (find_string_val(json, "value", value, sizeof(value))) val_ptr = value;
+        bool transient = find_bool_val(json, "transient", false);
+        
+        trie_set_config(trie, path, fd, key, val_ptr, transient);
+        send_json(fd, "{\"status\": \"ok\"}\n");
+        
+        if (!transient) {
+            broadcast_config_update(fd, path, key, val_ptr);
+        }
+    } else if (strcmp(method, "get_config") == 0) {
+        char key[256] = {0};
+        if (!find_string_val(json, "key", key, sizeof(key))) {
+            send_json(fd, "{\"status\": \"error\", \"message\": \"missing key\"}\n");
+            return;
+        }
+        char *val = trie_get_config(trie, path, fd, key);
+        if (val) {
+            char resp[4096 + 512];
+            snprintf(resp, sizeof(resp), "{\"status\": \"ok\", \"value\": \"%s\"}\n", val);
+            send_json(fd, resp);
+            free(val);
+        } else {
+            send_json(fd, "{\"status\": \"ok\", \"value\": null}\n");
         }
     } else {
         send_json(fd, "{\"status\": \"error\", \"message\": \"unknown method\"}\n");
@@ -171,6 +215,8 @@ int main() {
     struct epoll_event ev, events[MAX_EVENTS];
     trie_t *lock_trie = trie_create();
 
+    memset(all_clients, 0, sizeof(all_clients));
+
     listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (listen_fd == -1) { perror("socket"); exit(1); }
 
@@ -202,6 +248,15 @@ int main() {
                 set_nonblocking(client_fd);
                 client_ctx_t *ctx = calloc(1, sizeof(client_ctx_t));
                 ctx->fd = client_fd;
+                
+                /* Register in all_clients */
+                for (int j = 0; j < MAX_EVENTS; j++) {
+                    if (all_clients[j] == NULL) {
+                        all_clients[j] = ctx;
+                        break;
+                    }
+                }
+
                 ev.events = EPOLLIN;
                 ev.data.ptr = ctx;
                 epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
@@ -213,12 +268,21 @@ int main() {
                     char *w_paths[1024];
                     size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, w_paths, 1024);
                     for (size_t j = 0; j < w_count; j++) {
-                        char resp[4096 + 128];
+                        char resp[8192 + 128];
                         snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", w_paths[j]);
                         send_json(wakeup[j], resp);
                         free(w_paths[j]);
                     }
                     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
+                    
+                    /* Unregister from all_clients */
+                    for (int j = 0; j < MAX_EVENTS; j++) {
+                        if (all_clients[j] == ctx) {
+                            all_clients[j] = NULL;
+                            break;
+                        }
+                    }
+
                     close(ctx->fd);
                     free(ctx);
                 }

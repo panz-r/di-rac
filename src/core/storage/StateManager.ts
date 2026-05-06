@@ -80,6 +80,7 @@ export class StateManager {
 	private persistenceTimeout: NodeJS.Timeout | null = null
 	private readonly PERSISTENCE_DELAY_MS = 500
 	private taskHistoryWatcher: FSWatcher | null = null
+	private coordinatorClient: CoordinatorClient | null = null
 
 	// Callback for persistence errors
 	onPersistenceError?: (event: PersistenceErrorEvent) => void
@@ -89,6 +90,42 @@ export class StateManager {
 
 	private constructor(storage: StorageContext) {
 		this.storage = storage
+	}
+
+	/**
+	 * Setup real-time sync via coordination daemon
+	 */
+	private async setupCoordinatorSync(): Promise<void> {
+		try {
+			this.coordinatorClient = CoordinatorClient.getInstance()
+			this.coordinatorClient.on("config_update", ({ path: updatePath, key, value }) => {
+				Logger.info(`[StateManager] Received daemon update: ${key}=${value} at ${updatePath}`)
+
+				let parsedValue = value
+				if (value !== "null" && value !== null) {
+					try {
+						parsedValue = JSON.parse(value)
+					} catch {
+						// Use as-is
+					}
+				} else {
+					parsedValue = undefined
+				}
+
+				if (updatePath === "/") {
+					if (isSettingsKey(key) || isGlobalStateKey(key)) {
+						this.globalStateCache[key as any] = parsedValue
+					}
+				} else if (updatePath.includes("/tasks/")) {
+					// Task settings
+					this.taskStateCache[key as any] = parsedValue
+				}
+
+				void this.onSyncExternalChange?.()
+			})
+		} catch (error) {
+			Logger.warn("[StateManager] Coordinator sync unavailable:", error)
+		}
 	}
 
 	/**
@@ -117,6 +154,9 @@ export class StateManager {
 
 			// Start watcher for taskHistory.json so external edits update cache (no persist loop)
 			await StateManager.instance.setupTaskHistoryWatcher()
+
+			// Sync with coordination daemon
+			await StateManager.instance.setupCoordinatorSync()
 
 			StateManager.instance.isInitialized = true
 
@@ -186,6 +226,12 @@ export class StateManager {
 			this.globalStateCache[key] = value
 		}
 
+		// Sync with daemon (fire and forget)
+		if (key !== "taskHistory") {
+			const serializedValue = typeof value === "object" ? JSON.stringify(value) : String(value)
+			this.coordinatorClient?.setConfig("/", key as string, serializedValue, false).catch(() => {})
+		}
+
 		// Add to pending persistence set and schedule debounced write
 		this.pendingGlobalState.add(key)
 		this.scheduleDebouncedPersistence()
@@ -206,6 +252,13 @@ export class StateManager {
 		// Then track the keys for persistence
 		Object.keys(updates).forEach((key) => {
 			this.pendingGlobalState.add(key as GlobalStateAndSettingsKey)
+
+			// Sync with daemon
+			if (key !== "taskHistory") {
+				const value = (updates as any)[key]
+				const serializedValue = typeof value === "object" ? JSON.stringify(value) : String(value)
+				this.coordinatorClient?.setConfig("/", key, serializedValue, false).catch(() => {})
+			}
 		})
 
 		// Schedule debounced persistence
@@ -222,6 +275,11 @@ export class StateManager {
 
 		// Update cache immediately for instant access
 		this.taskStateCache[key] = value
+
+		// Sync with daemon
+		const taskPath = `/tasks/${taskId}`
+		const serializedValue = typeof value === "object" ? JSON.stringify(value) : String(value)
+		this.coordinatorClient?.setConfig(taskPath, key as string, serializedValue, false).catch(() => {})
 
 		// Add to pending persistence set and schedule debounced write
 		if (!this.pendingTaskState.has(taskId)) {
@@ -248,6 +306,12 @@ export class StateManager {
 		}
 		Object.keys(updates).forEach((key) => {
 			this.pendingTaskState.get(taskId)!.add(key as SettingsKey)
+			
+			// Sync with daemon
+			const value = (updates as any)[key]
+			const serializedValue = typeof value === "object" ? JSON.stringify(value) : String(value)
+			const taskPath = `/tasks/${taskId}`
+			this.coordinatorClient?.setConfig(taskPath, key, serializedValue, false).catch(() => {})
 		})
 
 		// Schedule debounced persistence
@@ -379,6 +443,10 @@ export class StateManager {
 			throw new Error(STATE_MANAGER_NOT_INITIALIZED)
 		}
 		this.sessionOverrideCache[key] = value
+
+		// Sync with daemon as transient (fire and forget)
+		const serializedValue = typeof value === "object" ? JSON.stringify(value) : String(value)
+		this.coordinatorClient?.setConfig("/", key as string, serializedValue, true).catch(() => {})
 	}
 
 	/**

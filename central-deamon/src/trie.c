@@ -65,6 +65,7 @@ static trie_node_t* node_create(const char *segment, trie_node_t *parent) {
         .zombie_window = 8
     };
     node->children = ht_create(&cfg, string_hash, string_eq, NULL);
+    node->settings = ht_create(&cfg, string_hash, string_eq, NULL);
     
     return node;
 }
@@ -81,6 +82,14 @@ static void node_destroy(trie_node_t *node) {
     }
     
     ht_destroy(node->children);
+    
+    /* Clean up settings */
+    it = ht_iter_begin(node->settings);
+    while (ht_iter_next(node->settings, &it, &key, &klen, &val, &vlen)) {
+        free(*(char**)val);
+    }
+    ht_destroy(node->settings);
+
     free(node->segment);
     free(node->waiters);
     free(node);
@@ -99,6 +108,7 @@ trie_t* trie_create(void) {
     };
     trie->fd_registry = ht_create(&cfg, fd_hash, fd_eq, NULL);
     trie->waiting_registry = ht_create(&cfg, fd_hash, fd_eq, NULL);
+    trie->transient_registry = ht_create(&cfg, fd_hash, fd_eq, NULL);
     
     return trie;
 }
@@ -115,53 +125,35 @@ static void free_registry_contents(ht_table_t *registry) {
     ht_destroy(registry);
 }
 
+static void free_kv_table(ht_table_t *kv) {
+    ht_iter_t it = ht_iter_begin(kv);
+    const void *key, *val;
+    size_t klen, vlen;
+    while (ht_iter_next(kv, &it, &key, &klen, &val, &vlen)) {
+        free(*(char**)val);
+    }
+    ht_destroy(kv);
+}
+
 void trie_destroy(trie_t *trie) {
     if (!trie) return;
     node_destroy(trie->root);
     free_registry_contents(trie->fd_registry);
     free_registry_contents(trie->waiting_registry);
+    
+    /* Clean up transient settings */
+    ht_iter_t it = ht_iter_begin(trie->transient_registry);
+    const void *key, *val;
+    size_t klen, vlen;
+    while (ht_iter_next(trie->transient_registry, &it, &key, &klen, &val, &vlen)) {
+        free_kv_table(*(ht_table_t**)val);
+    }
+    ht_destroy(trie->transient_registry);
+    
     free(trie);
 }
 
-/* Registry Helpers */
-
-static void register_node_to_fd(ht_table_t *registry, trie_node_t *node, int fd) {
-    size_t vlen;
-    const void *found = ht_find(registry, &fd, sizeof(int), &vlen);
-    node_list_t *list;
-    
-    if (found) {
-        list = *(node_list_t**)found;
-    } else {
-        list = calloc(1, sizeof(node_list_t));
-        list->cap = 4;
-        list->nodes = malloc(sizeof(trie_node_t*) * list->cap);
-        ht_upsert(registry, &fd, sizeof(int), &list, sizeof(node_list_t*));
-    }
-    
-    if (list->count == list->cap) {
-        list->cap *= 2;
-        list->nodes = realloc(list->nodes, sizeof(trie_node_t*) * list->cap);
-    }
-    list->nodes[list->count++] = node;
-}
-
-static void unregister_node_from_fd(ht_table_t *registry, trie_node_t *node, int fd) {
-    size_t vlen;
-    const void *found = ht_find(registry, &fd, sizeof(int), &vlen);
-    if (!found) return;
-    
-    node_list_t *list = *(node_list_t**)found;
-    for (size_t i = 0; i < list->count; i++) {
-        if (list->nodes[i] == node) {
-            list->nodes[i] = list->nodes[list->count - 1];
-            list->count--;
-            break;
-        }
-    }
-}
-
-/* Trie Operations */
+/* --- Trie Helper Operations --- */
 
 static trie_node_t* node_get_child(trie_node_t *node, const char *segment, bool create) {
     size_t segment_len = strlen(segment);
@@ -205,13 +197,143 @@ trie_node_t* trie_traverse(trie_t *trie, const char *path, bool create, bool *an
     return current;
 }
 
+/* --- Configuration Management --- */
+
+int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, const char *value, bool transient) {
+    size_t klen = strlen(key);
+    size_t vlen;
+    
+    if (transient) {
+        ht_table_t *kv;
+        const void *found = ht_find(trie->transient_registry, &fd, sizeof(int), &vlen);
+        if (found) {
+            kv = *(ht_table_t**)found;
+        } else {
+            ht_config_t cfg = {.initial_capacity = 8, .max_load_factor = 0.75, .min_load_factor = 0.20, .tomb_threshold = 0.20, .zombie_window = 8};
+            kv = ht_create(&cfg, string_hash, string_eq, NULL);
+            ht_insert(trie->transient_registry, &fd, sizeof(int), &kv, sizeof(ht_table_t*));
+        }
+        
+        const void *existing = ht_find(kv, key, klen, &vlen);
+        if (existing) {
+            free(*(char**)existing);
+            ht_remove(kv, key, klen);
+        }
+        
+        if (value) {
+            char *v_copy = strdup(value);
+            ht_insert(kv, key, klen, &v_copy, sizeof(char*));
+        }
+        return 0;
+    } else {
+        trie_node_t *node = trie_traverse(trie, path, true, NULL);
+        if (!node) return -1;
+        
+        const void *existing = ht_find(node->settings, key, klen, &vlen);
+        if (existing) {
+            free(*(char**)existing);
+            ht_remove(node->settings, key, klen);
+        }
+        
+        if (value) {
+            char *v_copy = strdup(value);
+            ht_insert(node->settings, key, klen, &v_copy, sizeof(char*));
+        }
+        return 0;
+    }
+}
+
+char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
+    size_t klen = strlen(key);
+    size_t vlen;
+    
+    /* 1. Check Transient (FD) */
+    const void *found_transient = ht_find(trie->transient_registry, &fd, sizeof(int), &vlen);
+    if (found_transient) {
+        ht_table_t *kv = *(ht_table_t**)found_transient;
+        const void *val = ht_find(kv, key, klen, &vlen);
+        if (val) return strdup(*(char**)val);
+    }
+    
+    /* 2. Check Node and Parents */
+    const char *segments[256];
+    size_t n_segments = 0;
+    char *path_copy = strdup(path);
+    char *saveptr;
+    char *segment = strtok_r(path_copy, "/", &saveptr);
+    while (segment) {
+        if (strcmp(segment, ".") == 0) {}
+        else if (strcmp(segment, "..") == 0) { if (n_segments > 0) n_segments--; }
+        else { if (n_segments < 256) segments[n_segments++] = segment; }
+        segment = strtok_r(NULL, "/", &saveptr);
+    }
+
+    trie_node_t *nodes[257];
+    nodes[0] = trie->root;
+    size_t depth = 1;
+    for (size_t i = 0; i < n_segments; i++) {
+        trie_node_t *next = node_get_child(nodes[depth - 1], segments[i], false);
+        if (!next) break;
+        nodes[depth++] = next;
+    }
+    free(path_copy);
+    
+    /* Search from deepest found node upwards */
+    for (int i = (int)depth - 1; i >= 0; i--) {
+        const void *val = ht_find(nodes[i]->settings, key, klen, &vlen);
+        if (val) return strdup(*(char**)val);
+    }
+    
+    return NULL;
+}
+
+/* --- Registry Helpers --- */
+
+static void register_node_to_fd(ht_table_t *registry, trie_node_t *node, int fd) {
+    size_t vlen;
+    const void *found = ht_find(registry, &fd, sizeof(int), &vlen);
+    node_list_t *list;
+    
+    if (found) {
+        list = *(node_list_t**)found;
+    } else {
+        list = calloc(1, sizeof(node_list_t));
+        list->cap = 4;
+        list->nodes = malloc(sizeof(trie_node_t*) * list->cap);
+        ht_upsert(registry, &fd, sizeof(int), &list, sizeof(node_list_t*));
+    }
+    
+    if (list->count == list->cap) {
+        list->cap *= 2;
+        list->nodes = realloc(list->nodes, sizeof(trie_node_t*) * list->cap);
+    }
+    list->nodes[list->count++] = node;
+}
+
+static void unregister_node_from_fd(ht_table_t *registry, trie_node_t *node, int fd) {
+    size_t vlen;
+    const void *found = ht_find(registry, &fd, sizeof(int), &vlen);
+    if (!found) return;
+    
+    node_list_t *list = *(node_list_t**)found;
+    for (size_t i = 0; i < list->count; i++) {
+        if (list->nodes[i] == node) {
+            list->nodes[i] = list->nodes[list->count - 1];
+            list->count--;
+            break;
+        }
+    }
+}
+
+/* --- Locking Operations --- */
+
 int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
     if (!path || *path == '\0') return -1;
     bool ancestor_locked = false;
     trie_node_t *current = trie_traverse(trie, path, true, &ancestor_locked);
     if (ancestor_locked || !current) return -1;
     if (current->owner_fd != -1 || current->intent_count > 0) {
-        if (!wait) return -1; /* Lock is held, and client doesn't want to wait */
+        if (!wait) return -1;
         current->waiters = realloc(current->waiters, sizeof(int) * (current->waiters_count + 1));
         current->waiters[current->waiters_count++] = fd;
         register_node_to_fd(trie->waiting_registry, current, fd);
@@ -331,5 +453,13 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
         free(list);
         ht_remove(trie->waiting_registry, &fd, sizeof(int));
     }
+    
+    /* Cleanup transient settings */
+    const void *found_transient = ht_find(trie->transient_registry, &fd, sizeof(int), &vlen);
+    if (found_transient) {
+        free_kv_table(*(ht_table_t**)found_transient);
+        ht_remove(trie->transient_registry, &fd, sizeof(int));
+    }
+
     return wakeup_count;
 }

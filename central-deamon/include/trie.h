@@ -18,6 +18,9 @@ typedef struct trie_node {
     /* Child management - using Draugr High-performance Hash Table */
     ht_table_t *children;       /* Key: segment string, Value: trie_node_t* */
 
+    /* Settings storage (Project/Global layer) */
+    ht_table_t *settings;       /* Key: string, Value: string (Value string) */
+
     /* Lock state */
     int owner_fd;               /* FD of the connection holding an exclusive lock on this path */
     int intent_count;           /* Number of exclusive locks in the subtree below this node */
@@ -34,11 +37,30 @@ typedef struct {
     trie_node_t *root;
     ht_table_t *fd_registry;    /* Key: int fd, Value: node_list_t* (Owned nodes) */
     ht_table_t *waiting_registry; /* Key: int fd, Value: node_list_t* (Nodes being waited on) */
+    ht_table_t *transient_registry; /* Key: int fd, Value: ht_table_t* (Per-connection KV overrides) */
 } trie_t;
 
 /* Core Trie Operations */
 trie_t* trie_create(void);
 void trie_destroy(trie_t *trie);
+
+/* Configuration Management */
+/**
+ * trie_set_config - Set a configuration value.
+ * @param path Path to associate with (Global if /, Project if workspace path).
+ * @param fd Connection FD (used for transient overrides).
+ * @param key Key name.
+ * @param value Value string (passing NULL deletes the key).
+ * @param transient If true, value is only valid for the lifetime of the connection.
+ */
+int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, const char *value, bool transient);
+
+/**
+ * trie_get_config - Get a merged configuration value.
+ * Performs lookup: Transient (FD) -> Path (and its parents) -> Global.
+ * @return Allocated value string, or NULL if not found. Must be freed by caller.
+ */
+char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key);
 
 /**
  * trie_acquire_lock - Attempt to acquire a lock on a path.

@@ -612,6 +612,88 @@ void test_cleanup_massive_multi_node_wakeups() {
     printf("PASS\n");
 }
 
+void test_massive_disconnect_wakeups() {
+    printf("Testing massive disconnect wakeups (100 waiters)...\n");
+    trie_t *t = trie_create();
+    
+    /* 10 owns /root */
+    trie_acquire_lock(t, "/root", 10, true);
+    
+    /* 100 waiters */
+    for (int i = 0; i < 100; i++) {
+        trie_acquire_lock(t, "/root", 100 + i, true);
+    }
+    
+    /* Disconnect owner */
+    int wakeup[128];
+    char *w_paths[128];
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 128);
+    assert(count == 1);
+    assert(wakeup[0] == 100);
+    free(w_paths[0]);
+    
+    /* Now disconnect 100. It should wake up 101. */
+    count = trie_cleanup_fd(t, 100, wakeup, w_paths, 128);
+    assert(count == 1);
+    assert(wakeup[0] == 101);
+    free(w_paths[0]);
+    
+    /* Cleanup all */
+    for (int i = 101; i < 200; i++) {
+        count = trie_cleanup_fd(t, i, wakeup, w_paths, 128);
+        for (size_t j = 0; j < count; j++) free(w_paths[j]);
+    }
+    
+    trie_destroy(t);
+    printf("PASS\n");
+}
+
+void test_config_management() {
+    printf("Testing configuration management (layered lookup)...\n");
+    trie_t *t = trie_create();
+    
+    /* 1. Global Setting */
+    trie_set_config(t, "/", 10, "theme", "dark", false);
+    char *val = trie_get_config(t, "/any/path", 11, "theme");
+    assert(val != NULL);
+    assert(strcmp(val, "dark") == 0);
+    free(val);
+    
+    /* 2. Project Setting Override */
+    trie_set_config(t, "/v/project", 10, "theme", "light", false);
+    val = trie_get_config(t, "/v/project/src", 11, "theme");
+    assert(val != NULL);
+    assert(strcmp(val, "light") == 0);
+    free(val);
+    
+    /* 3. Transient Setting Override (FD 12) */
+    trie_set_config(t, "/v/project", 12, "theme", "high-contrast", true);
+    val = trie_get_config(t, "/v/project/src", 12, "theme");
+    assert(val != NULL);
+    assert(strcmp(val, "high-contrast") == 0);
+    free(val);
+    
+    /* Other FD still sees project setting */
+    val = trie_get_config(t, "/v/project/src", 11, "theme");
+    assert(val != NULL);
+    assert(strcmp(val, "light") == 0);
+    free(val);
+    
+    /* 4. Cleanup Transient on Disconnect */
+    int wakeup[16];
+    char *w_paths[16];
+    trie_cleanup_fd(t, 12, wakeup, w_paths, 16);
+    
+    /* FD 12 now sees project setting */
+    val = trie_get_config(t, "/v/project/src", 12, "theme");
+    assert(val != NULL);
+    assert(strcmp(val, "light") == 0);
+    free(val);
+    
+    trie_destroy(t);
+    printf("PASS\n");
+}
+
 int main() {
     test_basic_locking();
     test_hierarchical_locking();
@@ -642,6 +724,8 @@ int main() {
     test_cleanup_mixed_state();
     test_cascading_intent_decrement();
     test_cleanup_massive_multi_node_wakeups();
-    printf("All 29 Trie test suites passed!\n");
+    test_massive_disconnect_wakeups();
+    test_config_management();
+    printf("All 31 Trie test suites passed!\n");
     return 0;
 }
