@@ -856,8 +856,7 @@ export class Task {
 
 	async *attemptApiRequest(previousApiReqIndex: number, shouldCompact?: boolean): ApiStream {
 		const providerInfo = this.getCurrentProviderInfo()
-		const host = await HostProvider.env.getHostVersion({})
-		const isCliEnvironment = host?.diracType === "CLI"
+		const isCliEnvironment = true
 		const browserSettings = this.stateManager.getGlobalSettingsKey("browserSettings")
 		const disableBrowserTool = browserSettings.disableToolUse ?? false
 		// dirac browser tool uses image recognition for navigation (requires model image support).
