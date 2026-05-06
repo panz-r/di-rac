@@ -1,5 +1,6 @@
 draugr
 out
+central-deamon/build/
 command-daemon/build
 api-gateway/api-gateway
 dist

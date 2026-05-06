@@ -7,8 +7,8 @@
 void test_basic_locking() {
     printf("Testing basic locking...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "/a/b", 10) == 0);
-    assert(trie_acquire_lock(t, "/a/b", 11) == 1);
+    assert(trie_acquire_lock(t, "/a/b", 10, true) == 0);
+    assert(trie_acquire_lock(t, "/a/b", 11, true) == 1);
     int next = trie_release_lock(t, "/a/b", 10);
     assert(next == 11);
     trie_destroy(t);
@@ -18,11 +18,11 @@ void test_basic_locking() {
 void test_hierarchical_locking() {
     printf("Testing hierarchical locking...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "/work", 10) == 0);
-    assert(trie_acquire_lock(t, "/work/project", 11) == -1);
+    assert(trie_acquire_lock(t, "/work", 10, true) == 0);
+    assert(trie_acquire_lock(t, "/work/project", 11, true) == -1);
     trie_release_lock(t, "/work", 10);
-    assert(trie_acquire_lock(t, "/work/project/src", 12) == 0);
-    assert(trie_acquire_lock(t, "/work", 13) == 1);
+    assert(trie_acquire_lock(t, "/work/project/src", 12, true) == 0);
+    assert(trie_acquire_lock(t, "/work", 13, true) == 1);
     trie_release_lock(t, "/work/project/src", 12);
     trie_destroy(t);
     printf("PASS\n");
@@ -31,17 +31,17 @@ void test_hierarchical_locking() {
 void test_cleanup() {
     printf("Testing cleanup on disconnect...\n");
     trie_t *t = trie_create();
-    trie_acquire_lock(t, "/a", 10);
-    trie_acquire_lock(t, "/b", 10);
+    trie_acquire_lock(t, "/a", 10, true);
+    trie_acquire_lock(t, "/b", 10, true);
     assert(trie_get_owned_count(t, 10) == 2);
-    assert(trie_acquire_lock(t, "/a", 11) == 1);
+    assert(trie_acquire_lock(t, "/a", 11, true) == 1);
     int wakeup[16];
     char *w_paths[16];
     size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
     assert(trie_get_owned_count(t, 10) == 0);
     assert(trie_get_owned_count(t, 11) == 1);
-    assert(trie_acquire_lock(t, "/b", 12) == 0);
+    assert(trie_acquire_lock(t, "/b", 12, true) == 0);
     trie_destroy(t);
     printf("PASS\n");
 }
@@ -49,8 +49,8 @@ void test_cleanup() {
 void test_deep_hierarchy() {
     printf("Testing deep hierarchy consistency...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "/a/b/c/d/e", 10) == 0);
-    assert(trie_acquire_lock(t, "/a/x", 11) == 0);
+    assert(trie_acquire_lock(t, "/a/b/c/d/e", 10, true) == 0);
+    assert(trie_acquire_lock(t, "/a/x", 11, true) == 0);
     trie_destroy(t);
     printf("PASS\n");
 }
@@ -58,10 +58,10 @@ void test_deep_hierarchy() {
 void test_multi_waiter_queue() {
     printf("Testing multi-waiter FIFO queue...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "/lock", 10) == 0);
-    assert(trie_acquire_lock(t, "/lock", 11) == 1);
-    assert(trie_acquire_lock(t, "/lock", 12) == 1);
-    assert(trie_acquire_lock(t, "/lock", 13) == 1);
+    assert(trie_acquire_lock(t, "/lock", 10, true) == 0);
+    assert(trie_acquire_lock(t, "/lock", 11, true) == 1);
+    assert(trie_acquire_lock(t, "/lock", 12, true) == 1);
+    assert(trie_acquire_lock(t, "/lock", 13, true) == 1);
     assert(trie_release_lock(t, "/lock", 10) == 11);
     assert(trie_release_lock(t, "/lock", 11) == 12);
     assert(trie_release_lock(t, "/lock", 12) == 13);
@@ -73,9 +73,9 @@ void test_multi_waiter_queue() {
 void test_intent_lock_safety() {
     printf("Testing intent lock collision safety...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "/work/project/A", 10) == 0);
-    assert(trie_acquire_lock(t, "/work", 11) == 1);
-    assert(trie_acquire_lock(t, "/work/project/B", 12) == 0);
+    assert(trie_acquire_lock(t, "/work/project/A", 10, true) == 0);
+    assert(trie_acquire_lock(t, "/work", 11, true) == 1);
+    assert(trie_acquire_lock(t, "/work/project/B", 12, true) == 0);
     /* Releasing child A wakes up NO ONE because child B still has an intent lock on /work */
     assert(trie_release_lock(t, "/work/project/A", 10) == -1); 
     /* Releasing child B finally wakes up the /work waiter (11) */
@@ -87,11 +87,11 @@ void test_intent_lock_safety() {
 void test_edge_cases() {
     printf("Testing edge cases...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "", 10) == -1);
+    assert(trie_acquire_lock(t, "", 10, true) == -1);
     assert(trie_release_lock(t, "/ghost", 10) == -1);
-    trie_acquire_lock(t, "/real", 10);
+    trie_acquire_lock(t, "/real", 10, true);
     assert(trie_release_lock(t, "/real", 11) == -1);
-    assert(trie_acquire_lock(t, "/real", 10) == 1);
+    assert(trie_acquire_lock(t, "/real", 10, true) == 1);
     trie_destroy(t);
     printf("PASS\n");
 }
@@ -99,10 +99,10 @@ void test_edge_cases() {
 void test_path_normalization() {
     printf("Testing path normalization (redundant slashes)...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "/a//b///c", 10) == 0);
-    assert(trie_acquire_lock(t, "/a/b/c", 11) == 1); 
-    assert(trie_acquire_lock(t, "/x/y/", 12) == 0);
-    assert(trie_acquire_lock(t, "/x/y", 13) == 1);
+    assert(trie_acquire_lock(t, "/a//b///c", 10, true) == 0);
+    assert(trie_acquire_lock(t, "/a/b/c", 11, true) == 1); 
+    assert(trie_acquire_lock(t, "/x/y/", 12, true) == 0);
+    assert(trie_acquire_lock(t, "/x/y", 13, true) == 1);
     trie_destroy(t);
     printf("PASS\n");
 }
@@ -110,9 +110,9 @@ void test_path_normalization() {
 void test_multiple_blockers() {
     printf("Testing multiple blockers for a single parent...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "/a/1", 10) == 0);
-    assert(trie_acquire_lock(t, "/a/2", 11) == 0);
-    assert(trie_acquire_lock(t, "/a", 13) == 1);
+    assert(trie_acquire_lock(t, "/a/1", 10, true) == 0);
+    assert(trie_acquire_lock(t, "/a/2", 11, true) == 0);
+    assert(trie_acquire_lock(t, "/a", 13, true) == 1);
     assert(trie_release_lock(t, "/a/1", 10) == -1);
     assert(trie_release_lock(t, "/a/2", 11) == 13);
     trie_destroy(t);
@@ -122,9 +122,9 @@ void test_multiple_blockers() {
 void test_waiter_abandonment() {
     printf("Testing waiter abandonment (disconnect while waiting)...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "/lock", 10) == 0);
-    assert(trie_acquire_lock(t, "/lock", 11) == 1);
-    assert(trie_acquire_lock(t, "/lock", 12) == 1);
+    assert(trie_acquire_lock(t, "/lock", 10, true) == 0);
+    assert(trie_acquire_lock(t, "/lock", 11, true) == 1);
+    assert(trie_acquire_lock(t, "/lock", 12, true) == 1);
     int wakeup[16];
     char *w_paths[16];
     size_t count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16);
@@ -139,10 +139,10 @@ void test_waiter_abandonment() {
 void test_complex_tree() {
     printf("Testing complex tree intersections...\n");
     trie_t *t = trie_create();
-    assert(trie_acquire_lock(t, "/v/src/a.c", 10) == 0);
-    assert(trie_acquire_lock(t, "/v/tests/b.test", 11) == 0);
-    assert(trie_acquire_lock(t, "/v", 12) == 1);
-    assert(trie_acquire_lock(t, "/v/src/c.c", 13) == 0); 
+    assert(trie_acquire_lock(t, "/v/src/a.c", 10, true) == 0);
+    assert(trie_acquire_lock(t, "/v/tests/b.test", 11, true) == 0);
+    assert(trie_acquire_lock(t, "/v", 12, true) == 1);
+    assert(trie_acquire_lock(t, "/v/src/c.c", 13, true) == 0); 
     int wakeup[16];
     char *w_paths[16];
     size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
@@ -159,7 +159,7 @@ void test_path_normalization_extreme() {
     trie_t *t = trie_create();
     
     /* 1. Acquire with complex path */
-    int res = trie_acquire_lock(t, "///v/./src/../src///", 10);
+    int res = trie_acquire_lock(t, "///v/./src/../src///", 10, true);
     assert(res == 0);
     
     /* 2. Release with different but equivalent string.
@@ -169,7 +169,7 @@ void test_path_normalization_extreme() {
     assert(res == -1); /* Successfully released, no waiters */
     
     /* 3. Verify it was actually released by locking again */
-    assert(trie_acquire_lock(t, "/v/src", 11) == 0);
+    assert(trie_acquire_lock(t, "/v/src", 11, true) == 0);
     
     trie_destroy(t);
     printf("PASS\n");
@@ -183,11 +183,11 @@ void test_intent_lock_starvation() {
     for (int i = 0; i < 100; i++) {
         char path[64];
         sprintf(path, "/v/child_%d", i);
-        assert(trie_acquire_lock(t, path, 100 + i) == 0);
+        assert(trie_acquire_lock(t, path, 100 + i, true) == 0);
     }
     
     /* Someone tries to lock /v exclusively */
-    assert(trie_acquire_lock(t, "/v", 200) == 1); // Must wait
+    assert(trie_acquire_lock(t, "/v", 200, true) == 1); // Must wait
     
     /* Release all children one by one */
     for (int i = 0; i < 99; i++) {
@@ -207,15 +207,15 @@ void test_path_traversal_above_root() {
     printf("Testing path traversal above root (../../..)...\n");
     trie_t *t = trie_create();
     
-    int r1 = trie_acquire_lock(t, "/", 10);
+    int r1 = trie_acquire_lock(t, "/", 10, true);
     printf(" - ACQ /: %d\n", r1);
     assert(r1 == 0);
     
-    int r2 = trie_acquire_lock(t, "/..", 11);
+    int r2 = trie_acquire_lock(t, "/..", 11, true);
     printf(" - ACQ /..: %d\n", r2);
     assert(r2 == 1);
     
-    int r3 = trie_acquire_lock(t, "/a/../..", 12);
+    int r3 = trie_acquire_lock(t, "/a/../..", 12, true);
     printf(" - ACQ /a/../..: %d\n", r3);
     assert(r3 == 1);
     
@@ -227,11 +227,11 @@ void test_waiter_reordering() {
     printf("Testing waiter reordering/subset disconnects...\n");
     trie_t *t = trie_create();
     
-    trie_acquire_lock(t, "/res", 10);
-    trie_acquire_lock(t, "/res", 11); // W1
-    trie_acquire_lock(t, "/res", 12); // W2
-    trie_acquire_lock(t, "/res", 13); // W3
-    trie_acquire_lock(t, "/res", 14); // W4
+    trie_acquire_lock(t, "/res", 10, true);
+    trie_acquire_lock(t, "/res", 11, true); // W1
+    trie_acquire_lock(t, "/res", 12, true); // W2
+    trie_acquire_lock(t, "/res", 13, true); // W3
+    trie_acquire_lock(t, "/res", 14, true); // W4
     
     /* W1 and W3 disconnect */
     int wakeup[16];
@@ -256,7 +256,7 @@ void test_intent_churn() {
     
     /* 1. Repeatedly lock/unlock deep children */
     for (int i = 0; i < 1000; i++) {
-        trie_acquire_lock(t, "/v/deep/path/to/resource", 10);
+        trie_acquire_lock(t, "/v/deep/path/to/resource", 10, true);
         trie_release_lock(t, "/v/deep/path/to/resource", 10);
     }
     
@@ -278,9 +278,9 @@ void test_massive_waiter_queue() {
     printf("Testing massive waiter queue (1000 waiters)...\n");
     trie_t *t = trie_create();
     
-    trie_acquire_lock(t, "/bottle-neck", 10);
+    trie_acquire_lock(t, "/bottle-neck", 10, true);
     for (int i = 0; i < 1000; i++) {
-        assert(trie_acquire_lock(t, "/bottle-neck", 100 + i) == 1);
+        assert(trie_acquire_lock(t, "/bottle-neck", 100 + i, true) == 1);
     }
     
     /* Release should grant to first in line */
@@ -295,8 +295,8 @@ void test_cleanup_recursive_intent() {
     trie_t *t = trie_create();
     
     /* 10 owns two deep resources */
-    trie_acquire_lock(t, "/a/b/c", 10);
-    trie_acquire_lock(t, "/a/b/d", 10);
+    trie_acquire_lock(t, "/a/b/c", 10, true);
+    trie_acquire_lock(t, "/a/b/d", 10, true);
     
     /* /a/b should have intent_count = 2 */
     trie_node_t *ab = trie_traverse(t, "/a/b", false, NULL);
@@ -326,7 +326,7 @@ void test_oversized_path() {
     }
     big_path[8191] = '\0';
     
-    assert(trie_acquire_lock(t, big_path, 10) == 0);
+    assert(trie_acquire_lock(t, big_path, 10, true) == 0);
     assert(trie_release_lock(t, big_path, 10) == -1);
     
     trie_destroy(t);
@@ -338,14 +338,14 @@ void test_deep_intent_hierarchy_complex() {
     trie_t *t = trie_create();
     
     /* Lock /a/b/c/d/e/f/g/h/i/j exclusively */
-    trie_acquire_lock(t, "/a/b/c/d/e/f/g/h/i/j", 10);
+    trie_acquire_lock(t, "/a/b/c/d/e/f/g/h/i/j", 10, true);
     
     /* Parent /a should have intent_count = 1 */
     trie_node_t *node = trie_traverse(t, "/a", false, NULL);
     assert(node->intent_count == 1);
     
     /* Lock /a/b/c/d/e/f/x exclusively (different branch) */
-    trie_acquire_lock(t, "/a/b/c/d/e/f/x", 11);
+    trie_acquire_lock(t, "/a/b/c/d/e/f/x", 11, true);
     
     /* /a/b/c/d/e/f should now have intent_count = 2 */
     node = trie_traverse(t, "/a/b/c/d/e/f", false, NULL);
@@ -374,7 +374,7 @@ void test_path_segment_limit() {
     
     /* The current implementation truncates to 256 segments.
        Let's verify it doesn't crash and behaves predictably. */
-    assert(trie_acquire_lock(t, long_path, 10) == 0);
+    assert(trie_acquire_lock(t, long_path, 10, true) == 0);
     
     /* A path with 256 segments should match it. */
     char match_path[2048] = {0};
@@ -392,11 +392,11 @@ void test_cleanup_massive_wakeups() {
     trie_t *t = trie_create();
     
     /* 10 owns /root */
-    trie_acquire_lock(t, "/root", 10);
+    trie_acquire_lock(t, "/root", 10, true);
     
     /* 100 people waiting for /root */
     for (int i = 0; i < 100; i++) {
-        trie_acquire_lock(t, "/root", 100 + i);
+        trie_acquire_lock(t, "/root", 100 + i, true);
     }
     
     /* Cleanup 10 with cap of 16 */
@@ -418,10 +418,10 @@ void test_deep_recursive_parent_wakeup() {
     trie_t *t = trie_create();
     
     /* /a/b/c is locked by 10 */
-    trie_acquire_lock(t, "/a/b/c", 10);
+    trie_acquire_lock(t, "/a/b/c", 10, true);
     
     /* /a is waited by 11 */
-    assert(trie_acquire_lock(t, "/a", 11) == 1);
+    assert(trie_acquire_lock(t, "/a", 11, true) == 1);
     
     /* Releasing /a/b/c should wake up 11 because /a is now free of intents */
     assert(trie_release_lock(t, "/a/b/c", 10) == 11);
@@ -435,13 +435,13 @@ void test_cleanup_multi_branch_wakeup() {
     trie_t *t = trie_create();
     
     /* 10 owns two unrelated nodes */
-    trie_acquire_lock(t, "/a/1", 10);
-    trie_acquire_lock(t, "/b/1", 10);
+    trie_acquire_lock(t, "/a/1", 10, true);
+    trie_acquire_lock(t, "/b/1", 10, true);
     
     /* 11 waits for /a */
-    assert(trie_acquire_lock(t, "/a", 11) == 1);
+    assert(trie_acquire_lock(t, "/a", 11, true) == 1);
     /* 12 waits for /b */
-    assert(trie_acquire_lock(t, "/b", 12) == 1);
+    assert(trie_acquire_lock(t, "/b", 12, true) == 1);
     
     int wakeup[16];
     char *w_paths[16];
@@ -475,7 +475,7 @@ void test_breadth_stress() {
     for (int i = 0; i < 1000; i++) {
         char path[32];
         sprintf(path, "/root/child_%d", i);
-        assert(trie_acquire_lock(t, path, 1000 + i) == 0);
+        assert(trie_acquire_lock(t, path, 1000 + i, true) == 0);
     }
     
     /* Releasing all should be fast */
@@ -494,18 +494,18 @@ void test_denied_on_ancestor_lock() {
     trie_t *t = trie_create();
     
     /* Lock /a exclusively */
-    assert(trie_acquire_lock(t, "/a", 10) == 0);
+    assert(trie_acquire_lock(t, "/a", 10, true) == 0);
     
     /* Try to lock /a/b - should be denied (-1), not waiting (1) */
-    assert(trie_acquire_lock(t, "/a/b", 11) == -1);
+    assert(trie_acquire_lock(t, "/a/b", 11, true) == -1);
     
     /* Try to lock /a/b/c - should also be denied */
-    assert(trie_acquire_lock(t, "/a/b/c", 12) == -1);
+    assert(trie_acquire_lock(t, "/a/b/c", 12, true) == -1);
     
     trie_release_lock(t, "/a", 10);
     
     /* Now /a/b can be locked */
-    assert(trie_acquire_lock(t, "/a/b", 13) == 0);
+    assert(trie_acquire_lock(t, "/a/b", 13, true) == 0);
     
     trie_destroy(t);
     printf("PASS\n");
@@ -516,16 +516,16 @@ void test_cleanup_mixed_state() {
     trie_t *t = trie_create();
     
     /* 10 owns /owned */
-    trie_acquire_lock(t, "/owned", 10);
+    trie_acquire_lock(t, "/owned", 10, true);
     
     /* 11 owns /other */
-    trie_acquire_lock(t, "/other", 11);
+    trie_acquire_lock(t, "/other", 11, true);
     
     /* 10 waits for /other */
-    assert(trie_acquire_lock(t, "/other", 10) == 1);
+    assert(trie_acquire_lock(t, "/other", 10, true) == 1);
     
     /* 12 waits for /owned */
-    assert(trie_acquire_lock(t, "/owned", 12) == 1);
+    assert(trie_acquire_lock(t, "/owned", 12, true) == 1);
     
     int wakeup[16];
     char *w_paths[16];
@@ -552,14 +552,14 @@ void test_cascading_intent_decrement() {
     trie_t *t = trie_create();
     
     /* Lock /a/b/c/d */
-    trie_acquire_lock(t, "/a/b/c/d", 10);
+    trie_acquire_lock(t, "/a/b/c/d", 10, true);
     
     /* Parent /a has intent_count = 1 */
     trie_node_t *node_a = trie_traverse(t, "/a", false, NULL);
     assert(node_a->intent_count == 1);
     
     /* Waiter on /a */
-    assert(trie_acquire_lock(t, "/a", 11) == 1);
+    assert(trie_acquire_lock(t, "/a", 11, true) == 1);
     
     /* Release /a/b/c/d */
     assert(trie_release_lock(t, "/a/b/c/d", 10) == 11);
@@ -580,14 +580,14 @@ void test_cleanup_massive_multi_node_wakeups() {
     for (int i = 0; i < 100; i++) {
         char path[32];
         sprintf(path, "/res/%d", i);
-        trie_acquire_lock(t, path, 10);
+        trie_acquire_lock(t, path, 10, true);
     }
     
     /* Each resource has one waiter */
     for (int i = 0; i < 100; i++) {
         char path[32];
         sprintf(path, "/res/%d", i);
-        assert(trie_acquire_lock(t, path, 100 + i) == 1);
+        assert(trie_acquire_lock(t, path, 100 + i, true) == 1);
     }
     
     /* Cleanup 10. Should wake up 100 people. 

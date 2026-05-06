@@ -47,7 +47,7 @@ void trie_destroy(trie_t *trie);
  * @param fd The connection FD requesting the lock.
  * @return 0 if granted, 1 if added to wait queue, -1 if denied (error).
  */
-int trie_acquire_lock(trie_t *trie, const char *path, int fd);
+int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait);
 
 /**
  * trie_release_lock - Release a lock held by an FD.

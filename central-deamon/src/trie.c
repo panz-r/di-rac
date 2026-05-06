@@ -205,12 +205,13 @@ trie_node_t* trie_traverse(trie_t *trie, const char *path, bool create, bool *an
     return current;
 }
 
-int trie_acquire_lock(trie_t *trie, const char *path, int fd) {
+int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
     if (!path || *path == '\0') return -1;
     bool ancestor_locked = false;
     trie_node_t *current = trie_traverse(trie, path, true, &ancestor_locked);
     if (ancestor_locked || !current) return -1;
     if (current->owner_fd != -1 || current->intent_count > 0) {
+        if (!wait) return -1; /* Lock is held, and client doesn't want to wait */
         current->waiters = realloc(current->waiters, sizeof(int) * (current->waiters_count + 1));
         current->waiters[current->waiters_count++] = fd;
         register_node_to_fd(trie->waiting_registry, current, fd);

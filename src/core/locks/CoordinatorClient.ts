@@ -49,6 +49,8 @@ export class CoordinatorClient extends EventEmitter {
 				Logger.error(`[CoordinatorClient] Socket error:`, err)
 				this.isConnected = false
 				this.connectionPromise = null
+				// Clear queues on error
+				this.cleanupQueues()
 				reject(err)
 			})
 
@@ -56,10 +58,25 @@ export class CoordinatorClient extends EventEmitter {
 				Logger.info(`[CoordinatorClient] Connection closed`)
 				this.isConnected = false
 				this.connectionPromise = null
+				this.cleanupQueues()
 			})
 		})
 
 		return this.connectionPromise
+	}
+
+	private cleanupQueues(): void {
+		while (this.responseQueue.length > 0) {
+			const resolver = this.responseQueue.shift()
+			if (resolver) resolver({ status: "error", message: "connection closed" })
+		}
+		for (const pathWaiters of this.waiters.values()) {
+			while (pathWaiters.length > 0) {
+				const resolve = pathWaiters.shift()
+				if (resolve) resolve()
+			}
+		}
+		this.waiters.clear()
 	}
 
 	private handleData(data: string): void {
@@ -101,23 +118,46 @@ export class CoordinatorClient extends EventEmitter {
 	 * Acquire a lock on the given path.
 	 * @param path The resource path to lock.
 	 * @param wait Whether to wait if the lock is held.
-	 * @returns true if acquired, false if denied.
+	 * @param timeoutMs Optional timeout in milliseconds.
+	 * @returns true if acquired, false if denied or timeout.
 	 */
-	async acquire(path: string, wait: boolean): Promise<boolean> {
-		await this.connect()
+	async acquire(path: string, wait: boolean, timeoutMs = 30000): Promise<boolean> {
+		try {
+			await this.connect()
+		} catch (e) {
+			return false
+		}
+
 		return new Promise((resolve) => {
+			const timeout = setTimeout(() => {
+				// Remove from waiters if still there
+				const pathWaiters = this.waiters.get(path)
+				if (pathWaiters) {
+					const idx = pathWaiters.indexOf(resolveTrue)
+					if (idx !== -1) pathWaiters.splice(idx, 1)
+				}
+				resolve(false)
+			}, timeoutMs)
+
+			const resolveTrue = () => {
+				clearTimeout(timeout)
+				resolve(true)
+			}
+
 			this.responseQueue.push((msg) => {
 				if (msg.status === "ok") {
-					resolve(true)
+					resolveTrue()
 				} else if (msg.status === "waiting") {
 					if (!wait) {
+						clearTimeout(timeout)
 						resolve(false)
 						return
 					}
 					const pathWaiters = this.waiters.get(path) || []
-					pathWaiters.push(() => resolve(true))
+					pathWaiters.push(resolveTrue)
 					this.waiters.set(path, pathWaiters)
 				} else {
+					clearTimeout(timeout)
 					resolve(false)
 				}
 			})
@@ -130,7 +170,11 @@ export class CoordinatorClient extends EventEmitter {
 	 * @param path The resource path to release.
 	 */
 	async release(path: string): Promise<void> {
-		await this.connect()
+		try {
+			await this.connect()
+		} catch (e) {
+			return
+		}
 		return new Promise((resolve) => {
 			this.responseQueue.push(() => resolve())
 			this.socket?.write(JSON.stringify({ method: "release", path }) + "\n")
@@ -146,5 +190,7 @@ export class CoordinatorClient extends EventEmitter {
 			this.socket = null
 		}
 		this.isConnected = false
+		this.connectionPromise = null
+		this.cleanupQueues()
 	}
 }

@@ -41,8 +41,8 @@ static const char* find_string_val(const char *json, const char *key, char *out,
     if (!p) return NULL;
     p = strchr(p + strlen(pattern), ':');
     if (!p) return NULL;
-    p = strchr(p, '"');
-    if (!p) return NULL;
+    while (*p == ' ' || *p == ':' || *p == '\t') p++;
+    if (*p != '"') return NULL;
     const char *start = p + 1;
     const char *end = strchr(start, '"');
     if (!end) return NULL;
@@ -51,6 +51,19 @@ static const char* find_string_val(const char *json, const char *key, char *out,
     memcpy(out, start, len);
     out[len] = '\0';
     return end;
+}
+
+static bool find_bool_val(const char *json, const char *key, bool default_val) {
+    char pattern[128];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char *p = strstr(json, pattern);
+    if (!p) return default_val;
+    p = strchr(p + strlen(pattern), ':');
+    if (!p) return default_val;
+    while (*p == ' ' || *p == ':' || *p == '\t') p++;
+    if (strncmp(p, "true", 4) == 0) return true;
+    if (strncmp(p, "false", 5) == 0) return false;
+    return default_val;
 }
 
 static void process_single_object(int fd, const char *json, trie_t *trie) {
@@ -63,10 +76,16 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
     }
 
     if (strcmp(method, "acquire") == 0) {
-        int res = trie_acquire_lock(trie, path, fd);
-        if (res == 0) send_json(fd, "{\"status\": \"ok\"}\n");
-        else if (res == 1) send_json(fd, "{\"status\": \"waiting\"}\n");
-        else send_json(fd, "{\"status\": \"denied\"}\n");
+        bool wait = find_bool_val(json, "wait", false);
+        int res = trie_acquire_lock(trie, path, fd, wait);
+        
+        if (res == 0) {
+            send_json(fd, "{\"status\": \"ok\"}\n");
+        } else if (res == 1) {
+            send_json(fd, "{\"status\": \"waiting\"}\n");
+        } else {
+            send_json(fd, "{\"status\": \"denied\"}\n");
+        }
     } else if (strcmp(method, "release") == 0) {
         int next_fd = trie_release_lock(trie, path, fd);
         send_json(fd, "{\"status\": \"ok\"}\n");
@@ -189,9 +208,10 @@ int main() {
             } else {
                 client_ctx_t *ctx = events[i].data.ptr;
                 if (handle_client_data(ctx, lock_trie) < 0) {
-                    int wakeup[256];
-                    char *w_paths[256];
-                    size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, w_paths, 256);
+                    /* On disconnect, cleanup up to 1024 wakeups */
+                    int wakeup[1024];
+                    char *w_paths[1024];
+                    size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, w_paths, 1024);
                     for (size_t j = 0; j < w_count; j++) {
                         char resp[4096 + 128];
                         snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", w_paths[j]);
