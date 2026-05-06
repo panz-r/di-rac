@@ -26,7 +26,7 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 			return
 		}
 
-		await uiHelpers.ask(this.name, context, true).catch(() => {})
+		await uiHelpers.ask("new_task", context, true).catch(() => {})
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -50,7 +50,7 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 
 		// Ask user for response
 		await config.callbacks.removeLastPartialMessageIfExistsWithType("ask", this.name as any)
-		const { text, images, files: newTaskFiles } = await config.callbacks.ask(this.name, context, false)
+		const { text, images, files: newTaskFiles } = await config.callbacks.ask("new_task", context, false)
 
 		// If the user provided a response, treat it as feedback
 		if (text || (images && images.length > 0) || (newTaskFiles && newTaskFiles.length > 0)) {

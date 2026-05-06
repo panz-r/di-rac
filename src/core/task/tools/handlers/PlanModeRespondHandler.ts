@@ -33,7 +33,7 @@ export class PlanModeRespondHandler implements IToolHandler, IPartialBlockHandle
 			options: parsePartialArrayString(uiHelpers.removeClosingTag(block, "options", optionsRaw)),
 		} satisfies DiracPlanModeResponse
 
-		await uiHelpers.ask(this.name, JSON.stringify(sharedMessage), true).catch(() => {})
+		await uiHelpers.ask("plan_mode_respond", JSON.stringify(sharedMessage), true).catch(() => {})
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -76,7 +76,7 @@ export class PlanModeRespondHandler implements IToolHandler, IPartialBlockHandle
 
 			if (switchSuccessful) {
 				// Complete the plan mode response tool call (this is a unique case where we auto-respond to the user with an ask response)
-				const lastPlanMessage = findLast(config.messageState.getDiracMessages(), (m: any) => m.ask === this.name)
+				const lastPlanMessage = findLast(config.messageState.getDiracMessages(), (m: any) => m.ask === "plan_mode_respond")
 				if (lastPlanMessage) {
 					lastPlanMessage.text = JSON.stringify({
 						...sharedMessage,
@@ -99,7 +99,7 @@ export class PlanModeRespondHandler implements IToolHandler, IPartialBlockHandle
 			text,
 			images,
 			files: planResponseFiles,
-		} = await config.callbacks.ask(this.name, JSON.stringify(sharedMessage), false)
+		} = await config.callbacks.ask("plan_mode_respond", JSON.stringify(sharedMessage), false)
 
 		config.taskState.isAwaitingPlanResponse = false
 
@@ -111,7 +111,7 @@ export class PlanModeRespondHandler implements IToolHandler, IPartialBlockHandle
 		if (optionsRaw && text && parsePartialArrayString(optionsRaw).includes(text)) {
 			// Valid option selected, don't show user message in UI
 			// Update last plan message with selected option
-			const lastPlanMessage = findLast(config.messageState.getDiracMessages(), (m: any) => m.ask === this.name)
+			const lastPlanMessage = findLast(config.messageState.getDiracMessages(), (m: any) => m.ask === "plan_mode_respond")
 			if (lastPlanMessage) {
 				lastPlanMessage.text = JSON.stringify({
 					...sharedMessage,
