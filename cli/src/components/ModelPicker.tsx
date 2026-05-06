@@ -9,7 +9,6 @@ import Spinner from "ink-spinner"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import { queryModels } from "@/core/api/providers/api-gateway"
 import { getProviderDefaultModelId } from "../utils/providers"
-import { refreshOpenRouterModels } from "@/core/controller/models/refreshOpenRouterModels"
 import {
 	type ApiProvider,
 	anthropicDefaultModelId,
@@ -90,13 +89,12 @@ export function getDefaultModelId(provider: string): string {
 
 interface ModelPickerProps {
 	provider: string
-	controller: any
 	onChange: (modelId: string) => void
 	onSubmit: (modelId: string) => void
 	isActive?: boolean
 }
 
-export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, onChange, onSubmit, isActive = true }) => {
+export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, onChange, onSubmit, isActive = true }) => {
 	const [isLoading, setIsLoading] = useState(false)
 	const [gatewayModels, setGatewayModels] = useState<string[] | null>(null)
 
@@ -127,24 +125,6 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, 
 			}
 
 			if (cancelled) return
-
-			// Fallback: TS-side fetch (openrouter only)
-			if (provider === "openrouter") {
-				try {
-					const tsModels = await refreshOpenRouterModels(controller)
-					if (cancelled) return
-					if (tsModels) {
-						const ids = Object.keys(tsModels).sort((a, b) => a.localeCompare(b))
-						if (ids.length > 0) {
-							gatewayModelsCache.set(provider, ids)
-						}
-						setGatewayModels(ids)
-						return
-					}
-				} catch {
-					// Both paths failed
-				}
-			}
 
 			// No gateway models — fall through to static list
 			if (!cancelled) {

@@ -9,8 +9,6 @@ import type { ModelRole } from "@shared/roles"
 import { getRoleStateKey } from "@shared/roles"
 import { buildApiHandler } from "@/core/api"
 import type { Controller } from "@/core/controller"
-import { refreshOpenRouterModels } from "@/core/controller/models/refreshOpenRouterModels"
-import { refreshVercelAiGatewayModels } from "@/core/controller/models/refreshVercelAiGatewayModels"
 import { StateManager } from "@/core/storage/StateManager"
 import type { BedrockConfig } from "../components/BedrockSetup"
 import { getDefaultModelId } from "../components/ModelPicker"
@@ -62,31 +60,7 @@ export async function applyProviderConfig(options: ApplyProviderConfigOptions): 
 			}
 		}
 
-		// Fetch model info from the provider API
-		if (providerId === "openrouter" && controller) {
-			const openRouterModels = await refreshOpenRouterModels(controller)
-			const modelInfo = openRouterModels?.[finalModelId]
-			if (modelInfo) {
-				const infoKey = getRoleStateKey(role, "openRouterModelInfo") as any
-				stateManager.setGlobalState(infoKey, modelInfo)
-				if (role === "act") {
-					stateManager.setGlobalState("planModeOpenRouterModelInfo", modelInfo)
-				}
-			}
-		} else if (providerId === "vercel-ai-gateway" && controller) {
-			const vercelModels = await refreshVercelAiGatewayModels(controller)
-			const modelInfo = vercelModels?.[finalModelId]
-			if (modelInfo) {
-				const infoKey = getRoleStateKey(role, "vercelAiGatewayModelInfo") as any
-				stateManager.setGlobalState(infoKey, modelInfo)
-				if (role === "act") {
-					stateManager.setGlobalState("planModeVercelAiGatewayModelInfo", modelInfo)
-				}
-			}
-		}
-	}
-
-	// Add API key if provided (shared across roles, not role-specific)
+		// Add API key if provided (shared across roles, not role-specific)
 	if (apiKey) {
 		const keyField = ProviderToApiKeyMap[providerId as keyof typeof ProviderToApiKeyMap]
 		if (keyField) {

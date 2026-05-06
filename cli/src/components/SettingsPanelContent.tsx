@@ -32,7 +32,6 @@ import { LanguagePicker } from "./LanguagePicker"
 import { CUSTOM_MODEL_ID, hasModelPicker, ModelPicker } from "./ModelPicker"
 import { Panel, PanelTab } from "./Panel"
 import { getProviderLabel, ProviderPicker } from "./ProviderPicker"
-import { refreshOpenRouterModels } from "@/core/controller/models/refreshOpenRouterModels"
 import { ROLE_DESCRIPTORS, getRoleStateKey, type ModelRole } from "@/shared/roles"
 
 interface SettingsPanelContentProps {
@@ -934,20 +933,8 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			const actKey = actProvider ? getProviderModelIdKey(actProvider, "act") : null
 			const planKey = planProvider ? getProviderModelIdKey(planProvider, "plan") : null
 
-			// For openrouter provider, also set model info
-			let modelInfo: ModelInfo | undefined
-			if (providerForSelection === "openrouter") {
-				const openRouterModels = await refreshOpenRouterModels(controller!)
-				modelInfo = openRouterModels?.[modelId]
-			}
-
 			const stateKey = pickingModelKey === "actModelId" ? actKey : planKey
 			if (stateKey) stateManager.setGlobalState(stateKey, modelId)
-			if (modelInfo) {
-				const infoKey =
-					pickingModelKey === "actModelId" ? "actModeOpenRouterModelInfo" : "planModeOpenRouterModelInfo"
-				stateManager.setGlobalState(infoKey, modelInfo)
-			}
 
 			// Flush pending state to ensure model ID is persisted
 			await stateManager.flushPendingState()
@@ -1319,7 +1306,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 					</Text>
 					<Box marginTop={1}>
 						<ModelPicker
-							controller={controller}
 							isActive={isPickingModel}
 							onChange={() => {}}
 							onSubmit={handleModelSelect}

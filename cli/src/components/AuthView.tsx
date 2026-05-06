@@ -514,7 +514,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ controller, onComplete, onEr
 							<Text color="white">Select a model</Text>
 							<Text> </Text>
 							<ModelPicker
-								controller={controller}
 								isActive={step === "modelid"}
 								onChange={setModelId}
 								onSubmit={handleModelIdSubmit}
