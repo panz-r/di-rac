@@ -13,7 +13,6 @@ describe("TemplateEngine", () => {
 	describe("resolve", () => {
 		const mockContext: SystemPromptContext = {
 			cwd: "/test/project",
-			ide: "TestIde",
 			supportsBrowserUse: true,
 			browserSettings: {
 				viewport: {
