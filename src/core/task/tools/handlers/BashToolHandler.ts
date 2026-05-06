@@ -118,6 +118,7 @@ ${result.stderr}`
 [detected_patterns: ${result.meta.detected_patterns.join(", ")}]`
 		if (securityViolations.length > 0) output += `
 [security: ${securityViolations.map(v => v.constraint).join(", ")}]`
+			if (result.meta.hint) output += `\n[hint: ${result.meta.hint}]`
 
 		return formatResponse.toolResult(output)
 	}

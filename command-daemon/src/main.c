@@ -9,20 +9,13 @@
 #include <time.h>
 #include <fcntl.h>
 #include "protocol.h"
+#include "json-write.h"
 #include "session.h"
 #include "executor.h"
 
 #define MAX_CHILDREN EXEC_MAX_CHILDREN
 
 static ExecChild children[MAX_CHILDREN];
-
-/* Find a free child slot */
-static ExecChild *alloc_child(void) {
-    for (int i = 0; i < MAX_CHILDREN; i++) {
-        if (!children[i].active) return &children[i];
-    }
-    return NULL;
-}
 
 /* Get monotonic time in ms */
 static long now_ms(void) {
@@ -78,8 +71,11 @@ static void strip_cwd_markers(char *stderr_buf, size_t *stderr_len) {
     *stderr_len = (size_t)(dst - stderr_buf);
 }
 
-/* Append data to a dynamic buffer, up to max_size bytes. */
-static void main_buf_append(char **buf, size_t *len, const char *data, size_t data_len, int max_size) {
+/* Append data to a dynamic buffer, up to max_size bytes.
+ * Always counts total bytes received (including dropped data). */
+static void main_buf_append(char **buf, size_t *len, size_t *total,
+                            const char *data, size_t data_len, int max_size) {
+    *total += data_len;
     if (*len >= (size_t)max_size) return;
     size_t avail = (size_t)max_size - *len;
     size_t append = data_len < avail ? data_len : avail;
@@ -97,10 +93,23 @@ static void drain_pipe(int fd, ExecChild *child, int is_stdout) {
     while (1) {
         ssize_t n = read(fd, tmp, sizeof(tmp));
         if (n <= 0) break;
-        char **buf = is_stdout ? &child->stdout_buf : &child->stderr_buf;
-        size_t *len = is_stdout ? &child->stdout_len : &child->stderr_len;
-        main_buf_append(buf, len, tmp, (size_t)n, EXEC_MAX_OUTPUT);
+        if (is_stdout) {
+            main_buf_append(&child->stdout_buf, &child->stdout_len,
+                            &child->total_stdout_bytes, tmp, (size_t)n, EXEC_MAX_OUTPUT);
+        } else {
+            main_buf_append(&child->stderr_buf, &child->stderr_len,
+                            &child->total_stderr_bytes, tmp, (size_t)n, EXEC_MAX_OUTPUT);
+        }
     }
+}
+
+/* Generate a hint string based on command outcome. Returns NULL if no hint needed. */
+static const char *compute_hint(ExecChild *child, int truncated) {
+    if (child->timed_out)
+        return "command timed out: try narrower scope or redirect to file";
+    if (truncated)
+        return "output exceeded limit: redirect to file with > or use head/tail";
+    return NULL;
 }
 
 /* Send the final result for a completed child */
@@ -113,25 +122,44 @@ static void send_child_result(ExecChild *child) {
 
     int truncated = (child->stdout_len >= (size_t)EXEC_MAX_OUTPUT ||
                      child->stderr_len >= (size_t)EXEC_MAX_OUTPUT) ? 1 : 0;
+    int truncation_offset = truncated ? (int)(child->total_stdout_bytes > child->total_stderr_bytes
+                                              ? child->total_stdout_bytes
+                                              : child->total_stderr_bytes) : 0;
+    const char *hint = compute_hint(child, truncated);
 
-    printf("{\"type\":\"result\",\"id\":\"%s\",", child->id ? child->id : "");
-    printf("\"stdout\":");
-    write_json_string_limited(child->stdout_buf ? child->stdout_buf : "", 8000);
-    printf(",\"stderr\":");
-    write_json_string_limited(child->stderr_buf ? child->stderr_buf : "", 2000);
-    printf(",\"exit_code\":%d,", child->exit_code);
-    printf("\"meta\":{");
-    printf("\"mode_used\":\"full\",");
-    printf("\"cwd\":");
-    write_json_string(child->cwd);
-    printf(",\"truncated\":%s", truncated ? "true" : "false");
-    printf(",\"truncation_offset\":null");
-    printf(",\"hint\":null");
-    printf(",\"blocked\":null");
-    printf(",\"timed_out\":%s", child->timed_out ? "true" : "false");
-    printf(",\"detected_patterns\":[]");
-    printf("}}\n");
-    fflush(stdout);
+    struct jsonw w;
+    jsonw_init(&w, stdout);
+    jsonw_object_open(&w);
+    jsonw_kv_str(&w, "type", "result");
+    jsonw_kv_str_or_null(&w, "id", child->id);
+
+    /* stdout and stderr with output truncation limits */
+    jsonw_key(&w, "stdout");
+    jsonw_strn(&w, child->stdout_buf ? child->stdout_buf : "",
+               (int)(child->stdout_buf ? child->stdout_len : 0), 8000);
+    jsonw_key(&w, "stderr");
+    jsonw_strn(&w, child->stderr_buf ? child->stderr_buf : "",
+               (int)(child->stderr_buf ? child->stderr_len : 0), 2000);
+
+    jsonw_kv_int(&w, "exit_code", child->exit_code);
+
+    /* meta object */
+    jsonw_key(&w, "meta");
+    jsonw_object_open(&w);
+    jsonw_kv_str(&w, "mode_used", "full");
+    jsonw_kv_str(&w, "cwd", child->cwd);
+    jsonw_kv_bool(&w, "truncated", truncated);
+    jsonw_kv_int(&w, "truncation_offset", truncation_offset);
+    jsonw_kv_str_or_null(&w, "hint", hint);
+    jsonw_key(&w, "blocked"); jsonw_null(&w);
+    jsonw_kv_bool(&w, "timed_out", child->timed_out);
+    jsonw_key(&w, "detected_patterns");
+    jsonw_array_open(&w);
+    jsonw_array_close(&w);
+    jsonw_object_close(&w); /* meta */
+
+    jsonw_object_close(&w); /* top */
+    jsonw_flush(&w);
 }
 
 int main(int argc, char *argv[]) {
@@ -151,6 +179,13 @@ int main(int argc, char *argv[]) {
 
     SessionStore store;
     session_store_init(&store);
+
+    struct proto_ctx ctx = {
+        .children = children,
+        .max_children = MAX_CHILDREN,
+        .sessions = &store,
+        .workspace_root = workspace_root,
+    };
 
     fprintf(stderr, "ready\n");
     fflush(stderr);
@@ -214,9 +249,13 @@ int main(int argc, char *argv[]) {
                     ssize_t n = read(pfds[j].fd, tmp, sizeof(tmp));
                     if (n > 0) {
                         int is_stdout = (pfds[j].fd == c->stdout_fd);
-                        char **buf = is_stdout ? &c->stdout_buf : &c->stderr_buf;
-                        size_t *len = is_stdout ? &c->stdout_len : &c->stderr_len;
-                        main_buf_append(buf, len, tmp, (size_t)n, EXEC_MAX_OUTPUT);
+                        if (is_stdout) {
+                            main_buf_append(&c->stdout_buf, &c->stdout_len,
+                                            &c->total_stdout_bytes, tmp, (size_t)n, EXEC_MAX_OUTPUT);
+                        } else {
+                            main_buf_append(&c->stderr_buf, &c->stderr_len,
+                                            &c->total_stderr_bytes, tmp, (size_t)n, EXEC_MAX_OUTPUT);
+                        }
                     } else if (n <= 0) {
                         /* Pipe closed */
                         if (pfds[j].fd == c->stdout_fd) c->stdout_done = 1;
@@ -290,73 +329,9 @@ int main(int argc, char *argv[]) {
                 if (len > 1 && line[len - 2] == '\r') line[len - 2] = '\0';
                 if (line[0] == '\0') continue;
 
-                /* Dispatch request */
-                if (strstr(line, "\"session_info\"")) {
-                    proto_handle_session_info(line, &store, workspace_root);
-                } else if (strstr(line, "\"execute\"")) {
-                    /* Parse request */
-                    char *id = json_get_string(line, "id");
-                    char *command = json_get_string(line, "command");
-                    char *session_id = json_get_string(line, "session_id");
-
-                    if (!command) {
-                        printf("{\"type\":\"error\",\"id\":\"%s\",\"code\":\"INVALID_REQUEST\",\"message\":\"Missing required field 'command'\"}\n",
-                               id ? id : "");
-                        fflush(stdout);
-                        free(id); free(command); free(session_id);
-                        continue;
-                    }
-
-                    /* Find a free slot */
-                    ExecChild *slot = alloc_child();
-                    if (!slot) {
-                        printf("{\"type\":\"error\",\"id\":\"%s\",\"code\":\"BUSY\",\"message\":\"Too many concurrent commands\"}\n",
-                               id ? id : "");
-                        fflush(stdout);
-                        free(id); free(command); free(session_id);
-                        continue;
-                    }
-
-                    /* Resolve cwd from session */
-                    const char *cwd = workspace_root;
-                    Session *session = NULL;
-                    if (session_id && session_id[0]) {
-                        session = session_get_or_create(&store, session_id, workspace_root);
-                        if (session) cwd = session->cwd;
-                    }
-                    session_cleanup_expired(&store);
-
-                    /* Fork the command */
-                    if (executor_fork(command, cwd, slot) < 0) {
-                        printf("{\"type\":\"error\",\"id\":\"%s\",\"code\":\"FORK_FAILED\",\"message\":\"Failed to start command\"}\n",
-                               id ? id : "");
-                        fflush(stdout);
-                        free(id); free(command); free(session_id);
-                        continue;
-                    }
-
-                    slot->id = id;
-                    int timeout_ms = executor_is_long_running(command) ? 300000 : 30000;
-                    slot->timeout_ms = timeout_ms;
-
-                    /* Update session cwd on completion (handled in send_child_result) */
-                    /* Store session pointer index for later update */
-                    (void)session; /* session cwd updated by CWD marker extraction */
-
-                    /* Send ack immediately */
-                    printf("{\"type\":\"ack\",\"id\":\"%s\"}\n", id ? id : "");
-                    fflush(stdout);
-
-                    free(command);
-                    free(session_id);
-                    /* id is now owned by slot */
-                } else {
-                    char *id = json_get_string(line, "id");
-                    printf("{\"type\":\"error\",\"id\":\"%s\",\"code\":\"UNKNOWN_TYPE\",\"message\":\"Unknown request type\"}\n",
-                           id ? id : "");
-                    fflush(stdout);
-                    free(id);
-                }
+                /* Dispatch to protocol handler */
+                int line_len = (int)strlen(line);
+                proto_handle_line(line, line_len, &ctx);
             }
         }
 

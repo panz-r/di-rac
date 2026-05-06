@@ -8,11 +8,7 @@ export const memory: DiracToolSpec = {
 	name: "memory",
 	description: `Manage saved tool outputs. No args or --list: list files. Filename: read file. --clear: delete all.
 
-Examples:
-  memory
-  memory --list
-  memory output.txt
-  memory --clear
+Example: memory output.txt
 
 Response: OK | items:N | <list> | tokens:N`,
 	parameters: [

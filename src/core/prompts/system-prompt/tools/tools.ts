@@ -8,10 +8,7 @@ export const tools: DiracToolSpec = {
 	name: "tools",
 	description: `Discover available tools. Optional keyword to filter.
 
-Examples:
-  tools
-  tools file
-  tools edit
+Example: tools file
 
 Response: OK | tools:N | <list> | tokens:N`,
 	parameters: [

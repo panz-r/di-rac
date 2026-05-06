@@ -24,9 +24,6 @@ Options:
 
 Examples:
   browser_action launch --url http://localhost:3000
-  browser_action click --coordinate 450,300
-  browser_action type --text "Hello, world!"
-  browser_action scroll_down
   browser_action close
 
 Response: OK | screenshot:<base64> | logs:N | tokens:N

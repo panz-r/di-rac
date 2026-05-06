@@ -13,9 +13,7 @@ Usage: use_skill <skill_name>
 Positional:
   skill_name          The name of the skill to activate (must match exactly one of the available skill names).
 
-Examples:
-  use_skill react-component
-  use_skill database-migration
+Example: use_skill react-component
 
 Response: OK | skill:<name> | tokens:N
 	Skill instructions follow header line.`,

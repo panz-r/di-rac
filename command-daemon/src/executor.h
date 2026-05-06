@@ -19,8 +19,10 @@ typedef struct {
     int stderr_fd;
     char *stdout_buf;
     size_t stdout_len;
+    size_t total_stdout_bytes;  /* bytes received before truncation */
     char *stderr_buf;
     size_t stderr_len;
+    size_t total_stderr_bytes;  /* bytes received before truncation */
     int stdout_done;       /* stdout pipe closed */
     int stderr_done;       /* stderr pipe closed */
     int exited;

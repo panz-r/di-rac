@@ -8,9 +8,7 @@ export const recall: DiracToolSpec = {
 	name: "recall",
 	description: `Search archived conversation observations.
 
-Examples:
-  recall auth middleware
-  recall error in login
+Example: recall auth middleware
 
 Response: OK | matches:N | tokens:N
 Note: Results are from past task observations, not current codebase.`,

@@ -8,9 +8,7 @@ export const plan: DiracToolSpec = {
 	name: "plan",
 	description: `Propose a plan. Plan mode only. --explore: more investigation needed.
 
-Examples:
-  plan "Refactor auth first, then update tests."
-  plan "Need to check database layer." --explore
+Example: plan "Refactor auth first, then update tests."
 
 Response: OK | plan:<text> | tokens:N
 	Plan text follows header line.`,

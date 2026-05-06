@@ -8,9 +8,7 @@ export const write: DiracToolSpec = {
 	name: "write",
 	description: `Create or overwrite a file. Auto-creates parent directories.
 
-Examples:
-  write src/new.ts --content "export function foo() { ... }"
-  write config.json --content '{"key": "value"}'
+Example: write src/new.ts --content "export function foo() { ... }"
 
 Chain: write a.ts --content '...'; write b.ts --content '...'
 Response: OK | lines:N | path:<path> | tokens:N

@@ -8,14 +8,7 @@ export const bash: DiracToolSpec = {
 	name: "bash",
 	description: `Execute shell commands. Composition (pipes, &&, ||) is encouraged to minimize round-trips. Use heredocs for multi-line scripts. Dangerous commands (recursive deletes, reverse shells) are blocked; blocked will name the pattern. Don't edit files with bash — use edit. Don't read files — use read.
 
-Examples:
-  bash "git diff --cached"
-  bash "grep -r 'TODO' src/ | wc -l"
-  bash "npm test && npm run build"
-  bash "python3 << 'EOF'
-import os
-print(os.getcwd())
-EOF"
+Example: bash "npm test && npm run build"
 
 Response: OK | tokens:N | lines:N | exit:N followed by stdout. [stderr], [truncated], [timed out], [blocked:pattern], [security:violation] appended as applicable.
 Note: stdout truncated at ~8KB, stderr at ~2KB (head+tail preserved). Use redirects to file for larger output.

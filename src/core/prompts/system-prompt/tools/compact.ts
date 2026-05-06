@@ -6,11 +6,9 @@ const id = DiracDefaultTool.COMPACT
 export const compact: DiracToolSpec = {
 	id,
 	name: "compact",
-	description: `Compress conversation history. Summary becomes your only context. --keep: file paths to reload (up to 8).
+	description: `Compress conversation history. Summary becomes your only context. --keep: file paths to reload (up to 8). Don't compact mid-edit — finish changes first. For reading saved outputs, use memory.
 
-Examples:
-  compact "Fixed auth bug. Changed middleware to JWT." --keep src/auth.ts
-  compact "Investigated N+1 issue. Root cause found."
+Example: compact "Fixed auth bug. Changed middleware to JWT." --keep src/auth.ts
 
 Response: OK | summary:<text> | reloaded:N | tokens:N
 	Summary follows header line.

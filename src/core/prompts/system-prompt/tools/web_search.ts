@@ -23,10 +23,7 @@ Options:
   --allowed-domains JSON    JSON array of domains to restrict results to.
   --blocked-domains JSON    JSON array of domains to exclude from results.
 
-Examples:
-  web_search "latest developments in AI"
-  web_search "React documentation" --allowed-domains '["react.dev", "github.com"]'
-  web_search "best practices" --blocked-domains '["ads.com"]'
+Example: web_search "React documentation" --allowed-domains '["react.dev", "github.com"]'
 
 Response: OK | results:N | query:<text> | tokens:N
 	Results follow: title | url | snippet (one per line, max 30).

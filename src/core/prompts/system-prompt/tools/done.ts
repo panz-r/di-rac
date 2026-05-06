@@ -8,9 +8,7 @@ export const done: DiracToolSpec = {
 	name: "done",
 	description: `Mark task complete with result summary. --cmd: optional demo command (not echo/cat).
 
-Examples:
-  done "Fixed auth bug by updating middleware"
-  done "Added caching layer" --cmd "npm test"
+Example: done "Added caching layer" --cmd "npm test"
 
 Response: OK | summary:<text> | tokens:N
 	Summary follows header line.

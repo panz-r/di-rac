@@ -6,12 +6,9 @@ const id = DiracDefaultTool.LIST_FILES
 export const repo: DiracToolSpec = {
 	id,
 	name: "repo",
-	description: `Repository structural overview. --detail: summary (default, top symbols per file), files (all files with line counts), skeleton (all defs). Optional paths filter directories.
+	description: `Get repository structural overview. --detail: summary (default, top symbols per file), files (all files with line counts), skeleton (all defs). Optional paths filter directories. For file content, use read. For searching text patterns, use search.
 
-Examples:
-  repo
-  repo --detail files src/
-  repo --detail skeleton
+Example: repo --detail files src/
 
 Response: OK | files:N | lines:N | symbols:N | detail:<summary|files|skeleton> | tokens:N
 	Content follows. Structure varies by detail level.

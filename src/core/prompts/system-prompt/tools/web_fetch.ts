@@ -12,6 +12,7 @@ export const web_fetch: DiracToolSpec = {
 - The prompt must be at least 2 characters
 - HTTP URLs will be automatically upgraded to HTTPS
 - This tool is read-only and does not modify any files
+- For searching multiple sources, use web_search instead
 
 Usage: web_fetch <url> --prompt <text>
 
@@ -21,9 +22,7 @@ Positional:
 Options:
   --prompt TEXT       (required) The prompt to use for analyzing the webpage content.
 
-Examples:
-  web_fetch https://example.com/docs --prompt "Summarize the main points and key takeaways"
-  web_fetch https://api.example.com --prompt "List all available endpoints"
+Example: web_fetch https://example.com/docs --prompt "Summarize the main points and key takeaways"
 
 Response: OK | url:<url> | tokens:N
 	Analyzed content follows header line.

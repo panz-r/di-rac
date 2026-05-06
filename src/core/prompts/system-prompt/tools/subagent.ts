@@ -16,9 +16,7 @@ Options:
   --timeout SEC         Timeout per subagent in seconds (default: 300).
   --max-turns N         Maximum number of turns per subagent.
 
-Examples:
-  use_subagents --prompt "Research auth patterns in the codebase" --prompt "Check test coverage for auth module"
-  use_subagents --prompt "Find all API endpoints" --prompt "Check for security issues" --prompt "Review error handling" --timeout 120
+Example: use_subagents --prompt "Research auth patterns in the codebase" --prompt "Check test coverage for auth module"
 
 Response: OK | results:N | turns:N | tokens:N
 	Results follow: prompt | summary | tools_used (one per subagent).

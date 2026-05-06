@@ -8,9 +8,7 @@ export const ask: DiracToolSpec = {
 	name: "ask",
 	description: `Ask user for clarification. --options: comma-separated choices (2-5).
 
-Examples:
-  ask "JWT or session?" --options JWT,Session,OAuth
-  ask "Which database?"
+Example: ask "JWT or session?" --options JWT,Session,OAuth
 
 Response: OK | <user_response> | tokens:N
 Typical: ask 'Which approach?' --options A,B,C`,

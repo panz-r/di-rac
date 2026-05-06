@@ -3,16 +3,21 @@
 
 #include "executor.h"
 #include "session.h"
+#include "safety.h"
 
 /* Max length of a single JSON line from stdin */
 #define PROTO_MAX_LINE 65536
 
-/* JSON helpers shared between main.c and protocol.c */
-char *json_get_string(const char *json, const char *key);
-void write_json_string(const char *s);
-void write_json_string_limited(const char *s, size_t max_len);
+/* Context passed to the protocol handler */
+struct proto_ctx {
+    ExecChild *children;
+    int max_children;
+    SessionStore *sessions;
+    const char *workspace_root;
+};
 
-/* Handle session_info request (sync, non-blocking) */
-void proto_handle_session_info(const char *line, SessionStore *store, const char *default_cwd);
+/* Parse and dispatch a single JSON request line.
+ * Returns 0 on success, -1 on parse error. */
+int proto_handle_line(const char *line, int line_len, struct proto_ctx *ctx);
 
-#endif
+#endif /* PROTOCOL_H */

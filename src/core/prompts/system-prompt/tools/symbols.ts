@@ -6,7 +6,7 @@ const id = DiracDefaultTool.SYMBOLS
 export const symbols: DiracToolSpec = {
 	id,
 	name: "symbols",
-	description: `AST symbol operations. For text/regex patterns, use search instead. For reading file content, use read --detail outline --section fn:Name.
+	description: `Perform AST symbol operations: search definitions, replace bodies, rename across files, find references. For text/regex patterns, use search instead. For reading file content, use read --detail outline --section fn:Name.
 
 Subcommands:
   search --name PATTERN [--kind function|class]    Find definitions
@@ -14,11 +14,7 @@ Subcommands:
   rename --old NAME --new NAME                     Rename across files
   refs --name SYMBOL                               Find all references
 
-Examples:
-  symbols search src/ --name AuthService --kind class
-  symbols replace src/auth.ts --name login --text "async login() { ... }"
-  symbols rename src/ --old calcTotal --new calcGrandTotal
-  symbols refs src/ --name login
+Example: symbols search src/ --name AuthService --kind class
 
 Response: OK | matches:N | hint:Try --kind function/class or different name | tokens:N
 Universal flags: --dry-run (preview changes without applying), --retry N.
