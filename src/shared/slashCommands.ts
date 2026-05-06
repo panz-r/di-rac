@@ -32,15 +32,6 @@ export const BASE_SLASH_COMMANDS: SlashCommand[] = [
 	},
 ]
 
-// VS Code-only slash commands
-export const VSCODE_ONLY_COMMANDS: SlashCommand[] = [
-	{
-		name: "explain-changes",
-		description: "Explain code changes between git refs (PRs, commits, branches, etc.)",
-		section: "default",
-	},
-]
-
 // CLI-only slash commands (handled locally, not sent to backend)
 export const CLI_ONLY_COMMANDS: SlashCommand[] = [
 	{
