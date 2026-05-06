@@ -9,6 +9,7 @@ import { ITerminalManager } from "@integrations/terminal/types"
 import type { Dirent } from "fs"
 import fs from "fs/promises"
 import * as path from "path"
+import { Logger } from "@shared/services/Logger"
 import { MessageStateHandler } from "./message-state"
 import { TaskState } from "./TaskState"
 
