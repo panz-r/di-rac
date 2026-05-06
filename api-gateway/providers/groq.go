@@ -417,4 +417,75 @@ func (h *GroqHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]Mod
 	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", h.apiKey)
 }
 
+func (h *GroqHandler) Capabilities() *ProviderInfo {
+	return &ProviderInfo{
+		ID:           "groq",
+		DefaultModel: "moonshotai/kimi-k2-instruct-0905",
+		Features: ProviderFeatures{
+			SupportsThinking:        true,
+			SupportsReasoningEffort: false,
+			SupportsTools:           true,
+			SupportsImages:          true,
+			SupportsPromptCache:     false,
+			SupportsStreaming:       true,
+		},
+		Settings: []ProviderSetting{
+			{
+				Key:         "temperature",
+				Label:       "Temperature",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(2),
+				Step:        fPtr(0.01),
+				Default:     0,
+				Group:       "sampling",
+				Description: "Controls randomness (0 = deterministic, 2 = creative).",
+				ValidRange:  "0 – 2",
+			},
+			{
+				Key:         "top_p",
+				Label:       "Top P",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(1),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Nucleus sampling threshold.",
+				ValidRange:  "0 – 1",
+			},
+			{
+				Key:        "presence_penalty",
+				Label:      "Presence Penalty",
+				Type:       SettingSlider,
+				Min:        fPtr(-2),
+				Max:        fPtr(2),
+				Step:       fPtr(0.1),
+				Group:      "sampling",
+				ValidRange: "-2 – 2",
+			},
+			{
+				Key:        "frequency_penalty",
+				Label:      "Frequency Penalty",
+				Type:       SettingSlider,
+				Min:        fPtr(-2),
+				Max:        fPtr(2),
+				Step:       fPtr(0.1),
+				Group:      "sampling",
+				ValidRange: "-2 – 2",
+			},
+			{
+				Key:         "max_tokens",
+				Label:       "Max Tokens",
+				Type:        SettingNumber,
+				Min:         fPtr(1),
+				Group:       "sampling",
+				Description: "Maximum number of tokens to generate.",
+			},
+		},
+	}
+}
+
+var _ CapableHandler = (*GroqHandler)(nil)
+
 var _ ModelLister = (*GroqHandler)(nil)

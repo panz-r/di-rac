@@ -295,4 +295,56 @@ func (h *CerebrasHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([
 	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", h.apiKey)
 }
 
+func (h *CerebrasHandler) Capabilities() *ProviderInfo {
+	return &ProviderInfo{
+		ID:           "cerebras",
+		DefaultModel: "zai-glm-4.7",
+		Features: ProviderFeatures{
+			SupportsThinking:        false,
+			SupportsReasoningEffort: false,
+			SupportsTools:           true,
+			SupportsImages:          false,
+			SupportsPromptCache:     false,
+			SupportsStreaming:       true,
+		},
+		Settings: []ProviderSetting{
+			{
+				Key:         "temperature",
+				Label:       "Temperature",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(2),
+				Step:        fPtr(0.01),
+				Default:     0,
+				Group:       "sampling",
+				Description: "Controls randomness (0 = deterministic, 2 = creative).",
+				ValidRange:  "0 – 2",
+			},
+			{
+				Key:         "top_p",
+				Label:       "Top P",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(1),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Nucleus sampling threshold.",
+				ValidRange:  "0 – 1",
+			},
+			{
+				Key:         "max_tokens",
+				Label:       "Max Tokens",
+				Type:        SettingNumber,
+				Min:         fPtr(1),
+				Default:     16384,
+				Group:       "sampling",
+				Description: "Maximum number of tokens to generate.",
+			},
+		},
+	}
+}
+
+var _ CapableHandler = (*CerebrasHandler)(nil)
+
 var _ ModelLister = (*CerebrasHandler)(nil)

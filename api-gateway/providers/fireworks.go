@@ -339,8 +339,75 @@ func (h *FireworksHandler) convertResponse(resp map[string]interface{}) *SendRes
 	}
 }
 
-// Ensure FireworksHandler satisfies Handler
-var _ Handler = (*FireworksHandler)(nil)
+func (h *FireworksHandler) Capabilities() *ProviderInfo {
+	return &ProviderInfo{
+		ID:           "fireworks",
+		DefaultModel: "accounts/fireworks/models/kimi-k2p6",
+		Features: ProviderFeatures{
+			SupportsThinking:    true,
+			SupportsTools:       true,
+			SupportsImages:      true,
+			SupportsPromptCache: false,
+			SupportsStreaming:   true,
+		},
+		Settings: []ProviderSetting{
+			{
+				Key:         "temperature",
+				Label:       "Temperature",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(2),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Controls randomness (0 = deterministic, 2 = creative).",
+				ValidRange:  "0 – 2",
+			},
+			{
+				Key:         "top_p",
+				Label:       "Top P",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(1),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Nucleus sampling threshold.",
+				ValidRange:  "0 – 1",
+			},
+			{
+				Key:         "max_tokens",
+				Label:       "Max Tokens",
+				Type:        SettingNumber,
+				Min:         fPtr(1),
+				Group:       "sampling",
+				Description: "Maximum tokens in the response.",
+			},
+			{
+				Key:        "presence_penalty",
+				Label:      "Presence Penalty",
+				Type:       SettingSlider,
+				Min:        fPtr(-2),
+				Max:        fPtr(2),
+				Step:       fPtr(0.1),
+				Group:      "sampling",
+				ValidRange: "-2 – 2",
+			},
+			{
+				Key:        "frequency_penalty",
+				Label:      "Frequency Penalty",
+				Type:       SettingSlider,
+				Min:        fPtr(-2),
+				Max:        fPtr(2),
+				Step:       fPtr(0.1),
+				Group:      "sampling",
+				ValidRange: "-2 – 2",
+			},
+		},
+	}
+}
+
+var _ CapableHandler = (*FireworksHandler)(nil)
 
 func (h *FireworksHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
 	base := h.baseURL

@@ -1,6 +1,9 @@
 package providers
 
-import "context"
+import (
+	"context"
+	"math"
+)
 
 // SettingType determines the UI widget for a provider setting.
 type SettingType string
@@ -113,4 +116,124 @@ type SettingsValidator interface {
 // Providers that don't implement it return nil from Registry.ListModels.
 type ModelLister interface {
 	ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error)
+}
+
+// ValidateOption customizes BaseValidateSettings behavior.
+type ValidateOption func(*validateContext)
+
+type validateContext struct {
+	inactiveInThinkingExtra []string
+	crossParamRules         []crossParamRule
+}
+
+type crossParamRule func(key string, val interface{}, settings map[string]interface{}) *SettingValidation
+
+// InactiveInThinking marks additional keys as inactive during thinking mode.
+func InactiveInThinking(keys ...string) ValidateOption {
+	return func(ctx *validateContext) {
+		ctx.inactiveInThinkingExtra = append(ctx.inactiveInThinkingExtra, keys...)
+	}
+}
+
+// CrossParamRule adds a custom cross-parameter validation rule.
+func CrossParamRule(fn func(key string, val interface{}, settings map[string]interface{}) *SettingValidation) ValidateOption {
+	return func(ctx *validateContext) {
+		ctx.crossParamRules = append(ctx.crossParamRules, fn)
+	}
+}
+
+// BaseValidateSettings performs standard slider clamping and thinking-mode invalidation.
+// Providers call this and then apply their own rules via ValidateOption.
+func BaseValidateSettings(
+	info *ProviderInfo,
+	settings map[string]interface{},
+	thinking *ThinkingConfig,
+	opts ...ValidateOption,
+) *ValidateSettingsResult {
+	ctx := &validateContext{}
+	for _, opt := range opts {
+		opt(ctx)
+	}
+
+	result := &ValidateSettingsResult{Settings: make(map[string]SettingValidation)}
+	isThinking := thinking != nil && thinking.Type == "enabled"
+
+	// Standard keys that are inactive in thinking mode
+	inThinking := map[string]bool{
+		"temperature": true, "top_p": true, "presence_penalty": true, "frequency_penalty": true,
+	}
+	for _, k := range ctx.inactiveInThinkingExtra {
+		inThinking[k] = true
+	}
+
+	// Keys that are inactive outside thinking mode
+	thinkingOnly := map[string]bool{
+		"reasoning_effort": true, "thinking_budget": true, "enable_thinking": true,
+	}
+
+	for _, s := range info.Settings {
+		val := settings[s.Key]
+		v := SettingValidation{Status: StatusActive}
+
+		// Clamp slider values to [min, max]
+		if s.Type == SettingSlider {
+			num := toFloat(val)
+			if num == 0 {
+				num = floatDefault(s.Default, 0)
+			}
+			clamped := num
+			if s.Min != nil {
+				clamped = math.Max(clamped, *s.Min)
+			}
+			if s.Max != nil {
+				clamped = math.Min(clamped, *s.Max)
+			}
+			if clamped != num {
+				v.Value = clamped
+			}
+			val = clamped
+		}
+
+		// Active/inactive based on thinking mode
+		if isThinking && inThinking[s.Key] {
+			v.Status = StatusInactive
+			v.Message = "Ignored in thinking mode"
+		} else if !isThinking && thinkingOnly[s.Key] {
+			v.Status = StatusInactive
+			v.Message = "Only applies in thinking mode"
+		}
+
+		// Cross-parameter: logprobs requires top_logprobs > 0
+		if s.Key == "top_logprobs" {
+			logprobsEnabled, _ := settings["logprobs"].(bool)
+			if logprobsEnabled {
+				num := toFloat(val)
+				if num <= 0 {
+					v.Error = "Must be > 0 when logprobs is enabled"
+					v.Value = float64(1)
+				}
+			}
+		}
+
+		// Custom cross-parameter rules
+		for _, rule := range ctx.crossParamRules {
+			if extra := rule(s.Key, val, settings); extra != nil {
+				if extra.Status != "" {
+					v.Status = extra.Status
+				}
+				if extra.Message != "" {
+					v.Message = extra.Message
+				}
+				if extra.Error != "" {
+					v.Error = extra.Error
+				}
+				if extra.Value != nil {
+					v.Value = extra.Value
+				}
+			}
+		}
+
+		result.Settings[s.Key] = v
+	}
+	return result
 }

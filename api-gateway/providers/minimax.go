@@ -44,12 +44,58 @@ type MiniMaxHandler struct {
 }
 
 func NewMiniMaxHandler() *MiniMaxHandler {
+	const defaultModel = "MiniMax-M2.7"
 	temp := 1.0
 	return &MiniMaxHandler{
 		inner: newOpenAICompatHandler(OpenAICompatConfig{
 			BaseURL:      "https://api.minimax.io/v1",
-			DefaultModel: "MiniMax-M2.7",
+			DefaultModel: defaultModel,
 			Temperature:  &temp,
+			Capabilities: &ProviderInfo{
+				ID:           "minimax",
+				DefaultModel: defaultModel,
+				Features: ProviderFeatures{
+					SupportsThinking:    false,
+					SupportsTools:       true,
+					SupportsImages:      false,
+					SupportsPromptCache: false,
+					SupportsStreaming:   true,
+				},
+				Settings: []ProviderSetting{
+					{
+						Key:         "temperature",
+						Label:       "Temperature",
+						Type:        SettingSlider,
+						Min:         fPtr(0),
+						Max:         fPtr(1),
+						Step:        fPtr(0.1),
+						Default:     1.0,
+						Group:       "sampling",
+						Description: "Controls randomness (0 = deterministic, 1 = creative).",
+						ValidRange:  "0 – 1",
+					},
+					{
+						Key:         "top_p",
+						Label:       "Top P",
+						Type:        SettingSlider,
+						Min:         fPtr(0),
+						Max:         fPtr(1),
+						Step:        fPtr(0.01),
+						Default:     1.0,
+						Group:       "sampling",
+						Description: "Nucleus sampling threshold.",
+						ValidRange:  "0 – 1",
+					},
+					{
+						Key:         "max_tokens",
+						Label:       "Max Tokens",
+						Type:        SettingNumber,
+						Min:         fPtr(1),
+						Group:       "sampling",
+						Description: "Maximum tokens in the response.",
+					},
+				},
+			},
 			ModifyRequest: func(req *Request, result map[string]interface{}) {
 				result["reasoning_split"] = true
 				// Log request summary for debugging

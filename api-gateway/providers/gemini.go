@@ -500,4 +500,66 @@ func (h *GeminiHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]M
 	return entries, nil
 }
 
+func (h *GeminiHandler) Capabilities() *ProviderInfo {
+	return &ProviderInfo{
+		ID:           "gemini",
+		DefaultModel: "gemini-2.0-flash",
+		Features: ProviderFeatures{
+			SupportsThinking:        true,
+			SupportsReasoningEffort: false,
+			SupportsTools:           true,
+			SupportsImages:          true,
+			SupportsPromptCache:     false,
+			SupportsStreaming:       true,
+		},
+		Settings: []ProviderSetting{
+			{
+				Key:         "temperature",
+				Label:       "Temperature",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(2),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Controls randomness (0 = deterministic, 2 = creative).",
+				ValidRange:  "0 – 2",
+			},
+			{
+				Key:         "top_p",
+				Label:       "Top P",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(1),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Nucleus sampling threshold.",
+				ValidRange:  "0 – 1",
+			},
+			{
+				Key:         "top_k",
+				Label:       "Top K",
+				Type:        SettingSlider,
+				Min:         fPtr(1),
+				Max:         fPtr(100),
+				Step:        fPtr(1),
+				Group:       "sampling",
+				Description: "Consider only top K tokens at each step.",
+				ValidRange:  "1 – 100",
+			},
+			{
+				Key:         "max_tokens",
+				Label:       "Max Output Tokens",
+				Type:        SettingNumber,
+				Min:         fPtr(1),
+				Group:       "sampling",
+				Description: "Maximum number of tokens in the response.",
+			},
+		},
+	}
+}
+
+var _ CapableHandler = (*GeminiHandler)(nil)
+
 var _ ModelLister = (*GeminiHandler)(nil)

@@ -531,4 +531,83 @@ func (h *AnthropicHandler) ListModels(ctx context.Context, cfg ProviderConfig) (
 	return entries, nil
 }
 
+func (h *AnthropicHandler) Capabilities() *ProviderInfo {
+	return &ProviderInfo{
+		ID:           "anthropic",
+		DefaultModel: "claude-sonnet-4-20250514",
+		Features: ProviderFeatures{
+			SupportsThinking:        true,
+			SupportsReasoningEffort: false,
+			SupportsTools:           true,
+			SupportsImages:          true,
+			SupportsPromptCache:     true,
+			SupportsStreaming:       true,
+		},
+		Settings: []ProviderSetting{
+			{
+				Key:         "temperature",
+				Label:       "Temperature",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(1),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Controls randomness (0 = deterministic, 1 = creative). Ignored in thinking mode.",
+				ValidRange:  "0 – 1",
+			},
+			{
+				Key:         "top_p",
+				Label:       "Top P",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(1),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Nucleus sampling threshold. Ignored in thinking mode.",
+				ValidRange:  "0 – 1",
+			},
+			{
+				Key:         "top_k",
+				Label:       "Top K",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(500),
+				Step:        fPtr(1),
+				Group:       "sampling",
+				Description: "Only sample from the top K options for each subsequent token.",
+				ValidRange:  "0 – 500",
+			},
+			{
+				Key:         "max_tokens",
+				Label:       "Max Tokens",
+				Type:        SettingNumber,
+				Min:         fPtr(1),
+				Default:     8192,
+				Group:       "sampling",
+				Description: "Maximum number of tokens to generate.",
+			},
+			{
+				Key:         "stop_sequences",
+				Label:       "Stop Sequences",
+				Type:        SettingText,
+				Group:       "sampling",
+				Description: "Custom stop sequences (comma-separated).",
+			},
+			{
+				Key:         "thinking_budget_tokens",
+				Label:       "Thinking Budget Tokens",
+				Type:        SettingNumber,
+				Min:         fPtr(1024),
+				Default:     8192,
+				Group:       "reasoning",
+				Description: "Token budget for extended thinking. Only applies in thinking mode.",
+			},
+		},
+	}
+}
+
+var _ CapableHandler = (*AnthropicHandler)(nil)
+
 var _ ModelLister = (*AnthropicHandler)(nil)

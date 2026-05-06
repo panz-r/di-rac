@@ -516,8 +516,74 @@ func (h *QwenHandler) convertResponse(resp map[string]interface{}) *SendResult {
 	}
 }
 
-// Ensure QwenHandler satisfies Handler
-var _ Handler = (*QwenHandler)(nil)
+func (h *QwenHandler) Capabilities() *ProviderInfo {
+	defaultModel := "qwen3-235b-a22b"
+	if h.apiLine == "international" {
+		defaultModel = "qwen3-coder-plus"
+	}
+	return &ProviderInfo{
+		ID:           "qwen",
+		DefaultModel: defaultModel,
+		Features: ProviderFeatures{
+			SupportsThinking:    true,
+			SupportsTools:       true,
+			SupportsImages:      true,
+			SupportsPromptCache: false,
+			SupportsStreaming:   true,
+		},
+		Settings: []ProviderSetting{
+			{
+				Key:         "temperature",
+				Label:       "Temperature",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(2),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Controls randomness (0 = deterministic, 2 = creative).",
+				ValidRange:  "0 – 2",
+			},
+			{
+				Key:         "top_p",
+				Label:       "Top P",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(1),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Nucleus sampling threshold.",
+				ValidRange:  "0 – 1",
+			},
+			{
+				Key:         "max_tokens",
+				Label:       "Max Tokens",
+				Type:        SettingNumber,
+				Min:         fPtr(1),
+				Group:       "sampling",
+				Description: "Maximum tokens in the response (sent as max_completion_tokens).",
+			},
+			{
+				Key:         "enable_thinking",
+				Label:       "Enable Thinking",
+				Type:        SettingToggle,
+				Group:       "reasoning",
+				Description: "Enable thinking/reasoning for Qwen3 and R1 models.",
+			},
+			{
+				Key:         "thinking_budget",
+				Label:       "Thinking Budget",
+				Type:        SettingNumber,
+				Min:         fPtr(1),
+				Group:       "reasoning",
+				Description: "Token budget for thinking (only applies when thinking is enabled).",
+			},
+		},
+	}
+}
+
+var _ CapableHandler = (*QwenHandler)(nil)
 
 func (h *QwenHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
 	base := h.baseURL

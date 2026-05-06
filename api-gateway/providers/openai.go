@@ -560,6 +560,115 @@ func (h *OpenAIHandler) convertResponse(resp map[string]interface{}) *SendResult
 	}
 }
 
+func (h *OpenAIHandler) Capabilities() *ProviderInfo {
+	return &ProviderInfo{
+		ID:           "openai",
+		DefaultModel: "gpt-4o",
+		Features: ProviderFeatures{
+			SupportsThinking:        true,
+			SupportsReasoningEffort: true,
+			SupportsTools:           true,
+			SupportsImages:          true,
+			SupportsPromptCache:     false,
+			SupportsStreaming:       true,
+		},
+		Settings: []ProviderSetting{
+			{
+				Key:         "temperature",
+				Label:       "Temperature",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(2),
+				Step:        fPtr(0.1),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Controls randomness (0 = deterministic, 2 = creative). Ignored in thinking mode.",
+				ValidRange:  "0 – 2",
+			},
+			{
+				Key:         "top_p",
+				Label:       "Top P",
+				Type:        SettingSlider,
+				Min:         fPtr(0),
+				Max:         fPtr(1),
+				Step:        fPtr(0.01),
+				Default:     1.0,
+				Group:       "sampling",
+				Description: "Nucleus sampling threshold. Ignored in thinking mode.",
+				ValidRange:  "0 – 1",
+			},
+			{
+				Key:   "reasoning_effort",
+				Label: "Reasoning Effort",
+				Type:  SettingSelect,
+				Scope: ScopePerMode,
+				Options: []SelectOption{
+					{Value: "", Label: "Default"},
+					{Value: "low", Label: "Low"},
+					{Value: "medium", Label: "Medium"},
+					{Value: "high", Label: "High"},
+				},
+				Group:       "reasoning",
+				Description: "Controls reasoning depth for o-series models. Only applies in thinking mode.",
+			},
+			{
+				Key:         "max_completion_tokens",
+				Label:       "Max Completion Tokens",
+				Type:        SettingNumber,
+				Min:         fPtr(1),
+				Group:       "sampling",
+				Description: "Maximum tokens in the completion.",
+			},
+			{
+				Key:        "presence_penalty",
+				Label:      "Presence Penalty",
+				Type:       SettingSlider,
+				Min:        fPtr(-2),
+				Max:        fPtr(2),
+				Step:       fPtr(0.1),
+				Group:      "sampling",
+				ValidRange: "-2 – 2",
+			},
+			{
+				Key:        "frequency_penalty",
+				Label:      "Frequency Penalty",
+				Type:       SettingSlider,
+				Min:        fPtr(-2),
+				Max:        fPtr(2),
+				Step:       fPtr(0.1),
+				Group:      "sampling",
+				ValidRange: "-2 – 2",
+			},
+			{
+				Key:         "logprobs",
+				Label:       "Log Probabilities",
+				Type:        SettingToggle,
+				Group:       "sampling",
+				Description: "Return log probabilities of output tokens.",
+			},
+			{
+				Key:        "top_logprobs",
+				Label:      "Top Logprobs",
+				Type:       SettingSlider,
+				Min:        fPtr(0),
+				Max:        fPtr(20),
+				Step:       fPtr(1),
+				Group:      "sampling",
+				ValidRange: "0 – 20",
+			},
+			{
+				Key:         "stop",
+				Label:       "Stop Sequences",
+				Type:        SettingText,
+				Group:       "sampling",
+				Description: "Custom stop sequences (comma-separated, max 4).",
+			},
+		},
+	}
+}
+
+var _ CapableHandler = (*OpenAIHandler)(nil)
+
 func (h *OpenAIHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
 	base := h.baseURL
 	if cfg.BaseURL != "" {

@@ -1,5 +1,4 @@
-import { ApiConfiguration, ModelInfo, openAiModelInfoSaneDefaults, QwenApiRegions } from "@shared/api"
-import { queryProviderInfo, type ProviderSetting } from "@/core/api/providers/api-gateway"
+import { ApiConfiguration, ModelInfo, ALL_MODEL_MAPS } from "@shared/api"
 import { getSettingsForMode } from "@shared/storage/provider-settings"
 import { Mode } from "@shared/storage/types"
 import { getRoleStateKey } from "@shared/roles"
@@ -59,6 +58,15 @@ function extractProviderSettings(
 	return result
 }
 
+// Resolve ModelInfo for a model ID by searching all static model maps.
+function resolveModelInfo(modelId: string | undefined): ModelInfo | undefined {
+	if (!modelId) return undefined
+	for (const [, map] of ALL_MODEL_MAPS) {
+		if (modelId in map) return map[modelId]
+	}
+	return undefined
+}
+
 // Helper: create an ApiGatewayHandler for a provider that has been migrated to the Go gateway.
 function gatewayHandler(
 	providerId: string,
@@ -69,15 +77,18 @@ function gatewayHandler(
 		thinkingBudgetTokens?: number
 		reasoningEffort?: string
 		settings?: Record<string, unknown>
+		modelInfo?: ModelInfo
 	},
 ): ApiGatewayHandler {
+	const modelInfo = opts.modelInfo || resolveModelInfo(opts.model)
 	return new ApiGatewayHandler({
 		providerId,
 		apiKey: opts.apiKey,
 		baseUrl: opts.baseUrl,
 		model: opts.model,
+		modelInfo,
 		thinkingBudgetTokens: opts.thinkingBudgetTokens,
-		enableThinking: true,
+		enableThinking: modelInfo?.supportsReasoning === true,
 		reasoningEffort: opts.reasoningEffort,
 		settings: opts.settings,
 	})
@@ -88,7 +99,6 @@ function createHandlerForProvider(
 	options: Omit<ApiConfiguration, "apiProvider">,
 	mode: "act" | "plan",
 ): ApiHandler {
-	// Providers migrated to the Go API gateway
 	const thinkingBudgetTokens =
 		mode === "plan" ? options.planModeThinkingBudgetTokens : options.actModeThinkingBudgetTokens
 	const reasoningEffort =
@@ -97,13 +107,13 @@ function createHandlerForProvider(
 	const providerSettings = extractProviderSettings(providerSettingsStore, apiProvider || "", mode)
 
 	switch (apiProvider) {
-		// --- Go gateway providers ---
 		case "anthropic":
 			return gatewayHandler("anthropic", {
 				apiKey: options.apiKey,
 				baseUrl: options.anthropicBaseUrl,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				thinkingBudgetTokens,
+				settings: providerSettings,
 			})
 		case "openrouter":
 			return gatewayHandler("openrouter", {
@@ -119,12 +129,14 @@ function createHandlerForProvider(
 				apiKey,
 				baseUrl: options.openAiBaseUrl,
 				model: openAiModelId,
+				settings: providerSettings,
 			})
 		}
 		case "lmstudio":
 			return gatewayHandler("lmstudio", {
 				baseUrl: options.lmStudioBaseUrl,
 				model: mode === "plan" ? options.planModeLmStudioModelId : options.actModeLmStudioModelId,
+				settings: providerSettings,
 			})
 		case "gemini":
 			return gatewayHandler("gemini", {
@@ -132,6 +144,7 @@ function createHandlerForProvider(
 				baseUrl: options.geminiBaseUrl,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				thinkingBudgetTokens,
+				settings: providerSettings,
 			})
 		case "deepseek":
 			return gatewayHandler("deepseek", {
@@ -144,57 +157,68 @@ function createHandlerForProvider(
 			return gatewayHandler("fireworks", {
 				apiKey: options.fireworksApiKey,
 				model: mode === "plan" ? options.planModeFireworksModelId : options.actModeFireworksModelId,
+				settings: providerSettings,
 			})
 		case "together":
 			return gatewayHandler("together", {
 				apiKey: options.togetherApiKey,
 				model: mode === "plan" ? options.planModeTogetherModelId : options.actModeTogetherModelId,
+				settings: providerSettings,
 			})
 		case "qwen":
 			return gatewayHandler("qwen", {
 				apiKey: options.qwenApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				thinkingBudgetTokens,
+				settings: providerSettings,
 			})
 		case "mistral":
 			return gatewayHandler("mistral", {
 				apiKey: options.mistralApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
 			})
 		case "moonshot":
 			return gatewayHandler("moonshot", {
 				apiKey: options.moonshotApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
 			})
 		case "huggingface":
 			return gatewayHandler("huggingface", {
 				apiKey: options.huggingFaceApiKey,
 				model: mode === "plan" ? options.planModeHuggingFaceModelId : options.actModeHuggingFaceModelId,
+				settings: providerSettings,
 			})
 		case "nebius":
 			return gatewayHandler("nebius", {
 				apiKey: options.nebiusApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
 			})
 		case "xai":
 			return gatewayHandler("xai", {
 				apiKey: options.xaiApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
 			})
 		case "sambanova":
 			return gatewayHandler("sambanova", {
 				apiKey: options.sambanovaApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
 			})
 		case "cerebras":
 			return gatewayHandler("cerebras", {
 				apiKey: options.cerebrasApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
 			})
 		case "groq":
 			return gatewayHandler("groq", {
 				apiKey: options.groqApiKey,
 				model: mode === "plan" ? options.planModeGroqModelId : options.actModeGroqModelId,
+				settings: providerSettings,
 			})
 		case "zai":
 			return gatewayHandler("zai", {
@@ -208,6 +232,7 @@ function createHandlerForProvider(
 				apiKey: options.minimaxApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				thinkingBudgetTokens,
+				settings: providerSettings,
 			})
 		case "nvidia-nim":
 			return gatewayHandler("nvidia-nim", {
@@ -220,16 +245,19 @@ function createHandlerForProvider(
 			return gatewayHandler("opencode_go", {
 				apiKey: options.openCodeGoApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
 			})
 		case "opencode_zen":
 			return gatewayHandler("opencode_zen", {
 				apiKey: options.openCodeZenApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
 			})
 		case "kilocode":
 			return gatewayHandler("kilocode", {
 				apiKey: options.kiloCodeApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
 			})
 		case "byteplus":
 			return gatewayHandler("byteplus", {
@@ -243,15 +271,20 @@ function createHandlerForProvider(
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				settings: providerSettings,
 			})
-		case "api-gateway":
+		case "api-gateway": {
+			const gwModel = mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId
+			const gwModelInfo = resolveModelInfo(gwModel)
 			return new ApiGatewayHandler({
 				providerId: options.apiGatewayProviderId || "anthropic",
 				apiKey: options.apiGatewayApiKey,
 				baseUrl: options.apiGatewayBaseUrl,
-				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				model: gwModel,
+				modelInfo: gwModelInfo,
 				thinkingBudgetTokens,
-				enableThinking: true,
+				enableThinking: gwModelInfo?.supportsReasoning === true,
+				settings: providerSettings,
 			})
+		}
 
 		default:
 			throw new Error(`No provider set. Current provider: "${apiProvider || "unknown"}". Configure a provider in settings.`)

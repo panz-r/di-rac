@@ -804,9 +804,11 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 	}
 
 	const { sendProviderConfigsToGateway } = await import("./utils/gateway-client")
-	sendProviderConfigsToGateway().catch((err) => {
+	try {
+		await sendProviderConfigsToGateway()
+	} catch (err) {
 		Logger.warn("[initializeCli]", "Failed to send provider configs to gateway:", err)
-	})
+	}
 
 	const { SharedUriHandler } = await import("@/services/uri/SharedUriHandler")
 	const webview = HostProvider.get().createDiracWebviewProvider() as any
