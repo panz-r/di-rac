@@ -20,7 +20,7 @@ npm run build
 echo "    OK"
 
 echo "==> Copying binaries to dist..."
-cp command-daemon/build/dirac-cmd dist/dirac-cmd 2>/dev/null || true
+cp command-daemon/build/di-rvv-cmd dist/di-rvv-cmd 2>/dev/null || true
 cp api-gateway/api-gateway dist/api-gateway 2>/dev/null || true
 cp treesitter-daemon/target/release/di-rvv-analyzer dist/di-rvv-analyzer 2>/dev/null || true
 echo "    OK"

@@ -150,7 +150,7 @@ export class Controller {
 
 	async ensureCommandClient(cwd: string): Promise<void> {
 		if (this.commandClient) return
-		const cmdBinary = path.join(__dirname, "dirac-cmd")
+		const cmdBinary = path.join(__dirname, "di-rvv-cmd")
 		this.commandClient = new CommandClient(cmdBinary, cwd)
 		await this.commandClient.start()
 	}

@@ -96,7 +96,7 @@ export class BashToolHandler implements IFullyManagedTool {
 
 		if (!client || client.fallback) {
 			config.taskState.consecutiveMistakeCount++
-			return '<tool_error severity="unrecoverable">Command daemon is not available. Ensure dirac-cmd binary exists in the dist directory.</tool_error>'
+			return '<tool_error severity="unrecoverable">Command daemon is not available. Ensure di-rvv-cmd binary exists in the dist directory.</tool_error>'
 		}
 
 		// Parse --timeout N from command (stripped before execution)
