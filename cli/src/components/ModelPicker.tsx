@@ -41,7 +41,6 @@ import {
 	xaiDefaultModelId,
 	xaiModels,
 } from "@/shared/api"
-import { filterOpenRouterModelIds } from "@/shared/utils/model-filters"
 import { COLORS } from "../constants/colors"
 import { getOpenRouterDefaultModelId } from "../utils/openrouter-models"
 import { SearchableList, SearchableListItem } from "./SearchableList"
@@ -136,11 +135,10 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, 
 					if (cancelled) return
 					if (tsModels) {
 						const ids = Object.keys(tsModels).sort((a, b) => a.localeCompare(b))
-						const filtered = filterOpenRouterModelIds(ids, provider as ApiProvider)
-						if (filtered.length > 0) {
-							gatewayModelsCache.set(provider, filtered)
+						if (ids.length > 0) {
+							gatewayModelsCache.set(provider, ids)
 						}
-						setGatewayModels(filtered)
+						setGatewayModels(ids)
 						return
 					}
 				} catch {
