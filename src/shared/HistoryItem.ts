@@ -7,7 +7,6 @@ export type HistoryItem = {
 	tokensOut: number
 	cacheWrites?: number
 	cacheReads?: number
-	totalCost: number
 
 	size?: number
 	cwdOnTaskInitialization?: string

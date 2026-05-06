@@ -24,7 +24,6 @@ export class ResponseProcessor {
 			outputTokens: number
 			cacheWriteTokens: number
 			cacheReadTokens: number
-			totalCost?: number
 		}
 		modelInfo: any
 		toolUseHandler: any
@@ -76,7 +75,6 @@ export class ResponseProcessor {
 							completion: params.taskMetrics.outputTokens,
 							cached: (params.taskMetrics.cacheWriteTokens ?? 0) + (params.taskMetrics.cacheReadTokens ?? 0),
 						},
-						cost: params.taskMetrics.totalCost,
 					},
 					ts: Date.now(),
 				})
@@ -107,7 +105,6 @@ export class ResponseProcessor {
 			outputTokens: number
 			cacheWriteTokens: number
 			cacheReadTokens: number
-			totalCost?: number
 		}
 		providerId: string
 		model: any
@@ -136,7 +133,6 @@ export class ResponseProcessor {
 					completion: params.taskMetrics.outputTokens,
 					cached: (params.taskMetrics.cacheWriteTokens ?? 0) + (params.taskMetrics.cacheReadTokens ?? 0),
 				},
-				cost: params.taskMetrics.totalCost,
 			},
 			ts: Date.now(),
 		})

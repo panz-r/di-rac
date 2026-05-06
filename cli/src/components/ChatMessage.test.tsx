@@ -61,7 +61,6 @@ describe("ChatMessage subagent rendering", () => {
 						toolCalls: 5,
 						inputTokens: 0,
 						outputTokens: 0,
-						totalCost: 0.034,
 						contextTokens: 24400,
 						contextWindow: 200000,
 						contextUsagePercentage: 12.2,
@@ -73,7 +72,6 @@ describe("ChatMessage subagent rendering", () => {
 						toolCalls: 11,
 						inputTokens: 0,
 						outputTokens: 0,
-						totalCost: 0.056,
 						contextTokens: 31600,
 						contextWindow: 200000,
 						contextUsagePercentage: 15.8,
@@ -85,7 +83,6 @@ describe("ChatMessage subagent rendering", () => {
 						toolCalls: 5,
 						inputTokens: 0,
 						outputTokens: 0,
-						totalCost: 0,
 						contextTokens: 28900,
 						contextWindow: 200000,
 						contextUsagePercentage: 14.4,
@@ -99,8 +96,8 @@ describe("ChatMessage subagent rendering", () => {
 
 		expect(frame).toContain("Dirac is running subagents")
 		expect(frame).toContain("✓ Find codebase stats and size")
-		expect(frame).toContain("5 tool uses · 24.4k tokens · $0.03")
-		expect(frame).toContain("11 tool uses · 31.6k tokens · $0.06")
-		expect(frame).toContain("5 tool uses · 28.9k tokens · $0.00")
+		expect(frame).toContain("5 tool uses · 24.4k tokens")
+		expect(frame).toContain("11 tool uses · 31.6k tokens")
+		expect(frame).toContain("5 tool uses · 28.9k tokens")
 	})
 })

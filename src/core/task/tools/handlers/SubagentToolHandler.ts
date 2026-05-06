@@ -160,7 +160,6 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			outputTokens: 0,
 			cacheWrites: 0,
 			cacheReads: 0,
-			totalCost: 0,
 			contextTokens: 0,
 			contextWindow: 0,
 			contextUsagePercentage: 0,
@@ -251,7 +250,6 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 							current.outputTokens = update.stats.outputTokens || 0
 							current.cacheWrites = update.stats.cacheWriteTokens || 0
 							current.cacheReads = update.stats.cacheReadTokens || 0
-							current.totalCost = update.stats.totalCost || 0
 							current.contextTokens = update.stats.contextTokens || 0
 							current.contextWindow = update.stats.contextWindow || 0
 							current.contextUsagePercentage = update.stats.contextUsagePercentage || 0
@@ -272,7 +270,6 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 		let usageTokensOut = 0
 		let usageCacheWrites = 0
 		let usageCacheReads = 0
-		let usageCost = 0
 		settled.forEach((result, index) => {
 			if (result.status === "rejected") {
 				entries[index].status = "failed"
@@ -287,7 +284,6 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			entries[index].outputTokens = result.value.stats.outputTokens || 0
 			entries[index].cacheWrites = result.value.stats.cacheWriteTokens || 0
 			entries[index].cacheReads = result.value.stats.cacheReadTokens || 0
-			entries[index].totalCost = result.value.stats.totalCost || 0
 			entries[index].contextTokens = result.value.stats.contextTokens || 0
 			entries[index].contextWindow = result.value.stats.contextWindow || 0
 			entries[index].contextUsagePercentage = result.value.stats.contextUsagePercentage || 0
@@ -296,7 +292,6 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			usageTokensOut += result.value.stats.outputTokens || 0
 			usageCacheWrites += result.value.stats.cacheWriteTokens || 0
 			usageCacheReads += result.value.stats.cacheReadTokens || 0
-			usageCost += result.value.stats.totalCost || 0
 		})
 
 		const failures = entries.filter((entry) => entry.status === "failed").length
@@ -308,7 +303,6 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			tokensOut: usageTokensOut,
 			cacheWrites: usageCacheWrites,
 			cacheReads: usageCacheReads,
-			cost: usageCost,
 		}
 		await config.callbacks.say("subagent_usage", JSON.stringify(subagentUsagePayload))
 

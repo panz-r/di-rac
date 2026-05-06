@@ -15,7 +15,6 @@ interface TaskHistoryItem {
 	id: string
 	ts: number
 	task?: string
-	totalCost?: number
 	modelId?: string
 }
 
@@ -184,11 +183,6 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 										{truncated}
 									</Text>
 								</Box>
-								{typeof task.totalCost === "number" && (
-									<Box marginLeft={4}>
-										<Text color="gray">Cost: ${task.totalCost ? task.totalCost.toFixed(4) : "0"}</Text>
-									</Box>
-								)}
 								{task.modelId && (
 									<Box marginLeft={4}>
 										<Text color="gray">Model: {task.modelId}</Text>

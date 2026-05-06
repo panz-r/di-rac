@@ -20,7 +20,6 @@ interface TaskHistoryItem {
 	id: string
 	ts: number
 	task: string
-	totalCost: number
 	tokensIn: number
 	tokensOut: number
 	isFavorited: boolean
@@ -44,11 +43,6 @@ function formatRelativeDate(ts: number): string {
 	if (hours < 24) return `${hours}h ago`
 	if (days < 7) return `${days}d ago`
 	return new Date(ts).toLocaleDateString()
-}
-
-function formatCost(cost: number): string {
-	if (cost === 0) return ""
-	return `$${cost.toFixed(2)}`
 }
 
 export const HistoryPanelContent: React.FC<HistoryPanelContentProps> = ({ onClose, onSelectTask, controller }) => {
@@ -81,7 +75,6 @@ export const HistoryPanelContent: React.FC<HistoryPanelContentProps> = ({ onClos
 						id: t.id,
 						ts: t.ts,
 						task: t.task,
-						totalCost: t.totalCost,
 						tokensIn: t.tokensIn,
 						tokensOut: t.tokensOut,
 						isFavorited: t.isFavorited,
@@ -186,7 +179,7 @@ export const HistoryPanelContent: React.FC<HistoryPanelContentProps> = ({ onClos
 					const actualIndex = scrollOffset + idx
 					const isSelected = actualIndex === selectedIndex
 					const taskText = item.task.replace(/\n/g, " ")
-					const meta = [formatRelativeDate(item.ts), formatCost(item.totalCost)].filter(Boolean).join(" · ")
+					const meta = formatRelativeDate(item.ts)
 
 					return (
 						<Box flexDirection="column" key={item.id}>

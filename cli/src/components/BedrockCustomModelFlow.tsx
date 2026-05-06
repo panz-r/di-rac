@@ -9,8 +9,15 @@ import { Box, Text, useInput } from "ink"
 import React, { useCallback, useState } from "react"
 import { COLORS } from "../constants/colors"
 import { useStdinContext } from "../context/StdinContext"
-import { getModelList } from "./ModelPicker"
 import { SearchableList } from "./SearchableList"
+
+const BEDROCK_BASE_MODELS = [
+	"anthropic.claude-sonnet-4-6",
+	"anthropic.claude-opus-4-6",
+	"anthropic.claude-haiku-4-5-20251001",
+	"anthropic.claude-3-5-sonnet-20241022-v2:0",
+	"anthropic.claude-3-5-haiku-20241022-v1:0",
+]
 
 type FlowStep = "arn_input" | "base_model"
 
@@ -97,7 +104,7 @@ export const BedrockCustomModelFlow: React.FC<BedrockCustomModelFlowProps> = ({ 
 			<Box marginTop={1}>
 				<SearchableList
 					isActive={isActive && step === "base_model"}
-					items={getModelList("bedrock").map((id) => ({ id, label: id }))}
+					items={BEDROCK_BASE_MODELS.map((id) => ({ id, label: id }))}
 					onSelect={(item) => {
 						onComplete(customArn, item.id)
 					}}

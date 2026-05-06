@@ -8,7 +8,6 @@ import (
 	"math"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -601,14 +600,7 @@ func (h *OpenRouterHandler) ListModels(ctx context.Context, cfg ProviderConfig) 
 			Description:    ptrStr(m.Description),
 			ContextWindow:  ptrInt(m.ContextLength),
 			MaxTokens:      ptrInt(m.TopProvider.MaxCompletionTokens),
-			SupportsImages: ptrBool(m.Architecture.Modality, "image"),
-		}
-
-		if m.Pricing != nil {
-			entry.InputPrice = parsePrice(m.Pricing.Prompt)
-			entry.OutputPrice = parsePrice(m.Pricing.Completion)
-			entry.CacheWritesPrice = parsePrice(m.Pricing.InputCacheWrite)
-			entry.CacheReadsPrice = parsePrice(m.Pricing.InputCacheRead)
+			SupportsImages: ptrBool(m.Architecture.InputModalities, "image"),
 		}
 
 		for _, p := range m.SupportedParameters {
@@ -617,10 +609,6 @@ func (h *OpenRouterHandler) ListModels(ctx context.Context, cfg ProviderConfig) 
 				entry.ThinkingMaxBudget = 32768
 				break
 			}
-		}
-
-		if m.Pricing != nil && parsePrice(m.Pricing.InputCacheRead) > 0 {
-			entry.SupportsPromptCache = true
 		}
 
 		entries = append(entries, entry)
@@ -642,26 +630,9 @@ type openRouterRawModel struct {
 		MaxCompletionTokens *int `json:"max_completion_tokens"`
 	} `json:"top_provider"`
 	Architecture struct {
-		Modality []string `json:"modality"`
+		InputModalities []string `json:"input_modalities"`
 	} `json:"architecture"`
-	Pricing *struct {
-		Prompt          *string `json:"prompt"`
-		Completion      *string `json:"completion"`
-		InputCacheWrite *string `json:"input_cache_write"`
-		InputCacheRead  *string `json:"input_cache_read"`
-	} `json:"pricing"`
 	SupportedParameters []string `json:"supported_parameters"`
-}
-
-func parsePrice(s *string) float64 {
-	if s == nil || *s == "" {
-		return 0
-	}
-	v, err := strconv.ParseFloat(*s, 64)
-	if err != nil {
-		return 0
-	}
-	return v * 1_000_000
 }
 
 func ptrStr(s *string) string {

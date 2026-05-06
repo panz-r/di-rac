@@ -152,8 +152,8 @@ export class LifecycleManager {
 		const lastApiReqStartedIndex = findLastIndex(savedDiracMessages, (m) => m.type === "say" && m.say === "api_req_started")
 		if (lastApiReqStartedIndex !== -1) {
 			const lastApiReqStarted = savedDiracMessages[lastApiReqStartedIndex]
-			const { cost, cancelReason }: DiracApiReqInfo = JSON.parse(lastApiReqStarted.text || "{}")
-			if (cost === undefined && cancelReason === undefined) {
+			const { cancelReason }: DiracApiReqInfo = JSON.parse(lastApiReqStarted.text || "{}")
+			if (cancelReason === undefined) {
 				savedDiracMessages.splice(lastApiReqStartedIndex, 1)
 			}
 		}

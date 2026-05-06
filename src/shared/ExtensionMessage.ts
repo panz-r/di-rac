@@ -333,7 +333,6 @@ export interface SubagentStatusItem {
 	outputTokens: number
 	cacheWrites: number
 	cacheReads: number
-	totalCost: number
 	contextTokens: number
 	contextWindow: number
 	contextUsagePercentage: number
@@ -396,7 +395,6 @@ export interface DiracApiReqInfo {
 	cacheWrites?: number
 	reasoningTokens?: number,
 	cacheReads?: number
-	cost?: number
 	contextWindow?: number
 	contextUsagePercentage?: number
 	cancelReason?: DiracApiReqCancelReason
@@ -415,7 +413,6 @@ export interface DiracSubagentUsageInfo {
 	tokensOut: number
 	cacheWrites: number
 	cacheReads: number
-	cost: number
 }
 
 export type DiracApiReqCancelReason = "streaming_failed" | "user_cancelled" | "retries_exhausted"

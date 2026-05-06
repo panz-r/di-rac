@@ -262,8 +262,7 @@ function formatSayMessage(message: DiracMessage, prefix: string, verbose: boolea
 			} else {
 				try {
 					const info = JSON.parse(message.text || "{}")
-					if (info.cost !== undefined || info.tokensIn !== undefined) {
-						const costStr = info.cost !== undefined ? `Cost: $${info.cost.toFixed(4)}` : ""
+					if (info.tokensIn !== undefined) {
 						const tokensStr =
 							info.tokensIn !== undefined
 								? `Tokens: ${info.tokensIn.toLocaleString()} in, ${info.tokensOut.toLocaleString()} out${info.reasoningTokens ? ` (+${info.reasoningTokens.toLocaleString()} thinking)` : ""}`
@@ -276,7 +275,7 @@ function formatSayMessage(message: DiracMessage, prefix: string, verbose: boolea
 							info.contextWindow !== undefined
 								? ` | Context: ${info.contextUsagePercentage}% of ${(info.contextWindow / 1000).toFixed(0)}K`
 								: ""
-						return `${prefix} ${style.api("API request finished")} ${style.dim(`[${tokensStr}${cacheStr}${contextStr} | ${costStr}]`)}`
+						return `${prefix} ${style.api("API request finished")} ${style.dim(`[${tokensStr}${cacheStr}${contextStr}]`)}`
 					}
 				} catch {
 					return `${message.text || ""}`

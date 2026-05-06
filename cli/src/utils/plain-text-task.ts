@@ -231,7 +231,7 @@ export async function runPlainTextTask(options: PlainTextTaskOptions): Promise<b
 	if (!jsonOutput && (verbose || yolo)) {
 		const messages = controller.task?.messageStateHandler.getDiracMessages() || []
 		const metrics = getApiMetrics(messages)
-		if (metrics.totalTokensIn > 0 || metrics.totalCost > 0) {
+		if (metrics.totalTokensIn > 0) {
 			process.stderr.write(`\n${"-".repeat(40)}\n`)
 			process.stderr.write(`Task Summary:\n`)
 			process.stderr.write(
@@ -241,9 +241,6 @@ export async function runPlainTextTask(options: PlainTextTaskOptions): Promise<b
 				process.stderr.write(
 					`Cache: ${(metrics.totalCacheReads || 0).toLocaleString()} read, ${(metrics.totalCacheWrites || 0).toLocaleString()} write\n`,
 				)
-			}
-			if (metrics.totalCost > 0) {
-				process.stderr.write(`Total Cost: $${metrics.totalCost.toFixed(4)}\n`)
 			}
 			process.stderr.write(`${"-".repeat(40)}\n`)
 		}
@@ -284,9 +281,8 @@ function handleMessageForPipeMode(
 				const label = message.say === "api_req_started" ? "API request started" : "API request finished"
 				try {
 					const info = JSON.parse(fullText || "{}")
-					const hasMetrics = info.cost !== undefined || info.tokensIn !== undefined
+					const hasMetrics = info.tokensIn !== undefined
 					if (hasMetrics || !isUpdate) {
-						const costStr = info.cost !== undefined ? `Cost: $${info.cost.toFixed(4)}` : ""
 						const tokensStr =
 							info.tokensIn !== undefined
 								? `Tokens: ${info.tokensIn.toLocaleString()} in, ${info.tokensOut.toLocaleString()} out${info.reasoningTokens ? ` (+${info.reasoningTokens.toLocaleString()} thinking)` : ""}`
@@ -300,7 +296,7 @@ function handleMessageForPipeMode(
 								? ` | Context: ${info.contextUsagePercentage}% of ${(info.contextWindow / 1000).toFixed(0)}K`
 								: ""
 
-						const metricsStr = hasMetrics ? ` [${tokensStr}${cacheStr}${contextStr} | ${costStr}]` : ""
+						const metricsStr = hasMetrics ? ` [${tokensStr}${cacheStr}${contextStr}]` : ""
 						process.stderr.write(`${statusPrefix}${label}${metricsStr}\n`)
 					}
 				} catch {

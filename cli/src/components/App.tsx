@@ -53,8 +53,8 @@ interface AppProps {
 	onComplete?: () => void
 	onError?: () => void
 	// For history view
-	historyItems?: Array<{ id: string; ts: number; task?: string; totalCost?: number; modelId?: string }>
-	historyAllItems?: Array<{ id: string; ts: number; task?: string; totalCost?: number; modelId?: string }>
+	historyItems?: Array<{ id: string; ts: number; task?: string; modelId?: string }>
+	historyAllItems?: Array<{ id: string; ts: number; task?: string; modelId?: string }>
 	historyPagination?: HistoryPagination
 	onHistoryPageChange?: (page: number) => void
 	// For config view

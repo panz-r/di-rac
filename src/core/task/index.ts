@@ -667,10 +667,8 @@ export class Task {
 
 			//  The way this agentic loop works is that dirac will be given a task that he then calls tools to complete. unless there's an attempt_completion call, we keep responding back to him with his tool's responses until he either attempt_completion or does not use anymore tools. If he does not use anymore tools, we ask him to consider if he's completed the task and then call attempt_completion, otherwise proceed with completing the task.
 
-			//const totalCost = this.calculateApiCost(totalInputTokens, totalOutputTokens)
 			if (didEndLoop) {
 				// For now a task never 'completes'. This will only happen if the user hits max requests and denies resetting the count.
-				//this.say("task_completed", `Task completed. Total API usage cost: ${totalCost}`)
 				break
 			}
 			// this.say(
@@ -1116,7 +1114,6 @@ export class Task {
 						outputTokens: 0,
 						cacheWriteTokens: 0,
 						cacheReadTokens: 0,
-						totalCost: undefined,
 						api: this.api,
 						cancelReason: "streaming_failed",
 						streamingFailedMessage,
@@ -1268,9 +1265,8 @@ export class Task {
 				cacheReadTokens: number
 				inputTokens: number
 				outputTokens: number
-				totalCost: number | undefined
 				reasoningTokens: number
-			} = { cacheWriteTokens: 0, cacheReadTokens: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, totalCost: undefined }
+			} = { cacheWriteTokens: 0, cacheReadTokens: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0 }
 			let didFinalizeApiReqMsg = false
 			let usageChunkSideEffectsQueue = Promise.resolve()
 
@@ -1295,7 +1291,6 @@ export class Task {
 					cacheWriteTokens: taskMetrics.cacheWriteTokens,
 					cacheReadTokens: taskMetrics.cacheReadTokens,
 					api: this.api,
-					totalCost: taskMetrics.totalCost,
 					cancelReason,
 					streamingFailedMessage,
 					contextWindow,
@@ -1306,7 +1301,7 @@ export class Task {
 			const queueUsageChunkSideEffects = (
 				usageInputTokens: number,
 				usageOutputTokens: number,
-				chunkOptions?: { cacheWriteTokens?: number; cacheReadTokens?: number; totalCost?: number; stopReason?: string },
+				chunkOptions?: { cacheWriteTokens?: number; cacheReadTokens?: number; stopReason?: string },
 			) => {
 				usageChunkSideEffectsQueue = usageChunkSideEffectsQueue
 					.then(async () => {
@@ -1365,7 +1360,6 @@ export class Task {
 							completion: taskMetrics.outputTokens,
 							cached: (taskMetrics.cacheWriteTokens ?? 0) + (taskMetrics.cacheReadTokens ?? 0),
 						},
-						cost: taskMetrics.totalCost,
 					},
 					ts: Date.now(),
 				})
@@ -1446,12 +1440,10 @@ export class Task {
 						taskMetrics.reasoningTokens += chunk.reasoningTokens ?? chunk.thoughtsTokenCount ?? 0
 						taskMetrics.cacheWriteTokens += chunk.cacheWriteTokens ?? 0
 						taskMetrics.cacheReadTokens += chunk.cacheReadTokens ?? 0
-						taskMetrics.totalCost = chunk.totalCost ?? taskMetrics.totalCost
 						stopReason = chunk.stopReason ?? stopReason
 						queueUsageChunkSideEffects(chunk.inputTokens, chunk.outputTokens, {
 							cacheWriteTokens: chunk.cacheWriteTokens,
 							cacheReadTokens: chunk.cacheReadTokens,
-							totalCost: chunk.totalCost,
 							stopReason: chunk.stopReason,
 						})
 					},
@@ -1625,11 +1617,9 @@ export class Task {
 					taskMetrics.cacheWriteTokens += apiStreamUsage.cacheWriteTokens ?? 0
 					taskMetrics.cacheReadTokens += apiStreamUsage.cacheReadTokens ?? 0
 					taskMetrics.reasoningTokens += (apiStreamUsage as any).reasoningTokens ?? (apiStreamUsage as any).thoughtsTokenCount ?? 0
-					taskMetrics.totalCost = apiStreamUsage.totalCost ?? taskMetrics.totalCost
 					queueUsageChunkSideEffects(apiStreamUsage.inputTokens, apiStreamUsage.outputTokens, {
 						cacheWriteTokens: apiStreamUsage.cacheWriteTokens,
 						cacheReadTokens: apiStreamUsage.cacheReadTokens,
-						totalCost: apiStreamUsage.totalCost,
 						stopReason: apiStreamUsage.stopReason,
 					})
 				}
@@ -1816,7 +1806,6 @@ export class Task {
 			outputTokens: number
 			cacheWriteTokens: number
 			cacheReadTokens: number
-			totalCost?: number
 		}
 		modelInfo: DiracMessageModelInfo
 		toolUseHandler: ReturnType<StreamResponseHandler["getHandlers"]>["toolUseHandler"]
@@ -1831,7 +1820,6 @@ export class Task {
 			outputTokens: number
 			cacheWriteTokens: number
 			cacheReadTokens: number
-			totalCost?: number
 		}
 		providerId: string
 		model: any

@@ -191,7 +191,6 @@ async function reconstructTaskHistoryItem(taskId: string): Promise<HistoryItem |
 			tokensOut: taskInfo.tokensOut,
 			cacheWrites: taskInfo.cacheWrites,
 			cacheReads: taskInfo.cacheReads,
-			totalCost: taskInfo.totalCost,
 			size: taskInfo.size,
 			isFavorited: taskInfo.isFavorited,
 			conversationHistoryDeletedRange: taskInfo.conversationHistoryDeletedRange,
@@ -211,7 +210,6 @@ interface TaskInfo {
 	tokensOut: number
 	cacheWrites?: number
 	cacheReads?: number
-	totalCost: number
 	size?: number
 	isFavorited?: boolean
 	conversationHistoryDeletedRange?: [number, number]
@@ -246,7 +244,6 @@ function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): T
 	let tokensOut = 0
 	let cacheWrites = 0
 	let cacheReads = 0
-	let totalCost = 0
 	let parseFailures = 0
 
 	// Look for usage-carrying messages with token info
@@ -276,11 +273,6 @@ function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): T
 				tokensOut += getVal(["tokensOut", "outputTokens", "output_tokens"])
 				cacheWrites += getVal(["cacheWrites", "cacheCreationInputTokens", "cache_creation_input_tokens"])
 				cacheReads += getVal(["cacheReads", "cacheReadInputTokens", "cache_read_input_tokens"])
-				
-				const cost = typeof usage.cost === "number" ? usage.cost : typeof usage.totalCost === "number" ? usage.totalCost : typeof usage.total_cost === "number" ? usage.total_cost : undefined
-				if (cost !== undefined && Number.isFinite(cost)) {
-					totalCost += cost
-				}
 			}
 		} catch {
 			parseFailures++
@@ -298,7 +290,6 @@ function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): T
 			tokensOut += usage.tokensOut || 0
 			cacheWrites += usage.cacheWrites || 0
 			cacheReads += usage.cacheReads || 0
-			totalCost += usage.totalCost || 0
 		}
 	}
 
@@ -317,7 +308,6 @@ function extractTaskInformation(diracMessages: DiracMessage[], metadata: any): T
 		tokensOut,
 		cacheWrites: cacheWrites > 0 ? cacheWrites : undefined,
 		cacheReads: cacheReads > 0 ? cacheReads : undefined,
-		totalCost,
 		size,
 	}
 }

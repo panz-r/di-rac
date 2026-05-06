@@ -4,8 +4,6 @@ import { showSystemNotification } from "@/integrations/notifications"
 import { DiracApiReqCancelReason, DiracApiReqInfo, DiracMessage } from "@/shared/ExtensionMessage"
 import { getApiMetrics } from "@/shared/getApiMetrics"
 import { Logger } from "@/shared/services/Logger"
-import { calculateApiCostAnthropic } from "@/utils/cost"
-import { calculateApiCostOpenAI, calculateApiCostQwen } from "@/utils/cost"
 import { MessageStateHandler } from "./message-state"
 
 export const showNotificationForApproval = (message: string, notificationsEnabled: boolean) => {
@@ -25,7 +23,6 @@ type UpdateApiReqMsgParams = {
 	outputTokens: number
 	cacheWriteTokens: number
 	cacheReadTokens: number
-	totalCost?: number
 	api: ApiHandler
 	cancelReason?: DiracApiReqCancelReason
 	streamingFailedMessage?: string
@@ -49,43 +46,6 @@ export const updateApiReqMsg = async (params: UpdateApiReqMsgParams) => {
 			reasoningTokens: params.reasoningTokens,
 			cacheWrites: params.cacheWriteTokens,
 			cacheReads: params.cacheReadTokens,
-			cost:
-				params.totalCost ??
-				(() => {
-					const info = params.api.getModel().info
-					const provider = params.api.constructor.name
-					if (provider === "ApiGatewayHandler" || provider === "ZAiHandler" || provider === "OpenAiHandler" || provider === "DeepSeekHandler") {
-						return calculateApiCostOpenAI(
-							info,
-							params.inputTokens,
-							params.outputTokens,
-							params.cacheWriteTokens,
-							params.cacheReadTokens,
-							undefined,
-							params.reasoningTokens,
-						)
-					}
-					if (provider === "QwenHandler") {
-						return calculateApiCostQwen(
-							info,
-							params.inputTokens,
-							params.outputTokens,
-							params.cacheWriteTokens,
-							params.cacheReadTokens,
-							undefined,
-							params.reasoningTokens,
-						)
-					}
-					return calculateApiCostAnthropic(
-						info,
-						params.inputTokens,
-						params.outputTokens,
-						params.cacheWriteTokens,
-						params.cacheReadTokens,
-						undefined,
-						params.reasoningTokens,
-					)
-				})(),
 			cancelReason: params.cancelReason,
 			streamingFailedMessage: params.streamingFailedMessage,
 			contextWindow: params.contextWindow,
@@ -213,7 +173,6 @@ export function printSessionSummary(deps: SessionSummaryDeps): void {
 
 	const tokensIn = metrics.totalTokensIn
 	const tokensOut = metrics.totalTokensOut
-	const cost = metrics.totalCost
 	const hasMetrics = tokensIn > 0 || tokensOut > 0
 
 	const recoveryTelemetry = deps.recoveryEngine?.getTelemetry()
@@ -222,7 +181,6 @@ export function printSessionSummary(deps: SessionSummaryDeps): void {
 	Logger.info(
 		'[Session Summary] task=' + taskPrefix + modelTag + ' | duration=' + durationStr + ' | tools=' + deps.totalToolCallCount +
 		(hasMetrics ? ' | tokens=' + tokensIn + ' in / ' + tokensOut + ' out' : ' | tokens=n/a') +
-		(hasMetrics && cost > 0 ? ' | cost=$' + cost.toFixed(4) : '') +
 		(hasRecovery
 			? ' | recovery: ' + (recoveryTelemetry!.interceptedCount as number) + ' intercepted (saved ~' + (recoveryTelemetry!.totalTurnSavings as number).toFixed(1) + ' turns), ' + (recoveryTelemetry!.escalatedCount as number) + ' escalated, rate=' + recoveryTelemetry!.recoveryRate
 			: '') +

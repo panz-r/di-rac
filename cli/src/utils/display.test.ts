@@ -324,7 +324,6 @@ describe("display", () => {
 					tokensIn: 10,
 					tokensOut: 20,
 					modelId: "gpt-4",
-					totalCost: 0.0025,
 				},
 				diracMessages: [],
 			}

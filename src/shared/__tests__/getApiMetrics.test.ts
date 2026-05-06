@@ -15,7 +15,6 @@ describe("getApiMetrics", () => {
 					tokensOut: 20,
 					cacheWrites: 3,
 					cacheReads: 1,
-					cost: 0.12,
 				}),
 			},
 			{
@@ -28,7 +27,6 @@ describe("getApiMetrics", () => {
 					tokensOut: 8,
 					cacheWrites: 2,
 					cacheReads: 1,
-					cost: 0.05,
 				}),
 			},
 			{
@@ -40,7 +38,6 @@ describe("getApiMetrics", () => {
 					tokensOut: 9,
 					cacheWrites: 1,
 					cacheReads: 0,
-					cost: 0.03,
 				}),
 			},
 		]
@@ -51,7 +48,6 @@ describe("getApiMetrics", () => {
 		assert.equal(metrics.totalTokensOut, 37)
 		assert.equal(metrics.totalCacheWrites, 6)
 		assert.equal(metrics.totalCacheReads, 2)
-		assert.ok(Math.abs(metrics.totalCost - 0.2) < 1e-9)
 	})
 
 	it("ignores malformed usage payloads", () => {
@@ -67,7 +63,6 @@ describe("getApiMetrics", () => {
 		const metrics = getApiMetrics(messages)
 		assert.equal(metrics.totalTokensIn, 0)
 		assert.equal(metrics.totalTokensOut, 0)
-		assert.equal(metrics.totalCost, 0)
 	})
 })
 

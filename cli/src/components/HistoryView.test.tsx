@@ -89,12 +89,11 @@ describe("HistoryView", () => {
 	})
 
 	describe("task details", () => {
-		it("should display task cost when available", () => {
-			const itemsWithCost = [{ id: "task-1", ts: Date.now(), task: "Task", totalCost: 0.0025 }]
-			const { lastFrame } = render(<HistoryView controller={mockController} items={itemsWithCost} />)
-			expect(lastFrame()).toContain("Cost:")
-			expect(lastFrame()).toContain("0.0025")
-		})
+			it("should display task details", () => {
+				const itemsWithDetails = [{ id: "task-1", ts: Date.now(), task: "Task" }]
+				const { lastFrame } = render(<HistoryView controller={mockController} items={itemsWithDetails} />)
+				expect(lastFrame()).toContain("Task")
+			})
 
 		it("should display model ID when available", () => {
 			const itemsWithModel = [{ id: "task-1", ts: Date.now(), task: "Task", modelId: "claude-sonnet-4-20250514" }]

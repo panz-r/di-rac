@@ -1,6 +1,6 @@
 /**
  * Model picker component for model selection.
- * All providers use gateway model discovery. Static models are fallback.
+ * All model discovery comes from the gateway.
  * Tab on a model field opens this picker; Enter opens inline text editor.
  */
 
@@ -9,124 +9,104 @@ import Spinner from "ink-spinner"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import { queryModels } from "@/core/api/providers/api-gateway"
 import { getProviderDefaultModelId } from "../utils/providers"
-import {
-	type ApiProvider,
-	anthropicDefaultModelId,
-	anthropicModels,
-	cerebrasDefaultModelId,
-	cerebrasModels,
-	deepSeekDefaultModelId,
-	deepSeekModels,
-	fireworksDefaultModelId,
-	fireworksModels,
-	groqDefaultModelId,
-	groqModels,
-	huggingFaceDefaultModelId,
-	huggingFaceModels,
-	internationalQwenDefaultModelId,
-	internationalQwenModels,
-	internationalZAiDefaultModelId,
-	internationalZAiModels,
-	minimaxDefaultModelId,
-	minimaxModels,
-	mistralDefaultModelId,
-	mistralModels,
-	moonshotDefaultModelId,
-	moonshotModels,
-	nebiusDefaultModelId,
-	nebiusModels,
-	sambanovaDefaultModelId,
-	sambanovaModels,
-	openRouterDefaultModelId,
-	xaiDefaultModelId,
-	xaiModels,
-} from "@/shared/api"
 import { COLORS } from "../constants/colors"
 import { SearchableList, SearchableListItem } from "./SearchableList"
+import { Logger } from "@/shared/services/Logger"
+import { StateManager } from "@/core/storage/StateManager"
+import { ProviderToApiKeyMap } from "@/shared/storage"
 
 export const CUSTOM_MODEL_ID = "__custom__"
 
-export const providerModels: Record<string, { models: Record<string, unknown>; defaultId: string }> = {
-	anthropic: { models: anthropicModels, defaultId: anthropicDefaultModelId },
-	cerebras: { models: cerebrasModels, defaultId: cerebrasDefaultModelId },
-	deepseek: { models: deepSeekModels, defaultId: deepSeekDefaultModelId },
-	fireworks: { models: fireworksModels, defaultId: fireworksDefaultModelId },
-	groq: { models: groqModels, defaultId: groqDefaultModelId },
-	huggingface: { models: huggingFaceModels, defaultId: huggingFaceDefaultModelId },
-	minimax: { models: minimaxModels, defaultId: minimaxDefaultModelId },
-	mistral: { models: mistralModels, defaultId: mistralDefaultModelId },
-	moonshot: { models: moonshotModels, defaultId: moonshotDefaultModelId },
-	nebius: { models: nebiusModels, defaultId: nebiusDefaultModelId },
-	qwen: { models: internationalQwenModels, defaultId: internationalQwenDefaultModelId },
-	sambanova: { models: sambanovaModels, defaultId: sambanovaDefaultModelId },
-	xai: { models: xaiModels, defaultId: xaiDefaultModelId },
-	zai: { models: internationalZAiModels, defaultId: internationalZAiDefaultModelId },
-}
-
 const gatewayModelsCache = new Map<string, string[]>()
 
-export function hasStaticModels(provider: string): boolean {
-	return provider in providerModels
-}
-
 export function hasModelPicker(provider: string): boolean {
-	// All gateway-backed providers support model discovery.
-	// Static-only providers (claude-code) also have a picker.
 	return true
 }
 
-export function getModelList(provider: string): string[] {
-	if (!hasStaticModels(provider)) return []
-	return Object.keys(providerModels[provider].models)
-}
-
 export function getDefaultModelId(provider: string): string {
-	if (provider === "openrouter") {
-		return openRouterDefaultModelId
-	}
-	return providerModels[provider]?.defaultId || getProviderDefaultModelId(provider)
+	return getProviderDefaultModelId(provider)
 }
 
 interface ModelPickerProps {
 	provider: string
+	controller?: any
 	onChange: (modelId: string) => void
 	onSubmit: (modelId: string) => void
 	isActive?: boolean
 }
 
-export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, onChange, onSubmit, isActive = true }) => {
-	const [isLoading, setIsLoading] = useState(false)
+function getApiKeyForProvider(providerId: string): string | undefined {
+	const stateManager = StateManager.get()
+	const apiConfig = stateManager.getApiConfiguration()
+	const keyField = ProviderToApiKeyMap[providerId as keyof typeof ProviderToApiKeyMap]
+	if (!keyField) return undefined
+	const fields = Array.isArray(keyField) ? keyField : [keyField]
+	for (const field of fields) {
+		const val = apiConfig[field as keyof typeof apiConfig] as string | undefined
+		if (val) return val
+	}
+	return undefined
+}
+
+function getBaseUrlForProvider(providerId: string): string | undefined {
+	const stateManager = StateManager.get()
+	const apiConfig = stateManager.getApiConfiguration()
+	const map: Record<string, string> = {
+		openai: "openAiBaseUrl",
+		anthropic: "anthropicBaseUrl",
+		gemini: "geminiBaseUrl",
+		openrouter: "openRouterBaseUrl",
+	}
+	const field = map[providerId]
+	if (!field) return undefined
+	return apiConfig[field as keyof typeof apiConfig] as string | undefined
+}
+
+export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, onChange, onSubmit, isActive = true }) => {
+	const [isLoading, setIsLoading] = useState(true)
 	const [gatewayModels, setGatewayModels] = useState<string[] | null>(null)
+	const [diagnostic, setDiagnostic] = useState<string | null>(null)
 
 	useEffect(() => {
 		// Check cache first
 		const cached = gatewayModelsCache.get(provider)
 		if (cached && cached.length > 0) {
 			setGatewayModels(cached)
+			setIsLoading(false)
+			setDiagnostic(null)
 			return
 		}
 
 		let cancelled = false
-		setIsLoading(true)
 
 		const fetchModels = async () => {
-			// Try gateway first
 			try {
-				const gwModels = await queryModels(provider)
+				const apiKey = getApiKeyForProvider(provider)
+				const baseUrl = getBaseUrlForProvider(provider)
+				const gwModels = await queryModels(provider, {
+					api_key: apiKey,
+					base_url: baseUrl,
+				})
 				if (cancelled) return
 				if (gwModels && gwModels.length > 0) {
 					const ids = gwModels.map((m) => m.id).sort((a, b) => a.localeCompare(b))
 					gatewayModelsCache.set(provider, ids)
 					setGatewayModels(ids)
+					setDiagnostic(null)
 					return
 				}
-			} catch {
-				// Gateway unavailable
+				const detail = gwModels === null
+					? "gateway returned null (socket error or no response)"
+					: `gateway returned ${gwModels.length} models`
+				setDiagnostic(`provider=${provider} key=${apiKey ? "set" : "none"} → ${detail}`)
+				Logger.warn("[ModelPicker]", `queryModels("${provider}") returned ${gwModels === null ? "null" : gwModels.length + " models"}`)
+			} catch (err: any) {
+				if (cancelled) return
+				const msg = err?.message || String(err)
+				setDiagnostic(`provider=${provider}: ${msg}`)
+				Logger.error("[ModelPicker]", `Failed to fetch models for "${provider}": ${msg}`)
 			}
 
-			if (cancelled) return
-
-			// No gateway models — fall through to static list
 			if (!cancelled) {
 				setGatewayModels([])
 			}
@@ -140,15 +120,10 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, onChange, on
 	}, [provider])
 
 	const modelList = useMemo(() => {
-		// Gateway models take priority
 		if (gatewayModels && gatewayModels.length > 0) {
 			return gatewayModels
 		}
-		// Fallback to static models
-		if (hasStaticModels(provider)) {
-			return Object.keys(providerModels[provider].models)
-		}
-		return gatewayModels || []
+		return []
 	}, [provider, gatewayModels])
 
 	const items: SearchableListItem[] = useMemo(() => {
@@ -169,7 +144,7 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, onChange, on
 				<Text color={COLORS.primaryBlue}>
 					<Spinner type="dots" />
 				</Text>
-				<Text color="gray"> Loading models...</Text>
+				<Text color="gray"> Loading models for {provider}...</Text>
 			</Box>
 		)
 	}
@@ -177,7 +152,9 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, onChange, on
 	if (modelList.length === 0) {
 		return (
 			<Box flexDirection="column">
-				<Text color="gray">No models available. Press Esc, then Enter to type a model ID.</Text>
+				<Text color="gray">No models available.</Text>
+				{diagnostic && <Text color="yellow">Debug: {diagnostic}</Text>}
+				<Text color="gray">Press Esc, then Enter to type a model ID.</Text>
 			</Box>
 		)
 	}

@@ -5,7 +5,6 @@ interface ApiMetrics {
 	totalTokensOut: number
 	totalCacheWrites?: number
 	totalCacheReads?: number
-	totalCost: number
 	totalReasoningTokens: number
 }
 
@@ -20,14 +19,14 @@ interface ApiMetrics {
  * It extracts and sums up the tokensIn, tokensOut, cacheWrites, cacheReads, and cost from these messages.
  *
  * @param messages - An array of DiracMessage objects to process.
- * @returns An ApiMetrics object containing totalTokensIn, totalTokensOut, totalCacheWrites, totalCacheReads, and totalCost.
+ * @returns An ApiMetrics object containing totalTokensIn, totalTokensOut, totalCacheWrites, totalCacheReads, and reasoning tokens.
  *
  * @example
  * const messages = [
- *   { type: "say", say: "api_req_started", text: '{"request":"GET /api/data","tokensIn":10,"tokensOut":20,"cost":0.005}', ts: 1000 }
+ *   { type: "say", say: "api_req_started", text: '{"request":"GET /api/data","tokensIn":10,"tokensOut":20}', ts: 1000 }
  * ];
- * const { totalTokensIn, totalTokensOut, totalCost } = getApiMetrics(messages);
- * // Result: { totalTokensIn: 10, totalTokensOut: 20, totalCost: 0.005 }
+ * const { totalTokensIn, totalTokensOut } = getApiMetrics(messages);
+ * // Result: { totalTokensIn: 10, totalTokensOut: 20 }
  */
 export function getApiMetrics(messages: DiracMessage[]): ApiMetrics {
 	const result: ApiMetrics = {
@@ -35,7 +34,6 @@ export function getApiMetrics(messages: DiracMessage[]): ApiMetrics {
 		totalTokensOut: 0,
 		totalCacheWrites: undefined,
 		totalCacheReads: undefined,
-		totalCost: 0,
 		totalReasoningTokens: 0,
 	}
 
@@ -47,7 +45,7 @@ export function getApiMetrics(messages: DiracMessage[]): ApiMetrics {
 		) {
 			try {
 				const parsedData = JSON.parse(message.text)
-				const { tokensIn, tokensOut, cacheWrites, cacheReads, cost, reasoningTokens } = parsedData
+				const { tokensIn, tokensOut, cacheWrites, cacheReads, reasoningTokens } = parsedData
 
 				if (typeof tokensIn === "number") {
 					result.totalTokensIn += tokensIn
@@ -60,9 +58,6 @@ export function getApiMetrics(messages: DiracMessage[]): ApiMetrics {
 				}
 				if (typeof cacheReads === "number") {
 					result.totalCacheReads = (result.totalCacheReads ?? 0) + cacheReads
-				}
-				if (typeof cost === "number") {
-					result.totalCost += cost
 				}
 				if (typeof reasoningTokens === "number") {
 					result.totalReasoningTokens += reasoningTokens

@@ -109,7 +109,7 @@ async function normalizeReasoningEffort(value?: string): Promise<OpenaiReasoning
 }
 
 async function validate_provider(provider: string): Promise<void> {
-	const { ALL_MODEL_MAPS, ALL_PROVIDERS } = await import("@shared/api")
+	const { ALL_PROVIDERS } = await import("@shared/api")
 	const { printError } = await import("./utils/display")
 	const { exit } = await import("node:process")
 
@@ -117,7 +117,7 @@ async function validate_provider(provider: string): Promise<void> {
 		return
 	}
 
-	const validProviders = ALL_PROVIDERS || Array.from(new Set(ALL_MODEL_MAPS.map(([p]) => p)))
+	const validProviders = ALL_PROVIDERS
 	if (!validProviders.includes(provider as any)) {
 		printError(`Invalid provider '${provider}'. Valid providers: ${validProviders.sort().join(", ")}`)
 		exit(1)

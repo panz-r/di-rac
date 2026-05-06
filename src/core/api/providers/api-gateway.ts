@@ -574,9 +574,17 @@ export interface ProviderInfo {
 
 // --- Gateway query helpers ---
 
+function resolveSocketPath(primary?: string): string | null {
+	if (primary && fs.existsSync(primary)) return primary
+	if (SOCKET_PATH !== primary && fs.existsSync(SOCKET_PATH)) return SOCKET_PATH
+	return null
+}
+
 function gatewayQuery<T>(socketPath: string, request: Record<string, unknown>): Promise<T | null> {
 	return new Promise((resolve) => {
-		if (!fs.existsSync(socketPath)) {
+		const resolved = resolveSocketPath(socketPath)
+		if (!resolved) {
+			Logger.warn("[Gateway:query]", `No socket found (tried: ${socketPath}, ${SOCKET_PATH})`)
 			resolve(null)
 			return
 		}
@@ -587,7 +595,7 @@ function gatewayQuery<T>(socketPath: string, request: Record<string, unknown>): 
 		}, 5000)
 
 		let buffer = ""
-		socket.connect(socketPath, () => {
+		socket.connect(resolved, () => {
 			clearTimeout(timeout)
 			socket.write(JSON.stringify(request) + "\n")
 		})
@@ -602,6 +610,7 @@ function gatewayQuery<T>(socketPath: string, request: Record<string, unknown>): 
 					const resp = JSON.parse(line)
 					socket.destroy()
 					if (resp.error) {
+						Logger.warn("[Gateway:query]", `Error from gateway: ${resp.error.code || "unknown"}: ${resp.error.message}`)
 						resolve(null)
 					} else if (resp.body) {
 						resolve(resp.body as T)
@@ -615,8 +624,9 @@ function gatewayQuery<T>(socketPath: string, request: Record<string, unknown>): 
 			}
 		})
 
-		socket.once("error", () => {
+		socket.once("error", (err) => {
 			clearTimeout(timeout)
+			Logger.warn("[Gateway:query]", `Socket error: ${err.message}`)
 			resolve(null)
 		})
 
@@ -680,10 +690,6 @@ export interface GatewayModelEntry {
 	max_tokens?: number
 	supports_images?: boolean
 	supports_prompt_cache?: boolean
-	input_price?: number
-	output_price?: number
-	cache_writes_price?: number
-	cache_reads_price?: number
 	supports_thinking?: boolean
 	thinking_max_budget?: number
 }

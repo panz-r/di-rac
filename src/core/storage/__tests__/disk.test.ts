@@ -276,7 +276,6 @@ describe("disk - atomic writes", () => {
 			task,
 			tokensIn: 100,
 			tokensOut: 200,
-			totalCost: 0.01,
 		}
 	}
 
@@ -464,7 +463,6 @@ describe("disk - atomic writes", () => {
 					task: "Complete task",
 					tokensIn: 500,
 					tokensOut: 1000,
-					totalCost: 0.15,
 					cacheWrites: 100,
 					cacheReads: 200,
 				},
@@ -479,7 +477,6 @@ describe("disk - atomic writes", () => {
 			result[0].task.should.equal("Complete task")
 			result[0].tokensIn.should.equal(500)
 			result[0].tokensOut.should.equal(1000)
-			result[0].totalCost.should.equal(0.15)
 			result[0].cacheWrites!.should.equal(100)
 			result[0].cacheReads!.should.equal(200)
 		})

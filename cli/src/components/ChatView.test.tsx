@@ -172,7 +172,6 @@ vi.mock("@shared/getApiMetrics", () => ({
 	getApiMetrics: vi.fn(() => ({
 		totalTokensIn: 0,
 		totalTokensOut: 0,
-		totalCost: 0,
 	})),
 	getLastApiReqTotalTokens: vi.fn(() => 0),
 }))

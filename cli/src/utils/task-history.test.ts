@@ -11,7 +11,6 @@ describe("findMostRecentTaskForWorkspace", () => {
 					task: "Older task",
 					tokensIn: 0,
 					tokensOut: 0,
-					totalCost: 0,
 					cwdOnTaskInitialization: "/repo",
 				},
 				{
@@ -20,7 +19,6 @@ describe("findMostRecentTaskForWorkspace", () => {
 					task: "Newer task",
 					tokensIn: 0,
 					tokensOut: 0,
-					totalCost: 0,
 					cwdOnTaskInitialization: "/repo",
 				},
 			],
@@ -39,7 +37,6 @@ describe("findMostRecentTaskForWorkspace", () => {
 					task: "Other task",
 					tokensIn: 0,
 					tokensOut: 0,
-					totalCost: 0,
 					cwdOnTaskInitialization: "/other",
 				},
 			],

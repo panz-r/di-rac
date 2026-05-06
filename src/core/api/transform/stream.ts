@@ -25,7 +25,6 @@ export interface ApiStreamUsageChunk {
 	cacheReadTokens?: number
 	reasoningTokens?: number,
 	thoughtsTokenCount?: number // openrouter
-	totalCost?: number // openrouter
 	/**
 	 * The reason the generation stopped (e.g., "length", "stop", "MAX_TOKENS")
 	 */

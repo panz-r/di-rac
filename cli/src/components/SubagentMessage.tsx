@@ -44,21 +44,9 @@ function formatCompactTokens(tokens: number | undefined): string {
 		.toLowerCase()
 }
 
-function formatCompactCost(cost: number | undefined): string {
-	const value = Number.isFinite(cost) ? Math.max(0, cost || 0) : 0
-	const maximumFractionDigits = value >= 0.01 ? 2 : 4
-	return new Intl.NumberFormat("en-US", {
-		style: "currency",
-		currency: "USD",
-		minimumFractionDigits: 2,
-		maximumFractionDigits,
-	}).format(value)
-}
-
 function formatSubagentStatsValues(
 	toolCalls: number | undefined,
 	contextTokens: number | undefined,
-	totalCost: number | undefined,
 	cacheWrites: number | undefined,
 	cacheReads: number | undefined,
 	latestToolCall?: string,
@@ -66,9 +54,8 @@ function formatSubagentStatsValues(
 	const safeToolCalls = Number.isFinite(toolCalls) ? Math.max(0, toolCalls || 0) : 0
 	const toolUses = safeToolCalls === 1 ? "tool use" : "tool uses"
 	const tokensUsed = formatCompactTokens(contextTokens || 0)
-	const formattedCost = formatCompactCost(totalCost || 0)
 	const cacheInfo = (cacheWrites || cacheReads) ? ` · cache: ${formatCompactTokens(cacheReads || 0)}r/${formatCompactTokens(cacheWrites || 0)}w` : ""
-	const stats = `${safeToolCalls} ${toolUses} · ${tokensUsed} tokens${cacheInfo} · ${formattedCost}`
+	const stats = `${safeToolCalls} ${toolUses} · ${tokensUsed} tokens${cacheInfo}`
 	const latestTool = latestToolCall?.trim()
 	return latestTool ? `${latestTool} · ${stats}` : stats
 }
@@ -218,7 +205,7 @@ export const SubagentMessage: React.FC<SubagentMessageProps> = ({ message, mode,
 								{shouldShowPromptStats && (
 									<TreeStatsRow
 										prefix={continuationPrefix}
-										stats={formatSubagentStatsValues(undefined, undefined, undefined, undefined, undefined)}
+										stats={formatSubagentStatsValues(undefined, undefined, undefined, undefined)}
 									/>
 								)}
 							</Box>
@@ -287,7 +274,6 @@ export const SubagentMessage: React.FC<SubagentMessageProps> = ({ message, mode,
 										stats={formatSubagentStatsValues(
 											entry.toolCalls,
 											entry.contextTokens,
-											entry.totalCost,
 											entry.cacheWrites,
 											entry.cacheReads,
 											entry.latestToolCall,
@@ -317,7 +303,6 @@ export const SubagentMessage: React.FC<SubagentMessageProps> = ({ message, mode,
 										stats={formatSubagentStatsValues(
 											entry.toolCalls,
 											entry.contextTokens,
-											entry.totalCost,
 											entry.cacheWrites,
 											entry.cacheReads,
 											entry.latestToolCall,
@@ -353,7 +338,6 @@ export const SubagentMessage: React.FC<SubagentMessageProps> = ({ message, mode,
 										stats={formatSubagentStatsValues(
 											entry.toolCalls,
 											entry.contextTokens,
-											entry.totalCost,
 											entry.cacheWrites,
 											entry.cacheReads,
 											entry.latestToolCall,

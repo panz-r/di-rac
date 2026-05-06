@@ -230,7 +230,6 @@ describe("SubagentToolHandler", () => {
 				outputTokens: 3,
 				cacheWriteTokens: 0,
 				cacheReadTokens: 0,
-				totalCost: 0.25,
 				contextTokens: 5,
 				contextWindow: 200000,
 				contextUsagePercentage: 0.0025,
@@ -268,7 +267,6 @@ describe("SubagentToolHandler", () => {
 					outputTokens: 0,
 					cacheWriteTokens: 0,
 					cacheReadTokens: 0,
-					totalCost: 0,
 					contextTokens: 0,
 					contextWindow: 200000,
 					contextUsagePercentage: 0,
@@ -285,7 +283,6 @@ describe("SubagentToolHandler", () => {
 					outputTokens: 3,
 					cacheWriteTokens: 0,
 					cacheReadTokens: 0,
-					totalCost: 0.25,
 					contextTokens: 5,
 					contextWindow: 200000,
 					contextUsagePercentage: 0.0025,
@@ -322,7 +319,6 @@ describe("SubagentToolHandler", () => {
 		assert.equal(usagePayload.tokensOut, 9)
 		assert.equal(usagePayload.cacheWrites, 0)
 		assert.equal(usagePayload.cacheReads, 0)
-		assert.equal(usagePayload.cost, 0.75)
 	})
 
 	it("continues after per-subagent failures and reports both outcomes", async () => {
@@ -339,7 +335,6 @@ describe("SubagentToolHandler", () => {
 						outputTokens: 0,
 						cacheWriteTokens: 0,
 						cacheReadTokens: 0,
-						totalCost: 0,
 						contextTokens: 0,
 						contextWindow: 200000,
 						contextUsagePercentage: 0,
@@ -355,7 +350,6 @@ describe("SubagentToolHandler", () => {
 					outputTokens: 0,
 					cacheWriteTokens: 0,
 					cacheReadTokens: 0,
-					totalCost: 0,
 					contextTokens: 0,
 					contextWindow: 200000,
 					contextUsagePercentage: 0,
@@ -398,7 +392,6 @@ describe("SubagentToolHandler", () => {
 				outputTokens: 3,
 				cacheWriteTokens: 0,
 				cacheReadTokens: 0,
-				totalCost: 0.1,
 				contextTokens: 100,
 				contextWindow: 200000,
 				contextUsagePercentage: 0.05,
@@ -448,7 +441,6 @@ describe("SubagentToolHandler", () => {
 				outputTokens: 3,
 				cacheWriteTokens: 0,
 				cacheReadTokens: 0,
-				totalCost: 0.25,
 				contextTokens: 5,
 				contextWindow: 200000,
 				contextUsagePercentage: 0.0025,

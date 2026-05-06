@@ -15,5 +15,4 @@ interface DiracTokensInfo {
 
 export interface DiracMessageMetricsInfo {
 	tokens?: DiracTokensInfo
-	cost?: number // Monetary cost for this turn
 }

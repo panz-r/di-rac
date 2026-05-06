@@ -146,7 +146,6 @@ import { FileMentionMenu } from "./FileMentionMenu"
 import { HelpPanelContent } from "./HelpPanelContent"
 import { HighlightedInput } from "./HighlightedInput"
 import { HistoryPanelContent } from "./HistoryPanelContent"
-import { providerModels } from "./ModelPicker"
 import { SettingsPanelContent } from "./SettingsPanelContent"
 import { SkillsPanelContent } from "./SkillsPanelContent"
 import { SlashCommandMenu } from "./SlashCommandMenu"
@@ -1612,15 +1611,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
 	// Get context window size from model info
 	const contextWindowSize = useMemo(() => {
-		const providerData = providerModels[provider]
-		if (providerData && modelId in providerData.models) {
-			const modelInfo = providerData.models[modelId] as ModelInfo
-			if (modelInfo?.contextWindow) {
-				return modelInfo.contextWindow
-			}
-		}
 		return DEFAULT_CONTEXT_WINDOW
-	}, [provider, modelId])
+	}, [])
 
 	const showSlashMenu = slashInfo.inSlashMode && !slashMenuDismissed
 	const showFileMenu = mentionInfo.inMentionMode && !showSlashMenu
@@ -1814,7 +1806,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 										</Text>
 									)
 								})()} <Text color="gray">
-									({lastApiReqTotalTokens.toLocaleString()}) | ${metrics.totalCost.toFixed(3)}
+									({lastApiReqTotalTokens.toLocaleString()})
 								</Text>
 								{StateManager.get().getGlobalSettingsKey("observerEnabled") && (
 									<Text color="gray"> | <Text color={observerFailing ? "red" : "cyan"}>obs</Text> observer</Text>

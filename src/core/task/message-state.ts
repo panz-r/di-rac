@@ -213,7 +213,6 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 				tokensOut: apiMetrics.totalTokensOut,
 				cacheWrites: apiMetrics.totalCacheWrites,
 				cacheReads: apiMetrics.totalCacheReads,
-				totalCost: apiMetrics.totalCost,
 				size: taskDirSize,
 				cwdOnTaskInitialization: cwd,
 				conversationHistoryDeletedRange: this.taskState.conversationHistoryDeletedRange,

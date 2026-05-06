@@ -92,10 +92,6 @@ type ModelEntry struct {
 	MaxTokens           int     `json:"max_tokens,omitempty"`
 	SupportsImages      bool    `json:"supports_images,omitempty"`
 	SupportsPromptCache bool    `json:"supports_prompt_cache,omitempty"`
-	InputPrice          float64 `json:"input_price,omitempty"`            // per million tokens
-	OutputPrice         float64 `json:"output_price,omitempty"`           // per million tokens
-	CacheWritesPrice    float64 `json:"cache_writes_price,omitempty"`
-	CacheReadsPrice     float64 `json:"cache_reads_price,omitempty"`
 	SupportsThinking    bool    `json:"supports_thinking,omitempty"`
 	ThinkingMaxBudget   int     `json:"thinking_max_budget,omitempty"`
 }

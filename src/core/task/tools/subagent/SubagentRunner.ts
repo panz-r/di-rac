@@ -15,7 +15,6 @@ import { ContextManager } from "@/core/context/context-management/ContextManager
 import { checkContextWindowExceededError } from "@/core/context/context-management/context-error-handling"
 import { getContextWindowInfo } from "@/core/context/context-management/context-window-utils"
 import { DiracError, DiracErrorType } from "@/services/error"
-import { calculateApiCostAnthropic } from "@/utils/cost"
 import { TaskState } from "../../TaskState"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
@@ -51,7 +50,6 @@ interface SubagentRunStats {
 	outputTokens: number
 	cacheWriteTokens: number
 	cacheReadTokens: number
-	totalCost: number
 	contextTokens: number
 	contextWindow: number
 	contextUsagePercentage: number
@@ -63,7 +61,6 @@ interface SubagentRequestUsageState {
 	cacheWriteTokens: number
 	cacheReadTokens: number
 	totalTokens: number
-	totalCost?: number
 }
 
 interface SubagentUsageState {
@@ -317,7 +314,6 @@ export class SubagentRunner {
 			outputTokens: 0,
 			cacheWriteTokens: 0,
 			cacheReadTokens: 0,
-			totalCost: 0,
 			contextTokens: 0,
 			contextWindow: 0,
 			contextUsagePercentage: 0,
@@ -570,7 +566,6 @@ ${partialResult}`
 								requestUsage.outputTokens +
 								requestUsage.cacheWriteTokens +
 								requestUsage.cacheReadTokens
-							requestUsage.totalCost = chunk.totalCost ?? requestUsage.totalCost
 							stats.contextTokens = requestUsage.totalTokens
 							stats.contextUsagePercentage =
 								stats.contextWindow > 0 ? (stats.contextTokens / stats.contextWindow) * 100 : 0
@@ -618,21 +613,11 @@ ${partialResult}`
 					}
 				}
 
-				const calculatedRequestCost =
-					requestUsage.totalCost ??
-					calculateApiCostAnthropic(
-						providerInfo.model.info,
-						requestUsage.inputTokens,
-						requestUsage.outputTokens,
-						requestUsage.cacheWriteTokens,
-						requestUsage.cacheReadTokens,
-					)
 				requestUsage.totalTokens =
 					requestUsage.inputTokens +
 					requestUsage.outputTokens +
 					requestUsage.cacheWriteTokens +
 					requestUsage.cacheReadTokens
-				stats.totalCost += calculatedRequestCost || 0
 				usageState.lastRequest = { ...requestUsage }
 
 				const nativeFinalizedToolCalls = toolUseHandler.getAllFinalizedToolUses().map((toolCall, index) => ({

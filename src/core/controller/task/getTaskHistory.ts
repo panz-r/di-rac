@@ -68,7 +68,13 @@ export async function getTaskHistory(controller: Controller, request: GetTaskHis
 					case "oldest":
 						return a.ts - b.ts
 					case "mostExpensive":
-						return (b.totalCost || 0) - (a.totalCost || 0)
+						return (
+							(b.tokensIn || 0) +
+							(b.tokensOut || 0) +
+							(b.cacheWrites || 0) +
+							(b.cacheReads || 0) -
+							((a.tokensIn || 0) + (a.tokensOut || 0) + (a.cacheWrites || 0) + (a.cacheReads || 0))
+						)
 					case "mostTokens":
 						return (
 							(b.tokensIn || 0) +
@@ -94,7 +100,6 @@ export async function getTaskHistory(controller: Controller, request: GetTaskHis
 			ts: item.ts,
 			isFavorited: item.isFavorited || false,
 			size: item.size || 0,
-			totalCost: item.totalCost || 0,
 			tokensIn: item.tokensIn || 0,
 			tokensOut: item.tokensOut || 0,
 			cacheWrites: item.cacheWrites || 0,
