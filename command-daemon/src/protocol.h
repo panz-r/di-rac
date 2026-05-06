@@ -4,16 +4,28 @@
 #include "executor.h"
 #include "session.h"
 #include "safety.h"
+#include <pthread.h>
 
 /* Max length of a single JSON line from stdin */
 #define PROTO_MAX_LINE 65536
+
+#define RECENT_FILES_MAX 100
+
+typedef struct {
+    char paths[RECENT_FILES_MAX][4096];
+    int count;
+    int head;
+    pthread_mutex_t lock;
+} RecentFilesStore;
 
 /* Context passed to the protocol handler */
 struct proto_ctx {
     ExecChild *children;
     int max_children;
     SessionStore *sessions;
+    RecentFilesStore *recent_files;
     const char *workspace_root;
+    pthread_mutex_t stdout_lock;
 };
 
 /* Parse and dispatch a single JSON request line.

@@ -7,10 +7,13 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <stdbool.h>
+#include <pthread.h>
 
 /* ---- response helpers ---- */
 
-static void send_error(const char *id, const char *code, const char *message) {
+static void send_error(pthread_mutex_t *lock, const char *id, const char *code, const char *message) {
+    pthread_mutex_lock(lock);
     struct jsonw w;
     jsonw_init(&w, stdout);
     jsonw_object_open(&w);
@@ -20,9 +23,11 @@ static void send_error(const char *id, const char *code, const char *message) {
     jsonw_kv_str(&w, "message", message);
     jsonw_object_close(&w);
     jsonw_flush(&w);
+    pthread_mutex_unlock(lock);
 }
 
-static void send_ack(const char *id, int timeout_ms) {
+static void send_ack(pthread_mutex_t *lock, const char *id, int timeout_ms) {
+    pthread_mutex_lock(lock);
     struct jsonw w;
     jsonw_init(&w, stdout);
     jsonw_object_open(&w);
@@ -31,9 +36,11 @@ static void send_ack(const char *id, int timeout_ms) {
     jsonw_kv_int(&w, "timeout_ms", timeout_ms);
     jsonw_object_close(&w);
     jsonw_flush(&w);
+    pthread_mutex_unlock(lock);
 }
 
-static void send_blocked_result(const char *id, const struct safety_result *sr) {
+static void send_blocked_result(pthread_mutex_t *lock, const char *id, const struct safety_result *sr) {
+    pthread_mutex_lock(lock);
     struct jsonw w;
     jsonw_init(&w, stdout);
     jsonw_object_open(&w);
@@ -59,13 +66,23 @@ static void send_blocked_result(const char *id, const struct safety_result *sr) 
     jsonw_object_close(&w); /* meta */
     jsonw_object_close(&w); /* top */
     jsonw_flush(&w);
+    pthread_mutex_unlock(lock);
 }
 
 /* ---- walk handler ---- */
 
-typedef struct {
+typedef struct WalkNode {
     char path[4096];
-} WalkStack;
+    struct WalkNode *next;
+} WalkNode;
+
+typedef struct {
+    char id[64];
+    char root[4096];
+    int limit;
+    bool recursive;
+    pthread_mutex_t *stdout_lock;
+} WalkRequest;
 
 static int should_ignore(const char *name) {
     if (name[0] == '.' && name[1] == '\0') return 1;
@@ -81,71 +98,147 @@ static int should_ignore(const char *name) {
     return 0;
 }
 
+static void* walk_thread_worker(void *arg) {
+    WalkRequest *req = (WalkRequest*)arg;
+    
+    pthread_mutex_lock(req->stdout_lock);
+    struct jsonw w;
+    jsonw_init(&w, stdout);
+    jsonw_object_open(&w);
+    jsonw_kv_str(&w, "type", "walk_result");
+    jsonw_kv_str_or_null(&w, "id", req->id);
+    jsonw_key(&w, "files");
+    jsonw_array_open(&w);
+
+    /* BFS using a queue */
+    WalkNode *head = malloc(sizeof(WalkNode));
+    strncpy(head->path, req->root, 4095);
+    head->next = NULL;
+    WalkNode *tail = head;
+
+    int files_found = 0;
+
+    while (head && files_found < req->limit) {
+        WalkNode *curr = head;
+        head = head->next;
+        if (!head) tail = NULL;
+
+        DIR *d = opendir(curr->path);
+        if (d) {
+            struct dirent *de;
+            while ((de = readdir(d)) != NULL && files_found < req->limit) {
+                if (should_ignore(de->d_name)) continue;
+
+                char full_path[4096];
+                snprintf(full_path, sizeof(full_path), "%s/%s", curr->path, de->d_name);
+
+                struct stat st;
+                if (lstat(full_path, &st) < 0) continue;
+
+                if (S_ISDIR(st.st_mode)) {
+                    if (req->recursive) {
+                        WalkNode *n = malloc(sizeof(WalkNode));
+                        strncpy(n->path, full_path, 4095);
+                        n->next = NULL;
+                        if (tail) tail->next = n;
+                        else head = n;
+                        tail = n;
+                    }
+                } else if (S_ISREG(st.st_mode)) {
+                    jsonw_object_open(&w);
+                    jsonw_kv_str(&w, "path", full_path);
+                    jsonw_kv_int(&w, "mtime", (int)st.st_mtime);
+                    jsonw_kv_int(&w, "size", (int)st.st_size);
+                    jsonw_object_close(&w);
+                    files_found++;
+                }
+            }
+            closedir(d);
+        }
+        free(curr);
+    }
+
+    while (head) {
+        WalkNode *tmp = head;
+        head = head->next;
+        free(tmp);
+    }
+
+    jsonw_array_close(&w);
+    jsonw_object_close(&w);
+    jsonw_flush(&w);
+    pthread_mutex_unlock(req->stdout_lock);
+
+    free(req);
+    return NULL;
+}
+
 static void handle_walk(const char *line, int line_len, struct proto_ctx *ctx) {
-    char id[64] = "", dir_param[4096] = "";
+    WalkRequest *req = calloc(1, sizeof(WalkRequest));
+    req->limit = 1000;
+    req->recursive = true;
+    req->stdout_lock = &ctx->stdout_lock;
+
     struct json j;
     if (json_enter_object(&j, line, line_len) < 0) {
-        send_error("", "INVALID_REQUEST", "Malformed JSON");
+        send_error(&ctx->stdout_lock, "", "INVALID_REQUEST", "Malformed JSON");
+        free(req);
         return;
     }
     char key[64];
     const char *val;
     int vlen;
     while ((vlen = json_next_key(&j, key, (int)sizeof(key), &val)) > 0) {
-        if (strcmp(key, "id") == 0) json_get_str(val, vlen, id, (int)sizeof(id));
-        else if (strcmp(key, "dir") == 0) json_get_str(val, vlen, dir_param, (int)sizeof(dir_param));
+        if (strcmp(key, "id") == 0) json_get_str(val, vlen, req->id, sizeof(req->id));
+        else if (strcmp(key, "dir") == 0) json_get_str(val, vlen, req->root, sizeof(req->root));
+        else if (strcmp(key, "limit") == 0) json_get_int(val, vlen, &req->limit);
+        else if (strcmp(key, "recursive") == 0) json_get_bool(val, vlen, &req->recursive);
     }
 
-    const char *root = dir_param[0] ? dir_param : ctx->workspace_root;
-    
+    if (!req->root[0]) strncpy(req->root, ctx->workspace_root, sizeof(req->root) - 1);
+
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, walk_thread_worker, req) != 0) {
+        send_error(&ctx->stdout_lock, req->id, "THREAD_FAILED", "Failed to spawn walk thread");
+        free(req);
+    } else {
+        pthread_detach(thread);
+    }
+}
+
+/* ---- recent_files handler ---- */
+
+static void handle_recent_files(const char *line, int line_len, struct proto_ctx *ctx) {
+    char id[64] = "";
+    struct json j;
+    if (json_enter_object(&j, line, line_len) >= 0) {
+        char key[64]; const char *val; int vlen;
+        while ((vlen = json_next_key(&j, key, (int)sizeof(key), &val)) > 0) {
+            if (strcmp(key, "id") == 0) json_get_str(val, vlen, id, (int)sizeof(id));
+        }
+    }
+
+    pthread_mutex_lock(&ctx->stdout_lock);
     struct jsonw w;
     jsonw_init(&w, stdout);
     jsonw_object_open(&w);
-    jsonw_kv_str(&w, "type", "walk_result");
+    jsonw_kv_str(&w, "type", "recent_files_result");
     jsonw_kv_str_or_null(&w, "id", id);
     jsonw_key(&w, "files");
     jsonw_array_open(&w);
 
-    WalkStack *stack = malloc(sizeof(WalkStack) * 4096);
-    int stack_ptr = 0;
-    strncpy(stack[stack_ptr++].path, root, 4095);
-
-    while (stack_ptr > 0) {
-        char current_dir[4096];
-        strncpy(current_dir, stack[--stack_ptr].path, 4095);
-
-        DIR *d = opendir(current_dir);
-        if (!d) continue;
-
-        struct dirent *de;
-        while ((de = readdir(d)) != NULL) {
-            if (should_ignore(de->d_name)) continue;
-
-            char full_path[4096];
-            snprintf(full_path, sizeof(full_path), "%s/%s", current_dir, de->d_name);
-
-            struct stat st;
-            if (lstat(full_path, &st) < 0) continue;
-
-            if (S_ISDIR(st.st_mode)) {
-                if (stack_ptr < 4096) {
-                    strncpy(stack[stack_ptr++].path, full_path, 4095);
-                }
-            } else if (S_ISREG(st.st_mode)) {
-                jsonw_object_open(&w);
-                jsonw_kv_str(&w, "path", full_path + strlen(root) + (full_path[strlen(root)] == '/' ? 1 : 0));
-                jsonw_kv_int(&w, "mtime", (int)st.st_mtime);
-                jsonw_kv_int(&w, "size", (int)st.st_size);
-                jsonw_object_close(&w);
-            }
-        }
-        closedir(d);
+    RecentFilesStore *s = ctx->recent_files;
+    pthread_mutex_lock(&s->lock);
+    for (int i = 0; i < s->count; i++) {
+        int idx = (s->head - 1 - i + RECENT_FILES_MAX) % RECENT_FILES_MAX;
+        jsonw_str(&w, s->paths[idx]);
     }
+    pthread_mutex_unlock(&s->lock);
 
-    free(stack);
     jsonw_array_close(&w);
     jsonw_object_close(&w);
     jsonw_flush(&w);
+    pthread_mutex_unlock(&ctx->stdout_lock);
 }
 
 /* ---- session_info handler ---- */
@@ -155,7 +248,7 @@ static void handle_session_info(const char *line, int line_len,
     char id[64] = "", session_id[128] = "";
     struct json j;
     if (json_enter_object(&j, line, line_len) < 0) {
-        send_error("", "INVALID_REQUEST", "Malformed JSON");
+        send_error(&ctx->stdout_lock, "", "INVALID_REQUEST", "Malformed JSON");
         return;
     }
     char key[64];
@@ -167,12 +260,13 @@ static void handle_session_info(const char *line, int line_len,
     }
 
     if (!session_id[0]) {
-        send_error(id, "INVALID_REQUEST", "Missing required field 'session_id'");
+        send_error(&ctx->stdout_lock, id, "INVALID_REQUEST", "Missing required field 'session_id'");
         return;
     }
 
     Session *s = session_get_or_create(ctx->sessions, session_id, ctx->workspace_root);
 
+    pthread_mutex_lock(&ctx->stdout_lock);
     struct jsonw w;
     jsonw_init(&w, stdout);
     jsonw_object_open(&w);
@@ -183,6 +277,7 @@ static void handle_session_info(const char *line, int line_len,
     jsonw_key(&w, "env"); jsonw_object_open(&w); jsonw_object_close(&w);
     jsonw_object_close(&w);
     jsonw_flush(&w);
+    pthread_mutex_unlock(&ctx->stdout_lock);
 }
 
 /* ---- execute handler ---- */
@@ -200,7 +295,7 @@ static void handle_execute(const char *line, int line_len,
     int client_timeout_s = -1;
     struct json j;
     if (json_enter_object(&j, line, line_len) < 0) {
-        send_error("", "INVALID_REQUEST", "Malformed JSON");
+        send_error(&ctx->stdout_lock, "", "INVALID_REQUEST", "Malformed JSON");
         return;
     }
     char key[64];
@@ -214,19 +309,19 @@ static void handle_execute(const char *line, int line_len,
     }
 
     if (!command[0]) {
-        send_error(id, "INVALID_REQUEST", "Missing required field 'command'");
+        send_error(&ctx->stdout_lock, id, "INVALID_REQUEST", "Missing required field 'command'");
         return;
     }
 
     struct safety_result sr = safety_check(command);
     if (sr.blocked) {
-        send_blocked_result(id, &sr);
+        send_blocked_result(&ctx->stdout_lock, id, &sr);
         return;
     }
 
     ExecChild *slot = alloc_child(ctx->children, ctx->max_children);
     if (!slot) {
-        send_error(id, "BUSY", "Too many concurrent commands");
+        send_error(&ctx->stdout_lock, id, "BUSY", "Too many concurrent commands");
         return;
     }
 
@@ -248,13 +343,13 @@ static void handle_execute(const char *line, int line_len,
     }
 
     if (executor_fork(command, cwd, slot) < 0) {
-        send_error(id, "FORK_FAILED", "Failed to start command");
+        send_error(&ctx->stdout_lock, id, "FORK_FAILED", "Failed to start command");
         return;
     }
 
     slot->id = strdup(id);
     slot->timeout_ms = timeout_ms;
-    send_ack(id, timeout_ms);
+    send_ack(&ctx->stdout_lock, id, timeout_ms);
 }
 
 /* ---- dispatch ---- */
@@ -262,7 +357,7 @@ static void handle_execute(const char *line, int line_len,
 int proto_handle_line(const char *line, int line_len, struct proto_ctx *ctx) {
     char type[32] = "";
     if (json_obj_find_str(line, line_len, "type", type, (int)sizeof(type)) < 0) {
-        send_error("", "INVALID_REQUEST", "Missing 'type' field");
+        send_error(&ctx->stdout_lock, "", "INVALID_REQUEST", "Missing 'type' field");
         return -1;
     }
 
@@ -272,10 +367,12 @@ int proto_handle_line(const char *line, int line_len, struct proto_ctx *ctx) {
         handle_execute(line, line_len, ctx);
     } else if (strcmp(type, "walk") == 0) {
         handle_walk(line, line_len, ctx);
+    } else if (strcmp(type, "recent_files") == 0) {
+        handle_recent_files(line, line_len, ctx);
     } else {
         char id[64] = "";
         json_obj_find_str(line, line_len, "id", id, (int)sizeof(id));
-        send_error(id, "UNKNOWN_TYPE", "Unknown request type");
+        send_error(&ctx->stdout_lock, id, "UNKNOWN_TYPE", "Unknown request type");
         return -1;
     }
     return 0;
