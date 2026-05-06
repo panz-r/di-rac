@@ -287,6 +287,71 @@ char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
     return NULL;
 }
 
+/* --- Persistence --- */
+
+static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf) {
+    size_t path_len = strlen(path_buf);
+    
+    /* Save settings for this node */
+    ht_iter_t it = ht_iter_begin(node->settings);
+    const void *key, *val;
+    size_t klen, vlen;
+    while (ht_iter_next(node->settings, &it, &key, &klen, &val, &vlen)) {
+        fprintf(f, "%s|%s=%s\n", path_buf, (const char*)key, *(char**)val);
+    }
+    
+    /* Recurse into children */
+    ht_iter_t cit = ht_iter_begin(node->children);
+    while (ht_iter_next(node->children, &cit, &key, &klen, &val, &vlen)) {
+        trie_node_t *child = *(trie_node_t**)val;
+        
+        if (strcmp(path_buf, "/") == 0) {
+            snprintf(path_buf + 1, 4096 - 1, "%s", child->segment);
+        } else {
+            snprintf(path_buf + path_len, 4096 - path_len, "/%s", child->segment);
+        }
+        
+        node_save_recursive(child, f, path_buf);
+        path_buf[path_len] = '\0'; /* Backtrack */
+    }
+}
+
+int trie_save_persist(trie_t *trie, const char *filepath) {
+    FILE *f = fopen(filepath, "w");
+    if (!f) return -1;
+    
+    char path_buf[4096] = "/";
+    node_save_recursive(trie->root, f, path_buf);
+    
+    fclose(f);
+    return 0;
+}
+
+int trie_load_persist(trie_t *trie, const char *filepath) {
+    FILE *f = fopen(filepath, "r");
+    if (!f) return -1;
+    
+    char line[8192];
+    while (fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\n")] = 0;
+        char *pipe = strchr(line, '|');
+        if (!pipe) continue;
+        *pipe = '\0';
+        char *path = line;
+        char *kv = pipe + 1;
+        char *eq = strchr(kv, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        char *key = kv;
+        char *val = eq + 1;
+        
+        trie_set_config(trie, path, -1, key, val, false);
+    }
+    
+    fclose(f);
+    return 0;
+}
+
 /* --- Registry Helpers --- */
 
 static void register_node_to_fd(ht_table_t *registry, trie_node_t *node, int fd) {

@@ -653,25 +653,14 @@ export class StateManager {
 	 * Returns early if nothing is pending
 	 */
 	private async persistPendingState(): Promise<void> {
-		// Early return if nothing to persist
-		if (
-			this.pendingGlobalState.size === 0 &&
-			this.pendingSecrets.size === 0 &&
-			this.pendingWorkspaceState.size === 0 &&
-			this.pendingTaskState.size === 0
-		) {
-			return
+		// Only task history remains disk-based for now.
+		// All other global and task settings are persisted by the central-deamon.
+		if (this.pendingGlobalState.has("taskHistory")) {
+			await this.persistGlobalStateBatch(new Set(["taskHistory"]))
+			this.pendingGlobalState.delete("taskHistory")
 		}
 
-		// Execute all persistence operations in parallel
-		await Promise.all([
-			this.persistGlobalStateBatch(this.pendingGlobalState),
-			this.persistSecretsBatch(this.pendingSecrets),
-			this.persistWorkspaceStateBatch(this.pendingWorkspaceState),
-			this.persistTaskStateBatch(this.pendingTaskState),
-		])
-
-		// Clear pending sets after successful persistence
+		// Clear pending sets
 		this.pendingGlobalState.clear()
 		this.pendingSecrets.clear()
 		this.pendingWorkspaceState.clear()

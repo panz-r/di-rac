@@ -45,22 +45,12 @@ trie_t* trie_create(void);
 void trie_destroy(trie_t *trie);
 
 /* Configuration Management */
-/**
- * trie_set_config - Set a configuration value.
- * @param path Path to associate with (Global if /, Project if workspace path).
- * @param fd Connection FD (used for transient overrides).
- * @param key Key name.
- * @param value Value string (passing NULL deletes the key).
- * @param transient If true, value is only valid for the lifetime of the connection.
- */
 int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, const char *value, bool transient);
-
-/**
- * trie_get_config - Get a merged configuration value.
- * Performs lookup: Transient (FD) -> Path (and its parents) -> Global.
- * @return Allocated value string, or NULL if not found. Must be freed by caller.
- */
 char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key);
+
+/* Persistence */
+int trie_load_persist(trie_t *trie, const char *filepath);
+int trie_save_persist(trie_t *trie, const char *filepath);
 
 /**
  * trie_acquire_lock - Attempt to acquire a lock on a path.

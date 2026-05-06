@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import os from "node:os"
 import { Logger } from "@/shared/services/Logger"
 
 /**
@@ -13,6 +14,11 @@ export async function ensureCoordinatorRunning(): Promise<void> {
 	}
 
 	Logger.info("[CoordinatorSpawn] Socket missing, attempting to start locking daemon...")
+
+	// Persistence path
+	const diracDir = path.join(os.homedir(), ".dirac")
+	if (!fs.existsSync(diracDir)) fs.mkdirSync(diracDir, { recursive: true })
+	const persistPath = path.join(diracDir, "daemon_state.kv")
 
 	// Resolve binary path
 	// During development, it's in central-deamon/build/
@@ -37,9 +43,9 @@ export async function ensureCoordinatorRunning(): Promise<void> {
 		return
 	}
 
-	Logger.info(`[CoordinatorSpawn] Spawning daemon: ${binPath}`)
+	Logger.info(`[CoordinatorSpawn] Spawning daemon: ${binPath} with persistence: ${persistPath}`)
 	try {
-		const child = spawn(binPath, [], {
+		const child = spawn(binPath, ["--persist", persistPath], {
 			detached: true,
 			stdio: "ignore",
 		})
