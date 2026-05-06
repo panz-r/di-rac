@@ -269,14 +269,14 @@ async function main() {
 
 		// Build command daemon (C)
 		const cmdDaemonDir = path.join(__dirname, "command-daemon")
-		const cmdDaemonBuild = path.join(cmdDaemonDir, "build", "dirac-cmd")
-		const cmdDaemonDest = path.join(distDir, "dirac-cmd")
+		const cmdDaemonBuild = path.join(cmdDaemonDir, "build", "di-rvv-cmd")
+		const cmdDaemonDest = path.join(distDir, "di-rvv-cmd")
 		try {
 			execSync("cmake -B build -DCMAKE_BUILD_TYPE=Release", { cwd: cmdDaemonDir, stdio: "pipe" })
 			execSync("cmake --build build", { cwd: cmdDaemonDir, stdio: "pipe" })
 			fs.copyFileSync(cmdDaemonBuild, cmdDaemonDest)
 			fs.chmodSync(cmdDaemonDest, "755")
-			console.log("[cli esbuild] Built and copied dirac-cmd binary to dist/")
+			console.log("[cli esbuild] Built and copied di-rvv-cmd binary to dist/")
 		} catch (e: any) {
 			console.error("[cli esbuild] WARNING: Failed to build command daemon:", e.stderr?.toString() || e.message)
 		}
