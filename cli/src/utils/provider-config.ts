@@ -61,11 +61,12 @@ export async function applyProviderConfig(options: ApplyProviderConfigOptions): 
 		}
 
 		// Add API key if provided (shared across roles, not role-specific)
-	if (apiKey) {
-		const keyField = ProviderToApiKeyMap[providerId as keyof typeof ProviderToApiKeyMap]
-		if (keyField) {
-			const fields = Array.isArray(keyField) ? keyField : [keyField]
-			config[fields[0]] = apiKey
+		if (apiKey) {
+			const keyField = ProviderToApiKeyMap[providerId as keyof typeof ProviderToApiKeyMap]
+			if (keyField) {
+				const fields = Array.isArray(keyField) ? keyField : [keyField]
+				config[fields[0]] = apiKey
+			}
 		}
 	}
 
