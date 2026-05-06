@@ -16,6 +16,7 @@ Note: path is optional (defaults to cwd). --context 0-5. Results auto-truncated 
 Fails when: 0 matches (pattern too specific or wrong path), 100+ matches (too broad).
 If fails: broaden pattern with .*, narrow with path, or try symbols search for code structure.
 After results: read the specific file:line from matches. If too many, narrow path or pattern.
+Good: 3-30 matches with files in repo, context shows pattern. Bad: 0 matches (broaden pattern), 100+ (narrow with path).
 Don't use for: code navigation (use symbols), full-file content (use read).
 Output example: OK | matches:3 | files:2 | tokens:45
   src/auth.ts:42:  // TODO: Refresh token

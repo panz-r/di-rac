@@ -58,7 +58,7 @@ ${
 	All tools accept: --retry N (retry on error, up to 5, exponential backoff), --dry-run (preview without side effects). Mutation tools (bash, write, edit, symbols replace/rename) support deep --dry-run with diff output.
 
 	RESPONSE FORMAT
-	Parse: split header on " | " — first token is status (OK/ERROR/TRUNCATED/EMPTY), rest are key:value. Multi-line content follows the header; lines:N tells you how many.
+	Parse: split header on " | ". First token = status (OK/ERROR/TRUNCATED/EMPTY). Remaining = key:value pairs (tokens:45, hint:guidance). Extract hint: value up to next " | " or EOL. Multi-line content follows header; lines:N = content line count.
 	OK | tokens:N | lines:N | cached:yes | cumulative:N — hint: provides next-step guidance. Use cumulative to budget context.
 	ERROR | code | message | hint:guidance | tokens:N — common codes: blocked (safety), timeout (retry narrower), not_found (check path), permission_denied.
 	TRUNCATED | lines:N | hint:use --range/--detail | tokens:N — content follows, truncated.
@@ -72,7 +72,12 @@ ${
 	After bash timed_out → "Use --timeout N for slow commands"
 	After bash blocked → "Check hint for allowed alternative"
 	After edit anchor not found → "Re-read file to get current anchors"
+	After edit applied → "run tests or read the changed section to verify"
 	After symbols no matches → "Try without --kind or use search"
+	After repo --detail files → "read --detail outline on specific files to explore"
+	After write created → "read the file back to verify, or edit for refinements"
+	After web_search results → "web_fetch the most relevant URL for details"
+	After browser launch → "screenshot first, then click or type"
 
 	BUDGET AWARENESS
 The header line includes cumulative:N (total tokens so far) and tokens:N (this response). If cumulative approaches your context limit, prefer targeted reads (--detail skeleton, --range). Cached reads (cached:yes) cost nothing.

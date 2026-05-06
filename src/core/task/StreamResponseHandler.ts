@@ -125,18 +125,18 @@ class ToolUseHandler {
 		}
 
 		let input: unknown = {}
-		if (pending.parsedInput != null) {
-			input = pending.parsedInput
-		} else {
-			const inputStr = pending.inputChunks.join("")
-			if (inputStr) {
-				try {
-					input = JSON.parse(inputStr)
-				} catch {
-					input = this.extractPartialJsonFields(inputStr)
-					pending.parsedInput = input
-				}
+		// Always re-parse complete input on finalization — the streaming regex
+		// cache (parsedInput) may be truncated if jsonParser.onValue never fired.
+		const inputStr = pending.inputChunks.join("")
+		if (inputStr) {
+			try {
+				input = JSON.parse(inputStr)
+			} catch {
+				// Full parse failed — fall back to cached streaming result
+				input = pending.parsedInput ?? this.extractPartialJsonFields(inputStr)
 			}
+		} else if (pending.parsedInput != null) {
+			input = pending.parsedInput
 		}
 
 		return {

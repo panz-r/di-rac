@@ -28,6 +28,11 @@ Examples:
 
 Response: OK | screenshot:<base64> | logs:N | tokens:N
 	Screenshot and console logs follow header line.
+Fails when: no browser launched (call launch first), element not found, navigation timeout.
+If fails: screenshot to see current state, verify element exists, relaunch if crashed.
+After results: screenshot to verify the action result before proceeding.
+Good: screenshot shows expected state after action. Bad: element not found (screenshot to verify), navigation error (check URL), timeout (page slow).
+Don't use for: API calls (use bash with curl), file operations (use read/write).
 Typical: browser_action launch --url http://localhost:3000`,
 	contextRequirements: (ctx) => ctx.supportsBrowserUse === true,
 	parameters: [

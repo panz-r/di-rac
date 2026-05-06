@@ -531,7 +531,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 		const sharedMessageProps = {
 			tool: "readFile",
 			paths: displayPaths.map((p) => getReadablePath(config.cwd, p)),
-			content: stripHashes(finalResult, { preserveGutter: true }),
+			content: stripHashes(finalResult, { preserveGutter: true }).replace(/^\[File Hash: [^\]]+\]\n?/gm, ""),
 			operationIsLocatedInWorkspace: (await Promise.all(relPaths.map((p) => isLocatedInWorkspace(p)))).every(Boolean),
 			path: displayPaths[0],
 			startLine: startLineNum?.toString(),

@@ -15,6 +15,7 @@ Note: stdout truncated at ~8KB, stderr at ~2KB (head+tail preserved). Use redire
 Fails when: timeout (>30s default), exit≠0 (check stderr), output truncated, blocked:pattern.
 If fails: --timeout 60 for slow commands; redirect large output to file; blocked shows the pattern.
 After results: check exit code. If non-zero, read stderr. If truncated, redirect to file then read.
+Good: exit:0 with expected output visible. Bad: exit!=0 (read stderr), truncated (redirect to file), timed_out (use --timeout).
 Output example: exit:0
   src/auth.ts  42 | a3|def login():
   src/auth.ts  58 | k7|  return token

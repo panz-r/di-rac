@@ -235,7 +235,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
 		const relPaths = this.getRelPaths(block.params)
-		const regex: string | undefined = block.params.regex
+		const regex: string | undefined = block.params.regex || block.params.pattern
 		const filePattern: string | undefined = block.params.file_pattern
 		const contextLines = Number.parseInt(block.params.context_lines || "0", 10)
 

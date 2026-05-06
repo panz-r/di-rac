@@ -20,6 +20,7 @@ Response: OK | matches:N | hint:Try --kind function/class or different name | to
 Fails when: no matches (typo, wrong --kind), file type not supported by tree-sitter.
 If fails: try without --kind, use search for text patterns, check file extension support.
 After results: use read --section <handle> to see full body. Use refs to find usages.
+Good: definitions found with types and signatures. Bad: no matches (try without --kind or use search), unsupported file type (check extension).
 Don't use for: text/regex patterns across files (use search), file overview (use repo).
 Output example: OK | matches:2 | tokens:35
   src/auth.ts:10 class AuthService (fn:login, fn:logout)

@@ -193,22 +193,16 @@ export function parseCliCommand(toolName: string, input: string): Record<string,
 	// Tokenize
 	const tokens = shellParse(input) as string[]
 
-	// Split into positionals and flags
+	// Parse flags and collect positionals from anywhere in the command
 	const positionalTokens: string[] = []
 	let i = 0
-
-	// Collect positionals (stop at first flag or end)
-	while (i < tokens.length && !isFlag(tokens[i])) {
-		positionalTokens.push(tokens[i])
-		i++
-	}
-
-	// Parse flags
 	const result: Record<string, any> = {}
+
 	while (i < tokens.length) {
 		const token = tokens[i]
 
 		if (!isFlag(token)) {
+			positionalTokens.push(token)
 			i++
 			continue
 		}

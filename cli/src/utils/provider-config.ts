@@ -59,14 +59,14 @@ export async function applyProviderConfig(options: ApplyProviderConfigOptions): 
 				if (planModelKey) config[planModelKey] = finalModelId
 			}
 		}
+	}
 
-		// Add API key if provided (shared across roles, not role-specific)
-		if (apiKey) {
-			const keyField = ProviderToApiKeyMap[providerId as keyof typeof ProviderToApiKeyMap]
-			if (keyField) {
-				const fields = Array.isArray(keyField) ? keyField : [keyField]
-				config[fields[0]] = apiKey
-			}
+// Add API key if provided (shared across roles, not role-specific)
+	if (apiKey) {
+		const keyField = ProviderToApiKeyMap[providerId as keyof typeof ProviderToApiKeyMap]
+		if (keyField) {
+			const fields = Array.isArray(keyField) ? keyField : [keyField]
+			config[fields[0]] = apiKey
 		}
 	}
 

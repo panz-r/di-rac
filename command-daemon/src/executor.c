@@ -44,7 +44,7 @@ int executor_fork(const char *command, const char *cwd, ExecChild *out) {
     int stdout_pipe[2], stderr_pipe[2];
     if (pipe(stdout_pipe) < 0 || pipe(stderr_pipe) < 0) return -1;
 
-    const char *cwd_suffix = "; printf '" EXEC_CWD_MARKER "%s\\n' \"$PWD\" >&2";
+    const char *cwd_suffix = "; _ec=$?; printf '" EXEC_CWD_MARKER "%s\\n' \"$PWD\" >&2; exit $_ec";
     size_t cmd_len = strlen(command) + strlen(cwd_suffix) + 1;
     char *full_cmd = malloc(cmd_len);
     if (!full_cmd) {

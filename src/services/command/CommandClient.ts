@@ -230,7 +230,7 @@ export class CommandClient {
 		})
 	}
 
-	private send(payload: Record<string, unknown>, timeoutMs = 10000): Promise<any> {
+	private send(payload: Record<string, unknown>, timeoutMs = 30000): Promise<any> {
 		return new Promise((resolve, reject) => {
 			if (this.shuttingDown) {
 				reject(new Error("Daemon shut down"))
@@ -253,7 +253,7 @@ export class CommandClient {
 				return
 			}
 			const id = ++this.requestId
-			const message = JSON.stringify({ id, ...payload }) + "\n"
+			const message = JSON.stringify({ id: String(id), ...payload }) + "\n"
 			const timer = setTimeout(() => {
 				this.pending.delete(id)
 				reject(new Error(`Request ${id} timed out after ${timeoutMs}ms`))

@@ -155,7 +155,8 @@
 		"tree-kill": "^1.2.2",
 		"ts-node": "^10.9.2",
 		"tsconfig-paths": "^4.2.0",
-		"typescript": "^5.4.5"
+		"typescript": "^5.4.5",
+		"@types/uuid": "^10.0.0"
 	},
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.88.0",
@@ -192,7 +193,6 @@
 		"@sap-cloud-sdk/connectivity": "^4.2.0",
 		"@streamparser/json": "^0.0.22",
 		"@tailwindcss/vite": "^4.1.14",
-		"@types/uuid": "^10.0.0",
 		"@vscode/ripgrep": "^1.15.9",
 		"archiver": "^7.0.1",
 		"aws4fetch": "^1.0.20",
@@ -270,7 +270,6 @@
 			"**/testing-platform/**",
 			"**/webview-ui/**",
 			"**/node_modules/**",
-			"node_modules",
 			"**/dist-standalone/src/**",
 			"**/dist-standalone/vsce-extension/https:/**",
 			"**/dist-standalone/vsce-extension/**",

@@ -137,7 +137,7 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, onChange, on
 		})
 
 		return () => { cancelled = true }
-	}, [provider, controller])
+	}, [provider])
 
 	const modelList = useMemo(() => {
 		// Gateway models take priority

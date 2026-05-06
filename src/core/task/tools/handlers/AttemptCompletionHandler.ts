@@ -48,7 +48,8 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 
 
-		const result = uiHelpers.removeClosingTag(block, "result", block.params.result)
+		const raw = typeof block.params.result === "string" ? block.params.result : block.params.result != null ? String(block.params.result) : undefined
+		const result = uiHelpers.removeClosingTag(block, "result", raw)
 		if (result) {
 			await uiHelpers.say("completion_result", result, undefined, undefined, block.partial)
 		}
@@ -56,7 +57,9 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
-		const result: string | undefined = block.params.result
+		let result: string | undefined = typeof block.params.result === "string"
+			? block.params.result
+			: block.params.result != null ? String(block.params.result) : undefined
 		const command: string | undefined = block.params.command
 
 		// Validate required parameters
