@@ -3,7 +3,6 @@ import type { SystemPromptContext } from "./types"
 export const SYSTEM_PROMPT = (context: SystemPromptContext) => {
 	const {
 		cwd,
-		ide,
 		supportsBrowserUse,
 		yoloModeToggled,
 		diracWebToolsEnabled,

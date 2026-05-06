@@ -857,7 +857,6 @@ export class Task {
 	async *attemptApiRequest(previousApiReqIndex: number, shouldCompact?: boolean): ApiStream {
 		const providerInfo = this.getCurrentProviderInfo()
 		const host = await HostProvider.env.getHostVersion({})
-		const ide = host?.platform || "Unknown"
 		const isCliEnvironment = host?.diracType === "CLI"
 		const browserSettings = this.stateManager.getGlobalSettingsKey("browserSettings")
 		const disableBrowserTool = browserSettings.disableToolUse ?? false
@@ -946,7 +945,6 @@ export class Task {
 
 		const promptContext: SystemPromptContext = {
 			cwd: this.cwd,
-			ide,
 			providerInfo,
 			editorTabs,
 			supportsBrowserUse,

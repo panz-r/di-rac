@@ -14,7 +14,6 @@ import { createToolError } from "@shared/tool-response"
 import { ContextManager } from "@/core/context/context-management/ContextManager"
 import { checkContextWindowExceededError } from "@/core/context/context-management/context-error-handling"
 import { getContextWindowInfo } from "@/core/context/context-management/context-window-utils"
-import { HostRegistryInfo } from "@/registry"
 import { DiracError, DiracErrorType } from "@/services/error"
 import { calculateApiCostAnthropic } from "@/utils/cost"
 import { TaskState } from "../../TaskState"
@@ -344,7 +343,6 @@ export class SubagentRunner {
 			}
 			stats.contextWindow = providerInfo.model.info.contextWindow || 0
 
-			const host = HostRegistryInfo.get()
 			const availableSkills = await getOrDiscoverSkills(this.baseConfig.cwd, this.baseConfig.taskState)
 			const configuredSkillNames = this.agent.getConfiguredSkills()
 			const skills =
@@ -363,7 +361,6 @@ export class SubagentRunner {
 			const context: SystemPromptContext = {
 				providerInfo,
 				cwd: this.baseConfig.cwd,
-				ide: host?.platform || "Unknown",
 				skills,
 				browserSettings: this.baseConfig.browserSettings,
 				yoloModeToggled: false,
