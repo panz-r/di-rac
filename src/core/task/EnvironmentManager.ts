@@ -96,17 +96,35 @@ export class EnvironmentManager {
 	private get workspaceManager() {
 		return this.dependencies.workspaceManager
 	}
+async getEnvironmentDetails(includeFileDetails = false): Promise<string> {
+	let details = ""
 
-	async getEnvironmentDetails(includeFileDetails = false): Promise<string> {
-		let details = ""
+	// Workspace roots (multi-root)
+	details += this.formatWorkspaceRootsSection()
 
-		// Workspace roots (multi-root)
-		details += this.formatWorkspaceRootsSection()
+	if (includeFileDetails) {
+		const MAX_RECENT_FILES = 10
 
-		if (includeFileDetails) {
-			const MAX_RECENT_FILES = 10
+		try {
+			// Use command-daemon for high-performance walk
+			const walkResult = await this.terminalManager.getCommandClient().walk(this.cwd)
+			const fileStats = walkResult.files.map((f) => ({
+				relativePath: f.path,
+				mtime: new Date(f.mtime * 1000),
+			}))
 
-			// Merge hardcoded ignores with .gitignore entries so we skip generated/vendor dirs
+			fileStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+			const recent = fileStats.slice(0, MAX_RECENT_FILES)
+
+			if (recent.length > 0) {
+				details += `\n\n# Latest ${MAX_RECENT_FILES} edited files in this workspace`
+				for (const { relativePath, mtime } of recent) {
+					details += `\n${relativePath.toPosix()}  ${EnvironmentManager.relativeTime(mtime)}`
+				}
+			}
+		} catch (error) {
+			Logger.error("EnvironmentManager", "Command-daemon walk failed, falling back to slow walk", error)
+			// Fallback to existing Node walk if needed
 			const gitIgnoredNames = await this.getGitIgnoredNames()
 			const ignoredDirs = new Set([...ALWAYS_IGNORED_DIRS, ...gitIgnoredNames])
 
@@ -133,8 +151,10 @@ export class EnvironmentManager {
 				}
 			}
 		}
+	}
 
-		details += "\n\n# Current Mode"
+	details += "\n\n# Current Mode"
+...
 		const mode = this.stateManager.getGlobalSettingsKey("mode")
 		if (mode === "plan") {
 			details += `\nPLAN MODE\n${formatResponse.planModeInstructions()}`

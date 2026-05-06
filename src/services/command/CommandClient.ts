@@ -29,6 +29,16 @@ export interface SessionInfoResult {
 	env: Record<string, string>
 }
 
+export interface WalkResult {
+	type: "walk_result"
+	id: string
+	files: Array<{
+		path: string
+		mtime: number
+		size: number
+	}>
+}
+
 interface PendingRequest {
 	resolve: (value: any) => void
 	reject: (reason: any) => void
@@ -267,5 +277,15 @@ export class CommandClient {
 			type: "session_info",
 			session_id: sessionId,
 		})
+	}
+
+	async walk(dir?: string): Promise<WalkResult> {
+		return this.send(
+			{
+				type: "walk",
+				dir: dir || undefined,
+			},
+			30000,
+		)
 	}
 }
