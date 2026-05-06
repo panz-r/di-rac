@@ -106,24 +106,39 @@ async getEnvironmentDetails(includeFileDetails = false): Promise<string> {
 		const MAX_RECENT_FILES = 10
 
 		try {
-			// Use command-daemon for high-performance walk
-			const walkResult = await this.terminalManager.getCommandClient().walk(this.cwd)
+			const commandClient = this.terminalManager.getCommandClient()
+
+			// 1. Get truly recent files via inotify
+			const recentResult = await commandClient.recentFiles()
+			const recentFilesSet = new Set(recentResult.files)
+
+			// 2. Supplement with high-performance walk
+			const walkResult = await commandClient.walk(this.cwd)
 			const fileStats = walkResult.files.map((f) => ({
 				relativePath: f.path,
 				mtime: new Date(f.mtime * 1000),
+				isTrulyRecent: recentFilesSet.has(f.path),
 			}))
 
-			fileStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+			fileStats.sort((a, b) => {
+				if (a.isTrulyRecent && !b.isTrulyRecent) return -1
+				if (!a.isTrulyRecent && b.isTrulyRecent) return 1
+				return b.mtime.getTime() - a.mtime.getTime()
+			})
+
 			const recent = fileStats.slice(0, MAX_RECENT_FILES)
 
 			if (recent.length > 0) {
 				details += `\n\n# Latest ${MAX_RECENT_FILES} edited files in this workspace`
-				for (const { relativePath, mtime } of recent) {
-					details += `\n${relativePath.toPosix()}  ${EnvironmentManager.relativeTime(mtime)}`
+				for (const { relativePath, mtime, isTrulyRecent } of recent) {
+					const marker = isTrulyRecent ? "*" : " "
+					details += `\n${marker} ${relativePath.toPosix()}  ${EnvironmentManager.relativeTime(mtime)}`
+				}
+				if (recentFilesSet.size > 0) {
+					details += `\n\n(* marked files were modified in the current session)`
 				}
 			}
-		} catch (error) {
-			Logger.error("EnvironmentManager", "Command-daemon walk failed, falling back to slow walk", error)
+		} catch (error) {			Logger.error("EnvironmentManager", "Command-daemon walk failed, falling back to slow walk", error)
 			// Fallback to existing Node walk if needed
 			const gitIgnoredNames = await this.getGitIgnoredNames()
 			const ignoredDirs = new Set([...ALWAYS_IGNORED_DIRS, ...gitIgnoredNames])
@@ -154,8 +169,7 @@ async getEnvironmentDetails(includeFileDetails = false): Promise<string> {
 	}
 
 	details += "\n\n# Current Mode"
-...
-		const mode = this.stateManager.getGlobalSettingsKey("mode")
+	const mode = this.stateManager.getGlobalSettingsKey("mode")
 		if (mode === "plan") {
 			details += `\nPLAN MODE\n${formatResponse.planModeInstructions()}`
 		} else {
