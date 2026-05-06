@@ -33,7 +33,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 					? params.path
 					: params.path
 						? [params.path as string]
-						: []
+						: ["."]
 	}
 
 	getDescription(block: ToolUse): string {
@@ -245,11 +245,6 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 		const provider = (currentMode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
 		// Validate required parameters
-		if (relPaths.length === 0) {
-			config.taskState.consecutiveMistakeCount++
-			return await config.callbacks.sayAndCreateMissingParamError(this.name, block.params.paths ? "paths" : "path")
-		}
-
 		if (!regex) {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "regex")

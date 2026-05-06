@@ -8,19 +8,19 @@ export const search: DiracToolSpec = {
 	name: "search",
 	description: `Search files with regex patterns. Skips .git, node_modules, build/, binaries. Returns first 30 matches with file, line, and context. Use for text patterns, config values, comments — not code navigation. For code navigation (functions, classes, imports), use symbols search --name instead.
 
-Example: search src/ --pattern "TODO|FIXME" --context 2
+Example: search --pattern "TODO|FIXME" --context 2
 
 Response: OK | matches:N | files:N | hint:refinements | tokens:N
 	Matches follow: file:line:context (one per line, max 30).
-Note: --context 0-5. Results auto-truncated at 30 matches; narrow your pattern or path if partial.
-Typical: search src/ --pattern 'TODO|FIXME'`,
+Note: path is optional (defaults to cwd). --context 0-5. Results auto-truncated at 30 matches; narrow your pattern or path if partial.
+Typical: search --pattern 'TODO|FIXME'`,
 	parameters: [
 		{
 			name: "command",
 			required: true,
 			type: "string",
-			instruction: "CLI arguments for search. Use --pattern and optional filter flags.",
-			usage: "src/ --pattern 'TODO|FIXME' --context 2",
+			instruction: "CLI arguments for search. Path is optional (defaults to cwd). Use --pattern and optional filter flags.",
+			usage: "--pattern 'TODO|FIXME' --context 2",
 		},
 	],
 	metadata: {

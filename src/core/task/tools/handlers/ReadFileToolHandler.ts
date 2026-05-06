@@ -286,7 +286,9 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 				const maxTokens = block.params.max_tokens ? Number.parseInt(String(block.params.max_tokens)) : undefined
 				const page = block.params.page as "next" | "prev" | "section" | undefined
 				const section = block.params.section as string | undefined
-				const rangesRaw = block.params.ranges as { start: number; end: number }[] | undefined
+				const effectivePage = page || (section ? "section" as const : undefined)
+				let sectionNotFound: string | undefined
+				const rangesRaw = block.params.ranges as { start: number; end: number }[] | string | undefined
 
 				const stats = await fs.stat(absolutePath)
 				const ext = path.extname(absolutePath).toLowerCase()
@@ -298,33 +300,52 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 				config.taskState.readCounts.set(absolutePath, currentReadCount)
 
 				let effectivePreviewLines = OVERSIZED_FILE_PREVIEW_LINES
-				if (currentReadCount >= 3 && !startLineNum && !endLineNum && !rangesRaw && !page) {
+				if (currentReadCount >= 3 && !startLineNum && !endLineNum && !rangesRaw && !effectivePage) {
 					effectivePreviewLines = AUTO_EXPAND_PREVIEW_LINES
 				}
 
 				// Auto-select detail if not specified
-				if (!detail && !startLineNum && !endLineNum && !rangesRaw && !page) {
+				if (!detail && !startLineNum && !endLineNum && !rangesRaw && !effectivePage) {
 					detail = stats.size > MAX_FILE_READ_SIZE && !isImage ? "preview" : "full"
 				}
 
 				// 4. Handle Ranges / Pagination / Jump
 				let ranges: Range[] = []
 				
-				if (rangesRaw && Array.isArray(rangesRaw)) {
+				// Parse string ranges from CLI (e.g. --range 40-100 or --range 10-20,30-40)
+				let parsedRanges: { start: number; end: number }[] | undefined
+				if (typeof rangesRaw === "string") {
+					parsedRanges = rangesRaw.split(",").map(part => {
+						const rangeMatch = part.trim().match(/^(\d+)-(\d+)$/)
+						if (rangeMatch) return { start: Number(rangeMatch[1]), end: Number(rangeMatch[2]) }
+						const singleMatch = part.trim().match(/^(\d+)$/)
+						if (singleMatch) return { start: Number(singleMatch[1]), end: Number(singleMatch[1]) + 1 }
+						return null
+					}).filter((r): r is { start: number; end: number } => r !== null)
+					if (parsedRanges.length === 0) parsedRanges = undefined
+				}
+
+				if (parsedRanges && parsedRanges.length > 0) {
+					ranges = this.mergeRanges(parsedRanges)
+				} else if (rangesRaw && Array.isArray(rangesRaw)) {
 					ranges = this.mergeRanges(rangesRaw.map(r => ({ start: Number(r.start), end: Number(r.end) })))
-				} else if (page || section) {
+				} else if (effectivePage || section) {
 					const currentCursor = config.taskState.fileCursors.get(absolutePath) || 1
 					let finalStartLine = 1
-					if (page === "next") {
+					if (effectivePage === "next") {
 						finalStartLine = currentCursor + effectivePreviewLines
-					} else if (page === "prev") {
+					} else if (effectivePage === "prev") {
 						finalStartLine = Math.max(1, currentCursor - effectivePreviewLines)
-					} else if (page === "section" && section) {
+					} else if (effectivePage === "section" && section) {
 						const daemonSymbols = await config.services.analyzer.outline(absolutePath)
 						const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols)
 						const target = definitions?.find(d => d.id === section)
 						if (target) {
-							finalStartLine = target.fullBodyRange?.startLine || target.lineIndex + 1
+							finalStartLine = (target.fullBodyRange?.startLine !== undefined
+								? target.fullBodyRange.startLine + 1
+								: target.lineIndex + 1)
+						} else {
+							sectionNotFound = section
 						}
 					}
 					ranges = [{ start: finalStartLine, end: finalStartLine + effectivePreviewLines - 1 }]
@@ -455,6 +476,10 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 						usedDetail = degradationPath[currentIndex] as any
 						responseContent = await tryGenerateContent(usedDetail, ranges)
 					}
+				}
+
+				if (sectionNotFound) {
+					responseContent += `\n[warning: section '${sectionNotFound}' not found in outline]`
 				}
 
 				const currentHash = contentHash(responseContent)
