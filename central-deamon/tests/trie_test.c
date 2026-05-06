@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 #include <string.h>
 #include "trie.h"
@@ -35,7 +36,9 @@ void test_cleanup() {
     assert(trie_get_owned_count(t, 10) == 2);
     assert(trie_acquire_lock(t, "/a", 11) == 1);
     int wakeup[16];
-    trie_cleanup_fd(t, 10, wakeup, 16);
+    char *w_paths[16];
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    for (size_t i = 0; i < count; i++) free(w_paths[i]);
     assert(trie_get_owned_count(t, 10) == 0);
     assert(trie_get_owned_count(t, 11) == 1);
     assert(trie_acquire_lock(t, "/b", 12) == 0);
@@ -123,7 +126,9 @@ void test_waiter_abandonment() {
     assert(trie_acquire_lock(t, "/lock", 11) == 1);
     assert(trie_acquire_lock(t, "/lock", 12) == 1);
     int wakeup[16];
-    trie_cleanup_fd(t, 11, wakeup, 16);
+    char *w_paths[16];
+    size_t count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16);
+    for (size_t i = 0; i < count; i++) free(w_paths[i]);
     int next = trie_release_lock(t, "/lock", 10);
     assert(next == 12); 
     assert(trie_get_owned_count(t, 12) == 1);
@@ -139,8 +144,11 @@ void test_complex_tree() {
     assert(trie_acquire_lock(t, "/v", 12) == 1);
     assert(trie_acquire_lock(t, "/v/src/c.c", 13) == 0); 
     int wakeup[16];
-    trie_cleanup_fd(t, 10, wakeup, 16);
-    trie_cleanup_fd(t, 11, wakeup, 16);
+    char *w_paths[16];
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    for (size_t i = 0; i < count; i++) free(w_paths[i]);
+    count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16);
+    for (size_t i = 0; i < count; i++) free(w_paths[i]);
     assert(trie_release_lock(t, "/v/src/c.c", 13) == 12);
     trie_destroy(t);
     printf("PASS\n");
@@ -227,8 +235,11 @@ void test_waiter_reordering() {
     
     /* W1 and W3 disconnect */
     int wakeup[16];
-    trie_cleanup_fd(t, 11, wakeup, 16);
-    trie_cleanup_fd(t, 13, wakeup, 16);
+    char *w_paths[16];
+    size_t count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16);
+    for (size_t i = 0; i < count; i++) free(w_paths[i]);
+    count = trie_cleanup_fd(t, 13, wakeup, w_paths, 16);
+    for (size_t i = 0; i < count; i++) free(w_paths[i]);
     
     /* Release owner 10. Next should be W2 (12). */
     assert(trie_release_lock(t, "/res", 10) == 12);
@@ -293,7 +304,9 @@ void test_cleanup_recursive_intent() {
     
     /* 10 disconnects */
     int wakeup[16];
-    trie_cleanup_fd(t, 10, wakeup, 16);
+    char *w_paths[16];
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    for (size_t i = 0; i < count; i++) free(w_paths[i]);
     
     /* intent_count must be 0 */
     assert(ab->intent_count == 0);
@@ -388,11 +401,13 @@ void test_cleanup_massive_wakeups() {
     
     /* Cleanup 10 with cap of 16 */
     int wakeup[16];
-    size_t count = trie_cleanup_fd(t, 10, wakeup, 16);
+    char *w_paths[16];
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
     
     /* Only 16 should be woken up in the array, but lock is granted to 100. */
     assert(count == 1); /* Only the direct waiter of /root is woken up */
     assert(wakeup[0] == 100);
+    free(w_paths[0]);
     
     trie_destroy(t);
     printf("PASS\n");
@@ -429,7 +444,8 @@ void test_cleanup_multi_branch_wakeup() {
     assert(trie_acquire_lock(t, "/b", 12) == 1);
     
     int wakeup[16];
-    size_t count = trie_cleanup_fd(t, 10, wakeup, 16);
+    char *w_paths[16];
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
     
     /* Both should be woken up */
     assert(count == 2);
@@ -437,8 +453,15 @@ void test_cleanup_multi_branch_wakeup() {
        but both must be present. */
     bool found11 = false, found12 = false;
     for (size_t i = 0; i < count; i++) {
-        if (wakeup[i] == 11) found11 = true;
-        if (wakeup[i] == 12) found12 = true;
+        if (wakeup[i] == 11) {
+            found11 = true;
+            assert(strcmp(w_paths[i], "/a") == 0);
+        }
+        if (wakeup[i] == 12) {
+            found12 = true;
+            assert(strcmp(w_paths[i], "/b") == 0);
+        }
+        free(w_paths[i]);
     }
     assert(found11 && found12);
     
@@ -505,11 +528,14 @@ void test_cleanup_mixed_state() {
     assert(trie_acquire_lock(t, "/owned", 12) == 1);
     
     int wakeup[16];
-    size_t count = trie_cleanup_fd(t, 10, wakeup, 16);
+    char *w_paths[16];
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
     
     /* 10's release of /owned should wake up 12 */
     assert(count == 1);
     assert(wakeup[0] == 12);
+    assert(strcmp(w_paths[0], "/owned") == 0);
+    free(w_paths[0]);
     
     /* /other should still be owned by 11 */
     assert(trie_get_owned_count(t, 11) == 1);
@@ -567,7 +593,9 @@ void test_cleanup_massive_multi_node_wakeups() {
     /* Cleanup 10. Should wake up 100 people. 
        We provide a small buffer to see if it overflows or just caps. */
     int wakeup[16];
-    size_t count = trie_cleanup_fd(t, 10, wakeup, 16);
+    char *w_paths[16];
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    for (size_t i = 0; i < count; i++) free(w_paths[i]);
     
     /* The current implementation caps at 16, but we want to make sure it doesn't crash. */
     printf(" - Woke up %zu waiters (cap 16)\n", count);

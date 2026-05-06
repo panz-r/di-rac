@@ -721,10 +721,13 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 	const { StateManager } = await import("@/core/storage/StateManager")
 	const { ErrorService } = await import("@/services/error/ErrorService")
 	const { SymbolIndexService } = await import("@/services/symbol-index/SymbolIndexService")
-
+	const { ensureCoordinatorRunning } = await import("@/core/locks/CoordinatorSpawn")
 
 	const workspacePath = options.cwd || process.cwd()
 	setRuntimeHooksDir(options.hooksDir)
+	
+	// Start the coordination daemon if it's not running
+	await ensureCoordinatorRunning()
 	const { extensionContext, storageContext, DATA_DIR, EXTENSION_DIR } = initializeCliContext({
 		diracDir: options.config,
 		workspaceDir: workspacePath,

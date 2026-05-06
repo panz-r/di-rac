@@ -71,7 +71,9 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
         int next_fd = trie_release_lock(trie, path, fd);
         send_json(fd, "{\"status\": \"ok\"}\n");
         if (next_fd != -1) {
-            send_json(next_fd, "{\"status\": \"granted\", \"path\": \"*\"}\n");
+            char resp[4096 + 128];
+            snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", path);
+            send_json(next_fd, resp);
         }
     } else {
         send_json(fd, "{\"status\": \"error\", \"message\": \"unknown method\"}\n");
@@ -188,9 +190,13 @@ int main() {
                 client_ctx_t *ctx = events[i].data.ptr;
                 if (handle_client_data(ctx, lock_trie) < 0) {
                     int wakeup[256];
-                    size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, 256);
-                    for (size_t j = 0; j < (w_count > 256 ? 256 : w_count); j++) {
-                        send_json(wakeup[j], "{\"status\": \"granted\", \"path\": \"*\"}\n");
+                    char *w_paths[256];
+                    size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, w_paths, 256);
+                    for (size_t j = 0; j < w_count; j++) {
+                        char resp[4096 + 128];
+                        snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", w_paths[j]);
+                        send_json(wakeup[j], resp);
+                        free(w_paths[j]);
                     }
                     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
                     close(ctx->fd);

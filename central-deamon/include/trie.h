@@ -70,7 +70,10 @@ trie_node_t* trie_traverse(trie_t *trie, const char *path, bool create, bool *an
  * @param wakeup_cap The size of the wakeup array.
  * @return The number of FDs added to the wakeup array.
  */
-size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, size_t wakeup_cap);
+size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t wakeup_cap);
+
+/* Path reconstruction */
+void node_get_path(trie_node_t *node, char *buf, size_t len);
 
 /**
  * trie_get_owned_count - Helper for testing cleanup.

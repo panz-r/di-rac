@@ -262,7 +262,23 @@ size_t trie_get_owned_count(trie_t *trie, int fd) {
     return (*(node_list_t**)found)->count;
 }
 
-size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, size_t wakeup_cap) {
+void node_get_path(trie_node_t *node, char *buf, size_t len) {
+    if (!node || !node->parent) {
+        if (len > 1) { buf[0] = '/'; buf[1] = '\0'; }
+        return;
+    }
+    
+    char temp[4096];
+    node_get_path(node->parent, temp, sizeof(temp));
+    
+    if (strcmp(temp, "/") == 0) {
+        snprintf(buf, len, "/%s", node->segment);
+    } else {
+        snprintf(buf, len, "%s/%s", temp, node->segment);
+    }
+}
+
+size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t wakeup_cap) {
     size_t wakeup_count = 0;
     size_t vlen;
     const void *found_owned = ht_find(trie->fd_registry, &fd, sizeof(int), &vlen);
@@ -277,11 +293,21 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, size_t wakeup_cap) {
             while (p) {
                 p->intent_count--;
                 int w = node_grant_to_next_waiter(trie, p);
-                if (w != -1 && wakeup_count < wakeup_cap) wakeup[wakeup_count++] = w;
+                if (w != -1 && wakeup_count < wakeup_cap) {
+                    wakeup[wakeup_count] = w;
+                    paths[wakeup_count] = malloc(4096);
+                    node_get_path(p, paths[wakeup_count], 4096);
+                    wakeup_count++;
+                }
                 p = p->parent;
             }
             int w = node_grant_to_next_waiter(trie, node);
-            if (w != -1 && wakeup_count < wakeup_cap) wakeup[wakeup_count++] = w;
+            if (w != -1 && wakeup_count < wakeup_cap) {
+                wakeup[wakeup_count] = w;
+                paths[wakeup_count] = malloc(4096);
+                node_get_path(node, paths[wakeup_count], 4096);
+                wakeup_count++;
+            }
         }
         free(list->nodes);
         free(list);

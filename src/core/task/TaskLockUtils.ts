@@ -17,7 +17,7 @@ const TASKS_BASE_PATH = "~/.dirac/data/tasks"
 export async function tryAcquireTaskLockWithRetry(taskId: string): Promise<FolderLockWithRetryResult> {
 	const options: FolderLockOptions = {
 		lockTarget: `${TASKS_BASE_PATH}/${taskId}`,
-		heldBy: taskId, // will be automatically swapped for instance address in SqliteLockManager
+		heldBy: taskId, // instance tracking handled by CoordinatorClient/Daemon
 	}
 
 	const result = await tryAcquireFolderLockWithRetry(options)
