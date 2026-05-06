@@ -447,10 +447,6 @@ describe("getProviderModelIdKey", () => {
 		expect(getProviderModelIdKey("openrouter", "plan")).toBe("planModeOpenRouterModelId")
 	})
 
-	it("should return same key for dirac as openrouter", () => {
-		expect(getProviderModelIdKey("dirac", "act")).toBe("actModeOpenRouterModelId")
-	})
-
 	it("should return correct key for openai", () => {
 		expect(getProviderModelIdKey("openai", "act")).toBe("actModeOpenAiModelId")
 	})

@@ -32,6 +32,7 @@ import { LanguagePicker } from "./LanguagePicker"
 import { CUSTOM_MODEL_ID, hasModelPicker, ModelPicker } from "./ModelPicker"
 import { Panel, PanelTab } from "./Panel"
 import { getProviderLabel, ProviderPicker } from "./ProviderPicker"
+import { refreshOpenRouterModels } from "@/core/controller/models/refreshOpenRouterModels"
 import { ROLE_DESCRIPTORS, getRoleStateKey, type ModelRole } from "@/shared/roles"
 
 interface SettingsPanelContentProps {
@@ -77,7 +78,7 @@ function buildDynamicItems(
 	validation?: ValidateSettingsResult | null,
 ): ListItem[] {
 	const items: ListItem[] = []
-	let currentGroup = ""
+	const emittedGroups = new Set<string>()
 
 	for (const setting of settings) {
 		const scope: SettingScope = setting.scope || "global"
@@ -92,10 +93,10 @@ function buildDynamicItems(
 		if (setting.valid_range) desc = (desc ? desc + " " : "") + `(${setting.valid_range})`
 
 		// Group header (indented under the role)
-		if (setting.group && setting.group !== currentGroup) {
-			currentGroup = setting.group
+		if (setting.group && !emittedGroups.has(setting.group)) {
+			emittedGroups.add(setting.group)
 			items.push({
-				key: `dynGroup:${setting.group}`,
+				key: `dynGroup:${mode}:${setting.group}`,
 				label: setting.group.charAt(0).toUpperCase() + setting.group.slice(1),
 				type: "header",
 				value: "",
@@ -929,14 +930,14 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				? actProvider || planProvider
 				: planProvider || actProvider
 			if (!providerForSelection) return
-			// Use provider-specific model ID keys (e.g., dirac uses actModeOpenRouterModelId)
+			// Use provider-specific model ID keys
 			const actKey = actProvider ? getProviderModelIdKey(actProvider, "act") : null
 			const planKey = planProvider ? getProviderModelIdKey(planProvider, "plan") : null
 
-			// For dirac/openrouter providers, also set model info (like webview does)
+			// For openrouter provider, also set model info
 			let modelInfo: ModelInfo | undefined
-			if (providerForSelection === "dirac" || providerForSelection === "openrouter") {
-				const openRouterModels = await controller?.readOpenRouterModels()
+			if (providerForSelection === "openrouter") {
+				const openRouterModels = await refreshOpenRouterModels(controller!)
 				modelInfo = openRouterModels?.[modelId]
 			}
 
@@ -983,16 +984,6 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	const handleProviderSelect = useCallback(
 		async (providerId: string) => {
 			const role = configuringRole || undefined
-
-			// Special handling for Dirac - uses OAuth
-			if (providerId === "dirac") {
-				setIsPickingProvider(false)
-				setConfiguringRole(null)
-				await applyProviderConfig({ providerId: "dirac", role, controller })
-				setProvider("dirac")
-				refreshModelIds()
-				return
-			}
 
 			// Special handling for Bedrock - needs multi-field configuration
 			if (providerId === "bedrock") {

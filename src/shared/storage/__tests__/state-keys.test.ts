@@ -248,7 +248,7 @@ describe("State Keys Type Safety", () => {
 
 		it("should correctly identify Secret keys", () => {
 			// Sample known secret keys
-			const knownSecretKeys = ["apiKey", "openRouterApiKey", "awsAccessKey", "diracApiKey"]
+			const knownSecretKeys = ["apiKey", "openRouterApiKey", "awsAccessKey", "byteplusApiKey"]
 
 			for (const key of knownSecretKeys) {
 				expect(isSecretKey(key), `${key} should be a SecretKey`).to.be.true
@@ -411,7 +411,7 @@ describe("State Keys Type Safety", () => {
 			// These assignments verify the key types are correctly narrowed
 			const globalKey: GlobalStateKey = "isNewUser"
 			const settingsKey: SettingsKey = "preferredLanguage"
-			const secretKey: SecretKey = "diracApiKey"
+			const secretKey: SecretKey = "byteplusApiKey"
 			const localKey: LocalStateKey = "localDiracRulesToggles"
 
 			expect(globalKey).to.be.a("string")

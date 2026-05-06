@@ -63,7 +63,7 @@ export async function applyProviderConfig(options: ApplyProviderConfigOptions): 
 		}
 
 		// Fetch model info from the provider API
-		if ((providerId === "dirac" || providerId === "openrouter") && controller) {
+		if (providerId === "openrouter" && controller) {
 			const openRouterModels = await refreshOpenRouterModels(controller)
 			const modelInfo = openRouterModels?.[finalModelId]
 			if (modelInfo) {

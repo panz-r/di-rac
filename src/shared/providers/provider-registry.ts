@@ -54,13 +54,6 @@ export interface ProviderDescriptor {
 
 export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 	{
-		providerId: "dirac",
-		label: "di-vrr",
-		modelIdKeySuffix: "DiracModelId",
-		apiKeyFields: "diracApiKey",
-		defaultModelId: openRouterDefaultModelId,
-	},
-	{
 		providerId: "gemini",
 		label: "Google Gemini",
 		apiKeyFields: "geminiApiKey",
@@ -220,7 +213,17 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		label: "Kilo Code",
 		apiKeyFields: "kiloCodeApiKey",
 		defaultModelId: "anthropic/claude-3-7-sonnet",
-	}
+	},
+	{
+		providerId: "byteplus",
+		label: "BytePlus",
+		apiKeyFields: "byteplusApiKey",
+	},
+	{
+		providerId: "byteplus_coding_plan",
+		label: "BytePlus Coding Plan",
+		apiKeyFields: "byteplusApiKey",
+	},
 ]
 
 // ---------------------------------------------------------------------------

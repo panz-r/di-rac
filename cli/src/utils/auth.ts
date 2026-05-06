@@ -45,17 +45,12 @@ export async function checkAnyProviderConfigured(): Promise<boolean> {
 	const stateManager = StateManager.get()
 	const config = stateManager.getApiConfiguration() as Record<string, unknown>
 
-	// Check Dirac account (stored as "dirac:diracAccountId" in secrets, loaded into config)
-	if (config["diracApiKey"] || config["dirac:diracAccountId"]) return true
 
 	// Check OpenAI Codex OAuth (stored in SECRETS_KEYS, loaded into config)
 	if (config["openai-codex-oauth-credentials"]) return true
 
 	// Check all BYO provider API keys (loaded into config from secrets)
 	for (const [provider, keyField] of Object.entries(ProviderToApiKeyMap)) {
-		// Skip dirac - already checked above with the correct key
-		if (provider === "dirac") continue
-
 		const fields = Array.isArray(keyField) ? keyField : [keyField]
 		for (const field of fields) {
 			if (config[field]) return true

@@ -13,7 +13,6 @@ export type ApiProvider =
 	| "qwen"
 	| "mistral"
 	| "vscode-lm"
-	| "dirac"
 	| "moonshot"
 	| "nebius"
 	| "fireworks"
@@ -29,6 +28,8 @@ export type ApiProvider =
 	| "opencode_go"
 	| "opencode_zen"
 	| "kilocode"
+	| "byteplus"
+	| "byteplus_coding_plan"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
 	"anthropic",
@@ -42,7 +43,6 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"qwen",
 	"mistral",
 	"vscode-lm",
-	"dirac",
 	"moonshot",
 	"nebius",
 	"fireworks",
@@ -58,6 +58,8 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"opencode_go",
 	"opencode_zen",
 	"kilocode",
+	"byteplus",
+	"byteplus_coding_plan",
 ]
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider

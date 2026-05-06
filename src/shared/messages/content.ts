@@ -18,7 +18,7 @@ interface DiracSharedMessageParam {
 	call_id?: string
 }
 
-export const REASONING_DETAILS_PROVIDERS = ["dirac", "openrouter"]
+export const REASONING_DETAILS_PROVIDERS = ["openrouter"]
 
 /**
  * An extension of Anthropic.MessageParam that includes Dirac-specific fields: reasoning_details.

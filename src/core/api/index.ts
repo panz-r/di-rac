@@ -231,6 +231,18 @@ function createHandlerForProvider(
 				apiKey: options.kiloCodeApiKey,
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 			})
+		case "byteplus":
+			return gatewayHandler("byteplus", {
+				apiKey: options.byteplusApiKey,
+				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
+			})
+		case "byteplus_coding_plan":
+			return gatewayHandler("byteplus_coding_plan", {
+				apiKey: options.byteplusApiKey,
+				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
+			})
 		case "api-gateway":
 			return new ApiGatewayHandler({
 				providerId: options.apiGatewayProviderId || "anthropic",
@@ -242,12 +254,7 @@ function createHandlerForProvider(
 			})
 
 		default:
-			return gatewayHandler("anthropic", {
-				apiKey: options.apiKey,
-				baseUrl: options.anthropicBaseUrl,
-				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
-				thinkingBudgetTokens,
-			})
+			throw new Error(`No provider set. Current provider: "${apiProvider || "unknown"}". Configure a provider in settings.`)
 	}
 }
 

@@ -437,6 +437,7 @@ enum ApiProvider {
   OPENCODE_GO = 42;
   OPENCODE_ZEN = 43;
   KILOCODE = 44;
+  BYTEPLUS = 45;
 }
 
 enum ApiFormat {

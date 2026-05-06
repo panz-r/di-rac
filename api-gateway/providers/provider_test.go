@@ -45,7 +45,7 @@ func TestNewRegistry(t *testing.T) {
 func TestRegistryRegister(t *testing.T) {
 	registry := NewRegistry()
 	mockHandler := &MockHandler{}
-	registry.Register("testprovider", mockHandler)
+	registry.Register("testprovider", mockHandler, ProviderMeta{ID: "testprovider", Label: "Test"})
 
 	handler, err := registry.GetHandler("testprovider")
 	if err != nil {
@@ -71,7 +71,7 @@ func TestRegistrySupportedProviders(t *testing.T) {
 
 	found := false
 	for _, p := range providers {
-		if p == "anthropic" {
+		if p.ID == "anthropic" {
 			found = true
 			break
 		}
@@ -527,7 +527,7 @@ func TestRegistryReRegister(t *testing.T) {
 	handler1, _ := registry.GetHandler("anthropic")
 
 	mockHandler := &MockHandler{}
-	registry.Register("anthropic", mockHandler)
+	registry.Register("anthropic", mockHandler, ProviderMeta{ID: "anthropic", Label: "Anthropic"})
 
 	handler2, _ := registry.GetHandler("anthropic")
 

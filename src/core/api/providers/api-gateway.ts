@@ -627,9 +627,15 @@ function gatewayQuery<T>(socketPath: string, request: Record<string, unknown>): 
 	})
 }
 
-export function queryProviderList(socketPath?: string): Promise<string[] | null> {
+export interface ProviderMeta {
+	id: string
+	label: string
+	default_model?: string
+}
+
+export function queryProviderList(socketPath?: string): Promise<ProviderMeta[] | null> {
 	const sock = socketPath || process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
-	return gatewayQuery<{ providers: string[] }>(sock, { type: "list-providers" }).then(
+	return gatewayQuery<{ providers: ProviderMeta[] }>(sock, { type: "list-providers" }).then(
 		(r) => r?.providers ?? null,
 	)
 }

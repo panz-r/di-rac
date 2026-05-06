@@ -217,6 +217,13 @@ type ProviderError struct {
 	Code    int    `json:"code,omitempty"`
 }
 
+// ProviderMeta is a lightweight descriptor returned by list-providers.
+type ProviderMeta struct {
+	ID           string `json:"id"`
+	Label        string `json:"label"`
+	DefaultModel string `json:"default_model,omitempty"`
+}
+
 // modelsCacheEntry holds cached model list results with expiry.
 type modelsCacheEntry struct {
 	models []ModelEntry
@@ -226,6 +233,7 @@ type modelsCacheEntry struct {
 // Registry manages provider handlers
 type Registry struct {
 	handlers    map[string]Handler
+	meta        map[string]ProviderMeta
 	modelsCache map[string]modelsCacheEntry
 	modelsMu    sync.RWMutex
 }
@@ -234,6 +242,7 @@ type Registry struct {
 func NewRegistry() *Registry {
 	r := &Registry{
 		handlers:    make(map[string]Handler),
+		meta:        make(map[string]ProviderMeta),
 		modelsCache: make(map[string]modelsCacheEntry),
 	}
 	r.registerProviders()
@@ -364,45 +373,56 @@ func floatDefault(def interface{}, fallback float64) float64 {
 	return fallback
 }
 
-// Register registers a handler for a provider
-func (r *Registry) Register(providerID string, handler Handler) {
+// Register registers a handler for a provider with metadata.
+func (r *Registry) Register(providerID string, handler Handler, meta ProviderMeta) {
 	r.handlers[providerID] = handler
+	// Fill DefaultModel from Capabilities if not set in meta
+	if meta.DefaultModel == "" {
+		if ch, ok := handler.(CapableHandler); ok {
+			if caps := ch.Capabilities(); caps != nil {
+				meta.DefaultModel = caps.DefaultModel
+			}
+		}
+	}
+	r.meta[providerID] = meta
 }
 
-// SupportedProviders returns the list of supported providers
-func (r *Registry) SupportedProviders() []string {
-	providers := make([]string, 0, len(r.handlers))
-	for id := range r.handlers {
-		providers = append(providers, id)
+// SupportedProviders returns the metadata for all registered providers.
+func (r *Registry) SupportedProviders() []ProviderMeta {
+	providers := make([]ProviderMeta, 0, len(r.meta))
+	for _, m := range r.meta {
+		providers = append(providers, m)
 	}
 	return providers
 }
 
 // registerProviders registers all built-in providers
 func (r *Registry) registerProviders() {
-	r.Register("anthropic", NewAnthropicHandler())
-	r.Register("openai", NewOpenAIHandler())
-	r.Register("openrouter", NewOpenRouterHandler())
-	r.Register("gemini", NewGeminiHandler())
-	r.Register("minimax", NewMiniMaxHandler())
-	r.Register("zai", NewZAIHandler())
-	r.Register("deepseek", NewDeepSeekHandler())
-	r.Register("mistral", NewMistralHandler())
-	r.Register("groq", NewGroqHandler())
-	r.Register("xai", NewXAIHandler())
-	r.Register("qwen", NewQwenHandler())
-	r.Register("fireworks", NewFireworksHandler())
-	r.Register("together", NewTogetherHandler())
-	r.Register("sambanova", NewSambaNovaHandler())
-	r.Register("cerebras", NewCerebrasHandler())
-	r.Register("lmstudio", NewLmStudioHandler())
-	r.Register("moonshot", NewMoonshotHandler())
-	r.Register("nvidia-nim", NewNvidiaNimHandler())
-	r.Register("nebius", NewNebiusHandler())
-	r.Register("huggingface", NewHuggingFaceHandler())
-	r.Register("opencode_go", NewOpenCodeGoHandler())
-	r.Register("opencode_zen", NewOpenCodeZenHandler())
-	r.Register("kilocode", NewKiloCodeHandler())
+	r.Register("anthropic", NewAnthropicHandler(), ProviderMeta{ID: "anthropic", Label: "Anthropic"})
+	r.Register("openai", NewOpenAIHandler(), ProviderMeta{ID: "openai", Label: "OpenAI"})
+	r.Register("openrouter", NewOpenRouterHandler(), ProviderMeta{ID: "openrouter", Label: "OpenRouter"})
+	r.Register("gemini", NewGeminiHandler(), ProviderMeta{ID: "gemini", Label: "Google Gemini"})
+	r.Register("minimax", NewMiniMaxHandler(), ProviderMeta{ID: "minimax", Label: "MiniMax"})
+	r.Register("zai", NewZAIHandler(), ProviderMeta{ID: "zai", Label: "Z AI"})
+	r.Register("deepseek", NewDeepSeekHandler(), ProviderMeta{ID: "deepseek", Label: "DeepSeek"})
+	r.Register("mistral", NewMistralHandler(), ProviderMeta{ID: "mistral", Label: "Mistral"})
+	r.Register("groq", NewGroqHandler(), ProviderMeta{ID: "groq", Label: "Groq"})
+	r.Register("xai", NewXAIHandler(), ProviderMeta{ID: "xai", Label: "xAI"})
+	r.Register("qwen", NewQwenHandler(), ProviderMeta{ID: "qwen", Label: "Qwen"})
+	r.Register("fireworks", NewFireworksHandler(), ProviderMeta{ID: "fireworks", Label: "Fireworks"})
+	r.Register("together", NewTogetherHandler(), ProviderMeta{ID: "together", Label: "Together"})
+	r.Register("sambanova", NewSambaNovaHandler(), ProviderMeta{ID: "sambanova", Label: "SambaNova"})
+	r.Register("cerebras", NewCerebrasHandler(), ProviderMeta{ID: "cerebras", Label: "Cerebras"})
+	r.Register("lmstudio", NewLmStudioHandler(), ProviderMeta{ID: "lmstudio", Label: "LM Studio"})
+	r.Register("moonshot", NewMoonshotHandler(), ProviderMeta{ID: "moonshot", Label: "Moonshot"})
+	r.Register("nvidia-nim", NewNvidiaNimHandler(), ProviderMeta{ID: "nvidia-nim", Label: "NVIDIA NIM"})
+	r.Register("nebius", NewNebiusHandler(), ProviderMeta{ID: "nebius", Label: "Nebius"})
+	r.Register("huggingface", NewHuggingFaceHandler(), ProviderMeta{ID: "huggingface", Label: "Hugging Face"})
+	r.Register("opencode_go", NewOpenCodeGoHandler(), ProviderMeta{ID: "opencode_go", Label: "OpenCode Go"})
+	r.Register("opencode_zen", NewOpenCodeZenHandler(), ProviderMeta{ID: "opencode_zen", Label: "OpenCode Zen"})
+	r.Register("kilocode", NewKiloCodeHandler(), ProviderMeta{ID: "kilocode", Label: "KiloCode"})
+	r.Register("byteplus", NewBytePlusHandler(), ProviderMeta{ID: "byteplus", Label: "BytePlus"})
+	r.Register("byteplus_coding_plan", NewBytePlusCodingPlanHandler(), ProviderMeta{ID: "byteplus_coding_plan", Label: "BytePlus Coding Plan"})
 }
 
 // ValidateRequest validates a request before processing

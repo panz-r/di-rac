@@ -8,6 +8,7 @@ import { Box, Text } from "ink"
 import Spinner from "ink-spinner"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import { queryModels } from "@/core/api/providers/api-gateway"
+import { getProviderDefaultModelId } from "../utils/providers"
 import { refreshOpenRouterModels } from "@/core/controller/models/refreshOpenRouterModels"
 import {
 	type ApiProvider,
@@ -85,7 +86,7 @@ export function getDefaultModelId(provider: string): string {
 	if (provider === "openrouter") {
 		return getOpenRouterDefaultModelId()
 	}
-	return providerModels[provider]?.defaultId || ""
+	return providerModels[provider]?.defaultId || getProviderDefaultModelId(provider)
 }
 
 interface ModelPickerProps {
