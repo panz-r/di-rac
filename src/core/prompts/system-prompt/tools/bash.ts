@@ -6,7 +6,7 @@ const id = DiracDefaultTool.BASH
 export const bash: DiracToolSpec = {
 	id,
 	name: "bash",
-	description: `Execute shell commands. Composition (pipes, &&, ||) is encouraged to minimize round-trips. Use heredocs for multi-line scripts. Dangerous commands (recursive deletes, reverse shells) are blocked; blocked will name the pattern.
+	description: `Execute shell commands. Composition (pipes, &&, ||) is encouraged to minimize round-trips. Use heredocs for multi-line scripts. Dangerous commands (recursive deletes, reverse shells) are blocked; blocked will name the pattern. Don't edit files with bash — use edit. Don't read files — use read.
 
 Examples:
   bash "git diff --cached"

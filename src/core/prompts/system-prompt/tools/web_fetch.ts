@@ -4,7 +4,7 @@ import type { DiracToolSpec } from "../spec"
 export const web_fetch: DiracToolSpec = {
 	id: DiracDefaultTool.WEB_FETCH,
 	name: "web_fetch",
-	description: `Fetches content from a specified URL and analyzes it using your prompt.
+	description: `Fetch and analyze content from a specified URL using your prompt.
 - Takes a URL and analysis prompt as input
 - Fetches the URL content and processes based on your prompt
 - Use this tool when you need to retrieve and analyze web content

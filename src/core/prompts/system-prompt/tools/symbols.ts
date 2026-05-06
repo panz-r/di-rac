@@ -6,7 +6,7 @@ const id = DiracDefaultTool.SYMBOLS
 export const symbols: DiracToolSpec = {
 	id,
 	name: "symbols",
-	description: `AST symbol operations. For text/regex patterns, use search instead.
+	description: `AST symbol operations. For text/regex patterns, use search instead. For reading file content, use read --detail outline --section fn:Name.
 
 Subcommands:
   search --name PATTERN [--kind function|class]    Find definitions

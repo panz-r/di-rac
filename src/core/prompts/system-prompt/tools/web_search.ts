@@ -4,7 +4,7 @@ import type { DiracToolSpec } from "../spec"
 export const web_search: DiracToolSpec = {
 	id: DiracDefaultTool.WEB_SEARCH,
 	name: "web_search",
-	description: `Performs a web search and returns relevant results.
+	description: `Search the web for information. Returns titles, URLs, and snippets.
 - Takes a search query as input and returns search results with titles and URLs
 - Optionally filter results by allowed or blocked domains
 - Use this tool when you need to search the web for information
@@ -12,6 +12,7 @@ export const web_search: DiracToolSpec = {
 - You may provide either allowed_domains OR blocked_domains, but NOT both
 - Domains should be provided as a JSON array of strings
 - This tool is read-only and does not modify any files
+- For fetching and analyzing a specific URL, use web_fetch instead
 
 Usage: web_search <query> [--allowed-domains JSON] [--blocked-domains JSON]
 

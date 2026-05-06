@@ -60,10 +60,15 @@ ${
 
 	RESPONSE FORMAT
 	All tools use compact pipe-delimited text. First token is status: OK, ERROR, TRUNCATED, or EMPTY. Multi-line content follows the header; lines:N tells you how many.
-	OK | tokens:N | lines:N | cached:yes | cumulative:N — hint: provides next-step guidance. Examples: "Try --kind function", "Narrow path to src/", "Use --detail full". Use cumulative to budget context.
-	ERROR | code | message | hint:guidance | tokens:N
+	OK | tokens:N | lines:N | cached:yes | cumulative:N — hint: provides next-step guidance. Use cumulative to budget context.
+	ERROR | code | message | hint:guidance | tokens:N — common codes: blocked (safety), timeout (retry narrower), not_found (check path), permission_denied.
 	TRUNCATED | lines:N | hint:use --range/--detail | tokens:N — content follows, truncated.
 	EMPTY | hint:suggestion | tokens:N
+
+	HINT examples by context:
+	After read --detail outline → "Use --section fn:Name to jump to symbol body"
+	After search 0 matches → "Broaden pattern or try different path"
+	After bash blocked → "Check hint for allowed alternative"
 
 	BUDGET AWARENESS
 The header line includes cumulative:N (total tokens so far) and tokens:N (this response). If cumulative approaches your context limit, prefer targeted reads (--detail skeleton, --range). Cached reads (cached:yes) cost nothing.

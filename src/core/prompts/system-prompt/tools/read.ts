@@ -6,7 +6,7 @@ const id = DiracDefaultTool.FILE_READ
 export const read: DiracToolSpec = {
 	id,
 	name: "read",
-	description: `Read files with detail levels: hint (kind+name only), preview (auto for large files), outline (defs with handles like fn:Name), skeleton (signatures only), full. Use --section fn:Name to jump to a symbol.
+	description: `Read files with detail levels: hint (kind+name only), preview (auto for large files), outline (defs with handles like fn:Name), skeleton (signatures only), full. Use --section fn:Name to jump to a symbol. Use --detail outline before --detail full for large files.
 
 Examples:
   read src/auth.ts --detail hint
