@@ -19,6 +19,12 @@ export interface ObserverConfig {
     tauWatcher: number // Time constant for S1 decay (Shen et al. 2025)
     tauCritic: number // Time constant for S2 decay
     permissiveBufferSize: number // Wong et al. 2025
+    
+    // Phase 5: Test-less Progress (Park & Lee 2025)
+    tierThresholds: {
+        sqs: [number, number, number, number] // SQS triggers for Tier 0, 1, 2, 3
+        confidence: [number, number, number, number] // Min confidence for Tier 0, 1, 2, 3
+    }
 }
 
 export interface ObservationEntry {
@@ -49,7 +55,7 @@ RULES:
 export const OBSERVER_WATCHER_PROMPT = `You are a Watcher Critic (System 1). Identify immediate gaps or loops.
 
 RULES:
-1. Identify GAP: "Haven't checked file X", "Missing import Y", "Ignored instruction Z".
+1. Identify GAP: "Missing check for X", "Ignored instruction Z".
 2. Identify LOOP: "Repeated regex/edit attempt on same file".
 3. Provide a confidence score (0.0 to 1.0).
 4. Format: [OBSERVER:WATCHER | confidence:0.XX] [Insight] [END_OBSERVER]
@@ -141,5 +147,9 @@ export function buildObserverConfig(settings: {
         tauWatcher: 7,
         tauCritic: 15,
         permissiveBufferSize: 2,
+        tierThresholds: {
+            sqs: [0.30, 0.32, 0.35, 0.40],
+            confidence: [0.50, 0.55, 0.60, 0.70]
+        }
 	}
 }

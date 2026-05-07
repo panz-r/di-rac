@@ -23,6 +23,7 @@ interface ActionFeatures {
     op: string
     lineRange: string
     errorSig: string | null
+    success: boolean
     turn: number
 }
 
@@ -52,7 +53,8 @@ export class ObserverCostTracker {
 }
 
 /**
- * ObserverOrchestrator - Manages the MEMENTO Memory Pyramid and SQS.
+ * ObserverOrchestrator - Manages the MEMENTO Memory Pyramid, SQS, and CPS.
+ * Implements "Progress Detection Without Tests" (Park & Lee 2025).
  */
 export class ObserverOrchestrator {
 	private store: ObservationStore
@@ -64,11 +66,11 @@ export class ObserverOrchestrator {
 	private _isEnabled: boolean
 	private config: ObserverConfig
     
-    // Phase 4 State
+    // Cognitive State
     private turnsSinceLastReflection = 0
     private actionHistory: ActionFeatures[] = []
-    private retryBuffer: Map<string, RetryState> = new Map()
     private lastSQS = 1.0
+    private currentTier = 2 // Default to Tier 2 (Parse only)
     private verboseLogs: string[] = []
 
 	constructor(
@@ -113,6 +115,7 @@ export class ObserverOrchestrator {
 		} else {
 			this.lastObservedMessageIndex = history.length
 		}
+        this.currentTier = this.detectTier(history)
 	}
 
 	private log(msg: string) {
@@ -123,37 +126,112 @@ export class ObserverOrchestrator {
     }
 
     /**
-     * Compute Search Quality Score (SQS) - Zheng et al. 2026.
-     * Combines Diffusion, E/E Ratio, and AST-Churn (DPR proxy).
+     * Graceful Degradation Ladder (Park & Lee 2025)
+     */
+    private detectTier(history: DiracStorageMessage[]): number {
+        const fullText = JSON.stringify(history)
+        if (fullText.includes("test") && (fullText.includes("pass") || fullText.includes("fail"))) return 0
+        if (fullText.includes("lint") || fullText.includes("README.md")) return 1
+        if (this.getAnalyzerClient?.()) return 2
+        return 3
+    }
+
+    /**
+     * Composite Progress Score (CPS) - Replacing test_pass_delta.
+     */
+    private async computeCPS(history: DiracStorageMessage[]): Promise<number> {
+        const lastAction = this.extractActionFeatures(history.slice(-2)).pop()
+        if (!lastAction) return 0.5
+
+        const signals: number[] = []
+
+        // 1. Syntactic Validity (0.25)
+        const analyzer = this.getAnalyzerClient?.()
+        if (analyzer && lastAction.file !== "global") {
+            // Placeholder: real implementation would check analyzer parse status
+            signals.push(lastAction.success ? 1.0 : 0.0)
+        } else {
+            signals.push(0.5)
+        }
+
+        // 2. AST Coverage (0.30)
+        const filesTouched = new Set(history.slice(-10).filter(m => m.role === "assistant").map(m => {
+             const c = JSON.stringify(m.content)
+             return c.match(/path":\s*"([^"]+)"/)?.[1] || "global"
+        }))
+        signals.push(Math.min(filesTouched.size / 5, 1.0))
+
+        // 3. Spec Alignment (0.25) - Simplified heuristic
+        signals.push(0.5)
+
+        // 4. Command Outcome Entropy (0.20)
+        const outcomes = history.slice(-6).filter(m => m.role === "tool").map(m => {
+            const c = JSON.stringify(m.content)
+            return c.includes("error") ? "FAIL" : "PASS"
+        })
+        const uniqueOutcomes = new Set(outcomes).size
+        signals.push(uniqueOutcomes > 1 ? 0.8 : (outcomes[0] === "PASS" ? 0.6 : 0.1))
+
+        return 0.25 * signals[0] + 0.30 * signals[1] + 0.25 * signals[2] + 0.20 * signals[3]
+    }
+
+    /**
+     * Depth-Coverage Ratio (DCR) - Zhang et al. 2025.
+     */
+    private async computeDCR(history: DiracStorageMessage[]): Promise<number> {
+        const assistantMsgs = history.filter(m => m.role === "assistant").slice(-10)
+        const filesTouched = new Set(assistantMsgs.map(m => {
+             const c = JSON.stringify(m.content)
+             return c.match(/path":\s*"([^"]+)"/)?.[1] || "global"
+        }))
+        
+        const churn = await this.getLastASTChurn(history)
+        const coverage = filesTouched.size / 5 // Heuristic module size
+        const depth = Math.log2(churn.added + churn.removed + 1)
+        
+        return coverage * Math.min(depth / 10, 1.0)
+    }
+
+    /**
+     * Search Quality Score (SQS) - Adaptive Tiering (Zheng et al. 2026).
      */
     private async computeSQS(history: DiracStorageMessage[]): Promise<{ sqs: number; status: string }> {
         const assistantMsgs = history.filter(m => m.role === "assistant").slice(-10)
         if (assistantMsgs.length === 0) return { sqs: 1.0, status: "FOCUSED" }
 
-        // 1. E/E Ratio & Loop Detection (Wong et al. 2025)
-        const recentActions = this.extractActionFeatures(assistantMsgs)
-        const uniqueFiles = new Set(recentActions.map(a => a.file)).size
-        const loopScore = this.detectLoops(recentActions)
-        const eeRatio = (uniqueFiles / recentActions.length) * (1 / (loopScore + 0.1))
-
-        // 2. Trajectory Diffusion (Zheng et al. 2026)
-        // Simplified trigram similarity between last action and task
-        const diffusion = 0.4 // Placeholder for actual calculation
-
-        // 3. Depth-Progress Ratio (Zhang et al. 2025)
-        // We call the Analyzer Daemon for AST-Churn
-        const churn = await this.getLastASTChurn(history)
-        const dpr = (churn.added + churn.removed) / (churn.total + 1)
-
-        // 4. Combined SQS
-        const sqs = 0.4 * (1 - diffusion) + 0.35 * eeRatio + 0.25 * Math.min(dpr * 10, 1.0)
+        const diffusion = 0.4 // Placeholder for rolling similarity
+        const eeRatio = this.computeEERatio(assistantMsgs)
+        
+        let sqs = 0
+        if (this.currentTier === 0) {
+            // Ideal: tests available
+            const testProgress = 0.5 // Placeholder
+            sqs = 0.3 * (1 - diffusion) + 0.3 * eeRatio + 0.2 * (await this.computeDCR(history)) + 0.2 * testProgress
+        } else {
+            // Graceful degradation (Park & Lee 2025)
+            const cps = await this.computeCPS(history)
+            const dcr = await this.computeDCR(history)
+            sqs = 0.35 * (1 - diffusion) + 0.30 * eeRatio + 0.20 * dcr + 0.15 * cps
+        }
         
         let status = "FOCUSED"
-        if (sqs < 0.3) status = "STAGNATING"
+        if (sqs < this.config.tierThresholds.sqs[this.currentTier]) status = "STAGNATING"
         else if (sqs > 0.6) status = "EXPLORING"
 
-        this.log(`SQS: ${sqs.toFixed(2)} | Status: ${status} | Churn: ${churn.added}/${churn.removed}`)
+        this.log(`Tier: ${this.currentTier} | SQS: ${sqs.toFixed(2)} | Status: ${status}`)
         return { sqs, status }
+    }
+
+    private computeEERatio(assistantMsgs: DiracStorageMessage[]): number {
+        const actions = this.extractActionFeatures(assistantMsgs)
+        const uniqueFiles = new Set(actions.map(a => a.file)).size
+        let maxLoops = 1
+        const counts: Record<string, number> = {}
+        for (const a of actions) {
+            const h = `${a.file}:${a.op}`; counts[h] = (counts[h] || 0) + 1
+            maxLoops = Math.max(maxLoops, counts[h])
+        }
+        return (uniqueFiles / actions.length) * (1 / maxLoops)
     }
 
     private extractActionFeatures(msgs: DiracStorageMessage[]): ActionFeatures[] {
@@ -162,25 +240,16 @@ export class ObserverOrchestrator {
             const tool = content.match(/tool_code":\s*"([a-zA-Z0-9_]+)"/)?.[1] || "think"
             const file = content.match(/path":\s*"([^"]+)"/)?.[1] || "global"
             const lineMatch = content.match(/start_line":\s*([0-9]+)/)
+            const success = !content.includes("error")
             return {
                 file,
                 op: tool,
                 lineRange: lineMatch ? lineMatch[1] : "0",
-                errorSig: null, // Populated later from tool result
+                errorSig: null,
+                success,
                 turn: i
             }
         })
-    }
-
-    private detectLoops(actions: ActionFeatures[]): number {
-        const hashes = actions.map(a => `${a.file}:${a.op}`)
-        let maxCount = 0
-        const counts: Record<string, number> = {}
-        for (const h of hashes) {
-            counts[h] = (counts[h] || 0) + 1
-            maxCount = Math.max(maxCount, counts[h])
-        }
-        return maxCount
     }
 
     private async getLastASTChurn(history: DiracStorageMessage[]): Promise<{ added: number; removed: number; total: number }> {
@@ -192,44 +261,44 @@ export class ObserverOrchestrator {
 
         const content = JSON.stringify(lastAssistantMsg.content)
         const fileMatch = content.match(/path":\s*"([^"]+)"/)?.[1]
-        const writeMatch = content.match(/new_content":\s*"([^"]+)"/) // Simplified match
+        const writeMatch = content.match(/new_content":\s*"([^"]+)"/)
 
         if (fileMatch && writeMatch) {
-            // Note: Real implementation would need to properly unescape the content
-            return await analyzer.getASTChurn(fileMatch, "TODO_UNESCAPE_CONTENT")
+            return await analyzer.getASTChurn(fileMatch, "TODO_UNESCAPE")
         }
         return { added: 0, removed: 0, total: 0 }
     }
 
-    /**
-     * Temporal Credit Assignment (Shen et al. 2025)
-     */
-    private getDecayedConfidence(baseConf: number, type: "WATCHER" | "CRITIC", turnsSince: number, progress: number): number {
+    private getDecayedConfidence(baseConf: number, type: "WATCHER" | "CRITIC", turnsSince: number): number {
         let tau = type === "WATCHER" ? this.config.tauWatcher : this.config.tauCritic
-        if (progress > 0.1) tau *= 2
-        if (progress < 0.05) tau *= 0.5
+        // Simple progress heuristic (SQS > 0.5 = progress)
+        if (this.lastSQS > 0.5) tau *= 2
+        else tau *= 0.5
         return baseConf * Math.exp(-turnsSince / tau)
     }
 
 	async onTurnComplete(history: DiracStorageMessage[]): Promise<void> {
 		if (!this._isEnabled) return
         this.turnsSinceLastReflection++
+        this.currentTier = this.detectTier(history)
 
 		const { sqs, status } = await this.computeSQS(history)
 		this.lastSQS = sqs
 
-        // ADAPTIVE SCHEDULING (Singh et al. 2025)
+        // 1. WATCHER (S1)
 		if (history.length % this.config.observerTurns === 0 || status === "STAGNATING") {
 			this.triggerSpecializedObservation(history, "watcher")
 		}
 
+		// 2. CRITIC (S2)
 		if (history.length % this.config.criticFrequency === 0 && this.turnsSinceLastReflection >= this.config.reflectionCooldown) {
-            if (sqs < 0.4 || history.length % (this.config.criticFrequency * 2) === 0) {
+            const sqsTrigger = this.config.tierThresholds.sqs[this.currentTier]
+            if (sqs < sqsTrigger + 0.1 || history.length % (this.config.criticFrequency * 2) === 0) {
 			    this.triggerSpecializedObservation(history, "critic")
             }
 		}
 
-		// HEAVY SUMMARIZER
+		// 3. SUMMARIZER
 		const unobserved = this.getUnobservedMessages(history)
 		if (unobserved.length >= 4) {
 			const tokenEstimate = Math.ceil(JSON.stringify(unobserved).length / 4)
@@ -402,13 +471,16 @@ export class ObserverOrchestrator {
 
 		const observationBlock = this.store.buildObservationBlock("summary")
         
+        // Confidence Threshold Ladder (Park & Lee 2025)
+        const minConfidence = this.config.tierThresholds.confidence[this.currentTier]
+
         const filterWithDecay = (type: ObservationType) => {
             return this.store.getAllObservations()
                 .filter(e => {
                     if (e.type !== type) return false
                     const turnsSince = (history.length - (e.compressedRange?.[1] || history.length))
-                    const decayed = this.getDecayedConfidence(e.confidence ?? 1.0, type === "critic" ? "CRITIC" : "WATCHER", turnsSince, 0.05)
-                    return decayed >= this.config.confidenceThreshold
+                    const decayed = this.getDecayedConfidence(e.confidence ?? 1.0, type === "critic" ? "CRITIC" : "WATCHER", turnsSince)
+                    return decayed >= minConfidence
                 })
                 .slice(-2)
                 .map(e => e.observationText)
@@ -424,8 +496,8 @@ export class ObserverOrchestrator {
         const latestCritic = this.store.getLatestObservation("critic")
         if (latestCritic && latestCritic.criticAction && latestCritic.criticAction !== "CONTINUE") {
             const turnsSince = (history.length - (latestCritic.compressedRange?.[1] || history.length))
-            const decayed = this.getDecayedConfidence(latestCritic.confidence ?? 1.0, "CRITIC", turnsSince, 0.05)
-            if (decayed >= 0.7) {
+            const decayed = this.getDecayedConfidence(latestCritic.confidence ?? 1.0, "CRITIC", turnsSince)
+            if (decayed >= Math.min(0.7, minConfidence + 0.1)) {
                 result.interruptReason = latestCritic.observationText
                 result.criticAction = latestCritic.criticAction
             }
@@ -444,7 +516,7 @@ export class ObserverOrchestrator {
 	}
 
 	async recall(query: string): Promise<string> {
-        if (query === "--stats") return this.costTracker.formatSummary()
+        if (query === "--stats") return JSON.stringify(this.costTracker.getSummary())
 
         const analyzer = this.getAnalyzerClient?.()
         if (analyzer) {
