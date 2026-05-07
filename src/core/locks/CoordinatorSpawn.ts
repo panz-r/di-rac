@@ -15,11 +15,16 @@ export async function ensureCoordinatorRunning(): Promise<void> {
 		// Verify the daemon is actually listening
 		const isAlive = await new Promise<boolean>((resolve) => {
 			const socket = net.connect(socketPath)
+			socket.setTimeout(1000)
 			socket.on("connect", () => {
 				socket.destroy()
 				resolve(true)
 			})
 			socket.on("error", () => {
+				resolve(false)
+			})
+			socket.on("timeout", () => {
+				socket.destroy()
 				resolve(false)
 			})
 		})
@@ -28,7 +33,7 @@ export async function ensureCoordinatorRunning(): Promise<void> {
 			return
 		}
 		
-		Logger.info("[CoordinatorSpawn] Stale socket detected, removing...")
+		Logger.info("CoordinatorSpawn", "Stale socket detected, removing...")
 		try {
 			fs.unlinkSync(socketPath)
 		} catch {
@@ -36,7 +41,7 @@ export async function ensureCoordinatorRunning(): Promise<void> {
 		}
 	}
 
-	Logger.info("[CoordinatorSpawn] Starting locking daemon...")
+	Logger.info("CoordinatorSpawn", "Starting locking daemon...")
 
 	// Persistence path
 	const diracDir = path.join(os.homedir(), ".dirac")
@@ -46,8 +51,13 @@ export async function ensureCoordinatorRunning(): Promise<void> {
 	// Resolve binary path
 	const binName = "di-vrr-central-deamon"
 	const possiblePaths = [
+		// 1. Next to the CLI binary (standard for bundled installs)
+		path.join(path.dirname(process.argv[1]), binName),
+		// 2. In the dist folder relative to CWD
+		path.join(process.cwd(), "dist", binName),
+		// 3. In the build folder (development)
 		path.join(process.cwd(), "central-deamon", "build", binName),
-		path.join(path.dirname(process.argv[1]), binName), // Next to the CLI binary
+		// 4. Global path
 		path.join("/usr/local/bin", binName),
 	]
 
@@ -60,33 +70,47 @@ export async function ensureCoordinatorRunning(): Promise<void> {
 	}
 
 	if (!binPath) {
-		Logger.error(`[CoordinatorSpawn] Could not find ${binName} binary. Hierarchical locking will be disabled.`)
+		Logger.error("CoordinatorSpawn", `Could not find ${binName} binary. searched in: ${possiblePaths.join(", ")}`)
 		return
 	}
 
-	Logger.info(`[CoordinatorSpawn] Spawning daemon: ${binPath} with persistence: ${persistPath}`)
+	Logger.info("CoordinatorSpawn", `Spawning daemon: ${binPath} with persistence: ${persistPath}`)
 	try {
+		// We use a log file for the daemon if it fails to start
+		const logPath = path.join(diracDir, "daemon.log")
+		const logStream = fs.openSync(logPath, "a")
+
 		const child = spawn(binPath, ["--persist", persistPath], {
 			detached: true,
-			stdio: "ignore",
+			stdio: ["ignore", logStream, logStream],
 		})
 
 		// Allow the child to continue running after this process exits
 		child.unref()
+		fs.closeSync(logStream)
 
-		// Wait for the socket to appear (up to 2 seconds)
+		// Wait for the socket to appear (up to 5 seconds)
 		let attempts = 0
-		while (attempts < 20) {
+		while (attempts < 50) {
 			if (fs.existsSync(socketPath)) {
-				Logger.info("[CoordinatorSpawn] Daemon started successfully")
-				return
+				// Final check: can we connect?
+				const canConnect = await new Promise<boolean>((resolve) => {
+					const s = net.connect(socketPath)
+					s.on("connect", () => { s.destroy(); resolve(true) })
+					s.on("error", () => resolve(false))
+					setTimeout(() => { s.destroy(); resolve(false) }, 200)
+				})
+				if (canConnect) {
+					Logger.info("CoordinatorSpawn", "Daemon started and responsive")
+					return
+				}
 			}
 			await new Promise((resolve) => setTimeout(resolve, 100))
 			attempts++
 		}
 
-		Logger.error("[CoordinatorSpawn] Daemon failed to create socket within 2 seconds.")
+		Logger.error("CoordinatorSpawn", `Daemon failed to become responsive within 5 seconds. Check ${logPath} for details.`)
 	} catch (error) {
-		Logger.error("[CoordinatorSpawn] Failed to spawn daemon:", error)
+		Logger.error("CoordinatorSpawn", `Failed to spawn daemon: ${error}`)
 	}
 }
