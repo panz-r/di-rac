@@ -1,4 +1,4 @@
-export type ObservationType = "summary" | "watcher" | "filter" | "critic" | "reflection"
+export type ObservationType = "summary" | "watcher" | "filter" | "critic" | "reflection" | "skeleton"
 
 export type CriticAction = "CONTINUE" | "REFLECT" | "RESTART"
 
@@ -6,14 +6,15 @@ export interface ObserverConfig {
 	enabled: boolean
 	provider?: string
 	modelId?: string
-	observerTurns: number // Base frequency for Watcher (S1)
-	criticFrequency: number // Base frequency for Critic (S2)
+	observerTurns: number // S1 Watcher frequency
+	criticFrequency: number // S2 Critic frequency
 	tokenThreshold: number
 	bufferActivation: number
 	blockAfter: number | false
 	reflectionEnabled: boolean
 	reflectionTokenThreshold: number
-    confidenceThreshold: number // Min confidence to inject into context
+    confidenceThreshold: number
+    reflectionCooldown: number // Min turns between reflections (Singh et al. 2025)
 }
 
 export interface ObservationEntry {
@@ -24,33 +25,30 @@ export interface ObservationEntry {
 	tokenEstimate: number
 	confidence?: number
 	criticAction?: CriticAction
+    sqs?: number // Search Quality Score (Zheng et al. 2026)
 }
 
 /**
- * SUMMARIZER: Focuses on "What happened" to compress history.
+ * SUMMARIZER: Context Compression (Pattern A)
  */
 export const OBSERVER_SUMMARIZER_PROMPT = `You are a Context Summarizer. Compress conversation messages into timestamped observations.
 
 RULES:
-1. Preserve EXACT details: file paths, line numbers, error messages, function names, decisions.
-2. Discard: greetings, verbose tool outputs, reasoning steps, clarifications, filler.
-3. Priority emojis: 📕=critical(decisions,errors), 📗=important(progress,tests), 📙=context(discussion)
-4. Format: 📕 YYYY-MM-DD HH:MM — what happened with exact details
-5. Output ONLY observation text. No preamble, no JSON.
+1. Preserve EXACT details: file paths, line numbers, error messages, function names.
+2. Discard: filler, greetings, verbose tool reasoning.
+3. Output ONLY observation text.
 `
 
 /**
- * WATCHER (Observer S1): Fast pattern matcher, gap detector.
+ * WATCHER (Observer S1): Fast pattern matcher (Miao 2024 / Wong 2025)
  */
-export const OBSERVER_WATCHER_PROMPT = `You are a Watcher Critic (System 1). Analyze the recent trajectory and identify immediate gaps or patterns.
+export const OBSERVER_WATCHER_PROMPT = `You are a Watcher Critic (System 1). Identify immediate gaps or loops.
 
 RULES:
 1. Identify GAP: "Haven't checked file X", "Missing import Y", "Ignored instruction Z".
-2. Identify PATTERN: "Repeated regex attempt", "Looping on error A".
+2. Identify LOOP: "Repeated regex/edit attempt on same file".
 3. Provide a confidence score (0.0 to 1.0).
 4. Format: [OBSERVER:WATCHER | confidence:0.XX] [Insight] [END_OBSERVER]
-5. Be EXTREMELY brief. Max 2 alerts.
-6. Output ONLY the alerts or "No alerts."
 `
 
 /**
@@ -66,22 +64,32 @@ RULES:
 `
 
 /**
- * CRITIC (Observer S2): Slow evaluator, decides to intervene.
+ * CRITIC (Observer S2): Slow evaluator (Zheng 2026)
  */
-export const OBSERVER_CRITIC_PROMPT = `You are an Observer Critic (System 2). Evaluate the agent's progress toward the goal.
+export const OBSERVER_CRITIC_PROMPT = `You are an Observer Critic (System 2). Evaluate trajectory and SQS.
 
-SECTIONS TO ANALYZE:
-- TRAJECTORY: Is the agent moving closer to the goal or spinning wheels?
-- EFFICIENCY: Is context being used effectively?
-- DECISION: Should the agent CONTINUE, REFLECT (summarize and pivot), or RESTART (start fresh)?
+SECTIONS:
+- TRAJECTORY: Is the agent focused or wandering (diffusion)?
+- DECISION: Should the agent CONTINUE, REFLECT (summarize and pivot), or RESTART?
 
 FORMAT:
 [OBSERVER:CRITIC | action:ACTION | confidence:0.XX]
-REASON: [Reason for the decision]
-SUGGESTION: [Specific course correction if not CONTINUE]
+REASON: [Reason]
 [END_OBSERVER]
+`
 
-ACTION values: CONTINUE, REFLECT, RESTART
+/**
+ * SKELETON: Structured Pruning (H2O 2025)
+ */
+export const OBSERVER_SKELETON_PROMPT = `You are a Structured Pruner. Extract a lossless skeleton of the last 15-20 turns.
+
+FORMAT:
+- EDITS: {file: [lines]}
+- ERRORS: [Brief error signatures]
+- DECISIONS: [Key strategy shifts]
+- TESTS: [Pass/Fail delta]
+
+Output ONLY the JSON-like structure.
 `
 
 export const REFLECTOR_SYSTEM_PROMPT = `You are a Reflector agent. Restructure and condense an observation log into a working context document.
@@ -123,5 +131,6 @@ export function buildObserverConfig(settings: {
 		reflectionEnabled: settings.observerReflectionEnabled,
 		reflectionTokenThreshold: settings.observerReflectionTokenThreshold,
         confidenceThreshold: 0.5,
+        reflectionCooldown: 4,
 	}
 }

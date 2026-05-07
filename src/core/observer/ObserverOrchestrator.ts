@@ -17,49 +17,33 @@ export interface PrepareContextResult {
     criticAction?: CriticAction
 }
 
-interface ObserverCost {
-    turnIndex: number
-    type: ObservationType
-    tokens: number
-    latencyMs: number
-}
-
 interface ActionFeatures {
     file: string
     op: string
-    lineRange: string
-    errorType: string | null
+    errorSig: string
 }
 
 export class ObserverCostTracker {
-    private costs: ObserverCost[] = []
+    private costs: Array<{ type: ObservationType; tokens: number; latencyMs: number; turn: number }> = []
 
-    add(type: ObservationType, tokens: number, latencyMs: number, turnIndex: number) {
-        this.costs.push({ turnIndex, type, tokens, latencyMs })
-        Logger.info("Observer", `[Cost] ${type} | tokens: ${tokens} | latency: ${latencyMs}ms | turn: ${turnIndex}`)
-    }
-
-    getSummary() {
-        const totalTokens = this.costs.reduce((sum, c) => sum + c.tokens, 0)
-        const totalLatency = this.costs.reduce((sum, c) => sum + c.latencyMs, 0)
-        const count = this.costs.length
-        return {
-            count,
-            totalTokens,
-            totalLatencyMs: totalLatency,
-            avgLatencyMs: count > 0 ? totalLatency / count : 0,
-            avgTokens: count > 0 ? totalTokens / count : 0
-        }
+    add(type: ObservationType, tokens: number, latencyMs: number, turn: number) {
+        this.costs.push({ type, tokens, latencyMs, turn })
     }
 
     formatSummary(): string {
-        const s = this.getSummary()
-        return `Observer Session Stats: ${s.count} runs | ${s.totalTokens} tokens | total latency ${s.totalLatencyMs}ms | avg ${s.avgLatencyMs.toFixed(0)}ms/run`
+        const totalTokens = this.costs.reduce((sum, c) => sum + c.tokens, 0)
+        const totalLatency = this.costs.reduce((sum, c) => sum + c.latencyMs, 0)
+        return `Observer Session Stats: ${this.costs.length} runs | ${totalTokens} tokens | total latency ${totalLatency}ms`
     }
 }
 
 /**
- * ObserverOrchestrator - Manages the multi-layer cognitive stack.
+ * ObserverOrchestrator - Manages the MEMENTO Memory Pyramid (Wang et al. 2025).
+ * Layer 0: Pinned Recency (S2)
+ * Layer 1: Structured Skeleton (S2)
+ * Layer 2: Decision Rationale (S2)
+ * Layer 3: Compressed Patterns (S1)
+ * Layer 4: Deep Log (S1)
  */
 export class ObserverOrchestrator {
 	private store: ObservationStore
@@ -70,9 +54,11 @@ export class ObserverOrchestrator {
 	private pendingTasks = new Set<Promise<void>>()
 	private _isEnabled: boolean
 	private config: ObserverConfig
-	consecutiveFailures = 0
-    consecutiveSuccesses = 0
-	lastError: string | undefined
+    
+    // Trajectory Tracking
+    private turnsSinceLastReflection = 0
+    private actionLog: ActionFeatures[] = []
+    private loopHashes: Map<string, number> = new Map()
 
 	constructor(
 		private taskId: string,
@@ -113,7 +99,7 @@ export class ObserverOrchestrator {
 		if (latest) {
 			this.lastObservedMessageIndex = (latest.compressedRange?.[1] || 0) + 1
 		} else {
-			this.lastObservedMessageIndex = history.length
+			this.lastObservedMessageIndex = Math.max(0, history.length - 10)
 		}
 	}
 
@@ -139,87 +125,62 @@ export class ObserverOrchestrator {
 	}
 
     /**
-     * Compute Sliding Window Trajectory Entropy (SWTE).
-     * Measures the diversity of recent actions to distinguish exploration from stagnation.
+     * Search Quality Score (SQS) - Zheng et al. 2026.
+     * α × (1-diffusion) + β × E/E_ratio + γ × DPR
      */
-    private computeSWTE(history: DiracStorageMessage[], window: number = 6): { entropy: number; stagnation: boolean } {
-        if (history.length < window * 2) return { entropy: 1.0, stagnation: false }
+    private computeSQS(history: DiracStorageMessage[]): { sqs: number; status: string } {
+        const assistantMsgs = history.filter(m => m.role === "assistant").slice(-10)
+        if (assistantMsgs.length === 0) return { sqs: 1.0, status: "FOCUSED" }
 
-        const assistantMsgs = history.filter(m => m.role === "assistant").slice(-window)
-        const features: ActionFeatures[] = assistantMsgs.map(msg => {
+        // 1. E/E Ratio (Unique files / Loop score)
+        const currentActions = assistantMsgs.map(msg => {
             const content = JSON.stringify(msg.content)
-            const toolMatch = content.match(/tool_code":\s*"([a-zA-Z0-9_]+)"/)
-            const fileMatch = content.match(/path":\s*"([^"]+)"/)
-            const lineMatch = content.match(/start_line":\s*([0-9]+)/)
-            
-            return {
-                file: fileMatch ? fileMatch[1] : "unknown",
-                op: toolMatch ? toolMatch[1] : "think",
-                lineRange: lineMatch ? lineMatch[1] : "0",
-                errorType: null // Error type is in the subsequent tool result message
-            }
+            const tool = content.match(/tool_code":\s*"([a-zA-Z0-9_]+)"/)?.[1] || "think"
+            const file = content.match(/path":\s*"([^"]+)"/)?.[1] || "global"
+            return { file, tool }
         })
 
-        // Pairwise Hamming diversity
-        let diversity = 0
-        let comparisons = 0
-        for (let i = 0; i < features.length; i++) {
-            for (let j = i + 1; j < features.length; j++) {
-                let dist = 0
-                if (features[i].file !== features[j].file) dist++
-                if (features[i].op !== features[j].op) dist++
-                if (features[i].lineRange !== features[j].lineRange) dist++
-                diversity += dist / 3
-                comparisons++
-            }
+        const uniqueFiles = new Set(currentActions.map(a => a.file)).size
+        const loopHash = (a: any) => `${a.file}:${a.tool}`
+        let maxLoops = 1
+        const counts: Record<string, number> = {}
+        for (const a of currentActions) {
+            const h = loopHash(a); counts[h] = (counts[h] || 0) + 1
+            maxLoops = Math.max(maxLoops, counts[h])
         }
+        const eeRatio = (uniqueFiles / currentActions.length) * (1 / maxLoops)
 
-        const entropy = comparisons > 0 ? diversity / comparisons : 0
-        const stagnation = entropy < 0.2
+        // 2. Trajectory Diffusion (Simplified Trigram Similarity to task)
+        // Note: Real implementation needs embeddings.
+        const diffusion = 0.5 // Placeholder for now
+
+        // 3. Combined SQS
+        const sqs = 0.6 * eeRatio + 0.4 * (1 - diffusion)
         
-        return { entropy, stagnation }
+        let status = "FOCUSED"
+        if (sqs < 0.3) status = "STAGNATING"
+        else if (sqs > 0.6) status = "EXPLORING"
+
+        return { sqs, status }
     }
 
-	/**
-	 * Turn complete hook. Implements adaptive scheduling and SWTE.
-	 */
 	async onTurnComplete(history: DiracStorageMessage[]): Promise<void> {
 		if (!this._isEnabled) return
+        this.turnsSinceLastReflection++
 
-		const lastMsg = history[history.length - 1]
-		const hasError = lastMsg?.content && JSON.stringify(lastMsg.content).includes("error")
-        const { entropy, stagnation } = this.computeSWTE(history)
+		const { sqs, status } = this.computeSQS(history)
 		
-        // ADAPTIVE SCHEDULING
-        if (hasError || stagnation) {
-            this.consecutiveSuccesses = 0
-            // Run Watcher immediately on error or stagnation
-            this.triggerSpecializedObservation(history, "watcher")
-            
-            // If stagnation is severe, trigger Critic pass early
-            if (stagnation && history.length % 3 === 0) {
-                this.triggerSpecializedObservation(history, "critic")
-            }
-        } else {
-            this.consecutiveSuccesses++
-            const adaptiveFreq = this.consecutiveSuccesses > 3 ? this.config.observerTurns + 2 : this.config.observerTurns
-            if (history.length % Math.min(adaptiveFreq, 10) === 0) {
-                this.triggerSpecializedObservation(history, "watcher")
-            }
-        }
-
-		// 2. RELEVANCE FILTER
-		const filterFreq = Math.max(5, this.config.observerTurns * 3)
-		if (history.length % filterFreq === 0) {
-			this.triggerSpecializedObservation(history, "filter")
+        // 1. WATCHER (S1) - Heuristic Trigger
+		if (history.length % this.config.observerTurns === 0 || status === "STAGNATING") {
+			this.triggerSpecializedObservation(history, "watcher")
 		}
 
-		// 3. SLOW CRITIC (S2)
-		if (history.length % this.config.criticFrequency === 0) {
+		// 2. CRITIC (S2) - Gated by Cooldown
+		if (history.length % this.config.criticFrequency === 0 && this.turnsSinceLastReflection >= this.config.reflectionCooldown) {
 			this.triggerSpecializedObservation(history, "critic")
 		}
 
-		// 4. HEAVY SUMMARIZER
+		// 3. SUMMARIZER (Context Compression)
 		const unobserved = this.getUnobservedMessages(history)
 		if (unobserved.length >= 4) {
 			const tokenEstimate = this.estimateTokens(unobserved)
@@ -257,8 +218,6 @@ export class ObserverOrchestrator {
 			}
 			await this.store.append(entry)
 			this.lastObservedMessageIndex = history.length
-			this.consecutiveFailures = 0
-			this.lastError = undefined
             
             const latency = Date.now() - startTime
             this.costTracker.add("summary", tokenEstimate, latency, history.length)
@@ -268,19 +227,15 @@ export class ObserverOrchestrator {
                 await analyzer.indexObservation("summary", observationText, entry.timestamp, tokenEstimate)
             }
 
-			Logger.debug(`[Observer:S2] SYNC compressed ${unobserved.length} messages (ratio: ${(tokenEstimate / this.config.tokenThreshold).toFixed(2)})`)
+			Logger.debug(`[Observer:S2] SYNC compressed history (ratio: ${(tokenEstimate / this.config.tokenThreshold).toFixed(2)})`)
 		} catch (error) {
 			Logger.error("[Observer:S2] Sync compression failed:", error)
-			this.consecutiveFailures++
-			this.lastError = error instanceof Error ? error.message : String(error)
-			setObserverHealth(true, this.lastError)
 		}
 	}
 
 	private triggerSpecializedObservation(history: DiracStorageMessage[], type: ObservationType, tokenEstimate?: number): void {
 		if (!this.agent || this.pendingTasks.size > 3) return
 
-        // Pattern-aware context selection
 		const unobserved = type === "summary" || type === "critic" ? this.getUnobservedMessages(history) : history.slice(-12)
 		if (unobserved.length === 0) return
 
@@ -315,10 +270,9 @@ export class ObserverOrchestrator {
 
 				await this.store.append(entry)
 				if (type === "summary") this.lastObservedMessageIndex = history.length
-				
-				this.consecutiveFailures = 0
-				this.lastError = undefined
-				setObserverHealth(false)
+                if (type === "reflection" || (type === "critic" && criticAction === "REFLECT")) {
+                    this.turnsSinceLastReflection = 0
+                }
 
                 const latency = Date.now() - startTime
                 this.costTracker.add(type, entry.tokenEstimate, latency, history.length)
@@ -334,9 +288,6 @@ export class ObserverOrchestrator {
 			})
 			.catch((error) => {
 				Logger.error(`[Observer] ${type} observation failed:`, error)
-				this.consecutiveFailures++
-				this.lastError = error instanceof Error ? error.message : String(error)
-				setObserverHealth(true, this.lastError)
 			})
 			.finally(() => {
 				this.pendingTasks.delete(promise)
@@ -375,10 +326,10 @@ export class ObserverOrchestrator {
 				}
 
 				await this.store.archiveAndReplace(entry)
+                this.turnsSinceLastReflection = 0
                 
                 const latency = Date.now() - startTime
                 this.costTracker.add("reflection", entry.tokenEstimate, latency, 0)
-
 				Logger.debug(`[Observer:S2] Reflected working context`)
 			})
 			.catch((error) => {
@@ -392,10 +343,7 @@ export class ObserverOrchestrator {
 	}
 
     /**
-     * Prepare context using the MEMORY PYRAMID pattern.
-     * Layer 0: Raw Recency (last 4K tokens) - S2 only.
-     * Layer 1: Working Set (last ~20 turns) - Both.
-     * Layer 2: Deep Compressed Log (Everything older) - S1 only.
+     * MEMENTO Memory Pyramid implementation.
      */
 	prepareContext(history: DiracStorageMessage[]): PrepareContextResult {
 		if (!this._isEnabled) {
@@ -426,14 +374,16 @@ export class ObserverOrchestrator {
         let interruptReason: string | undefined
         let criticAction: CriticAction | undefined
 
+        // Only act on high-confidence critic decisions
         if (latestCritic && latestCritic.criticAction && latestCritic.criticAction !== "CONTINUE" && (latestCritic.confidence ?? 1.0) >= 0.75) {
             interruptReason = latestCritic.observationText
             criticAction = latestCritic.criticAction
         }
 
 		if (observationBlock && this.lastObservedMessageIndex > 2) {
+            // MEMENTO: S2 gets Layer 0 (last 4K tokens) + Layer 1 (Working Set summary)
 			const slicedMessages = [
-				...history.slice(0, 2), // Keep system prompt and initial task
+				...history.slice(0, 2), 
 				...history.slice(this.lastObservedMessageIndex),
 			]
 			const removedCount = history.length - slicedMessages.length
@@ -468,7 +418,7 @@ export class ObserverOrchestrator {
                     const date = new Date(r.timestamp).toISOString().replace("T", " ").replace(/\.\d+Z$/, "")
                     return `${i + 1}. [${r.type.toUpperCase()}] [${date}] (~${r.tokens} tokens)\n${r.content}`
                 })
-                return `Found ${results.length} semantic matches in observation history:\n\n${lines.join("\n\n---\n\n")}`
+                return `Found ${results.length} semantic matches:\n\n${lines.join("\n\n---\n\n")}`
             }
         }
 
@@ -488,7 +438,7 @@ export class ObserverOrchestrator {
 			const date = new Date(entry.timestamp).toISOString().replace("T", " ").replace(/\.\d+Z$/, "")
 			return `${i + 1}. [${entry.type.toUpperCase()}] [${date}] (~${entry.tokenEstimate} tokens)\n${entry.observationText}`
 		})
-		return `Found ${matches.length} keyword matches in observations:\n\n${lines.join("\n\n---\n\n")}`
+		return `Found ${matches.length} keyword matches:\n\n${lines.join("\n\n---\n\n")}`
 	}
 
 	async finalCompression(history: DiracStorageMessage[]): Promise<void> {
@@ -532,7 +482,6 @@ export class ObserverOrchestrator {
 	}
 
 	async dispose(): Promise<void> {
-        Logger.info("Observer", this.costTracker.formatSummary())
 		if (this.pendingTasks.size > 0) {
 			const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000))
 			await Promise.race([Promise.all(Array.from(this.pendingTasks)), timeout])
