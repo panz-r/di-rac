@@ -73,6 +73,7 @@ void analyzer_free_imports(ImportResult *ir);
 char* analyzer_generate_skeleton(ParsedSource *ps);
 void analyzer_repo_map(const char *root, struct jsonw *w);
 void analyzer_search_symbols(AnalyzerCtx *ctx, const char *query, const char *kind_filter, int limit, struct jsonw *w);
+void analyzer_ast_churn(const char *file_path, const char *new_content, struct jsonw *w);
 
 const char* symbol_kind_to_str(SymbolKind kind);
 

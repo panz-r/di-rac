@@ -289,6 +289,15 @@ static void handle_search_watcher_patterns(pthread_mutex_t *lock, pthread_mutex_
     pthread_mutex_unlock(lock);
 }
 
+static void handle_ast_churn(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *file, const char *content) {
+    pthread_mutex_lock(lock);
+    struct jsonw w; jsonw_init(&w, stdout); jsonw_object_open(&w);
+    jsonw_kv_str(&w, "type", "ast_churn_result"); jsonw_id(&w, raw_id, id_len); jsonw_kv_bool(&w, "ok", true);
+    analyzer_ast_churn(file, content, &w);
+    jsonw_object_close(&w); jsonw_flush(&w);
+    pthread_mutex_unlock(lock);
+}
+
 static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *file, AnalyzerCtx *ctx) {
     if (!ctx->db) {
         send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open");
@@ -482,6 +491,8 @@ static void* request_worker(void *arg) {
         handle_index_watcher_pattern(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, content, file_hash, turn, &task->gctx->base);
     } else if (strcmp(command, "search-watcher-patterns") == 0) {
         handle_search_watcher_patterns(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, limit, &task->gctx->base);
+    } else if (strcmp(command, "ast-churn") == 0) {
+        handle_ast_churn(&task->gctx->stdout_lock, raw_id, id_len, file, content);
     } else if (strcmp(command, "invalidate-file") == 0) {
         handle_invalidate_file(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, file, &task->gctx->base);
     } else if (strcmp(command, "clear-index") == 0) {

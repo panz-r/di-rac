@@ -308,3 +308,67 @@ const char* symbol_kind_to_str(SymbolKind kind) {
         default:            return "unknown";
     }
 }
+
+static uint32_t count_nodes(TSNode node) {
+    uint32_t count = 1;
+    uint32_t n = ts_node_child_count(node);
+    for (uint32_t i = 0; i < n; i++) {
+        count += count_nodes(ts_node_child(node, i));
+    }
+    return count;
+}
+
+void analyzer_ast_churn(const char *file_path, const char *new_content, struct jsonw *w) {
+    Language lang = LANG_UNKNOWN;
+    const char *ext = strrchr(file_path, '.');
+    if (ext) lang = parse_language_name(ext + 1);
+
+    ParsedSource *ps_new = analyzer_parse(new_content, lang);
+    if (!ps_new) {
+        jsonw_kv_int(w, "added", 0); jsonw_kv_int(w, "removed", 0); jsonw_kv_int(w, "total", 0);
+        return;
+    }
+
+    uint32_t new_count = count_nodes(ts_tree_root_node(ps_new->tree));
+
+    FILE *f = fopen(file_path, "r");
+    if (!f) {
+        jsonw_kv_int(w, "added", (int)new_count);
+        jsonw_kv_int(w, "removed", 0);
+        jsonw_kv_int(w, "total", (int)new_count);
+        analyzer_free_source(ps_new);
+        return;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *old_content = malloc(fsize + 1);
+    if (fread(old_content, 1, fsize, f) != (size_t)fsize) {
+        free(old_content); fclose(f);
+        jsonw_kv_int(w, "added", (int)new_count); jsonw_kv_int(w, "removed", 0); jsonw_kv_int(w, "total", (int)new_count);
+        analyzer_free_source(ps_new);
+        return;
+    }
+    old_content[fsize] = '\0';
+    fclose(f);
+
+    ParsedSource *ps_old = analyzer_parse(old_content, lang);
+    free(old_content);
+
+    if (!ps_old) {
+        jsonw_kv_int(w, "added", (int)new_count); jsonw_kv_int(w, "removed", 0); jsonw_kv_int(w, "total", (int)new_count);
+        analyzer_free_source(ps_new);
+        return;
+    }
+
+    uint32_t old_count = count_nodes(ts_tree_root_node(ps_old->tree));
+
+    int delta = (int)new_count - (int)old_count;
+    jsonw_kv_int(w, "added", delta > 0 ? delta : 0);
+    jsonw_kv_int(w, "removed", delta < 0 ? -delta : 0);
+    jsonw_kv_int(w, "total", (int)new_count);
+
+    analyzer_free_source(ps_new);
+    analyzer_free_source(ps_old);
+}

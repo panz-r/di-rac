@@ -15,6 +15,10 @@ export interface ObserverConfig {
 	reflectionTokenThreshold: number
     confidenceThreshold: number
     reflectionCooldown: number // Min turns between reflections (Singh et al. 2025)
+    verbose: boolean
+    tauWatcher: number // Time constant for S1 decay (Shen et al. 2025)
+    tauCritic: number // Time constant for S2 decay
+    permissiveBufferSize: number // Wong et al. 2025
 }
 
 export interface ObservationEntry {
@@ -113,6 +117,7 @@ export function buildObserverConfig(settings: {
 	observerModelId?: string
 	observerTurns: number
 	observerCriticFrequency?: number
+    observerVerbose?: boolean
 	observerTokenThreshold: number
 	observerBufferActivation: number
 	observerBlockAfter: number
@@ -132,5 +137,9 @@ export function buildObserverConfig(settings: {
 		reflectionTokenThreshold: settings.observerReflectionTokenThreshold,
         confidenceThreshold: 0.5,
         reflectionCooldown: 4,
+        verbose: settings.observerVerbose || false,
+        tauWatcher: 7,
+        tauCritic: 15,
+        permissiveBufferSize: 2,
 	}
 }

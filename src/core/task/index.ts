@@ -994,6 +994,14 @@ export class Task {
 			const originalCount = messagesForContext.length
 			const result = this.observerOrchestrator.prepareContext(messagesForContext)
 			messagesForContext = result.messages
+
+            // Verbose Output
+            if (result.verboseLogs.length > 0) {
+                for (const log of result.verboseLogs) {
+                    await this.say("info", log)
+                }
+            }
+
 			if (result.observationBlock) {
 				enrichedSystemPrompt += "\n\n---\n\n# Conversation Observations\n\n" + result.observationBlock
 			}

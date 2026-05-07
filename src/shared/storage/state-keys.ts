@@ -217,6 +217,7 @@ const USER_SETTINGS_FIELDS = {
 	observerModelId: { default: undefined as string | undefined },
 	observerTurns: { default: 2 as number },
 	observerCriticFrequency: { default: 6 as number },
+	observerVerbose: { default: false as boolean },
 	observerTokenThreshold: { default: 15000 as number },
 	observerBufferActivation: { default: 0.8 as number },
 	observerBlockAfter: { default: 0.7 as number },

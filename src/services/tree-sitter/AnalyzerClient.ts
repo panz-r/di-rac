@@ -667,6 +667,24 @@ export class AnalyzerClient {
 		}
 	}
 
+	async getASTChurn(file: string, content: string): Promise<{ added: number; removed: number; total: number }> {
+		try {
+			const resp = await this.send({
+				command: "ast-churn",
+				file,
+				content,
+			})
+			return {
+				added: resp.added || 0,
+				removed: resp.removed || 0,
+				total: resp.total || 0,
+			}
+		} catch (e) {
+			Logger.warn("AnalyzerClient", `Failed to get AST churn: ${e}`)
+			return { added: 0, removed: 0, total: 0 }
+		}
+	}
+
 	/** Convert daemon symbols to ParsedDefinition[] for backward compatibility */
 	static toParsedDefinitions(symbols: DaemonSymbol[], sourceLines?: string[]): ParsedDefinition[] {
 		return symbols.map((s) => ({

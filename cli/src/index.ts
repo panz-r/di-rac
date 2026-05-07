@@ -52,6 +52,7 @@ interface TaskOptions {
 	observe?: boolean
 	observeProvider?: string
 	observeModel?: string
+	observeVerbose?: boolean
 	observerTurns?: string
 	observerCriticFrequency?: string
 	observeBlockAfter?: string
@@ -398,6 +399,9 @@ async function applyTaskOptions(options: TaskOptions): Promise<void> {
 		}
 		if (options.observeModel) {
 			stateManager.setSessionOverride("observerModelId", options.observeModel)
+		}
+		if (options.observeVerbose) {
+			stateManager.setSessionOverride("observerVerbose", true)
 		}
 		if (options.observerTurns) {
 			const turns = parseInt(options.observerTurns)
@@ -1228,6 +1232,7 @@ program
 	.option("--observe", "Enable observer agent for context compression")
 	.option("--observe-provider <provider>", "Observer API provider (requires --observe)")
 	.option("--observe-model <model>", "Observer model ID (requires --observe)")
+	.option("--observe-verbose", "Enable detailed observer logging in TUI")
 	.option("--observer-turns <n>", "Frequency of observer runs in turns (default: 2)")
 	.option("--observer-critic-freq <n>", "Frequency of deep critic evaluation in turns (default: 6)")
 	.option("--observe-block-after <ratio>", "Context ratio to trigger synchronous compression (default: 0.7)")
@@ -1467,6 +1472,7 @@ program
 	.option("--observe", "Enable observer agent for context compression")
 	.option("--observe-provider <provider>", "Observer API provider (requires --observe)")
 	.option("--observe-model <model>", "Observer model ID (requires --observe)")
+	.option("--observe-verbose", "Enable detailed observer logging in TUI")
 	.option("--observer-turns <n>", "Frequency of observer runs in turns (default: 2)")
 	.option("--observer-critic-freq <n>", "Frequency of deep critic evaluation in turns (default: 6)")
 	.option("--observe-block-after <ratio>", "Context ratio to trigger synchronous compression (default: 0.7)")
