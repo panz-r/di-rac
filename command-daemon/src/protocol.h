@@ -25,7 +25,7 @@ struct proto_ctx {
     SessionStore *sessions;
     RecentFilesStore *recent_files;
     const char *workspace_root;
-    pthread_mutex_t stdout_lock;
+    pthread_mutex_t *stdout_lock;
 };
 
 /* Parse and dispatch a single JSON request line.

@@ -17,7 +17,6 @@ echo "==> Checking build dependencies..."
 MISSING_TOOLS=0
 check_tool cmake || MISSING_TOOLS=1
 check_tool cc || MISSING_TOOLS=1
-check_tool go || MISSING_TOOLS=1
 check_tool cargo || MISSING_TOOLS=1
 check_tool npm || MISSING_TOOLS=1
 
@@ -25,6 +24,10 @@ if [ $MISSING_TOOLS -ne 0 ]; then
     echo "ERROR: Some build dependencies are missing. Please install them and try again."
     exit 1
 fi
+echo "    OK"
+
+echo "==> Updating git submodules..."
+git submodule update --init --recursive
 echo "    OK"
 
 echo "==> Building C command daemon..."
@@ -37,15 +40,19 @@ echo "==> Building C central coordination daemon..."
 cp central-deamon/build/di-vrr-central-deamon dist/di-vrr-central-deamon
 echo "    OK"
 
-echo "==> Building Go api-gateway..."
-(cd api-gateway && go build -o api-gateway .)
-cp api-gateway/api-gateway dist/api-gateway
+echo "==> Building C analyzer daemon (tree-sitter)..."
+(cd treesitter-daemon && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build)
+cp treesitter-daemon/build/di-rvv-analyzer dist/di-rvv-analyzer
 echo "    OK"
 
-echo "==> Building Rust tree-sitter analyzer..."
-(cd treesitter-daemon && cargo build --release)
-cp treesitter-daemon/target/release/di-rvv-analyzer dist/di-rvv-analyzer
-echo "    OK"
+echo "==> Building Go api-gateway..."
+if command -v go >/dev/null 2>&1; then
+    (cd api-gateway && go build -o api-gateway .)
+    cp api-gateway/api-gateway dist/api-gateway
+    echo "    OK"
+else
+    echo "    SKIPPED (go not found)"
+fi
 
 echo "==> Building TypeScript CLI..."
 npm install --silent

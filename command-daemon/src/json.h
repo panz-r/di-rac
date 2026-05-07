@@ -274,4 +274,16 @@ static inline int json_obj_find_str(const char *json_str, int json_len,
     return -1; /* key not found */
 }
 
+/* Copy a JSON token as a raw string into buf. 
+ * If it's a quoted string, it unescapes it. 
+ * If it's a bare word (number, bool), it just copies the bytes. */
+static inline int json_get_raw_str(const char *val, int len, char *buf, int buf_max) {
+    if (len <= 0) { if (buf_max > 0) buf[0] = '\0'; return 0; }
+    if (val[0] == '"') return json_get_str(val, len, buf, buf_max);
+    int to_copy = len < buf_max ? len : buf_max - 1;
+    memcpy(buf, val, (size_t)to_copy);
+    buf[to_copy] = '\0';
+    return to_copy;
+}
+
 #endif /* JSON_H */

@@ -18,6 +18,7 @@
 typedef struct {
     pthread_mutex_t stdout_lock;
     pthread_mutex_t thread_count_lock;
+    pthread_mutex_t db_lock;
     int active_threads;
     AnalyzerCtx base;
 } GlobalCtx;
@@ -32,6 +33,7 @@ static void jsonw_id(struct jsonw *w, const char *raw_id, int id_len) {
     if (!raw_id || id_len <= 0) {
         jsonw_null(w);
     } else {
+        /* Write raw JSON value (could be number or string) */
         fwrite(raw_id, 1, id_len, w->f);
         w->need_comma = true;
     }
@@ -44,6 +46,7 @@ static void send_error(pthread_mutex_t *lock, const char *raw_id, int id_len, co
     jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "error");
     jsonw_id(&w, raw_id, id_len);
+    jsonw_kv_bool(&w, "ok", false);
     jsonw_kv_str(&w, "code", code);
     jsonw_kv_str(&w, "message", message);
     jsonw_object_close(&w);
@@ -66,6 +69,52 @@ static void handle_status(pthread_mutex_t *lock, const char *raw_id, int id_len,
     pthread_mutex_unlock(lock);
 }
 
+static void write_outline_payload(struct jsonw *w, SymbolResult *sr, ImportResult *ir, bool compact) {
+    jsonw_key(w, "symbols");
+    jsonw_array_open(w);
+    if (sr) {
+        for (size_t i = 0; i < sr->count; i++) {
+            jsonw_object_open(w);
+            if (compact) {
+                jsonw_kv_str(w, "n", sr->symbols[i].name);
+                jsonw_kv_str(w, "t", "d");
+                jsonw_kv_str(w, "k", symbol_kind_to_str(sr->symbols[i].kind));
+                jsonw_kv_int(w, "start_line", sr->symbols[i].start_line);
+                jsonw_kv_int(w, "start_col", 1);
+                jsonw_kv_int(w, "end_line", sr->symbols[i].end_line);
+                jsonw_kv_int(w, "end_col", 1);
+            } else {
+                jsonw_kv_str(w, "name", sr->symbols[i].name);
+                jsonw_kv_str(w, "kind", symbol_kind_to_str(sr->symbols[i].kind));
+                jsonw_kv_str(w, "handle", sr->symbols[i].handle);
+                jsonw_kv_int(w, "start_line", sr->symbols[i].start_line);
+                jsonw_kv_int(w, "end_line", sr->symbols[i].end_line);
+                jsonw_kv_str(w, "signature", sr->symbols[i].signature);
+            }
+            jsonw_object_close(w);
+        }
+    }
+    jsonw_array_close(w);
+
+    jsonw_key(w, "imports");
+    jsonw_array_open(w);
+    if (ir) {
+        for (size_t i = 0; i < ir->count; i++) {
+            jsonw_object_open(w);
+            jsonw_kv_str(w, "module", ir->imports[i].module);
+            jsonw_kv_int(w, "line", ir->imports[i].line);
+            jsonw_key(w, "names");
+            jsonw_array_open(w);
+            for (size_t j = 0; j < ir->imports[i].names_count; j++) {
+                jsonw_str(w, ir->imports[i].names[j]);
+            }
+            jsonw_array_close(w);
+            jsonw_object_close(w);
+        }
+    }
+    jsonw_array_close(w);
+}
+
 static void handle_outline(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *content, const char *lang_name, AnalyzerCtx *ctx) {
     Language lang = parse_language_name(lang_name);
     ParsedSource *ps = analyzer_parse(content, lang);
@@ -84,41 +133,7 @@ static void handle_outline(pthread_mutex_t *lock, const char *raw_id, int id_len
     jsonw_kv_str(&w, "type", "outline_result");
     jsonw_id(&w, raw_id, id_len);
     jsonw_kv_bool(&w, "ok", true);
-    
-    jsonw_key(&w, "symbols");
-    jsonw_array_open(&w);
-    if (sr) {
-        for (size_t i = 0; i < sr->count; i++) {
-            jsonw_object_open(&w);
-            jsonw_kv_str(&w, "name", sr->symbols[i].name);
-            jsonw_kv_str(&w, "kind", symbol_kind_to_str(sr->symbols[i].kind));
-            jsonw_kv_str(&w, "handle", sr->symbols[i].handle);
-            jsonw_kv_int(&w, "start_line", sr->symbols[i].start_line);
-            jsonw_kv_int(&w, "end_line", sr->symbols[i].end_line);
-            jsonw_kv_str(&w, "signature", sr->symbols[i].signature);
-            jsonw_object_close(&w);
-        }
-    }
-    jsonw_array_close(&w);
-
-    jsonw_key(&w, "imports");
-    jsonw_array_open(&w);
-    if (ir) {
-        for (size_t i = 0; i < ir->count; i++) {
-            jsonw_object_open(&w);
-            jsonw_kv_str(&w, "module", ir->imports[i].module);
-            jsonw_kv_int(&w, "line", ir->imports[i].line);
-            jsonw_key(&w, "names");
-            jsonw_array_open(&w);
-            for (size_t j = 0; j < ir->imports[i].names_count; j++) {
-                jsonw_str(&w, ir->imports[i].names[j]);
-            }
-            jsonw_array_close(&w);
-            jsonw_object_close(&w);
-        }
-    }
-    jsonw_array_close(&w);
-
+    write_outline_payload(&w, sr, ir, false);
     jsonw_object_close(&w);
     jsonw_flush(&w);
     pthread_mutex_unlock(lock);
@@ -170,7 +185,7 @@ static void handle_repo_map(pthread_mutex_t *lock, const char *raw_id, int id_le
     pthread_mutex_unlock(lock);
 }
 
-static void handle_search_symbols(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *query, const char *kind, int limit, AnalyzerCtx *ctx) {
+static void handle_search_symbols(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *query, const char *kind, int limit, AnalyzerCtx *ctx) {
     pthread_mutex_lock(lock);
     struct jsonw w;
     jsonw_init(&w, stdout);
@@ -178,13 +193,17 @@ static void handle_search_symbols(pthread_mutex_t *lock, const char *raw_id, int
     jsonw_kv_str(&w, "type", "search_symbols_result");
     jsonw_id(&w, raw_id, id_len);
     jsonw_kv_bool(&w, "ok", true);
+    
+    if (ctx->db) pthread_mutex_lock(db_lock);
     analyzer_search_symbols(ctx, query, kind, limit, &w);
+    if (ctx->db) pthread_mutex_unlock(db_lock);
+
     jsonw_object_close(&w);
     jsonw_flush(&w);
     pthread_mutex_unlock(lock);
 }
 
-static void handle_index_file(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *file, AnalyzerCtx *ctx) {
+static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *file, AnalyzerCtx *ctx) {
     if (!ctx->db) {
         send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open");
         return;
@@ -201,7 +220,7 @@ static void handle_index_file(pthread_mutex_t *lock, const char *raw_id, int id_
     fseek(f, 0, SEEK_SET);
     char *content = malloc(size + 1);
     if (!content) { fclose(f); return; }
-    fread(content, 1, size, f);
+    if (fread(content, 1, size, f) != (size_t)size) { free(content); fclose(f); return; }
     content[size] = '\0';
     fclose(f);
 
@@ -219,7 +238,9 @@ static void handle_index_file(pthread_mutex_t *lock, const char *raw_id, int id_
     SymbolResult *sr = analyzer_extract_symbols(ps, ctx);
     ImportResult *ir = analyzer_extract_imports(ps, ctx);
 
+    pthread_mutex_lock(db_lock);
     db_index_file((IndexDB*)ctx->db, file, 0.0, "TODO_HASH", sr, ir);
+    pthread_mutex_unlock(db_lock);
 
     pthread_mutex_lock(lock);
     struct jsonw w;
@@ -228,7 +249,10 @@ static void handle_index_file(pthread_mutex_t *lock, const char *raw_id, int id_
     jsonw_kv_str(&w, "type", "index_file_result");
     jsonw_id(&w, raw_id, id_len);
     jsonw_kv_bool(&w, "ok", true);
-    jsonw_kv_int(&w, "symbol_count", (int)(sr ? sr->count : 0));
+    jsonw_key(&w, "data");
+    jsonw_object_open(&w);
+    write_outline_payload(&w, sr, ir, true);
+    jsonw_object_close(&w);
     jsonw_object_close(&w);
     jsonw_flush(&w);
     pthread_mutex_unlock(lock);
@@ -239,23 +263,39 @@ static void handle_index_file(pthread_mutex_t *lock, const char *raw_id, int id_
     free(content);
 }
 
-static void handle_invalidate_file(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *file, AnalyzerCtx *ctx) {
-    if (ctx->db) db_invalidate_file((IndexDB*)ctx->db, file);
+static void handle_invalidate_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *file, AnalyzerCtx *ctx) {
+    if (ctx->db) {
+        pthread_mutex_lock(db_lock);
+        db_invalidate_file((IndexDB*)ctx->db, file);
+        pthread_mutex_unlock(db_lock);
+    }
     pthread_mutex_lock(lock);
-    printf("{\"type\":\"ok\",\"id\":");
-    if (raw_id) fwrite(raw_id, 1, id_len, stdout); else printf("null");
-    printf("}\n");
-    fflush(stdout);
+    struct jsonw w;
+    jsonw_init(&w, stdout);
+    jsonw_object_open(&w);
+    jsonw_kv_str(&w, "type", "ok");
+    jsonw_id(&w, raw_id, id_len);
+    jsonw_kv_bool(&w, "ok", true);
+    jsonw_object_close(&w);
+    jsonw_flush(&w);
     pthread_mutex_unlock(lock);
 }
 
-static void handle_clear_index(pthread_mutex_t *lock, const char *raw_id, int id_len, AnalyzerCtx *ctx) {
-    if (ctx->db) db_clear((IndexDB*)ctx->db);
+static void handle_clear_index(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, AnalyzerCtx *ctx) {
+    if (ctx->db) {
+        pthread_mutex_lock(db_lock);
+        db_clear((IndexDB*)ctx->db);
+        pthread_mutex_unlock(db_lock);
+    }
     pthread_mutex_lock(lock);
-    printf("{\"type\":\"ok\",\"id\":");
-    if (raw_id) fwrite(raw_id, 1, id_len, stdout); else printf("null");
-    printf("}\n");
-    fflush(stdout);
+    struct jsonw w;
+    jsonw_init(&w, stdout);
+    jsonw_object_open(&w);
+    jsonw_kv_str(&w, "type", "ok");
+    jsonw_id(&w, raw_id, id_len);
+    jsonw_kv_bool(&w, "ok", true);
+    jsonw_object_close(&w);
+    jsonw_flush(&w);
     pthread_mutex_unlock(lock);
 }
 
@@ -278,10 +318,7 @@ static void* request_worker(void *arg) {
     int vlen;
 
     while ((vlen = json_next_key(&j, key, sizeof(key), &val)) > 0) {
-        if (strcmp(key, "id") == 0) {
-            raw_id = val;
-            id_len = vlen;
-        }
+        if (strcmp(key, "id") == 0) { raw_id = val; id_len = vlen; }
         else if (strcmp(key, "command") == 0) json_get_str(val, vlen, command, sizeof(command));
         else if (strcmp(key, "file") == 0) json_get_str(val, vlen, file, sizeof(file));
         else if (strcmp(key, "content") == 0) json_get_str(val, vlen, content, sizeof(content));
@@ -302,10 +339,13 @@ static void* request_worker(void *arg) {
                 long fsize = ftell(f);
                 fseek(f, 0, SEEK_SET);
                 char *fcontent = malloc(fsize + 1);
-                fread(fcontent, 1, fsize, f);
-                fcontent[fsize] = '\0';
-                handle_outline(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang, &task->gctx->base);
-                free(fcontent);
+                if (fcontent) {
+                    if (fread(fcontent, 1, fsize, f) == (size_t)fsize) {
+                        fcontent[fsize] = '\0';
+                        handle_outline(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang, &task->gctx->base);
+                    }
+                    free(fcontent);
+                }
                 fclose(f);
             }
         } else {
@@ -319,10 +359,13 @@ static void* request_worker(void *arg) {
                 long fsize = ftell(f);
                 fseek(f, 0, SEEK_SET);
                 char *fcontent = malloc(fsize + 1);
-                fread(fcontent, 1, fsize, f);
-                fcontent[fsize] = '\0';
-                handle_skeleton(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang);
-                free(fcontent);
+                if (fcontent) {
+                    if (fread(fcontent, 1, fsize, f) == (size_t)fsize) {
+                        fcontent[fsize] = '\0';
+                        handle_skeleton(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang);
+                    }
+                    free(fcontent);
+                }
                 fclose(f);
             }
         } else {
@@ -331,19 +374,24 @@ static void* request_worker(void *arg) {
     } else if (strcmp(command, "repo-map") == 0) {
         handle_repo_map(&task->gctx->stdout_lock, raw_id, id_len, dir, &task->gctx->base);
     } else if (strcmp(command, "search-symbols") == 0 || strcmp(command, "search-index") == 0) {
-        handle_search_symbols(&task->gctx->stdout_lock, raw_id, id_len, query, kind[0] ? kind : NULL, limit, &task->gctx->base);
+        handle_search_symbols(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, kind[0] ? kind : NULL, limit, &task->gctx->base);
     } else if (strcmp(command, "index-file") == 0) {
-        handle_index_file(&task->gctx->stdout_lock, raw_id, id_len, file, &task->gctx->base);
+        handle_index_file(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, file, &task->gctx->base);
     } else if (strcmp(command, "invalidate-file") == 0) {
-        handle_invalidate_file(&task->gctx->stdout_lock, raw_id, id_len, file, &task->gctx->base);
+        handle_invalidate_file(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, file, &task->gctx->base);
     } else if (strcmp(command, "clear-index") == 0) {
-        handle_clear_index(&task->gctx->stdout_lock, raw_id, id_len, &task->gctx->base);
+        handle_clear_index(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, &task->gctx->base);
     } else if (strcmp(command, "shutdown") == 0) {
         pthread_mutex_lock(&task->gctx->stdout_lock);
-        printf("{\"ok\": true, \"id\": ");
-        if (raw_id) fwrite(raw_id, 1, id_len, stdout); else printf("null");
-        printf(", \"status\": \"shutting_down\"}\n");
-        fflush(stdout);
+        struct jsonw w;
+        jsonw_init(&w, stdout);
+        jsonw_object_open(&w);
+        jsonw_kv_bool(&w, "ok", true);
+        jsonw_id(&w, raw_id, id_len);
+        jsonw_kv_str(&w, "status", "shutting_down");
+        jsonw_object_close(&w);
+        jsonw_flush(&w);
+        pthread_mutex_unlock(&task->gctx->stdout_lock);
         exit(0);
     } else {
         send_error(&task->gctx->stdout_lock, raw_id, id_len, "UNKNOWN_COMMAND", "Unknown analyzer command");
@@ -362,9 +410,9 @@ int main(int argc, char *argv[]) {
     GlobalCtx gctx = {0};
     pthread_mutex_init(&gctx.stdout_lock, NULL);
     pthread_mutex_init(&gctx.thread_count_lock, NULL);
+    pthread_mutex_init(&gctx.db_lock, NULL);
     
     char db_path[4096] = "";
-
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--oneshot") == 0) gctx.base.oneshot = true;
         else if (strcmp(argv[i], "-w") == 0 && i + 1 < argc) {
@@ -375,12 +423,8 @@ int main(int argc, char *argv[]) {
             i++;
         }
     }
-
     if (!gctx.base.workspace_root[0]) getcwd(gctx.base.workspace_root, sizeof(gctx.base.workspace_root));
-
-    if (db_path[0]) {
-        gctx.base.db = db_open(db_path);
-    }
+    if (db_path[0]) gctx.base.db = db_open(db_path);
 
     if (!gctx.base.oneshot) {
         fprintf(stderr, "di-rvv-analyzer: ready (C version)\n");
@@ -388,15 +432,12 @@ int main(int argc, char *argv[]) {
         size_t cap = 0;
         while (getline(&line, &cap, stdin) > 0) {
             if (line[0] == '\n' || line[0] == '\r' || line[0] == '\0') continue;
-            
             RequestTask *task = malloc(sizeof(RequestTask));
             task->line = strdup(line);
             task->gctx = &gctx;
-
             pthread_mutex_lock(&gctx.thread_count_lock);
             gctx.active_threads++;
             pthread_mutex_unlock(&gctx.thread_count_lock);
-
             pthread_t thread;
             if (pthread_create(&thread, NULL, request_worker, task) != 0) {
                 pthread_mutex_lock(&gctx.thread_count_lock);
@@ -410,7 +451,6 @@ int main(int argc, char *argv[]) {
             }
         }
         free(line);
-
         while (1) {
             pthread_mutex_lock(&gctx.thread_count_lock);
             int count = gctx.active_threads;
@@ -419,8 +459,6 @@ int main(int argc, char *argv[]) {
             usleep(10000);
         }
     }
-
     if (gctx.base.db) db_close((IndexDB*)gctx.base.db);
-
     return 0;
 }

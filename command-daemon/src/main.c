@@ -17,6 +17,7 @@
 #include "executor.h"
 
 #define MAX_CHILDREN EXEC_MAX_CHILDREN
+#define STDIN_BUF_SIZE 65536
 
 static ExecChild children[MAX_CHILDREN];
 static RecentFilesStore recent_files;
@@ -76,22 +77,21 @@ static void strip_cwd_markers(char *stderr_buf, size_t *stderr_len) {
     *stderr_len = (size_t)(dst - stderr_buf);
 }
 
-/* Append data to a dynamic buffer, up to max_size bytes. */
 static void main_buf_append(char **buf, size_t *len, size_t *total,
                             const char *data, size_t data_len, int max_size) {
     *total += data_len;
     if (*len >= (size_t)max_size) return;
     size_t avail = (size_t)max_size - *len;
     size_t append = data_len < avail ? data_len : avail;
-    *buf = realloc(*buf, *len + append + 1);
-    if (*buf) {
+    char *new_buf = realloc(*buf, *len + append + 1);
+    if (new_buf) {
+        *buf = new_buf;
         memcpy(*buf + *len, data, append);
         *len += append;
         (*buf)[*len] = '\0';
     }
 }
 
-/* Drain a pipe into the child's buffer */
 static void drain_pipe(int fd, ExecChild *child, int is_stdout) {
     char tmp[4096];
     while (1) {
@@ -107,16 +107,6 @@ static void drain_pipe(int fd, ExecChild *child, int is_stdout) {
     }
 }
 
-/* Generate a hint string based on command outcome. */
-static const char *compute_hint(ExecChild *child, int truncated) {
-    if (child->timed_out)
-        return "command timed out";
-    if (truncated)
-        return "output exceeded limit";
-    return NULL;
-}
-
-/* Send the final result for a completed child */
 static void send_child_result(ExecChild *child) {
     if (child->stderr_buf && child->stderr_len > 0) {
         extract_cwd(child->stderr_buf, child->stderr_len, child->cwd, sizeof(child->cwd));
@@ -128,7 +118,6 @@ static void send_child_result(ExecChild *child) {
     int truncation_offset = truncated ? (int)(child->total_stdout_bytes > child->total_stderr_bytes
                                               ? child->total_stdout_bytes
                                               : child->total_stderr_bytes) : 0;
-    const char *hint = compute_hint(child, truncated);
 
     pthread_mutex_lock(&stdout_lock);
     struct jsonw w;
@@ -136,52 +125,25 @@ static void send_child_result(ExecChild *child) {
     jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "result");
     jsonw_kv_str_or_null(&w, "id", child->id);
-
     jsonw_key(&w, "stdout");
-    jsonw_strn(&w, child->stdout_buf ? child->stdout_buf : "",
-               (int)(child->stdout_buf ? child->stdout_len : 0), 8000);
+    jsonw_strn(&w, child->stdout_buf ? child->stdout_buf : "", (int)child->stdout_len, 0);
     jsonw_key(&w, "stderr");
-    jsonw_strn(&w, child->stderr_buf ? child->stderr_buf : "",
-               (int)(child->stderr_buf ? child->stderr_len : 0), 2000);
-
+    jsonw_strn(&w, child->stderr_buf ? child->stderr_buf : "", (int)child->stderr_len, 0);
     jsonw_kv_int(&w, "exit_code", child->exit_code);
-
     jsonw_key(&w, "meta");
     jsonw_object_open(&w);
-    jsonw_kv_str(&w, "mode_used", "full");
     jsonw_kv_str(&w, "cwd", child->cwd);
     jsonw_kv_bool(&w, "truncated", truncated);
     jsonw_kv_int(&w, "truncation_offset", truncation_offset);
-    jsonw_kv_str_or_null(&w, "hint", hint);
     jsonw_kv_bool(&w, "timed_out", child->timed_out);
-    jsonw_key(&w, "detected_patterns");
-    jsonw_array_open(&w);
-    jsonw_array_close(&w);
     jsonw_object_close(&w);
-
     jsonw_object_close(&w);
     jsonw_flush(&w);
     pthread_mutex_unlock(&stdout_lock);
 }
 
-static void add_recent_file(const char *path) {
-    pthread_mutex_lock(&recent_files.lock);
-    /* Avoid duplicates */
-    int prev = (recent_files.head - 1 + RECENT_FILES_MAX) % RECENT_FILES_MAX;
-    if (recent_files.count > 0 && strcmp(recent_files.paths[prev], path) == 0) {
-        pthread_mutex_unlock(&recent_files.lock);
-        return;
-    }
-
-    strncpy(recent_files.paths[recent_files.head], path, 4095);
-    recent_files.head = (recent_files.head + 1) % RECENT_FILES_MAX;
-    if (recent_files.count < RECENT_FILES_MAX) recent_files.count++;
-    pthread_mutex_unlock(&recent_files.lock);
-}
-
 int main(int argc, char *argv[]) {
     char workspace_root[4096] = "";
-
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--workspace-root") == 0 && i + 1 < argc) {
             strncpy(workspace_root, argv[i + 1], sizeof(workspace_root) - 1);
@@ -205,71 +167,59 @@ int main(int argc, char *argv[]) {
         .sessions = &store,
         .recent_files = &recent_files,
         .workspace_root = workspace_root,
-        .stdout_lock = stdout_lock,
+        .stdout_lock = &stdout_lock,
     };
 
-    /* inotify setup */
     int inotify_fd = inotify_init1(IN_NONBLOCK);
-    if (inotify_fd >= 0) {
-        inotify_add_watch(inotify_fd, workspace_root, IN_MODIFY | IN_CREATE | IN_MOVED_TO);
-    }
+    if (inotify_fd >= 0) inotify_add_watch(inotify_fd, workspace_root, IN_MODIFY | IN_CREATE | IN_MOVED_TO);
 
     fprintf(stderr, "ready\n");
     fflush(stderr);
 
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
-
-    char *line = NULL;
-    size_t line_cap = 0;
-    FILE *in = stdin;
+    char stdin_buf[STDIN_BUF_SIZE];
+    size_t stdin_len = 0;
 
     while (1) {
         struct pollfd pfds[2 + MAX_CHILDREN * 2];
         int nfds = 0;
         ExecChild *fd_child_map[2 + MAX_CHILDREN * 2];
 
-        pfds[0].fd = STDIN_FILENO;
-        pfds[0].events = POLLIN;
-        pfds[0].revents = 0;
-        fd_child_map[0] = NULL;
-        nfds = 1;
-
-        if (inotify_fd >= 0) {
-            pfds[nfds].fd = inotify_fd;
-            pfds[nfds].events = POLLIN;
-            pfds[nfds].revents = 0;
-            fd_child_map[nfds] = NULL;
-            nfds++;
-        }
+        pfds[0].fd = STDIN_FILENO; pfds[0].events = POLLIN; nfds = 1; fd_child_map[0] = NULL;
+        if (inotify_fd >= 0) { pfds[nfds].fd = inotify_fd; pfds[nfds].events = POLLIN; nfds++; fd_child_map[nfds-1] = NULL; }
 
         for (int i = 0; i < MAX_CHILDREN; i++) {
             ExecChild *c = &children[i];
             if (!c->active) continue;
-            if (!c->stdout_done && c->stdout_fd >= 0) {
-                pfds[nfds].fd = c->stdout_fd;
-                pfds[nfds].events = POLLIN;
-                pfds[nfds].revents = 0;
-                fd_child_map[nfds] = c;
-                nfds++;
-            }
-            if (!c->stderr_done && c->stderr_fd >= 0) {
-                pfds[nfds].fd = c->stderr_fd;
-                pfds[nfds].events = POLLIN;
-                pfds[nfds].revents = 0;
-                fd_child_map[nfds] = c;
-                nfds++;
-            }
+            if (!c->stdout_done && c->stdout_fd >= 0) { pfds[nfds].fd = c->stdout_fd; pfds[nfds].events = POLLIN; fd_child_map[nfds++] = c; }
+            if (!c->stderr_done && c->stderr_fd >= 0) { pfds[nfds].fd = c->stderr_fd; pfds[nfds].events = POLLIN; fd_child_map[nfds++] = c; }
         }
 
-        int poll_ms = 100;
-        int pret = poll(pfds, (nfds_t)nfds, poll_ms);
-        if (pret < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
+        int pret = poll(pfds, (nfds_t)nfds, 100);
+        if (pret < 0 && errno != EINTR) break;
 
         if (pret > 0) {
-            /* Handle inotify events */
+            if (pfds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+                ssize_t n = read(STDIN_FILENO, stdin_buf + stdin_len, STDIN_BUF_SIZE - stdin_len - 1);
+                if (n > 0) {
+                    stdin_len += (size_t)n;
+                    stdin_buf[stdin_len] = '\0';
+                    char *line_start = stdin_buf;
+                    char *newline;
+                    while ((newline = strchr(line_start, '\n')) != NULL) {
+                        *newline = '\0';
+                        proto_handle_line(line_start, (int)(newline - line_start), &ctx);
+                        line_start = newline + 1;
+                    }
+                    size_t processed = (size_t)(line_start - stdin_buf);
+                    if (processed > 0) {
+                        memmove(stdin_buf, line_start, stdin_len - processed + 1);
+                        stdin_len -= processed;
+                    }
+                } else if (n == 0 && (pfds[0].revents & (POLLHUP | POLLERR))) {
+                    break;
+                }
+            }
             if (inotify_fd >= 0) {
                 for (int j = 0; j < nfds; j++) {
                     if (pfds[j].fd == inotify_fd && (pfds[j].revents & POLLIN)) {
@@ -280,72 +230,50 @@ int main(int argc, char *argv[]) {
                             for (char *ptr = buf; ptr < buf + len; ptr += sizeof(struct inotify_event) + event->len) {
                                 event = (const struct inotify_event *)ptr;
                                 if (event->len > 0 && !(event->mask & IN_ISDIR)) {
-                                    add_recent_file(event->name);
+                                    pthread_mutex_lock(&recent_files.lock);
+                                    strncpy(recent_files.paths[recent_files.head], event->name, 4095);
+                                    recent_files.head = (recent_files.head + 1) % RECENT_FILES_MAX;
+                                    if (recent_files.count < RECENT_FILES_MAX) recent_files.count++;
+                                    pthread_mutex_unlock(&recent_files.lock);
                                 }
                             }
                         }
                     }
                 }
             }
-
-            /* Handle child pipe events */
-            for (int j = 0; j < nfds; j++) {
+            for (int j = 1; j < nfds; j++) {
                 ExecChild *c = fd_child_map[j];
                 if (!c || !c->active) continue;
-
-                if (pfds[j].revents & POLLIN) {
+                if (pfds[j].revents & (POLLIN | POLLHUP | POLLERR)) {
                     char tmp[4096];
-                    ssize_t n = read(pfds[j].fd, tmp, sizeof(tmp));
-                    if (n > 0) {
-                        int is_stdout = (pfds[j].fd == c->stdout_fd);
-                        if (is_stdout) {
-                            main_buf_append(&c->stdout_buf, &c->stdout_len,
-                                            &c->total_stdout_bytes, tmp, (size_t)n, EXEC_MAX_OUTPUT);
-                        } else {
-                            main_buf_append(&c->stderr_buf, &c->stderr_len,
-                                            &c->total_stderr_bytes, tmp, (size_t)n, EXEC_MAX_OUTPUT);
-                        }
-                    } else if (n <= 0) {
-                        if (pfds[j].fd == c->stdout_fd) c->stdout_done = 1;
-                        else c->stderr_done = 1;
-                    }
-                }
-                if (pfds[j].revents & (POLLHUP | POLLERR)) {
-                    if (pfds[j].fd == c->stdout_fd) {
-                        drain_pipe(c->stdout_fd, c, 1);
-                        c->stdout_done = 1;
+                    ssize_t sn = read(pfds[j].fd, tmp, sizeof(tmp));
+                    if (sn > 0) {
+                        if (pfds[j].fd == c->stdout_fd) main_buf_append(&c->stdout_buf, &c->stdout_len, &c->total_stdout_bytes, tmp, (size_t)sn, EXEC_MAX_OUTPUT);
+                        else main_buf_append(&c->stderr_buf, &c->stderr_len, &c->total_stderr_bytes, tmp, (size_t)sn, EXEC_MAX_OUTPUT);
                     } else {
-                        drain_pipe(c->stderr_fd, c, 0);
-                        c->stderr_done = 1;
+                        if (pfds[j].fd == c->stdout_fd) c->stdout_done = 1; else c->stderr_done = 1;
                     }
                 }
             }
         }
 
-        /* Check for child exit or timeout */
         for (int i = 0; i < MAX_CHILDREN; i++) {
             ExecChild *c = &children[i];
             if (!c->active) continue;
             if (!c->exited) {
                 int status;
-                pid_t ret = waitpid(c->pid, &status, WNOHANG);
-                if (ret == c->pid) {
+                if (waitpid(c->pid, &status, WNOHANG) == c->pid) {
                     c->exited = 1;
-                    if (WIFEXITED(status)) c->exit_code = WEXITSTATUS(status);
-                    else if (WIFSIGNALED(status)) c->exit_code = 128 + WTERMSIG(status);
-                    if (!c->stdout_done) { drain_pipe(c->stdout_fd, c, 1); c->stdout_done = 1; }
-                    if (!c->stderr_done) { drain_pipe(c->stderr_fd, c, 0); c->stderr_done = 1; }
-                }
-            }
-            if (!c->exited) {
-                long elapsed = now_ms() - c->start_ms;
-                if (elapsed >= c->timeout_ms) {
+                    c->exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 1);
+                    drain_pipe(c->stdout_fd, c, 1); c->stdout_done = 1;
+                    drain_pipe(c->stderr_fd, c, 0); c->stderr_done = 1;
+                } else if (now_ms() - c->start_ms >= c->timeout_ms) {
                     kill(c->pid, SIGKILL);
                     c->exited = 1;
                     c->timed_out = 1;
                     c->exit_code = 124;
-                    if (!c->stdout_done) { drain_pipe(c->stdout_fd, c, 1); c->stdout_done = 1; }
-                    if (!c->stderr_done) { drain_pipe(c->stderr_fd, c, 0); c->stderr_done = 1; }
+                    drain_pipe(c->stdout_fd, c, 1); c->stdout_done = 1;
+                    drain_pipe(c->stderr_fd, c, 0); c->stderr_done = 1;
                 }
             }
             if (c->exited && c->stdout_done && c->stderr_done) {
@@ -353,32 +281,6 @@ int main(int argc, char *argv[]) {
                 exec_child_cleanup(c);
             }
         }
-
-        /* Handle stdin */
-        if (pfds[0].revents & POLLIN) {
-            while (1) {
-                ssize_t len = getline(&line, &line_cap, in);
-                if (len < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-                    break;
-                }
-                if (len == 0) continue;
-                if (line[len - 1] == '\n') line[len - 1] = '\0';
-                if (len > 1 && line[len - 2] == '\r') line[len - 2] = '\0';
-                if (line[0] == '\0') continue;
-                proto_handle_line(line, (int)strlen(line), &ctx);
-            }
-        }
-        if (pfds[0].revents & (POLLHUP | POLLERR)) break;
     }
-
-    for (int i = 0; i < MAX_CHILDREN; i++) {
-        if (children[i].active) {
-            kill(children[i].pid, SIGKILL);
-            waitpid(children[i].pid, NULL, 0);
-            exec_child_cleanup(&children[i]);
-        }
-    }
-    free(line);
     return 0;
 }

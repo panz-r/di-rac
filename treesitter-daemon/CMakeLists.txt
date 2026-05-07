@@ -22,7 +22,6 @@ include_directories(${SQLITE_DIR})
 add_library(sqlite STATIC
     ${SQLITE_DIR}/sqlite3.c
 )
-# SQLite needs dl and m
 target_link_libraries(sqlite m dl)
 
 # 3. Pthread
@@ -61,7 +60,7 @@ add_grammar(php ${VENDOR_DIR}/tree-sitter-php/php)
 include_directories(include-c)
 include_directories(../command-daemon/src) # Reuse JSON helpers
 
-add_executable(di-rvv-analyzer
+set(DAEMON_SOURCES
     src-c/main.c
     src-c/analyzer.c
     src-c/languages.c
@@ -72,7 +71,9 @@ add_executable(di-rvv-analyzer
     src-c/db.c
 )
 
-target_link_libraries(di-rvv-analyzer
+add_executable(di-rvv-analyzer ${DAEMON_SOURCES})
+
+set(LIBS
     tree-sitter
     sqlite
     ts-grammar-python
@@ -90,5 +91,18 @@ target_link_libraries(di-rvv-analyzer
     m
     dl
 )
+
+target_link_libraries(di-rvv-analyzer ${LIBS})
+
+# --- Tests ---
+
+add_executable(test_db
+    tests/test_db.c
+    src-c/db.c
+    src-c/analyzer.c
+    src-c/languages.c
+    src-c/queries.c
+)
+target_link_libraries(test_db ${LIBS})
 
 install(TARGETS di-rvv-analyzer DESTINATION bin)
