@@ -1,19 +1,42 @@
 import { spawn } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import * as net from "node:net"
 import os from "node:os"
 import { Logger } from "@/shared/services/Logger"
 
 /**
- * ensureCoordinatorRunning - Checks for the daemon socket and starts the daemon if missing.
+ * ensureCoordinatorRunning - Checks for the daemon socket and starts the daemon if missing or dead.
  */
 export async function ensureCoordinatorRunning(): Promise<void> {
 	const socketPath = "/tmp/di-vrr-coord.sock"
+	
 	if (fs.existsSync(socketPath)) {
-		return
+		// Verify the daemon is actually listening
+		const isAlive = await new Promise<boolean>((resolve) => {
+			const socket = net.connect(socketPath)
+			socket.on("connect", () => {
+				socket.destroy()
+				resolve(true)
+			})
+			socket.on("error", () => {
+				resolve(false)
+			})
+		})
+
+		if (isAlive) {
+			return
+		}
+		
+		Logger.info("[CoordinatorSpawn] Stale socket detected, removing...")
+		try {
+			fs.unlinkSync(socketPath)
+		} catch {
+			// Ignore
+		}
 	}
 
-	Logger.info("[CoordinatorSpawn] Socket missing, attempting to start locking daemon...")
+	Logger.info("[CoordinatorSpawn] Starting locking daemon...")
 
 	// Persistence path
 	const diracDir = path.join(os.homedir(), ".dirac")
@@ -21,8 +44,6 @@ export async function ensureCoordinatorRunning(): Promise<void> {
 	const persistPath = path.join(diracDir, "daemon_state.kv")
 
 	// Resolve binary path
-	// During development, it's in central-deamon/build/
-	// For installed version, it would be in a bin directory.
 	const binName = "di-vrr-central-deamon"
 	const possiblePaths = [
 		path.join(process.cwd(), "central-deamon", "build", binName),

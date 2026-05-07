@@ -1,5 +1,6 @@
 out
-central-deamon/build/
+treesitter-daemon/build
+central-deamon/build
 command-daemon/build
 api-gateway/api-gateway
 dist

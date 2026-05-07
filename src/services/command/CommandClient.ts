@@ -39,6 +39,12 @@ export interface WalkResult {
 	}>
 }
 
+export interface RecentFilesResult {
+	type: "recent_files_result"
+	id: string
+	files: string[]
+}
+
 interface PendingRequest {
 	resolve: (value: any) => void
 	reject: (reason: any) => void
@@ -96,6 +102,7 @@ export class CommandClient {
 
 			proc.stderr!.on("data", (chunk: Buffer) => {
 				const msg = chunk.toString().trim()
+				Logger.info("CommandClient", `[daemon-stderr] ${msg}`)
 				if (msg.includes("ready") && !startupResolved) {
 					startupResolved = true
 					resolve()
@@ -287,5 +294,11 @@ export class CommandClient {
 			},
 			30000,
 		)
+	}
+
+	async recentFiles(): Promise<RecentFilesResult> {
+		return this.send({
+			type: "recent_files",
+		})
 	}
 }

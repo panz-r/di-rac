@@ -7,6 +7,7 @@ import { globby, Options } from "globby"
 import * as os from "os"
 import * as path from "path"
 import { Logger } from "@/shared/services/Logger"
+import { StandaloneTerminalManager } from "@/integrations/terminal/standalone/StandaloneTerminalManager"
 
 // Constants
 const DEFAULT_IGNORE_DIRECTORIES = [
@@ -82,6 +83,24 @@ export async function listFiles(dirPath: string, recursive: boolean, limit: numb
 	// Do not allow listing files in root or home directory
 	if (isRestrictedPath(absolutePath)) {
 		return [[], false]
+	}
+
+	try {
+		const terminalManager = StandaloneTerminalManager.getInstance()
+		const commandClient = terminalManager.getCommandClient()
+
+		if (!commandClient.fallback) {
+			const walkResult = await commandClient.walk(absolutePath)
+			const fileInfos: FileInfo[] = walkResult.files.slice(0, limit).map((f) => ({
+				path: f.path,
+				mtime: f.mtime * 1000,
+				size: f.size,
+				isDirectory: false,
+			}))
+			return [fileInfos, walkResult.files.length >= limit]
+		}
+	} catch (error) {
+		Logger.warn("Services.glob", "Daemon walk failed, falling back to globby", error)
 	}
 
 	// globby requires cwd to point to a directory
