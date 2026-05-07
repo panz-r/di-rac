@@ -1,4 +1,4 @@
-import { buildObserverConfig, type ObserverConfig, type ObservationEntry, type ObservationType } from "./ObserverConfig"
+import { buildObserverConfig, type ObserverConfig, type ObservationEntry, type ObservationType, type CriticAction } from "./ObserverConfig"
 import { ObservationStore } from "./ObservationStore"
 import { ObserverAgent } from "./ObserverAgent"
 import { setObserverHealth } from "./index"
@@ -13,6 +13,8 @@ export interface PrepareContextResult {
 	observationBlock: string
 	watcherInsights: string
 	removedCount: number
+    interruptReason?: string
+    criticAction?: CriticAction
 }
 
 interface ObserverCost {
@@ -33,15 +35,27 @@ export class ObserverCostTracker {
     getSummary() {
         const totalTokens = this.costs.reduce((sum, c) => sum + c.tokens, 0)
         const totalLatency = this.costs.reduce((sum, c) => sum + c.latencyMs, 0)
+        const count = this.costs.length
         return {
-            totalInvocations: this.costs.length,
+            count,
             totalTokens,
             totalLatencyMs: totalLatency,
-            avgLatencyMs: this.costs.length > 0 ? totalLatency / this.costs.length : 0
+            avgLatencyMs: count > 0 ? totalLatency / count : 0,
+            avgTokens: count > 0 ? totalTokens / count : 0
         }
+    }
+
+    formatSummary(): string {
+        const s = this.getSummary()
+        return `Observer Session Stats: ${s.count} runs | ${s.totalTokens} tokens | total latency ${s.totalLatencyMs}ms | avg ${s.avgLatencyMs.toFixed(0)}ms/run`
     }
 }
 
+/**
+ * ObserverOrchestrator - Manages the multi-layer cognitive stack.
+ * Layer 2: Watcher (S1) - Fast, heuristic, every turn.
+ * Layer 3: Critic (S2) - Slow, deliberative, adaptive.
+ */
 export class ObserverOrchestrator {
 	private store: ObservationStore
 	private agent: ObserverAgent | undefined
@@ -52,6 +66,7 @@ export class ObserverOrchestrator {
 	private _isEnabled: boolean
 	private config: ObserverConfig
 	consecutiveFailures = 0
+    consecutiveSuccesses = 0 // For adaptive scheduling
 	lastError: string | undefined
 
 	constructor(
@@ -64,6 +79,7 @@ export class ObserverOrchestrator {
 			observerProvider: stateManager.getGlobalSettingsKey("observerProvider"),
 			observerModelId: stateManager.getGlobalSettingsKey("observerModelId"),
 			observerTurns: stateManager.getGlobalSettingsKey("observerTurns"),
+			observerCriticFrequency: stateManager.getGlobalSettingsKey("observerCriticFrequency"),
 			observerTokenThreshold: stateManager.getGlobalSettingsKey("observerTokenThreshold"),
 			observerBufferActivation: stateManager.getGlobalSettingsKey("observerBufferActivation"),
 			observerBlockAfter: stateManager.getGlobalSettingsKey("observerBlockAfter"),
@@ -117,26 +133,42 @@ export class ObserverOrchestrator {
 		return history.slice(sliceStart)
 	}
 
+	/**
+	 * Turn complete hook. Implements adaptive scheduling (Semi-MDP lite).
+	 */
 	async onTurnComplete(history: DiracStorageMessage[]): Promise<void> {
 		if (!this._isEnabled) return
 
-		const unobserved = this.getUnobservedMessages(history)
-		
-		// 1. WATCHER (Frequency controlled by observerTurns)
 		const lastMsg = history[history.length - 1]
 		const hasError = lastMsg?.content && JSON.stringify(lastMsg.content).includes("error")
 		
-		if (history.length % this.config.observerTurns === 0 || hasError) {
-			this.triggerSpecializedObservation(history, "watcher")
-		}
+        // ADAPTIVE SCHEDULING (System 1 control)
+        if (hasError) {
+            this.consecutiveSuccesses = 0
+            // Run Watcher immediately on error
+            this.triggerSpecializedObservation(history, "watcher")
+        } else {
+            this.consecutiveSuccesses++
+            // Heuristic: if doing well, back off. If failing, run more often.
+            const adaptiveFreq = this.consecutiveSuccesses > 3 ? this.config.observerTurns + 1 : this.config.observerTurns
+            if (history.length % Math.min(adaptiveFreq, 10) === 0) {
+                this.triggerSpecializedObservation(history, "watcher")
+            }
+        }
 
-		// 2. RELEVANCE FILTER (Runs half as often as watcher, min every 5)
-		const filterFreq = Math.max(5, this.config.observerTurns * 2)
+		// 2. RELEVANCE FILTER
+		const filterFreq = Math.max(5, this.config.observerTurns * 3)
 		if (history.length % filterFreq === 0) {
 			this.triggerSpecializedObservation(history, "filter")
 		}
 
-		// 3. SUMMARIZER (Context Compression)
+		// 3. SLOW CRITIC (S2)
+		if (history.length % this.config.criticFrequency === 0) {
+			this.triggerSpecializedObservation(history, "critic")
+		}
+
+		// 4. HEAVY SUMMARIZER
+		const unobserved = this.getUnobservedMessages(history)
 		if (unobserved.length >= 4) {
 			const tokenEstimate = this.estimateTokens(unobserved)
 			const ratio = tokenEstimate / this.config.tokenThreshold
@@ -179,15 +211,14 @@ export class ObserverOrchestrator {
             const latency = Date.now() - startTime
             this.costTracker.add("summary", tokenEstimate, latency, history.length)
 
-            // Index in C daemon if available
             const analyzer = this.getAnalyzerClient?.()
             if (analyzer) {
                 await analyzer.indexObservation("summary", observationText, entry.timestamp, tokenEstimate)
             }
 
-			Logger.debug(`[Observer] SYNC compressed ${unobserved.length} messages — block mode (ratio > ${this.config.blockAfter})`)
+			Logger.debug(`[Observer:S2] SYNC compressed ${unobserved.length} messages (headroom: ${(1.0 - (this.config.blockAfter as number)).toFixed(2)})`)
 		} catch (error) {
-			Logger.error("[Observer] Sync compression failed:", error)
+			Logger.error("[Observer:S2] Sync compression failed:", error)
 			this.consecutiveFailures++
 			this.lastError = error instanceof Error ? error.message : String(error)
 			setObserverHealth(true, this.lastError)
@@ -197,7 +228,7 @@ export class ObserverOrchestrator {
 	private triggerSpecializedObservation(history: DiracStorageMessage[], type: ObservationType, tokenEstimate?: number): void {
 		if (!this.agent || this.pendingTasks.size > 2) return
 
-		const unobserved = type === "summary" ? this.getUnobservedMessages(history) : history.slice(-10)
+		const unobserved = type === "summary" || type === "critic" ? this.getUnobservedMessages(history) : history.slice(-10)
 		if (unobserved.length === 0) return
 
 		const sliceStart = Math.max(this.lastObservedMessageIndex, 2)
@@ -209,12 +240,29 @@ export class ObserverOrchestrator {
 			.then(async (text) => {
 				if (!text || text.includes("No alerts") || text.includes("Context clean")) return
 
+                // Parse confidence and action
+                let confidence = 1.0
+                const confMatch = text.match(/confidence:([0-9.]+)/)
+                if (confMatch) confidence = parseFloat(confMatch[1])
+
+                // "Whisper, not shout": Filter low confidence insights from context injection
+                // (They stay in the store for recall, but don't bother the actor)
+                const isHighConfidence = confidence >= this.config.confidenceThreshold
+
+                let criticAction: CriticAction | undefined
+                if (type === "critic") {
+                    const actionMatch = text.match(/action:([A-Z]+)/)
+                    if (actionMatch) criticAction = actionMatch[1] as CriticAction
+                }
+
 				const entry: ObservationEntry = {
 					timestamp: Date.now(),
 					type,
 					observationText: text,
 					compressedRange,
 					tokenEstimate: tokenEstimate || Math.ceil(text.length / 4),
+                    confidence,
+                    criticAction
 				}
 
 				await this.store.append(entry)
@@ -227,13 +275,12 @@ export class ObserverOrchestrator {
                 const latency = Date.now() - startTime
                 this.costTracker.add(type, entry.tokenEstimate, latency, history.length)
 
-                // Index in C daemon
                 const analyzer = this.getAnalyzerClient?.()
                 if (analyzer) {
                     await analyzer.indexObservation(type, text, entry.timestamp, entry.tokenEstimate)
                 }
 
-				Logger.debug(`[Observer] Finished ${type} observation (~${entry.tokenEstimate} tokens)`)
+				Logger.debug(`[Observer:${type === "critic" ? "S2" : "S1"}] Finished ${type} observation (conf: ${confidence})`)
 			})
 			.catch((error) => {
 				Logger.error(`[Observer] ${type} observation failed:`, error)
@@ -282,10 +329,10 @@ export class ObserverOrchestrator {
                 const latency = Date.now() - startTime
                 this.costTracker.add("reflection", entry.tokenEstimate, latency, 0)
 
-				Logger.debug(`[Observer] Reflected observation log`)
+				Logger.debug(`[Observer:S2] Reflected observation log`)
 			})
 			.catch((error) => {
-				Logger.error("[Observer] Reflection failed:", error)
+				Logger.error("[Observer:S2] Reflection failed:", error)
 			})
 			.finally(() => {
 				this.pendingTasks.delete(promise)
@@ -300,13 +347,35 @@ export class ObserverOrchestrator {
 		}
 
 		const observationBlock = this.store.buildObservationBlock("summary")
-		const watcherInsights = this.store.buildObservationBlock("watcher")
-		const filterInsights = this.store.buildObservationBlock("filter")
+        
+        // Filter insights by confidence threshold for context injection
+        const filterHighConf = (type: ObservationType) => {
+            return this.store.getAllObservations()
+                .filter(e => e.type === type && (e.confidence ?? 1.0) >= this.config.confidenceThreshold)
+                .slice(-2)
+                .map(e => e.observationText)
+                .join("\n")
+        }
+
+		const watcherInsights = filterHighConf("watcher")
+		const filterInsights = filterHighConf("filter")
+        const criticInsights = filterHighConf("critic")
 
 		const combinedInsights = [
 			watcherInsights,
-			filterInsights
-		].filter(Boolean).join("\n\n")
+			filterInsights,
+            criticInsights
+		].filter(Boolean).join("\n")
+
+        const latestCritic = this.store.getLatestObservation("critic")
+        let interruptReason: string | undefined
+        let criticAction: CriticAction | undefined
+
+        // Only act on high-confidence critic decisions
+        if (latestCritic && latestCritic.criticAction && latestCritic.criticAction !== "CONTINUE" && (latestCritic.confidence ?? 1.0) >= 0.8) {
+            interruptReason = latestCritic.observationText
+            criticAction = latestCritic.criticAction
+        }
 
 		if (observationBlock && this.lastObservedMessageIndex > 2) {
 			const slicedMessages = [
@@ -314,16 +383,29 @@ export class ObserverOrchestrator {
 				...history.slice(this.lastObservedMessageIndex),
 			]
 			const removedCount = history.length - slicedMessages.length
-			return { messages: slicedMessages, observationBlock, watcherInsights: combinedInsights, removedCount }
+			return { 
+                messages: slicedMessages, 
+                observationBlock, 
+                watcherInsights: combinedInsights, 
+                removedCount,
+                interruptReason,
+                criticAction
+            }
 		}
 
-		return { messages: history, observationBlock: "", watcherInsights: combinedInsights, removedCount: 0 }
+		return { 
+            messages: history, 
+            observationBlock: "", 
+            watcherInsights: combinedInsights, 
+            removedCount: 0,
+            interruptReason,
+            criticAction
+        }
 	}
 
-	/**
-	 * Search archived and current observations using the C analyzer's FTS5 index.
-	 */
 	async recall(query: string): Promise<string> {
+        if (query === "--stats") return this.costTracker.formatSummary()
+
         const analyzer = this.getAnalyzerClient?.()
         if (analyzer) {
             const results = await analyzer.searchObservations(query)
@@ -336,12 +418,9 @@ export class ObserverOrchestrator {
             }
         }
 
-        // Fallback to local keyword search if C daemon search returns nothing or is unavailable
 		await this.store.load()
 		const entries = this.store.getAllObservations()
-		if (entries.length === 0) {
-			return "No observations found."
-		}
+		if (entries.length === 0) return "No observations found."
 
 		const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
 		const matches = entries.filter((entry) => {
@@ -349,9 +428,7 @@ export class ObserverOrchestrator {
 			return terms.every((term) => text.includes(term))
 		})
 
-		if (matches.length === 0) {
-			return `No observations matching "${query}".`
-		}
+		if (matches.length === 0) return `No observations matching "${query}".`
 
 		const lines = matches.map((entry, i) => {
 			const date = new Date(entry.timestamp).toISOString().replace("T", " ").replace(/\.\d+Z$/, "")
@@ -401,6 +478,7 @@ export class ObserverOrchestrator {
 	}
 
 	async dispose(): Promise<void> {
+        Logger.info("Observer", this.costTracker.formatSummary())
 		if (this.pendingTasks.size > 0) {
 			const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000))
 			await Promise.race([Promise.all(Array.from(this.pendingTasks)), timeout])

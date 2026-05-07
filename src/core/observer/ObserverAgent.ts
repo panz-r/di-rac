@@ -3,7 +3,8 @@ import type { ObserverConfig, ObservationType } from "./ObserverConfig"
 import { 
     OBSERVER_SUMMARIZER_PROMPT, 
     OBSERVER_WATCHER_PROMPT, 
-    OBSERVER_FILTER_PROMPT 
+    OBSERVER_FILTER_PROMPT,
+    OBSERVER_CRITIC_PROMPT
 } from "./ObserverConfig"
 import type { StateManager } from "@core/storage/StateManager"
 import { formatContentBlockToMarkdown } from "@integrations/misc/export-markdown"
@@ -49,6 +50,7 @@ export class ObserverAgent {
 		let systemPrompt = OBSERVER_SUMMARIZER_PROMPT
 		if (type === "watcher") systemPrompt = OBSERVER_WATCHER_PROMPT
 		else if (type === "filter") systemPrompt = OBSERVER_FILTER_PROMPT
+		else if (type === "critic") systemPrompt = OBSERVER_CRITIC_PROMPT
 
 		const observerMessages: DiracStorageMessage[] = [
 			{ role: "user", content: serialized, ts: Date.now() },

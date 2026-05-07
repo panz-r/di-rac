@@ -1000,6 +1000,21 @@ export class Task {
 			if (result.watcherInsights) {
 				enrichedSystemPrompt += "\n\n---\n\n# OBSERVER FEEDBACK (Background Monitoring)\n\n" + result.watcherInsights
 			}
+
+            // Interrupt/Pivot Logic
+            if (result.criticAction && result.criticAction !== "CONTINUE") {
+                await this.say("info", `observer triggered ${result.criticAction}: ${result.interruptReason?.slice(0, 100)}...`)
+                
+                if (result.criticAction === "REFLECT") {
+                    // Trigger reflection pass
+                    const reflection = await this.observerOrchestrator.recall(result.interruptReason || "Dead-end detection")
+                    enrichedSystemPrompt += `\n\n---\n\n# OBSERVER REFLECTION (Action Required)\n\nYou have been stuck. The observer suggests: ${reflection}\nPivot your strategy immediately.`
+                } else if (result.criticAction === "RESTART") {
+                    // Start fresh (conceptually, we just add a very strong directive)
+                    enrichedSystemPrompt += `\n\n---\n\n# OBSERVER RESTART (High Priority)\n\nAbandon your current approach. It has been flagged as a terminal dead-end. Start from first principles using the orientations from the repo tool.`
+                }
+            }
+
 			if (result.removedCount > 0) {
 				await this.say("info", `observer compressed ${result.removedCount} messages into observations (${originalCount} → ${messagesForContext.length})`)
 			}

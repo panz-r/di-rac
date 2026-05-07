@@ -53,6 +53,7 @@ interface TaskOptions {
 	observeProvider?: string
 	observeModel?: string
 	observerTurns?: string
+	observerCriticFrequency?: string
 	observeBlockAfter?: string
 }
 
@@ -401,6 +402,10 @@ async function applyTaskOptions(options: TaskOptions): Promise<void> {
 		if (options.observerTurns) {
 			const turns = parseInt(options.observerTurns)
 			if (!isNaN(turns)) stateManager.setSessionOverride("observerTurns", turns)
+		}
+		if (options.observerCriticFrequency) {
+			const turns = parseInt(options.observerCriticFrequency)
+			if (!isNaN(turns)) stateManager.setSessionOverride("observerCriticFrequency", turns)
 		}
 		if (options.observeBlockAfter) {
 			const ratio = parseFloat(options.observeBlockAfter)
@@ -1224,6 +1229,7 @@ program
 	.option("--observe-provider <provider>", "Observer API provider (requires --observe)")
 	.option("--observe-model <model>", "Observer model ID (requires --observe)")
 	.option("--observer-turns <n>", "Frequency of observer runs in turns (default: 2)")
+	.option("--observer-critic-freq <n>", "Frequency of deep critic evaluation in turns (default: 6)")
 	.option("--observe-block-after <ratio>", "Context ratio to trigger synchronous compression (default: 0.7)")
 	.option("-T, --taskId <id>", "Resume an existing task by ID")
 	.action((prompt, options) => {
@@ -1462,6 +1468,7 @@ program
 	.option("--observe-provider <provider>", "Observer API provider (requires --observe)")
 	.option("--observe-model <model>", "Observer model ID (requires --observe)")
 	.option("--observer-turns <n>", "Frequency of observer runs in turns (default: 2)")
+	.option("--observer-critic-freq <n>", "Frequency of deep critic evaluation in turns (default: 6)")
 	.option("--observe-block-after <ratio>", "Context ratio to trigger synchronous compression (default: 0.7)")
 	.option("--kanban", "Run npx kanban --agent dirac")
 	.option("-T, --taskId <id>", "Resume an existing task by ID")
