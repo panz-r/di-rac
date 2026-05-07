@@ -8,9 +8,10 @@ import type {
     EnvServiceClientInterface,
     WindowServiceClientInterface,
     WorkspaceServiceClientInterface,
-} from "@generated/hosts/host-bridge-client-types"
-import type { HostBridgeClientProvider, StreamingCallbacks } from "@hosts/host-provider-types"
-import * as proto from "@shared/proto/index"
+    HostBridgeClientProvider,
+    StreamingCallbacks,
+} from "../proto/host"
+import * as proto from "../proto/index"
 import { StateManager } from "@/core/storage/StateManager"
 import { version as CLI_VERSION } from "../../../package.json"
 import { printError, printInfo, printWarning } from "../utils/display"

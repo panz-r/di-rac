@@ -3,8 +3,7 @@
  * Shows task history with search and keyboard navigation
  */
 
-import { StringRequest } from "@shared/proto/dirac/common"
-import { GetTaskHistoryRequest } from "@shared/proto/dirac/task"
+import { StringRequest, GetTaskHistoryRequest } from "../proto/dirac"
 import { Box, Text, useInput } from "ink"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import type { Controller } from "@/core/controller"

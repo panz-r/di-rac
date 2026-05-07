@@ -12,7 +12,7 @@
 // Console output is intentional here for plain text mode
 
 import type { DiracMessage, ExtensionState } from "@shared/ExtensionMessage"
-import { StringRequest } from "@shared/proto/dirac/common"
+import { StringRequest } from "../proto/dirac"
 import type { Controller } from "@/core/controller"
 import { getRequestRegistry } from "@/core/controller/grpc-handler"
 import { subscribeToState } from "@/core/controller/state/subscribeToState"

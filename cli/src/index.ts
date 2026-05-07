@@ -791,7 +791,7 @@ async function initializeCli(options: InitOptions): Promise<CliContext> {
 		() => new FileEditProvider(),
 		() => new CliCommentReviewController(),
 		() => new StandaloneTerminalManager(),
-		createCliHostBridgeProvider(workspacePath),
+		createCliHostBridgeProvider(workspacePath) as any,
 		logToChannel,
 		async (_path: string) => "",
 		getCliBinaryPath,

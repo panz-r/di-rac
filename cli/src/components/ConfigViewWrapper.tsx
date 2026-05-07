@@ -6,7 +6,7 @@ import { exec } from "node:child_process"
 import os from "node:os"
 import path from "node:path"
 
-import { RuleScope } from "@shared/proto/dirac/file"
+import { RuleScope } from "../proto/dirac"
 import type { GlobalStateAndSettings, GlobalStateAndSettingsKey, LocalState, LocalStateKey } from "@shared/storage/state-keys"
 import React, { useCallback, useEffect, useState } from "react"
 
