@@ -188,7 +188,6 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 						Options: []SelectOption{
 							{Value: "", Label: "Default"},
 							{Value: "json_object", Label: "JSON"},
-							{Value: "json_schema", Label: "JSON Schema"},
 						},
 						Description: "Force structured output format.",
 					},
@@ -486,8 +485,8 @@ func (h *OpenRouterHandler) ValidateSettings(settings map[string]interface{}, th
 
 		switch s.Key {
 		case "response_format":
-			if rf, ok := val.(string); ok && rf != "" && rf != "json_object" && rf != "json_schema" {
-				v.Error = "Must be 'json_object', 'json_schema', or empty"
+			if rf, ok := val.(string); ok && rf != "" && rf != "json_object" {
+				v.Error = "Must be 'json_object' or empty"
 				v.Value = ""
 			}
 		case "service_tier":

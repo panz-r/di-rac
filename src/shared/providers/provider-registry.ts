@@ -224,6 +224,16 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		label: "BytePlus Coding Plan",
 		apiKeyFields: "byteplusApiKey",
 	},
+	{
+		providerId: "openai_codex",
+		label: "OpenAI Codex",
+		defaultModelId: "gpt-5.3-codex",
+		isConfiguredOverride: () => {
+			// Codex uses OAuth — always show as available in the picker.
+			// Actual auth status is checked by the gateway at request time.
+			return true
+		},
+	},
 ]
 
 // ---------------------------------------------------------------------------

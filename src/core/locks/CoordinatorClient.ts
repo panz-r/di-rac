@@ -128,11 +128,7 @@ export class CoordinatorClient extends EventEmitter {
 	 * @returns true if acquired, false if denied or timeout.
 	 */
 	async acquire(path: string, wait: boolean, timeoutMs = 30000): Promise<boolean> {
-		try {
-			await this.connect()
-		} catch (e) {
-			return false
-		}
+		await this.connect()
 
 		return new Promise((resolve) => {
 			const timeout = setTimeout(() => {

@@ -271,6 +271,11 @@ function createHandlerForProvider(
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				settings: providerSettings,
 			})
+		case "openai_codex":
+			return gatewayHandler("openai_codex", {
+				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
+			})
 		case "api-gateway": {
 			const gwModel = mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId
 			const gwModelInfo = resolveModelInfo(gwModel)

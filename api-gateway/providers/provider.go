@@ -489,6 +489,7 @@ func (r *Registry) registerProviders() {
 	r.Register("kilocode", NewKiloCodeHandler(), ProviderMeta{ID: "kilocode", Label: "KiloCode"})
 	r.Register("byteplus", NewBytePlusHandler(), ProviderMeta{ID: "byteplus", Label: "BytePlus"})
 	r.Register("byteplus_coding_plan", NewBytePlusCodingPlanHandler(), ProviderMeta{ID: "byteplus_coding_plan", Label: "BytePlus Coding Plan"})
+	r.Register("openai_codex", NewOpenAICodexHandler(), ProviderMeta{ID: "openai_codex", Label: "OpenAI Codex"})
 }
 
 // ValidateRequest validates a request before processing

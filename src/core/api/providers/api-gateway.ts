@@ -758,6 +758,107 @@ export function queryModelInfo(
 	}).then((r) => r?.model ?? null)
 }
 
+// --- Codex OAuth ---
+
+export interface CodexLoginStatus {
+	type: "codex-login-status"
+	status: "success" | "error" | "authenticated" | "not_authenticated"
+	message?: string
+	account_id?: string
+}
+
+export interface CodexDeviceCode {
+	type: "codex-login-device"
+	verification_url: string
+	user_code: string
+	expires_at: number
+	interval: number
+}
+
+export function codexLogin(socketPath?: string): Promise<CodexLoginStatus> {
+	// Browser OAuth flow can take minutes — use 5 minute timeout
+	return codexLongQuery<CodexLoginStatus>(socketPath, { type: "codex-login" }, 300_000)
+}
+
+export function codexLoginDevice(socketPath?: string): Promise<CodexDeviceCode> {
+	return codexLongQuery<CodexDeviceCode>(socketPath, { type: "codex-login-device" }, 10_000)
+}
+
+export function codexLoginStatus(socketPath?: string): Promise<CodexLoginStatus> {
+	return codexLongQuery<CodexLoginStatus>(socketPath, { type: "codex-login-status" }, 5000)
+}
+
+function codexLongQuery<T>(socketPath: string | undefined, request: Record<string, unknown>, timeoutMs: number): Promise<T> {
+	const sock = socketPath || process.env.DIRAC_API_GATEWAY_SOCKET || SOCKET_PATH
+	return new Promise((resolve, reject) => {
+		const resolved = resolveSocketPath(sock)
+		if (!resolved) {
+			reject(new Error("Gateway socket not found"))
+			return
+		}
+		const socket = new net.Socket()
+		const timeout = setTimeout(() => {
+			socket.destroy()
+			reject(new Error("Codex login timed out"))
+		}, timeoutMs)
+
+		let buffer = ""
+		let resolved_ = false
+		socket.connect(resolved, () => {
+			clearTimeout(timeout)
+			socket.write(JSON.stringify(request) + "\n")
+			// Set a longer idle timeout after connecting
+			socket.setTimeout(timeoutMs)
+		})
+
+		socket.on("data", (data) => {
+			buffer += data.toString()
+			const lines = buffer.split("\n")
+			buffer = lines.pop() || ""
+			for (const line of lines) {
+				if (!line.trim()) continue
+				try {
+					const resp = JSON.parse(line)
+					// The gateway sends codex-login-status as a body response
+					if (resp.body && resp.body.type === "codex-login-status") {
+						if (!resolved_) {
+							resolved_ = true
+							socket.destroy()
+							resolve(resp.body as T)
+							return
+						}
+					}
+					if (resp.error) {
+						if (!resolved_) {
+							resolved_ = true
+							socket.destroy()
+							reject(new Error(resp.error.message || "Login failed"))
+							return
+						}
+					}
+				} catch {
+					// skip
+				}
+			}
+		})
+
+		socket.on("timeout", () => {
+			if (!resolved_) {
+				resolved_ = true
+				socket.destroy()
+				reject(new Error("Codex login timed out"))
+			}
+		})
+
+		socket.on("error", (err) => {
+			if (!resolved_) {
+				resolved_ = true
+				reject(err)
+			}
+		})
+	})
+}
+
 export function createApiGatewayHandler(
 	providerId: string,
 	options: {

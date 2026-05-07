@@ -30,6 +30,7 @@ export type ApiProvider =
 	| "kilocode"
 	| "byteplus"
 	| "byteplus_coding_plan"
+	| "openai_codex"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
 	"anthropic",
@@ -60,6 +61,7 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"kilocode",
 	"byteplus",
 	"byteplus_coding_plan",
+	"openai_codex",
 ]
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider

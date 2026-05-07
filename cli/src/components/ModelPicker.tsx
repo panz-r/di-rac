@@ -4,10 +4,10 @@
  * Tab on a model field opens this picker; Enter opens inline text editor.
  */
 
-import { Box, Text } from "ink"
+import { Box, Text, useInput } from "ink"
 import Spinner from "ink-spinner"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
-import { queryModels } from "@/core/api/providers/api-gateway"
+import { queryModels, codexLogin, codexLoginStatus } from "@/core/api/providers/api-gateway"
 import { getProviderDefaultModelId } from "../utils/providers"
 import { COLORS } from "../constants/colors"
 import { SearchableList, SearchableListItem } from "./SearchableList"
@@ -66,6 +66,32 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, 
 	const [isLoading, setIsLoading] = useState(true)
 	const [gatewayModels, setGatewayModels] = useState<string[] | null>(null)
 	const [diagnostic, setDiagnostic] = useState<string | null>(null)
+	const [isLoggingIn, setIsLoggingIn] = useState(false)
+
+	// Handle Enter key for codex sign-in
+	useInput((_input, key) => {
+		if (provider === "openai_codex" && !isLoading && !isLoggingIn && (gatewayModels === null || gatewayModels.length === 0)) {
+			if (key.return) {
+				setIsLoggingIn(true)
+				codexLogin()
+					.then((result) => {
+						if (result.status === "success") {
+							// Re-fetch models after login
+							gatewayModelsCache.delete(provider)
+							setIsLoading(true)
+							setGatewayModels(null)
+							setDiagnostic(null)
+						} else {
+							setDiagnostic(result.message || "Login failed")
+						}
+					})
+					.catch((err) => {
+						setDiagnostic(err?.message || "Login error")
+					})
+					.finally(() => setIsLoggingIn(false))
+			}
+		}
+	})
 
 	useEffect(() => {
 		// Check cache first
@@ -150,6 +176,25 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, 
 	}
 
 	if (modelList.length === 0) {
+		if (provider === "openai_codex") {
+			if (isLoggingIn) {
+				return (
+					<Box>
+						<Text color={COLORS.primaryBlue}>
+							<Spinner type="dots" />
+						</Text>
+						<Text color="gray"> Waiting for browser sign-in...</Text>
+					</Box>
+				)
+			}
+			return (
+				<Box flexDirection="column">
+					<Text color="yellow">Not signed in to OpenAI Codex.</Text>
+					<Text color="gray">Press Enter to open browser sign-in, or Esc to cancel.</Text>
+					{diagnostic && <Text color="red">{diagnostic}</Text>}
+				</Box>
+			)
+		}
 		return (
 			<Box flexDirection="column">
 				<Text color="gray">No models available.</Text>

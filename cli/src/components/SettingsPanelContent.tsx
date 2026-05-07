@@ -13,7 +13,8 @@ import { Box, Text, useInput } from "ink"
 import Spinner from "ink-spinner"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import { buildApiHandler } from "@/core/api"
-import { queryProviderInfo, queryValidateSettings, type ProviderInfo, type ProviderSetting, type ValidateSettingsResult } from "@/core/api/providers/api-gateway"
+import { queryProviderInfo, queryValidateSettings, codexLoginStatus, codexLogin, type ProviderInfo, type ProviderSetting, type ValidateSettingsResult } from "@/core/api/providers/api-gateway"
+import { Logger } from "@/shared/services/Logger"
 import { getProviderSetting, setProviderSetting, type SettingScope } from "@shared/storage/provider-settings"
 import type { Controller } from "@/core/controller"
 import { StateManager } from "@/core/storage/StateManager"
@@ -280,6 +281,8 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 	const [isEnteringApiKey, setIsEnteringApiKey] = useState(false)
 	const [pendingProvider, setPendingProvider] = useState<string | null>(null)
 	const [isConfiguringBedrock, setIsConfiguringBedrock] = useState(false)
+	const [isCodexOAuth, setIsCodexOAuth] = useState(false)
+	const [codexOAuthStatus, setCodexOAuthStatus] = useState<string | null>(null)
 	const [apiKeyValue, setApiKeyValue] = useState("")
 	const [editValue, setEditValue] = useState("")
 
@@ -970,48 +973,103 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 		[stateManager],
 	)
 
-	const handleProviderSelect = useCallback(
-		async (providerId: string) => {
-			const role = configuringRole || undefined
+		const handleProviderSelect = useCallback(
+			async (providerId: string) => {
+				const role = configuringRole || undefined
 
-			// Special handling for Bedrock - needs multi-field configuration
-			if (providerId === "bedrock") {
-				setPendingProvider(providerId)
-				setIsPickingProvider(false)
-				setIsConfiguringBedrock(true)
-				return
-			}
+				// Special handling for Bedrock - needs multi-field configuration
+				if (providerId === "bedrock") {
+					setPendingProvider(providerId)
+					setIsPickingProvider(false)
+					setIsConfiguringBedrock(true)
+					return
+				}
 
-			// Check if this provider needs an API key
-			const keyField = ProviderToApiKeyMap[providerId as ApiProvider]
-			if (keyField) {
-				const apiConfig = stateManager.getApiConfiguration()
-				const fieldName = Array.isArray(keyField) ? keyField[0] : keyField
-				const existingKey = (apiConfig as Record<string, string>)[fieldName] || ""
-				if (existingKey) {
-					// Key already configured — just apply provider for this role
-					await applyProviderConfig({ providerId, role, controller })
+				// Special handling for OpenAI Codex — OAuth-based, no API key
+				if (providerId === "openai_codex") {
+					setIsPickingProvider(false)
+					setCodexOAuthStatus("Checking authentication...")
+					setIsCodexOAuth(true)
+					try {
+						const status = await codexLoginStatus()
+						if (status?.status === "authenticated") {
+							// Already signed in — apply provider directly
+							try {
+								await applyProviderConfig({ providerId, role, controller })
+							} catch (err) {
+								Logger.error("[Settings]", `applyProviderConfig failed for ${providerId}:`, err)
+							}
+							setProvider(providerId)
+							refreshModelIds()
+							setIsCodexOAuth(false)
+							setConfiguringRole(null)
+							return
+						}
+					} catch {
+						// Gateway not available — fall through to OAuth prompt
+					}
+					// Not authenticated — start browser OAuth flow
+					setCodexOAuthStatus("Opening browser for sign-in...")
+					try {
+						const result = await codexLogin()
+						if (result?.status === "success") {
+							setCodexOAuthStatus("Sign-in successful!")
+							try {
+								await applyProviderConfig({ providerId, role, controller })
+							} catch (err) {
+								Logger.error("[Settings]", `applyProviderConfig failed for ${providerId}:`, err)
+							}
+							setProvider(providerId)
+							refreshModelIds()
+							setIsCodexOAuth(false)
+							setConfiguringRole(null)
+						} else {
+							setCodexOAuthStatus(result?.message || "Sign-in failed. Press Esc to cancel.")
+						}
+					} catch (err: any) {
+						setCodexOAuthStatus(err?.message || "Sign-in error. Press Esc to cancel.")
+					}
+					return
+				}
+
+				// Check if this provider needs an API key
+				const keyField = ProviderToApiKeyMap[providerId as ApiProvider]
+				if (keyField) {
+					const apiConfig = stateManager.getApiConfiguration()
+					const fieldName = Array.isArray(keyField) ? keyField[0] : keyField
+					const existingKey = (apiConfig as Record<string, string>)[fieldName] || ""
+					if (existingKey) {
+						// Key already configured — just apply provider for this role
+						try {
+							await applyProviderConfig({ providerId, role, controller })
+						} catch (err) {
+							Logger.error("[Settings]", `applyProviderConfig failed for ${providerId}:`, err)
+						}
+						setProvider(providerId)
+						refreshModelIds()
+						setIsPickingProvider(false)
+						setConfiguringRole(null)
+					} else {
+						// Need to enter API key
+						setPendingProvider(providerId)
+						setApiKeyValue("")
+						setIsPickingProvider(false)
+						setIsEnteringApiKey(true)
+					}
+				} else {
+					try {
+						await applyProviderConfig({ providerId, role, controller })
+					} catch (err) {
+						Logger.error("[Settings]", `applyProviderConfig failed for ${providerId}:`, err)
+					}
 					setProvider(providerId)
 					refreshModelIds()
 					setIsPickingProvider(false)
 					setConfiguringRole(null)
-				} else {
-					// Need to enter API key
-					setPendingProvider(providerId)
-					setApiKeyValue("")
-					setIsPickingProvider(false)
-					setIsEnteringApiKey(true)
 				}
-			} else {
-				await applyProviderConfig({ providerId, role, controller })
-				setProvider(providerId)
-				refreshModelIds()
-				setIsPickingProvider(false)
-				setConfiguringRole(null)
-			}
-		},
-		[stateManager, controller, refreshModelIds, configuringRole],
-		)
+			},
+			[stateManager, controller, refreshModelIds, configuringRole],
+			)
 
 		// Handle Tab-to-edit on a configured provider in the picker
 		const handleProviderEdit = useCallback(
@@ -1025,10 +1083,13 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 					const existingKey = (apiConfig as Record<string, string>)[fieldName] || ""
 					setApiKeyValue(existingKey)
 					setIsEnteringApiKey(true)
+				} else {
+					// No API key needed — delegate to handleProviderSelect
+					handleProviderSelect(providerId)
 				}
 			},
-			[stateManager],
-		)
+			[stateManager, handleProviderSelect],
+			)
 
 	// Handle API key submission after provider selection
 	const handleApiKeySubmit = useCallback(
@@ -1181,6 +1242,16 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			}
 			// Organization picker mode - escape to close, input is handled by OrganizationPicker
 
+			// Codex OAuth flow - escape to cancel
+			if (isCodexOAuth) {
+				if (key.escape) {
+					setIsCodexOAuth(false)
+					setCodexOAuthStatus(null)
+					setConfiguringRole(null)
+				}
+				return
+			}
+
 			// Bedrock custom flow - input handled by BedrockCustomModelFlow component
 			if (isBedrockCustomFlow) {
 				return
@@ -1287,6 +1358,33 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			)
 		}
 
+
+		if (isCodexOAuth) {
+			const isComplete = codexOAuthStatus?.includes("successful")
+			const isError = codexOAuthStatus?.includes("failed") || codexOAuthStatus?.includes("error") || codexOAuthStatus?.includes("Esc")
+			return (
+				<Box flexDirection="column">
+					<Text bold color={COLORS.primaryBlue}>OpenAI Codex Sign-in</Text>
+					<Box marginTop={1}>
+						{!isComplete && !isError && (
+							<Box>
+								<Text color={COLORS.primaryBlue}><Spinner type="dots" /></Text>
+								<Text color="gray"> {codexOAuthStatus}</Text>
+							</Box>
+						)}
+						{isComplete && <Text color="green">{codexOAuthStatus}</Text>}
+						{isError && <Text color="red">{codexOAuthStatus}</Text>}
+					</Box>
+					<Box marginTop={1}>
+						<Text color="gray">
+							{isError
+								? "Press Esc to go back."
+								: "A browser window should open for ChatGPT sign-in. Complete sign-in there."}
+						</Text>
+					</Box>
+				</Box>
+			)
+		}
 
 		if (isPickingModel && (pickingModelKey || pickingModelRole)) {
 			let label: string

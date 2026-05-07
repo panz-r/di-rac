@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { queryProviderList, type ProviderMeta } from "@/core/api/providers/api-gateway"
-import { PROVIDER_LIST } from "@/shared/providers/provider-registry"
+import { PROVIDER_LIST, getProviderDefaultModelId as getRegistryDefaultModelId } from "@/shared/providers/provider-registry"
 
 // Create a lookup map from provider value to display label
 const providerLabels: Record<string, string> = Object.fromEntries(
@@ -46,7 +46,8 @@ export function getProviderDefaultModelId(providerId: string): string {
 		const meta = gatewayProvidersCache.find((p) => p.id === providerId)
 		if (meta?.default_model) return meta.default_model
 	}
-	return ""
+	// Fall back to static registry default (e.g. "gpt-5.3-codex" for openai_codex)
+	return getRegistryDefaultModelId(providerId as import("@shared/api").ApiProvider)
 }
 
 /**

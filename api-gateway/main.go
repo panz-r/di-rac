@@ -452,6 +452,99 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
+		// Handle codex-login (browser OAuth flow)
+		if typeCheck.Type == "codex-login" {
+			go func() {
+				tokens, err := codexStartOAuth(s.ctx)
+				if err != nil {
+					body, _ := json.Marshal(map[string]interface{}{
+						"type":    "codex-login-status",
+						"status":  "error",
+						"message": err.Error(),
+					})
+					w.write(&Response{ID: 0, Status: 200, Body: body})
+					return
+				}
+				if err := codexTokens.Save(tokens); err != nil {
+					body, _ := json.Marshal(map[string]interface{}{
+						"type":    "codex-login-status",
+						"status":  "error",
+						"message": fmt.Sprintf("save tokens: %v", err),
+					})
+					w.write(&Response{ID: 0, Status: 200, Body: body})
+					return
+				}
+				body, _ := json.Marshal(map[string]interface{}{
+					"type":       "codex-login-status",
+					"status":     "success",
+					"account_id": tokens.AccountID,
+				})
+				w.write(&Response{ID: 0, Status: 200, Body: body})
+			}()
+			continue
+		}
+
+		// Handle codex-login-device (headless device code flow)
+		if typeCheck.Type == "codex-login-device" {
+			dc, err := codexStartDeviceCode(s.ctx)
+			if err != nil {
+				w.write(&Response{ID: 0, Status: 500, Error: &ErrorDetail{Code: "OAUTH_ERROR", Message: err.Error()}})
+				continue
+			}
+			body, _ := json.Marshal(map[string]interface{}{
+				"type":             "codex-login-device",
+				"verification_url": dc.VerificationURL,
+				"user_code":        dc.UserCode,
+				"expires_at":       dc.ExpiresAt,
+				"interval":         dc.Interval,
+			})
+			w.write(&Response{ID: 0, Status: 200, Body: body})
+
+			// Poll in background
+			go func() {
+				tokens, err := codexPollDeviceCode(s.ctx, dc)
+				if err != nil {
+					body, _ := json.Marshal(map[string]interface{}{
+						"type":    "codex-login-status",
+						"status":  "error",
+						"message": err.Error(),
+					})
+					w.write(&Response{ID: 0, Status: 200, Body: body})
+					return
+				}
+				if err := codexTokens.Save(tokens); err != nil {
+					log.Printf("Warning: failed to save codex device tokens: %v", err)
+				}
+				body, _ := json.Marshal(map[string]interface{}{
+					"type":       "codex-login-status",
+					"status":     "success",
+					"account_id": tokens.AccountID,
+				})
+				w.write(&Response{ID: 0, Status: 200, Body: body})
+			}()
+			continue
+		}
+
+		// Handle codex-login-status (check if logged in)
+		if typeCheck.Type == "codex-login-status" {
+			tokens, err := codexTokens.Load()
+			if err != nil {
+				body, _ := json.Marshal(map[string]interface{}{
+					"type":   "codex-login-status",
+					"status": "not_authenticated",
+				})
+				w.write(&Response{ID: 0, Status: 200, Body: body})
+				continue
+			}
+			body, _ := json.Marshal(map[string]interface{}{
+				"type":       "codex-login-status",
+				"status":     "authenticated",
+				"account_id": tokens.AccountID,
+			})
+			w.write(&Response{ID: 0, Status: 200, Body: body})
+			continue
+		}
+
 		// Regular API request
 		var req Request
 		if err := json.Unmarshal(rawMsg, &req); err != nil {
@@ -515,6 +608,16 @@ func (s *Server) mergeProviderConfig(req *Request) {
 	if req.Provider.ID == "" {
 		return
 	}
+
+	// For codex provider, inject OAuth token if no API key is set
+	// This must run before the stored-config early return since openai_codex
+	// never has a stored config (it uses OAuth, not API keys).
+	if req.Provider.ID == "openai_codex" && req.Provider.APIKey == "" {
+		if token, err := codexTokens.GetValidToken(); err == nil {
+			req.Provider.APIKey = token
+		}
+	}
+
 	s.configMu.RLock()
 	stored, ok := s.providerConfigs[req.Provider.ID]
 	s.configMu.RUnlock()

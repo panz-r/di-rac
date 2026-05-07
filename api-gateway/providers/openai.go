@@ -112,6 +112,24 @@ func NewOpenAIHandler() *OpenAIHandler {
 						ValidRange: "0 – 20",
 					},
 					{
+						Key:         "seed",
+						Label:       "Seed",
+						Type:        SettingNumber,
+						Group:       "sampling",
+						Description: "Random seed for deterministic outputs.",
+					},
+					{
+						Key:   "response_format",
+						Label: "Response Format",
+						Type:  SettingSelect,
+						Group: "output",
+						Options: []SelectOption{
+							{Value: "", Label: "Default"},
+							{Value: "json_object", Label: "JSON"},
+						},
+						Description: "Force JSON output format.",
+					},
+					{
 						Key:         "stop",
 						Label:       "Stop Sequences",
 						Type:        SettingText,

@@ -43,13 +43,13 @@ export async function tryAcquireFolderLockWithRetry(
 	_config?: FolderLockRetryConfig,
 ): Promise<FolderLockWithRetryResult> {
 	try {
-		Logger.log(`Attempting to acquire folder lock for: ${options.lockTarget}`)
 		const client = getCoordinatorClient()
 		const acquired = await client.acquire(options.lockTarget, true)
 		return { acquired, skipped: false }
 	} catch (error) {
-		Logger.error("Error in folder lock acquisition:", error)
-		return { acquired: false }
+		// Daemon not running — skip locking (single-instance mode)
+		Logger.log("Coordinator daemon unavailable, skipping lock")
+		return { acquired: false, skipped: true }
 	}
 }
 
