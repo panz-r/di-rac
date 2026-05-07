@@ -69,6 +69,7 @@ import { Logger } from "@shared/services/Logger"
 import { Session } from "@shared/services/Session"
 import { DiracDefaultTool } from "@shared/tools"
 import { DiracAskResponse } from "@shared/WebviewMessage"
+import type { Mode } from "@shared/storage/types"
 import { isLocalModel, isParallelToolCallingEnabled } from "@utils/model-utils"
 import fs from "fs/promises"
 import Mutex from "p-mutex"
@@ -1227,7 +1228,7 @@ export class Task {
 		const modelInfo: DiracMessageModelInfo = {
 			modelId: model.id,
 			providerId: providerId,
-			mode: mode,
+			mode: mode as Mode,
 		}
 
 		const mistakeResult = await this.handleMistakeLimitReached(userContent)

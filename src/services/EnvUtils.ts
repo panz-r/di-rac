@@ -24,7 +24,7 @@ export function buildExternalBasicHeaders(): Record<string, string> {
 export async function buildBasicDiracHeaders(): Promise<Record<string, string>> {
 	const headers: Record<string, string> = buildExternalBasicHeaders()
 	try {
-		const host = await HostProvider.env.getHostVersion(EmptyRequest.create({}))
+		const host = await HostProvider.env.getHostVersion(EmptyRequest.create())
 		headers[DiracHeaders.PLATFORM] = host.platform || "unknown"
 		headers[DiracHeaders.PLATFORM_VERSION] = host.version || "unknown"
 		headers[DiracHeaders.CLIENT_TYPE] = host.diracType || "unknown"

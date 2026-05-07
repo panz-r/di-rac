@@ -4,6 +4,7 @@ import {
     type GlobalState,
     type GlobalStateAndSettings,
     type GlobalStateAndSettingsKey,
+    isGlobalStateKey,
     isSecretKey,
     isSettingsKey,
     type LocalState,
@@ -30,6 +31,7 @@ import {
 import { HistoryItem } from "@shared/HistoryItem"
 import { STATE_MANAGER_NOT_INITIALIZED } from "./error-messages"
 import { readGlobalStateFromStorage, readSecretsFromStorage, readWorkspaceStateFromStorage } from "./utils/state-helpers"
+import { CoordinatorClient } from "@/core/locks/CoordinatorClient"
 export interface PersistenceErrorEvent {
 	error: Error
 }
@@ -98,11 +100,12 @@ export class StateManager {
 	private async setupCoordinatorSync(): Promise<void> {
 		try {
 			this.coordinatorClient = CoordinatorClient.getInstance()
-			this.coordinatorClient.on("config_update", ({ path: updatePath, key, value }) => {
+			this.coordinatorClient.on("config_update", (msg: { path: string; key: string; value: string | undefined }) => {
+				const { path: updatePath, key, value } = msg
 				Logger.info(`[StateManager] Received daemon update: ${key}=${value} at ${updatePath}`)
 
-				let parsedValue = value
-				if (value !== "null" && value !== null) {
+				let parsedValue: unknown = value
+				if (typeof value === "string" && value !== "null") {
 					try {
 						parsedValue = JSON.parse(value)
 					} catch {
@@ -114,11 +117,11 @@ export class StateManager {
 
 				if (updatePath === "/") {
 					if (isSettingsKey(key) || isGlobalStateKey(key)) {
-						this.globalStateCache[key as any] = parsedValue
+						;(this.globalStateCache as Record<string, unknown>)[key] = parsedValue
 					}
 				} else if (updatePath.includes("/tasks/")) {
 					// Task settings
-					this.taskStateCache[key as any] = parsedValue
+					;(this.taskStateCache as Record<string, unknown>)[key] = parsedValue
 				}
 
 				void this.onSyncExternalChange?.()

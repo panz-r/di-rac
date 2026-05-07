@@ -858,6 +858,8 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			// Build a minimal BedrockConfig from current state for applyBedrockConfig
 			const bedrockConfig: BedrockConfig = {
 				awsAuthentication: "credentials",
+				awsRegion: "",
+				awsUseCrossRegionInference: false,
 			}
 
 			await applyBedrockConfig({

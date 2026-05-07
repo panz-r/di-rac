@@ -1,6 +1,8 @@
 // Barrel re-export for host proto types.
 
 export * from "./host/diff"
-export * from "./host/env"
 export * from "./host/window"
+export { EmptyRequest, Empty, Setting } from "./host/env"
+export { GetHostVersionResponse, GetTelemetrySettingsResponse, TelemetrySettingsEvent } from "./host/env"
+export type { Metadata } from "./host/diff"
 export * from "./host/workspace"

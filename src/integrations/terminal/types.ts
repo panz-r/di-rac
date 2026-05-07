@@ -236,6 +236,11 @@ export interface ITerminalManager {
 	 * @returns Processed output string
 	 */
 	processOutput(outputLines: string[], overrideLimit?: number): string
+
+	/**
+	 * Get the command client for this terminal manager.
+	 */
+	getCommandClient?(): import("@/services/command/CommandClient").CommandClient
 }
 
 /**

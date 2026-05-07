@@ -100,6 +100,7 @@ export async function getTaskHistory(controller: Controller, request: GetTaskHis
 			ts: item.ts,
 			isFavorited: item.isFavorited || false,
 			size: item.size || 0,
+			totalCost: 0,
 			tokensIn: item.tokensIn || 0,
 			tokensOut: item.tokensOut || 0,
 			cacheWrites: item.cacheWrites || 0,

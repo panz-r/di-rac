@@ -106,20 +106,40 @@ async getEnvironmentDetails(includeFileDetails = false): Promise<string> {
 	if (includeFileDetails) {
 		const MAX_RECENT_FILES = 10
 
+		// recentFilesSet will be empty since CommandClient doesn't expose recentFiles via inotify
+		// The inotify-based recent file detection is not implemented in the command daemon
+		const recentFilesSet = new Set<string>()
+
 		try {
-			const commandClient = this.terminalManager.getCommandClient()
+			let fileStats: { relativePath: string; mtime: Date; isTrulyRecent: boolean }[] = []
 
-			// 1. Get truly recent files via inotify
-			const recentResult = await commandClient.recentFiles()
-			const recentFilesSet = new Set(recentResult.files)
+			const commandClient = this.terminalManager.getCommandClient?.()
+			if (commandClient) {
+				// 2. Supplement with high-performance walk
+				const walkResult = await commandClient.walk(this.cwd)
+				fileStats = walkResult.files.map((f) => ({
+					relativePath: f.path,
+					mtime: new Date(f.mtime * 1000),
+					isTrulyRecent: recentFilesSet.has(f.path),
+				}))
+			} else {
+				// Fallback to slow walk if no command client
+				const gitIgnoredNames = await this.getGitIgnoredNames()
+				const ignoredDirs = new Set([...ALWAYS_IGNORED_DIRS, ...gitIgnoredNames])
 
-			// 2. Supplement with high-performance walk
-			const walkResult = await commandClient.walk(this.cwd)
-			const fileStats = walkResult.files.map((f) => ({
-				relativePath: f.path,
-				mtime: new Date(f.mtime * 1000),
-				isTrulyRecent: recentFilesSet.has(f.path),
-			}))
+				for await (const absPath of this.walkCodeFiles(this.cwd, ignoredDirs)) {
+					try {
+						const stat = await fs.stat(absPath)
+						fileStats.push({
+							relativePath: path.relative(this.cwd, absPath),
+							mtime: stat.mtime,
+							isTrulyRecent: false,
+						})
+					} catch {
+						// File removed between walk and stat — skip
+					}
+				}
+			}
 
 			fileStats.sort((a, b) => {
 				if (a.isTrulyRecent && !b.isTrulyRecent) return -1
@@ -139,33 +159,8 @@ async getEnvironmentDetails(includeFileDetails = false): Promise<string> {
 					details += `\n\n(* marked files were modified in the current session)`
 				}
 			}
-		} catch (error) {			Logger.error("EnvironmentManager", "Command-daemon walk failed, falling back to slow walk", error)
-			// Fallback to existing Node walk if needed
-			const gitIgnoredNames = await this.getGitIgnoredNames()
-			const ignoredDirs = new Set([...ALWAYS_IGNORED_DIRS, ...gitIgnoredNames])
-
-			const fileStats: { relativePath: string; mtime: Date }[] = []
-			for await (const absPath of this.walkCodeFiles(this.cwd, ignoredDirs)) {
-				try {
-					const stat = await fs.stat(absPath)
-					fileStats.push({
-						relativePath: path.relative(this.cwd, absPath),
-						mtime: stat.mtime,
-					})
-				} catch {
-					// File removed between walk and stat — skip
-				}
-			}
-
-			fileStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
-			const recent = fileStats.slice(0, MAX_RECENT_FILES)
-
-			if (recent.length > 0) {
-				details += `\n\n# Latest ${MAX_RECENT_FILES} edited files in this workspace`
-				for (const { relativePath, mtime } of recent) {
-					details += `\n${relativePath.toPosix()}  ${EnvironmentManager.relativeTime(mtime)}`
-				}
-			}
+		} catch (error) {
+			Logger.error("EnvironmentManager", "Command-daemon walk failed, falling back to slow walk", error)
 		}
 	}
 

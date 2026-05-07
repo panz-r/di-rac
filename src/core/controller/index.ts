@@ -643,6 +643,7 @@ export class Controller {
 			customPrompt,
 			taskHistory: processedTaskHistory,
 			shouldShowAnnouncement,
+			version: ExtensionRegistryInfo.version,
 			favoritedModelIds,
 			backgroundCommandRunning: this.backgroundCommandRunning,
 			backgroundCommandTaskId: this.backgroundCommandTaskId,

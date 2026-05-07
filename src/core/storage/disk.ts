@@ -287,7 +287,7 @@ export async function getTaskMetadata(taskId: string): Promise<TaskMetadata> {
 	} catch (error) {
 		Logger.error("Failed to read task metadata:", error)
 	}
-	return { files_in_context: [], model_usage: [], environment_history: [] }
+	return { files_in_context: [], model_usage: [] }
 }
 
 export async function saveTaskMetadata(taskId: string, metadata: TaskMetadata) {

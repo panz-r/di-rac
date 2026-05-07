@@ -82,6 +82,18 @@ export const toolParamNames = [
 	"max_results",
 	"kind",
 	"ranges",
+	// DiracOutputsToolHandler
+	"file",
+	"clear",
+	"list",
+	// DiracUndoToolHandler
+	"turn",
+	// Executor control params (used by ToolExecutorCoordinator)
+	"retry",
+	"dryRun",
+	"clarify",
+	"autoCorrect",
+	"verify",
 ] as const
 
 export type ToolParamName = (typeof toolParamNames)[number]

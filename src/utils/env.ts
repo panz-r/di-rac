@@ -25,7 +25,7 @@ export async function writeTextToClipboard(text: string): Promise<void> {
  */
 export async function readTextFromClipboard(): Promise<string> {
 	try {
-		const response = await HostProvider.env.clipboardReadText(EmptyRequest.create({}))
+		const response = await HostProvider.env.clipboardReadText(EmptyRequest.create())
 		return response.value
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : String(error)

@@ -40,7 +40,7 @@ export async function sendChatButtonClickedEvent(): Promise<void> {
 	// Send the event to all active subscribers
 	const promises = Array.from(activeChatButtonClickedSubscriptions).map(async (responseStream) => {
 		try {
-			const event = Empty.create({})
+			const event = Empty.create()
 			await responseStream(
 				event,
 				false, // Not the last message
