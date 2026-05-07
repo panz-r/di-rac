@@ -41,6 +41,16 @@ IndexDB* db_open(const char *path) {
         "  tokenize='trigram',"
         "  content_rowid='id'"
         ");"
+        "CREATE VIRTUAL TABLE IF NOT EXISTS critic_decisions_fts USING fts5("
+        "  decision_text, "
+        "  turn_number, "
+        "  confidence"
+        ");"
+        "CREATE VIRTUAL TABLE IF NOT EXISTS watcher_patterns_fts USING fts5("
+        "  pattern_text, "
+        "  file_hash, "
+        "  turn_number"
+        ");"
         "CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);"
         "CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);";
 
@@ -107,7 +117,7 @@ int db_invalidate_file(IndexDB *db, const char *path) {
 }
 
 int db_clear(IndexDB *db) {
-    sqlite3_exec(db->db, "DELETE FROM symbols; DELETE FROM files; DELETE FROM observer_logs; DELETE FROM observer_logs_fts;", NULL, NULL, NULL);
+    sqlite3_exec(db->db, "DELETE FROM symbols; DELETE FROM files; DELETE FROM observer_logs; DELETE FROM observer_logs_fts; DELETE FROM critic_decisions_fts; DELETE FROM watcher_patterns_fts;", NULL, NULL, NULL);
     return 0;
 }
 
@@ -155,6 +165,72 @@ void db_search_observations(IndexDB *db, const char *query, int limit, struct js
         jsonw_kv_str(w, "content", (const char*)sqlite3_column_text(stmt, 1));
         jsonw_kv_double(w, "timestamp", sqlite3_column_double(stmt, 2));
         jsonw_kv_int(w, "tokens", sqlite3_column_int(stmt, 3));
+        jsonw_object_close(w);
+    }
+    jsonw_array_close(w);
+    sqlite3_finalize(stmt);
+}
+
+int db_index_critic_decision(IndexDB *db, const char *text, int turn, double confidence) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db->db, "INSERT INTO critic_decisions_fts (decision_text, turn_number, confidence) VALUES (?, ?, ?)", -1, &stmt, NULL);
+    sqlite3_bind_text(stmt, 1, text, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, turn);
+    sqlite3_bind_double(stmt, 3, confidence);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+void db_search_critic_decisions(IndexDB *db, const char *query, int limit, struct jsonw *w) {
+    sqlite3_stmt *stmt;
+    const char *sql = "SELECT decision_text, turn_number, confidence FROM critic_decisions_fts WHERE critic_decisions_fts MATCH ? ORDER BY rank LIMIT ?";
+    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, limit);
+    jsonw_key(w, "results");
+    jsonw_array_open(w);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        jsonw_object_open(w);
+        jsonw_kv_str(w, "text", (const char*)sqlite3_column_text(stmt, 0));
+        jsonw_kv_int(w, "turn", sqlite3_column_int(stmt, 1));
+        jsonw_kv_double(w, "confidence", sqlite3_column_double(stmt, 2));
+        jsonw_object_close(w);
+    }
+    jsonw_array_close(w);
+    sqlite3_finalize(stmt);
+}
+
+int db_index_watcher_pattern(IndexDB *db, const char *text, const char *file_hash, int turn) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db->db, "INSERT INTO watcher_patterns_fts (pattern_text, file_hash, turn_number) VALUES (?, ?, ?)", -1, &stmt, NULL);
+    sqlite3_bind_text(stmt, 1, text, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, file_hash ? file_hash : "", -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 3, turn);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+void db_search_watcher_patterns(IndexDB *db, const char *query, int limit, struct jsonw *w) {
+    sqlite3_stmt *stmt;
+    const char *sql = "SELECT pattern_text, file_hash, turn_number FROM watcher_patterns_fts WHERE watcher_patterns_fts MATCH ? ORDER BY rank LIMIT ?";
+    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, limit);
+    jsonw_key(w, "results");
+    jsonw_array_open(w);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        jsonw_object_open(w);
+        jsonw_kv_str(w, "text", (const char*)sqlite3_column_text(stmt, 0));
+        jsonw_kv_str(w, "file_hash", (const char*)sqlite3_column_text(stmt, 1));
+        jsonw_kv_int(w, "turn", sqlite3_column_int(stmt, 2));
         jsonw_object_close(w);
     }
     jsonw_array_close(w);

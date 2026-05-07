@@ -613,6 +613,60 @@ export class AnalyzerClient {
 		}
 	}
 
+	async indexCriticDecision(text: string, turn: number, confidence: number): Promise<void> {
+		try {
+			await this.send({
+				command: "index-critic-decision",
+				content: text,
+				turn,
+				confidence,
+			})
+		} catch (e) {
+			Logger.warn("AnalyzerClient", `Failed to index critic decision: ${e}`)
+		}
+	}
+
+	async searchCriticDecisions(query: string, limit = 5): Promise<any[]> {
+		try {
+			const resp = await this.send({
+				command: "search-critic-decisions",
+				query,
+				limit,
+			})
+			return resp.results || []
+		} catch (e) {
+			Logger.warn("AnalyzerClient", `Failed to search critic decisions: ${e}`)
+			return []
+		}
+	}
+
+	async indexWatcherPattern(text: string, fileHash: string, turn: number): Promise<void> {
+		try {
+			await this.send({
+				command: "index-watcher-pattern",
+				content: text,
+				file_hash: fileHash,
+				turn,
+			})
+		} catch (e) {
+			Logger.warn("AnalyzerClient", `Failed to index watcher pattern: ${e}`)
+		}
+	}
+
+	async searchWatcherPatterns(query: string, limit = 5): Promise<any[]> {
+		try {
+			const resp = await this.send({
+				command: "search-watcher-patterns",
+				query,
+				limit,
+			})
+			return resp.results || []
+		} catch (e) {
+			Logger.warn("AnalyzerClient", `Failed to search watcher patterns: ${e}`)
+			return []
+		}
+	}
+
 	/** Convert daemon symbols to ParsedDefinition[] for backward compatibility */
 	static toParsedDefinitions(symbols: DaemonSymbol[], sourceLines?: string[]): ParsedDefinition[] {
 		return symbols.map((s) => ({

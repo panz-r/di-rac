@@ -24,6 +24,13 @@ interface ObserverCost {
     latencyMs: number
 }
 
+interface ActionFeatures {
+    file: string
+    op: string
+    lineRange: string
+    errorType: string | null
+}
+
 export class ObserverCostTracker {
     private costs: ObserverCost[] = []
 
@@ -53,8 +60,6 @@ export class ObserverCostTracker {
 
 /**
  * ObserverOrchestrator - Manages the multi-layer cognitive stack.
- * Layer 2: Watcher (S1) - Fast, heuristic, every turn.
- * Layer 3: Critic (S2) - Slow, deliberative, adaptive.
  */
 export class ObserverOrchestrator {
 	private store: ObservationStore
@@ -66,7 +71,7 @@ export class ObserverOrchestrator {
 	private _isEnabled: boolean
 	private config: ObserverConfig
 	consecutiveFailures = 0
-    consecutiveSuccesses = 0 // For adaptive scheduling
+    consecutiveSuccesses = 0
 	lastError: string | undefined
 
 	constructor(
@@ -133,24 +138,71 @@ export class ObserverOrchestrator {
 		return history.slice(sliceStart)
 	}
 
+    /**
+     * Compute Sliding Window Trajectory Entropy (SWTE).
+     * Measures the diversity of recent actions to distinguish exploration from stagnation.
+     */
+    private computeSWTE(history: DiracStorageMessage[], window: number = 6): { entropy: number; stagnation: boolean } {
+        if (history.length < window * 2) return { entropy: 1.0, stagnation: false }
+
+        const assistantMsgs = history.filter(m => m.role === "assistant").slice(-window)
+        const features: ActionFeatures[] = assistantMsgs.map(msg => {
+            const content = JSON.stringify(msg.content)
+            const toolMatch = content.match(/tool_code":\s*"([a-zA-Z0-9_]+)"/)
+            const fileMatch = content.match(/path":\s*"([^"]+)"/)
+            const lineMatch = content.match(/start_line":\s*([0-9]+)/)
+            
+            return {
+                file: fileMatch ? fileMatch[1] : "unknown",
+                op: toolMatch ? toolMatch[1] : "think",
+                lineRange: lineMatch ? lineMatch[1] : "0",
+                errorType: null // Error type is in the subsequent tool result message
+            }
+        })
+
+        // Pairwise Hamming diversity
+        let diversity = 0
+        let comparisons = 0
+        for (let i = 0; i < features.length; i++) {
+            for (let j = i + 1; j < features.length; j++) {
+                let dist = 0
+                if (features[i].file !== features[j].file) dist++
+                if (features[i].op !== features[j].op) dist++
+                if (features[i].lineRange !== features[j].lineRange) dist++
+                diversity += dist / 3
+                comparisons++
+            }
+        }
+
+        const entropy = comparisons > 0 ? diversity / comparisons : 0
+        const stagnation = entropy < 0.2
+        
+        return { entropy, stagnation }
+    }
+
 	/**
-	 * Turn complete hook. Implements adaptive scheduling (Semi-MDP lite).
+	 * Turn complete hook. Implements adaptive scheduling and SWTE.
 	 */
 	async onTurnComplete(history: DiracStorageMessage[]): Promise<void> {
 		if (!this._isEnabled) return
 
 		const lastMsg = history[history.length - 1]
 		const hasError = lastMsg?.content && JSON.stringify(lastMsg.content).includes("error")
+        const { entropy, stagnation } = this.computeSWTE(history)
 		
-        // ADAPTIVE SCHEDULING (System 1 control)
-        if (hasError) {
+        // ADAPTIVE SCHEDULING
+        if (hasError || stagnation) {
             this.consecutiveSuccesses = 0
-            // Run Watcher immediately on error
+            // Run Watcher immediately on error or stagnation
             this.triggerSpecializedObservation(history, "watcher")
+            
+            // If stagnation is severe, trigger Critic pass early
+            if (stagnation && history.length % 3 === 0) {
+                this.triggerSpecializedObservation(history, "critic")
+            }
         } else {
             this.consecutiveSuccesses++
-            // Heuristic: if doing well, back off. If failing, run more often.
-            const adaptiveFreq = this.consecutiveSuccesses > 3 ? this.config.observerTurns + 1 : this.config.observerTurns
+            const adaptiveFreq = this.consecutiveSuccesses > 3 ? this.config.observerTurns + 2 : this.config.observerTurns
             if (history.length % Math.min(adaptiveFreq, 10) === 0) {
                 this.triggerSpecializedObservation(history, "watcher")
             }
@@ -216,7 +268,7 @@ export class ObserverOrchestrator {
                 await analyzer.indexObservation("summary", observationText, entry.timestamp, tokenEstimate)
             }
 
-			Logger.debug(`[Observer:S2] SYNC compressed ${unobserved.length} messages (headroom: ${(1.0 - (this.config.blockAfter as number)).toFixed(2)})`)
+			Logger.debug(`[Observer:S2] SYNC compressed ${unobserved.length} messages (ratio: ${(tokenEstimate / this.config.tokenThreshold).toFixed(2)})`)
 		} catch (error) {
 			Logger.error("[Observer:S2] Sync compression failed:", error)
 			this.consecutiveFailures++
@@ -226,9 +278,10 @@ export class ObserverOrchestrator {
 	}
 
 	private triggerSpecializedObservation(history: DiracStorageMessage[], type: ObservationType, tokenEstimate?: number): void {
-		if (!this.agent || this.pendingTasks.size > 2) return
+		if (!this.agent || this.pendingTasks.size > 3) return
 
-		const unobserved = type === "summary" || type === "critic" ? this.getUnobservedMessages(history) : history.slice(-10)
+        // Pattern-aware context selection
+		const unobserved = type === "summary" || type === "critic" ? this.getUnobservedMessages(history) : history.slice(-12)
 		if (unobserved.length === 0) return
 
 		const sliceStart = Math.max(this.lastObservedMessageIndex, 2)
@@ -240,14 +293,9 @@ export class ObserverOrchestrator {
 			.then(async (text) => {
 				if (!text || text.includes("No alerts") || text.includes("Context clean")) return
 
-                // Parse confidence and action
                 let confidence = 1.0
                 const confMatch = text.match(/confidence:([0-9.]+)/)
                 if (confMatch) confidence = parseFloat(confMatch[1])
-
-                // "Whisper, not shout": Filter low confidence insights from context injection
-                // (They stay in the store for recall, but don't bother the actor)
-                const isHighConfidence = confidence >= this.config.confidenceThreshold
 
                 let criticAction: CriticAction | undefined
                 if (type === "critic") {
@@ -277,10 +325,12 @@ export class ObserverOrchestrator {
 
                 const analyzer = this.getAnalyzerClient?.()
                 if (analyzer) {
-                    await analyzer.indexObservation(type, text, entry.timestamp, entry.tokenEstimate)
+                    if (type === "critic") await analyzer.indexCriticDecision(text, history.length, confidence)
+                    else if (type === "watcher") await analyzer.indexWatcherPattern(text, "global", history.length)
+                    else await analyzer.indexObservation(type, text, entry.timestamp, entry.tokenEstimate)
                 }
 
-				Logger.debug(`[Observer:${type === "critic" ? "S2" : "S1"}] Finished ${type} observation (conf: ${confidence})`)
+				Logger.debug(`[Observer:${type === "critic" ? "S2" : "S1"}] Finished ${type} (conf: ${confidence})`)
 			})
 			.catch((error) => {
 				Logger.error(`[Observer] ${type} observation failed:`, error)
@@ -329,7 +379,7 @@ export class ObserverOrchestrator {
                 const latency = Date.now() - startTime
                 this.costTracker.add("reflection", entry.tokenEstimate, latency, 0)
 
-				Logger.debug(`[Observer:S2] Reflected observation log`)
+				Logger.debug(`[Observer:S2] Reflected working context`)
 			})
 			.catch((error) => {
 				Logger.error("[Observer:S2] Reflection failed:", error)
@@ -341,6 +391,12 @@ export class ObserverOrchestrator {
 		this.pendingTasks.add(promise)
 	}
 
+    /**
+     * Prepare context using the MEMORY PYRAMID pattern.
+     * Layer 0: Raw Recency (last 4K tokens) - S2 only.
+     * Layer 1: Working Set (last ~20 turns) - Both.
+     * Layer 2: Deep Compressed Log (Everything older) - S1 only.
+     */
 	prepareContext(history: DiracStorageMessage[]): PrepareContextResult {
 		if (!this._isEnabled) {
 			return { messages: history, observationBlock: "", watcherInsights: "", removedCount: 0 }
@@ -348,7 +404,6 @@ export class ObserverOrchestrator {
 
 		const observationBlock = this.store.buildObservationBlock("summary")
         
-        // Filter insights by confidence threshold for context injection
         const filterHighConf = (type: ObservationType) => {
             return this.store.getAllObservations()
                 .filter(e => e.type === type && (e.confidence ?? 1.0) >= this.config.confidenceThreshold)
@@ -371,15 +426,14 @@ export class ObserverOrchestrator {
         let interruptReason: string | undefined
         let criticAction: CriticAction | undefined
 
-        // Only act on high-confidence critic decisions
-        if (latestCritic && latestCritic.criticAction && latestCritic.criticAction !== "CONTINUE" && (latestCritic.confidence ?? 1.0) >= 0.8) {
+        if (latestCritic && latestCritic.criticAction && latestCritic.criticAction !== "CONTINUE" && (latestCritic.confidence ?? 1.0) >= 0.75) {
             interruptReason = latestCritic.observationText
             criticAction = latestCritic.criticAction
         }
 
 		if (observationBlock && this.lastObservedMessageIndex > 2) {
 			const slicedMessages = [
-				...history.slice(0, 2),
+				...history.slice(0, 2), // Keep system prompt and initial task
 				...history.slice(this.lastObservedMessageIndex),
 			]
 			const removedCount = history.length - slicedMessages.length
