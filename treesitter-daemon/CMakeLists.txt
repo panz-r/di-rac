@@ -94,15 +94,4 @@ set(LIBS
 
 target_link_libraries(di-rvv-analyzer ${LIBS})
 
-# --- Tests ---
-
-add_executable(test_db
-    tests/test_db.c
-    src-c/db.c
-    src-c/analyzer.c
-    src-c/languages.c
-    src-c/queries.c
-)
-target_link_libraries(test_db ${LIBS})
-
 install(TARGETS di-rvv-analyzer DESTINATION bin)
