@@ -11,6 +11,7 @@ export const list_skills: DiracToolSpec = {
 Usage: list_skills
 
 Response: OK | skills:N | <list> | tokens:N
+	After results: if a skill matches your task, use use_skill to activate it.
 
 No arguments required.`,
 	parameters: [

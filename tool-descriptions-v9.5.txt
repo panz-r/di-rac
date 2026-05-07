@@ -1,0 +1,408 @@
+========================================================================
+DI-RAC TOOL SYSTEM v9.5 — COMPLETE SPECIFICATION
+========================================================================
+
+CENTRALIZED RESPONSE FORMAT & HINTS
+----------------------------------------
+RESPONSE FORMAT
+	Parse: split header on " | ". First token = status (OK/ERROR/TRUNCATED/EMPTY). Remaining = key:value pairs (tokens:45, hint:guidance). Extract hint: value up to next " | " or EOL. Multi-line content follows header; lines:N = content line count.
+	OK | tokens:N | lines:N | cached:yes | cumulative:N — hint: provides next-step guidance. Use cumulative to budget context.
+	ERROR | code | message | hint:guidance | tokens:N — common codes: blocked (safety), timeout (retry narrower), not_found (check path), permission_denied.
+	TRUNCATED | lines:N | hint:use --range/--detail | tokens:N — content follows, truncated.
+	EMPTY | hint:suggestion | tokens:N
+
+	HINT examples by context:
+	After read --detail outline → "Use --section fn:Name to jump to symbol body"
+	After read truncated → "Use --range or redirect to file"
+	After search 0 matches → "Broaden pattern, try symbols, or check path"
+	After search many matches → "Narrow with path or --context 0"
+	After bash timed_out → "Use --timeout N for slow commands"
+	After bash blocked → "Check hint for allowed alternative"
+	After edit anchor not found → "Re-read file to get current anchors"
+	After edit applied → "run tests or read the changed section to verify"
+	After symbols no matches → "Try without --kind or use search"
+	After repo --detail files → "read --detail outline on specific files to explore"
+	After write created → "read the file back to verify, or edit for refinements"
+	After web_search results → "web_fetch the most relevant URL for details"
+	After browser launch → "screenshot first, then click or type"
+	After recall → "verify past observations against current code before acting"
+	After use_subagents results → "pick best result, don't try to combine all"
+
+	BUDGET AWARENESS
+The header line includes cumulative:N (total tokens so far) and tokens:N (this response). If cumulative approaches your context limit, prefer targeted reads (--detail skeleton, --range). Cached reads (cached:yes) cost nothing.
+
+	ERROR RECOVERY
+On ERROR: parse error code → read hint: for fix → verify fix is actionable → retry ONCE with narrowed scope or corrected params → if second attempt fails, escalate to user or try an alternative tool. Do not retry blindly — unbounded retries risk introducing new errors.
+
+	CONTEXT MANAGEMENT
+After extracting facts from large outputs, discard what you don't need:
+- After read: keep only relevant handles/anchors. Forget full content.
+- After search: keep only chosen file:line pairs. Forget unmatched results.
+- After bash: keep only exit code + key output. Forget full stdout/stderr.
+- After repo: keep only target file paths. Forget full listing.
+If cumulative:N > 80% of context: prefer --range, --context 0, or compact.
+
+DECISION RULES
+- Transient error (timeout, file busy) → --retry 3
+- Blocked command → read hint for alternatives, adjust and retry
+- Stuck after retry → use task to start fresh with new context
+- Multiple matches or unclear intent → use ask --options
+
+
+========================================================================
+TOOL DESCRIPTIONS
+========================================================================
+
+--- File Operations ---
+
+## edit
+----------------------------------------
+Edit files using hash-anchored line references. Don't rewrite entire files — use targeted anchors. Don't edit without first reading anchors (e.g. "a3|def foo():"). Types: replace (anchor to end-anchor), insert_after, insert_before.
+
+Example: edit src/auth.ts --anchor "a3|def login():" --end-anchor "k7|  pass" --content "def login():\
+  ..."
+
+Chain: edit a.ts --anchor 'a3|...' --content '...'; edit b.ts --anchor 'b2|...' --content '...'
+Anchor format: hash|content (e.g. "a3|def foo():"). Use read --detail outline or symbols search to get anchors before editing. Response: OK | edits:N | tokens:N. Diffs follow. Verify with read after editing.
+Fails when: anchor not found (file changed since last read), end-anchor before start-anchor.
+If fails: re-read the file to get current anchors, then retry. Use --dry-run to preview changes.
+Don't use for: creating new files (use write), reading content (use read).
+Good: diff shows expected changes applied. Bad: anchor not found (re-read file for current anchors), wrong lines (check anchor placement).
+Output example: OK | edits:1 | tokens:12  - a3|old line  + new line
+Universal flags: --dry-run (edit temp file, show diff), --retry N.
+Typical: edit src/file.ts --anchor 'a3|def foo' --content 'new body'
+
+## read
+----------------------------------------
+Read files with detail levels: hint (kind+name only), preview (auto for large files), outline (defs with handles like fn:Name), skeleton (signatures only), full. Use --section fn:Name to jump to a symbol. Use --detail outline before --detail full for large files.
+
+Example: read src/auth.ts --detail outline
+
+Response: OK | detail:<level> | handles:N | lines:N | tokens:N. Content follows. Handles like fn:Name work with --section.
+Note: --detail full auto-downgrades to preview for files over 50KB. Repeated reads at same detail are cached.
+Fails when: file >50KB auto-downgrades, binary files show minimal content, --section not found (returns warning).
+If fails: for large files use --detail outline first then --section or --range. For binary use bash file.
+After results: if outline, use --section fn:Name to jump to body. If preview, use --range for specific lines.
+Good: symbols visible, content at expected line, hash anchors stable. Bad: auto-downgraded (file too large, use --range), binary (use bash), section not found (use outline).
+Don't use for: searching patterns (use search), code structure across files (use symbols or repo).
+Output example (outline): OK | detail:outline | handles:3 | lines:42 | tokens:120
+  fn:login (line 42)  fn:logout (line 58)  class:AuthService (line 10)
+Typical: read src/file.ts --detail outline
+
+## write
+----------------------------------------
+Create or overwrite a file. Auto-creates parent directories.
+
+Example: write src/new.ts --content "export function foo() { ... }"
+
+Chain: write a.ts --content '...'; write b.ts --content '...'
+Response: OK | lines:N | path:<path> | tokens:N
+Fails when: path is a directory, content missing, disk full.
+If fails: verify path is a file (not dir), ensure --content is provided, check disk space.
+After results: read the file to verify content, or use edit for targeted refinements.
+Good: file created/overwritten with expected content. Bad: directory path (specify a file), missing content (ensure --content is set).
+Don't use for: editing existing files (use edit), reading content (use read).
+Output example: OK | lines:5 | path:src/new.ts | tokens:20
+Universal flags: --dry-run (write to temp file, show diff), --retry N.
+Typical: write src/new.ts --content 'export const X = ...'
+
+--- Code Analysis ---
+
+## symbols
+----------------------------------------
+Perform AST symbol operations: search definitions, replace bodies, rename across files, find references. For text/regex patterns, use search instead. For reading file content, use read --detail outline --section fn:Name.
+
+Subcommands:
+  search --name PATTERN [--kind function|class]    Find definitions
+  replace --name SYMBOL --text CODE                Replace definition body
+  rename --old NAME --new NAME                     Rename across files
+  refs --name SYMBOL                               Find all references
+
+Example: symbols search src/ --name AuthService --kind class
+
+Response: OK | matches:N | hint:Try --kind function/class or different name | tokens:N
+Fails when: no matches (typo, wrong --kind), file type not supported by tree-sitter.
+If fails: try without --kind, use search for text patterns, check file extension support.
+After results: use read --section <handle> to see full body. Use refs to find usages.
+Good: definitions found with types and signatures. Bad: no matches (try without --kind or use search), unsupported file type (check extension).
+Don't use for: text/regex patterns across files (use search), file overview (use repo).
+Output example: OK | matches:2 | tokens:35
+  src/auth.ts:10 class AuthService (fn:login, fn:logout)
+  src/auth.ts:42 fn login()
+Universal flags: --dry-run (preview changes without applying), --retry N.
+Typical: symbols search src/ --name AuthService --kind class
+
+--- Search ---
+
+## search
+----------------------------------------
+Search files with regex patterns. Skips .git, node_modules, build/, binaries. Returns first 30 matches with file, line, and context. Use for text patterns, config values, comments.
+
+Example: search --pattern "TODO|FIXME" --context 2
+
+Response: OK | matches:N | files:N | hint:refinements | tokens:N
+  Matches follow: file:line:context (one per line, max 30).
+Note: path is optional (defaults to cwd). --context 0-5. Results auto-truncated at 30 matches; narrow your pattern or path if partial.
+Fails when: 0 matches (pattern too specific or wrong path), 100+ matches (too broad).
+If fails: broaden pattern with .*, narrow with path, or try symbols search for code structure.
+After results: read the specific file:line from matches. If too many, narrow path or pattern.
+Good: 3-30 matches with files in repo, context shows pattern. Bad: 0 matches (broaden pattern), 100+ (narrow with path).
+Don't use for: code navigation (use symbols), full-file content (use read).
+Output example: OK | matches:3 | files:2 | tokens:45
+  src/auth.ts:42:  // TODO: Refresh token
+  src/auth.ts:156: // FIXME: Add rate limit
+  config/api.env:2: TODO=remove_from_git
+Tip: too many matches? Narrow with path or --context 0.
+Typical: search --pattern 'TODO|FIXME'
+
+--- Execution ---
+
+## bash
+----------------------------------------
+Execute shell commands. Composition (pipes, &&, ||) is encouraged to minimize round-trips. Use heredocs for multi-line scripts. Dangerous commands (recursive deletes, reverse shells) are blocked; blocked will name the pattern. Don't edit files with bash — use edit. Don't read files — use read.
+
+Example: bash "npm test && npm run build"
+
+Response: OK | tokens:N | lines:N | exit:N followed by stdout. [stderr], [truncated], [timed out], [blocked:pattern], [security:violation] appended as applicable.
+Note: stdout truncated at ~8KB, stderr at ~2KB (head+tail preserved). Use redirects to file for larger output.
+Fails when: timeout (>30s default), exit≠0 (check stderr), output truncated, blocked:pattern.
+If fails: --timeout 60 for slow commands; redirect large output to file; blocked shows the pattern.
+After results: check exit code. If non-zero, read stderr. If truncated, redirect to file then read.
+Good: exit:0 with expected output visible. Bad: exit!=0 (read stderr), truncated (redirect to file), timed_out (use --timeout).
+Output example: exit:0
+  src/auth.ts  42 | a3|def login():
+  src/auth.ts  58 | k7|  return token
+Universal flags: --timeout N (max seconds to wait, default 30s, max 600s), --retry N (retry on error, max 5).
+Typical: bash 'npm test && npm run build'
+
+## use_subagents
+----------------------------------------
+Run between two and five focused in-process subagents in parallel. Each subagent gets its own prompt and returns a comprehensive research result. Default timeout is 300 seconds. Particularly effective for investigating multiple independent paths simultaneously without consuming your context window.
+
+Usage: use_subagents --prompt TEXT --prompt TEXT [--prompt TEXT] [--include-history] [--timeout SEC] [--max-turns N]
+
+Options:
+  --prompt TEXT         (required, repeat 2-5 times) Subagent prompt.
+  --include-history     Include the main task's conversation history.
+  --timeout SEC         Timeout per subagent in seconds (default: 300).
+  --max-turns N         Maximum number of turns per subagent.
+
+Example: use_subagents --prompt "Research auth patterns in the codebase" --prompt "Check test coverage for auth module"
+
+Response: OK | results:N | turns:N | tokens:N
+  Results follow: prompt | summary | tools_used (one per subagent).
+After results: pick the best result or combine key insights. Don't try to execute all subagent suggestions.
+Good: each subagent returns focused, actionable results. Bad: subagent timeout (increase --timeout), vague results (sharpen prompt), overlapping results (differentiate prompts).
+Don't use for: simple tasks (overhead not worth it), sequential reasoning (use plan + task).
+Typical: use_subagents --prompt "Research auth patterns" --prompt "Check test coverage"
+
+--- Navigation ---
+
+## repo
+----------------------------------------
+Get repository structural overview. --detail: summary (default, top symbols per file), files (all files with line counts), skeleton (all defs). Optional paths filter directories.
+
+Example: repo --detail files src/
+
+Response: OK | files:N | lines:N | symbols:N | detail:<summary|files|skeleton> | tokens:N
+  Content follows. Structure varies by detail level.
+Fails when: path doesn't exist (returns empty), very large repos (--detail skeleton may be slow).
+If fails: verify path with repo --detail files, or narrow to a subdirectory.
+After results: read --detail outline on specific files to explore, or search for patterns within.
+Good: files listed with expected structure. Bad: empty (wrong path), too many files (narrow with path filter).
+Don't use for: file content (use read), text search (use search), specific definitions (use symbols).
+Output example (files): OK | files:12 | detail:files | tokens:30
+  src/auth.ts 142
+  src/config.ts 58
+  src/utils/helpers.ts 89
+Tip: use path filter to limit scope (e.g. repo --detail files src/auth/). Use --detail summary instead of skeleton for large repos.
+Typical: repo --detail files src/
+
+--- Web Operations ---
+
+## web_fetch
+----------------------------------------
+Fetch and analyze content from a specified URL using your prompt.
+- The URL must be a fully-formed valid URL. HTTP upgraded to HTTPS.
+- The prompt must be at least 2 characters. Read-only tool.
+- For searching multiple sources, use web_search instead.
+
+Usage: web_fetch <url> --prompt <text>
+
+Positional:
+  url                 The URL to fetch content from.
+
+Options:
+  --prompt TEXT       (required) The prompt to use for analyzing the webpage content.
+
+Example: web_fetch https://example.com/docs --prompt "Summarize the main points and key takeaways"
+
+Response: OK | url:<url> | tokens:N
+  Analyzed content follows header line.
+Fails when: URL unreachable (timeout, DNS), content behind auth or JS rendering, invalid URL.
+If fails: check URL format, try web_search to find content elsewhere, use a different URL.
+After results: extract key facts. For follow-up, fetch related URLs or search for more context.
+Good: content extracted with relevant sections. Bad: timeout (simplify analysis prompt), empty (check URL), blocked (domain restricted).
+Don't use for: searching multiple sources (use web_search), reading local files (use read).
+Output example: OK | url:https://example.com | tokens:200
+  Analyzed content follows with your prompt applied.
+Typical: web_fetch https://example.com/docs --prompt "Summarize key points"
+
+## web_search
+----------------------------------------
+Search the web for information. Returns titles, URLs, and snippets.
+- The query must be at least 2 characters
+- Filter by --allowed-domains OR --blocked-domains (not both), as JSON array
+- Read-only tool
+
+Usage: web_search <query> [--allowed-domains JSON] [--blocked-domains JSON]
+
+Positional:
+  query               The search query (at least 2 characters).
+
+Options:
+  --allowed-domains JSON    JSON array of domains to restrict results to.
+  --blocked-domains JSON    JSON array of domains to exclude from results.
+
+Example: web_search "React documentation" --allowed-domains '["react.dev", "github.com"]'
+
+Response: OK | results:N | query:<text> | tokens:N
+  Results follow: title | url | snippet (one per line, max 30).
+Fails when: query too short (<2 chars), no results, network error.
+If fails: broaden query, remove domain filters, check network connectivity.
+After results: web_fetch the most relevant URL for detailed content.
+Good: relevant results with useful URLs and snippets. Bad: no results (broaden query), irrelevant results (use --allowed-domains).
+Don't use for: fetching specific URLs (use web_fetch), reading local files (use read).
+Output example: OK | results:3 | query:"React docs" | tokens:60
+  React Documentation | https://react.dev | Official React documentation...
+  React GitHub | https://github.com/facebook/react | A JavaScript library...
+Tip: use --allowed-domains to narrow results and reduce noise. Max 30 results; use specific queries to avoid broad matches.
+Typical: web_search "React documentation"
+
+--- Browser Automation ---
+
+## browser_action
+----------------------------------------
+Interact with a Puppeteer-controlled browser. Every action, except \`close\
+
+--- Interaction ---
+
+## ask
+----------------------------------------
+Ask user for clarification. --options: comma-separated choices (2-5).
+
+Example: ask "JWT or session?" --options JWT,Session,OAuth
+
+Response: OK | <user_response> | tokens:N
+  Good: clear answer with one of the options. Bad: ambiguous response (ask again with narrower options).
+Typical: ask 'Which approach?' --options A,B,C
+
+## done
+----------------------------------------
+Mark task complete with result summary. --cmd: optional demo command (not echo/cat).
+
+Example: done "Added caching layer" --cmd "npm test"
+
+Response: OK | summary:<text> | tokens:N
+  Summary follows header line.
+  Good: clear summary of what changed and how to verify. Bad: vague summary (be specific about what was done).
+Typical: done 'Fixed the bug'
+
+## plan
+----------------------------------------
+Propose a plan. Plan mode only. --explore: more investigation needed.
+
+Example: plan "Refactor auth first, then update tests."
+
+Response: OK | plan:<text> | tokens:N
+  Plan text follows header line.
+  After results: wait for user approval. If approved, start executing first step.
+  Good: clear steps with dependencies. Bad: vague plan (add specifics), missing edge cases (consider error paths).
+
+--- Context Management ---
+
+## compact
+----------------------------------------
+Compress conversation history. Summary becomes your only context. --keep: file paths to reload (up to 8). Don't compact mid-edit — finish changes first. For reading saved outputs, use memory.
+
+Example: compact "Fixed auth bug. Changed middleware to JWT." --keep src/auth.ts
+
+Response: OK | summary:<text> | reloaded:N | tokens:N
+  Summary follows header line.
+After results: context is compressed. Use memory to reload key outputs if needed.
+Good: summary captures key state, --keep files reloaded. Bad: lost important context (use --keep next time), compacted mid-edit (finish edits first).
+Typical: compact 'Summary of work so far' --keep src/file.ts
+
+--- Lifecycle ---
+
+## task
+----------------------------------------
+Create a new task with preloaded context. Use for major context switches.
+
+Example: task "Refactoring auth. Done: middleware. Next: tests."
+
+Response: OK | task_id:<id> | tokens:N
+  After results: new task created. Start working in it. Use compact to save current context if needed.
+
+--- Meta/Discovery ---
+
+## list_skills
+----------------------------------------
+List all available skills and their descriptions. Use this to discover specialized capabilities when the initial list in the system prompt is truncated.
+
+Usage: list_skills
+
+Response: OK | skills:N | <list> | tokens:N
+  After results: if a skill matches your task, use use_skill to activate it.
+
+No arguments required.
+
+## memory
+----------------------------------------
+Manage saved tool outputs. No args or --list: list files. Filename: read file. --clear: delete all. Use to preserve outputs across compactions.
+
+Example: memory output.txt
+
+Response: OK | items:N | <list> | tokens:N
+Don't use for: current code (use read/search), temporary data (use bash temp files).
+Typical: memory --list
+
+## recall
+----------------------------------------
+Search archived conversation observations from past tasks. Returns matches ranked by relevance. Results may be stale — always verify against current code.
+
+Example: recall auth middleware
+
+Response: OK | matches:N | tokens:N
+Note: Results are from past task observations, not current codebase. Verify before acting.
+Good: relevant past observations found. Bad: stale results (verify with read/search), no matches (broaden query).
+Don't use for: current code state (use read/search), web info (use web_search).
+Typical: recall auth middleware
+
+## tools
+----------------------------------------
+Discover available tools. Optional keyword to filter.
+
+Example: tools file
+
+Response: OK | tools:N | <list> | tokens:N
+  After results: pick the right tool and call it directly. Don't call tools again.
+
+## use_skill
+----------------------------------------
+Load and activate a skill by name. Skills provide specialized instructions for specific tasks. Use this tool ONCE when a user's request matches one of the available skill descriptions shown in the SKILLS section of your system prompt. After activation, follow the skill's instructions directly - do not call use_skill again.
+
+Usage: use_skill <skill_name>
+
+Positional:
+  skill_name          The name of the skill to activate (must match exactly one of the available skill names).
+
+Example: use_skill react-component
+
+Response: OK | skill:<name> | tokens:N
+  Skill instructions follow header line.
+  After results: skill is active. Follow its instructions. Don't call use_skill again.
+
+========================================================================
+Total tools: 21
+========================================================================

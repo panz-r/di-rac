@@ -12,6 +12,7 @@ Example: done "Added caching layer" --cmd "npm test"
 
 Response: OK | summary:<text> | tokens:N
 	Summary follows header line.
+	Good: clear summary of what changed and how to verify. Bad: vague summary (be specific about what was done).
 Typical: done 'Fixed the bug'`,
 	parameters: [
 		{

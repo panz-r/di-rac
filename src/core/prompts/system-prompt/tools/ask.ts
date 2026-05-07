@@ -11,6 +11,7 @@ export const ask: DiracToolSpec = {
 Example: ask "JWT or session?" --options JWT,Session,OAuth
 
 Response: OK | <user_response> | tokens:N
+	Good: clear answer with one of the options. Bad: ambiguous response (ask again with narrower options).
 Typical: ask 'Which approach?' --options A,B,C`,
 	parameters: [
 		{

@@ -12,6 +12,8 @@ Example: compact "Fixed auth bug. Changed middleware to JWT." --keep src/auth.ts
 
 Response: OK | summary:<text> | reloaded:N | tokens:N
 	Summary follows header line.
+After results: context is compressed. Use memory to reload key outputs if needed.
+Good: summary captures key state, --keep files reloaded. Bad: lost important context (use --keep next time), compacted mid-edit (finish edits first).
 Typical: compact 'Summary of work so far' --keep src/file.ts`,
 	parameters: [
 		{

@@ -11,7 +11,9 @@ export const plan: DiracToolSpec = {
 Example: plan "Refactor auth first, then update tests."
 
 Response: OK | plan:<text> | tokens:N
-	Plan text follows header line.`,
+	Plan text follows header line.
+	After results: wait for user approval. If approved, start executing first step.
+	Good: clear steps with dependencies. Bad: vague plan (add specifics), missing edge cases (consider error paths).`,
 	parameters: [
 		{
 			name: "command",

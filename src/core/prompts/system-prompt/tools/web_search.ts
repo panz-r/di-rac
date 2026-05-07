@@ -5,12 +5,9 @@ export const web_search: DiracToolSpec = {
 	id: DiracDefaultTool.WEB_SEARCH,
 	name: "web_search",
 	description: `Search the web for information. Returns titles, URLs, and snippets.
-- Takes a search query as input and returns search results with titles and URLs
-- Optionally filter results by allowed or blocked domains
 - The query must be at least 2 characters
-- You may provide either allowed_domains OR blocked_domains, but NOT both
-- Domains should be provided as a JSON array of strings
-- This tool is read-only and does not modify any files
+- Filter by --allowed-domains OR --blocked-domains (not both), as JSON array
+- Read-only tool
 
 Usage: web_search <query> [--allowed-domains JSON] [--blocked-domains JSON]
 

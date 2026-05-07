@@ -16,7 +16,8 @@ Positional:
 Example: use_skill react-component
 
 Response: OK | skill:<name> | tokens:N
-	Skill instructions follow header line.`,
+	Skill instructions follow header line.
+	After results: skill is active. Follow its instructions. Don't call use_skill again.`,
 	contextRequirements: (ctx) => ctx.skills !== undefined && ctx.skills.length > 0,
 	parameters: [
 		{

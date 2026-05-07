@@ -6,11 +6,13 @@ const id = DiracDefaultTool.DIRAC_OUTPUTS
 export const memory: DiracToolSpec = {
 	id,
 	name: "memory",
-	description: `Manage saved tool outputs. No args or --list: list files. Filename: read file. --clear: delete all.
+	description: `Manage saved tool outputs. No args or --list: list files. Filename: read file. --clear: delete all. Use to preserve outputs across compactions.
 
 Example: memory output.txt
 
-Response: OK | items:N | <list> | tokens:N`,
+Response: OK | items:N | <list> | tokens:N
+Don't use for: current code (use read/search), temporary data (use bash temp files).
+Typical: memory --list`,
 	parameters: [
 		{
 			name: "command",

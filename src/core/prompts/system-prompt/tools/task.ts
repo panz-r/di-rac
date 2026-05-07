@@ -10,7 +10,8 @@ export const task: DiracToolSpec = {
 
 Example: task "Refactoring auth. Done: middleware. Next: tests."
 
-Response: OK | task_id:<id> | tokens:N`,
+Response: OK | task_id:<id> | tokens:N
+	After results: new task created. Start working in it. Use compact to save current context if needed.`,
 	parameters: [
 		{
 			name: "command",

@@ -20,6 +20,9 @@ Example: use_subagents --prompt "Research auth patterns in the codebase" --promp
 
 Response: OK | results:N | turns:N | tokens:N
 	Results follow: prompt | summary | tools_used (one per subagent).
+After results: pick the best result or combine key insights. Don't try to execute all subagent suggestions.
+Good: each subagent returns focused, actionable results. Bad: subagent timeout (increase --timeout), vague results (sharpen prompt), overlapping results (differentiate prompts).
+Don't use for: simple tasks (overhead not worth it), sequential reasoning (use plan + task).
 Typical: use_subagents --prompt "Research auth patterns" --prompt "Check test coverage"`,
 	contextRequirements: (ctx) => ctx.subagentsEnabled === true,
 	parameters: [

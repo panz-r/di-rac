@@ -5,14 +5,9 @@ export const web_fetch: DiracToolSpec = {
 	id: DiracDefaultTool.WEB_FETCH,
 	name: "web_fetch",
 	description: `Fetch and analyze content from a specified URL using your prompt.
-- Takes a URL and analysis prompt as input
-- Fetches the URL content and processes based on your prompt
-- Use this tool when you need to retrieve and analyze web content
-- The URL must be a fully-formed valid URL
-- The prompt must be at least 2 characters
-- HTTP URLs will be automatically upgraded to HTTPS
-- This tool is read-only and does not modify any files
-- For searching multiple sources, use web_search instead
+- The URL must be a fully-formed valid URL. HTTP upgraded to HTTPS.
+- The prompt must be at least 2 characters. Read-only tool.
+- For searching multiple sources, use web_search instead.
 
 Usage: web_fetch <url> --prompt <text>
 

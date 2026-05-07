@@ -10,7 +10,8 @@ export const tools: DiracToolSpec = {
 
 Example: tools file
 
-Response: OK | tools:N | <list> | tokens:N`,
+Response: OK | tools:N | <list> | tokens:N
+	After results: pick the right tool and call it directly. Don't call tools again.`,
 	parameters: [
 		{
 			name: "command",

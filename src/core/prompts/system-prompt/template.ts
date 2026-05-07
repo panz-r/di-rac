@@ -78,16 +78,29 @@ ${
 	After write created → "read the file back to verify, or edit for refinements"
 	After web_search results → "web_fetch the most relevant URL for details"
 	After browser launch → "screenshot first, then click or type"
+	After recall → "verify past observations against current code before acting"
+	After use_subagents results → "pick best result, don't try to combine all"
 
 	BUDGET AWARENESS
 The header line includes cumulative:N (total tokens so far) and tokens:N (this response). If cumulative approaches your context limit, prefer targeted reads (--detail skeleton, --range). Cached reads (cached:yes) cost nothing.
+
+	ERROR RECOVERY
+On ERROR: parse error code → read hint: for fix → verify fix is actionable → retry ONCE with narrowed scope or corrected params → if second attempt fails, escalate to user or try an alternative tool. Do not retry blindly — unbounded retries risk introducing new errors.
+
+	CONTEXT MANAGEMENT
+After extracting facts from large outputs, discard what you don't need:
+- After read: keep only relevant handles/anchors. Forget full content.
+- After search: keep only chosen file:line pairs. Forget unmatched results.
+- After bash: keep only exit code + key output. Forget full stdout/stderr.
+- After repo: keep only target file paths. Forget full listing.
+If cumulative:N > 80% of context: prefer --range, --context 0, or compact.
 
 SECURITY: If you create a script file, review it with read before executing it via bash.
 
 DECISION RULES
 - Transient error (timeout, file busy) → --retry 3
 - Blocked command → read hint for alternatives, adjust and retry
-- Stuck after 3 retries → use task to start fresh with new context
+- Stuck after retry → use task to start fresh with new context
 - Multiple matches or unclear intent → use ask --options
 
 ACT MODE VS PLAN MODE

@@ -6,7 +6,7 @@ const id = DiracDefaultTool.SEARCH
 export const search: DiracToolSpec = {
 	id,
 	name: "search",
-	description: `Search files with regex patterns. Skips .git, node_modules, build/, binaries. Returns first 30 matches with file, line, and context. Use for text patterns, config values, comments — not code navigation. For code navigation (functions, classes, imports), use symbols search --name instead.
+	description: `Search files with regex patterns. Skips .git, node_modules, build/, binaries. Returns first 30 matches with file, line, and context. Use for text patterns, config values, comments.
 
 Example: search --pattern "TODO|FIXME" --context 2
 
