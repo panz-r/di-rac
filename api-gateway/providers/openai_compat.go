@@ -11,8 +11,9 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 )
+
+const maxBodySize = 10 << 20 // 10 MB safety cap on response bodies
 
 // OpenAICompatConfig configures an OpenAI-compatible provider.
 // Fill in only what differs from defaults; the rest are zero-valued.
@@ -46,7 +47,7 @@ type openaiCompatHandler struct {
 
 func newOpenAICompatHandler(config OpenAICompatConfig) *openaiCompatHandler {
 	return &openaiCompatHandler{
-		httpClient: &http.Client{},
+		httpClient: SharedHTTPClient,
 		config:     config,
 	}
 }
@@ -76,7 +77,7 @@ func (h *openaiCompatHandler) Send(ctx context.Context, req *Request) (*SendResu
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -119,7 +120,7 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 		return &ProviderAPIError{
 			StatusCode: resp.StatusCode,
 			Message:    fmt.Sprintf("API error (status %d): %s", resp.StatusCode, string(body)),
@@ -764,7 +765,7 @@ func extractContentString(raw json.RawMessage) string {
 // fetchModelsHTTP fetches models from any OpenAI-compatible /models endpoint.
 // The caller provides the full URL and optional API key with Bearer auth.
 func fetchModelsHTTP(ctx context.Context, modelsURL, apiKey string) ([]ModelEntry, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := SharedHTTPClient
 	req, err := http.NewRequestWithContext(ctx, "GET", modelsURL, nil)
 	if err != nil {
 		return nil, err
@@ -780,7 +781,7 @@ func fetchModelsHTTP(ctx context.Context, modelsURL, apiKey string) ([]ModelEntr
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 		return nil, &ProviderAPIError{
 			StatusCode: resp.StatusCode,
 			Message:    fmt.Sprintf("/models returned status %d: %s", resp.StatusCode, string(errBody)),
@@ -788,7 +789,7 @@ func fetchModelsHTTP(ctx context.Context, modelsURL, apiKey string) ([]ModelEntr
 		}
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return nil, err
 	}

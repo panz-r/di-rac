@@ -8,7 +8,6 @@ import (
 	"math"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // OpenCodeZenHandler handles OpenCode Zen API requests.
@@ -309,7 +308,7 @@ func (h *OpenCodeZenHandler) ValidateSettings(settings map[string]interface{}, t
 
 // ListModels fetches available models from the OpenCode Zen API.
 func (h *OpenCodeZenHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := SharedHTTPClient
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://opencode.ai/zen/v1/models", nil)
 	if err != nil {
 		return nil, err

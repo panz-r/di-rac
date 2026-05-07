@@ -137,7 +137,7 @@ export class ApiGatewayHandler implements ApiHandler {
 	}
 
 	private async *connectAndStreamWithRetry(request: GatewayRequest): AsyncGenerator<GatewayResponse> {
-		const maxRetries = 3
+		const maxRetries = 8
 		let lastError: Error | null = null
 		for (let attempt = 0; attempt < maxRetries; attempt++) {
 			if (this.abortController?.signal.aborted) return
@@ -170,7 +170,7 @@ export class ApiGatewayHandler implements ApiHandler {
 			} catch (err: any) {
 				if ((err as any).retriable && attempt < maxRetries - 1) {
 					lastError = err
-					const delay = Math.min(10000, 1000 * Math.pow(2, attempt))
+					const delay = Math.min(60000, 1000 * Math.pow(2, attempt))
 					await new Promise((resolve) => setTimeout(resolve, delay))
 					continue
 				}

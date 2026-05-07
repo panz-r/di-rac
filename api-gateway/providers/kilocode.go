@@ -8,7 +8,6 @@ import (
 	"math"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // KiloCodeHandler handles Kilo Code AI Gateway API requests.
@@ -293,7 +292,7 @@ func (h *KiloCodeHandler) ValidateSettings(settings map[string]interface{}, thin
 
 // ListModels fetches available models from the Kilo Code API.
 func (h *KiloCodeHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := SharedHTTPClient
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.kilo.ai/api/gateway/models", nil)
 	if err != nil {
 		return nil, err

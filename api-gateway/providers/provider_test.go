@@ -256,19 +256,6 @@ func TestValidateRequestWithContentBlocks(t *testing.T) {
 	}
 }
 
-func TestConvertMessages(t *testing.T) {
-	messages := []Message{
-		{Role: "user", Content: "Hello"},
-		{Role: "assistant", Content: "Hi there!"},
-	}
-
-	result := ConvertMessages(messages)
-
-	if result == nil {
-		t.Error("ConvertMessages returned nil")
-	}
-}
-
 func TestMessageWithToolCalls(t *testing.T) {
 	msgJSON := `{"role": "assistant", "tool_calls": [{"id": "call_123", "type": "function", "function": {"name": "get_weather", "arguments": "{\"location\":\"NYC\"}"}}]}`
 

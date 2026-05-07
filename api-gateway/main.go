@@ -75,6 +75,17 @@ type ErrorDetail struct {
 	Retriable bool   `json:"retriable,omitempty"`
 }
 
+// responseWriter wraps a connection and JSON encoder with write deadlines.
+type responseWriter struct {
+	conn    net.Conn
+	encoder *json.Encoder
+}
+
+func (w *responseWriter) write(v interface{}) error {
+	w.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	return w.encoder.Encode(v)
+}
+
 // Server manages the API gateway
 type Server struct {
 	providerRegistry *providers.Registry
@@ -217,6 +228,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)
+	w := &responseWriter{conn: conn, encoder: encoder}
 
 	for {
 		// Refresh read deadline for each message
@@ -234,7 +246,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		// Handle ping/pong
 		if typeCheck.Type == "ping" {
-			encoder.Encode(map[string]string{"type": "pong"})
+			w.write(map[string]string{"type": "pong"})
 			continue
 		}
 
@@ -242,7 +254,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		if typeCheck.Type == "set-provider" {
 			var setProviderReq SetProviderRequest
 			if err := json.Unmarshal(rawMsg, &setProviderReq); err != nil {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 400,
 					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: fmt.Sprintf("Failed to parse set-provider request: %v", err)},
@@ -255,7 +267,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			log.Printf("Stored configuration for provider: %s", setProviderReq.Provider)
 			s.configMu.Unlock()
 
-			encoder.Encode(&Response{ID: 0, Status: 200})
+			w.write(&Response{ID: 0, Status: 200})
 			continue
 		}
 
@@ -265,7 +277,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			body, _ := json.Marshal(map[string]interface{}{
 				"providers": providerList,
 			})
-			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			w.write(&Response{ID: 0, Status: 200, Body: body})
 			continue
 		}
 
@@ -275,7 +287,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				Provider string `json:"provider"`
 			}
 			if err := json.Unmarshal(rawMsg, &infoReq); err != nil || infoReq.Provider == "" {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 400,
 					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: "provider-info requires 'provider' field"},
@@ -284,7 +296,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 			info := s.providerRegistry.GetCapabilities(infoReq.Provider)
 			if info == nil {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 404,
 					Error:  &ErrorDetail{Code: "NOT_FOUND", Message: "No capabilities for provider: " + infoReq.Provider},
@@ -292,7 +304,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				continue
 			}
 			body, _ := json.Marshal(info)
-			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			w.write(&Response{ID: 0, Status: 200, Body: body})
 			continue
 		}
 
@@ -304,7 +316,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				Thinking *providers.ThinkingConfig `json:"thinking,omitempty"`
 			}
 			if err := json.Unmarshal(rawMsg, &validateReq); err != nil || validateReq.Provider == "" {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 400,
 					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: "validate-parameters requires 'provider' and 'settings' fields"},
@@ -313,7 +325,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 			result := s.providerRegistry.ValidateSettings(validateReq.Provider, validateReq.Settings, validateReq.Thinking)
 			if result == nil {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 200,
 					Body:   json.RawMessage(`{"settings":{}}`),
@@ -321,7 +333,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				continue
 			}
 			body, _ := json.Marshal(result)
-			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			w.write(&Response{ID: 0, Status: 200, Body: body})
 			continue
 		}
 
@@ -332,7 +344,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				Config   providers.ProviderConfig `json:"config,omitempty"`
 			}
 			if err := json.Unmarshal(rawMsg, &modelsReq); err != nil || modelsReq.Provider == "" {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 400,
 					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: "models requires 'provider' field"},
@@ -356,7 +368,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 			models, err := s.providerRegistry.ListModels(s.ctx, modelsReq.Provider, cfg)
 			if err != nil {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 500,
 					Error:  &ErrorDetail{Code: "FETCH_ERROR", Message: fmt.Sprintf("Failed to fetch models: %v", err)},
@@ -364,7 +376,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				continue
 			}
 			if models == nil {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 200,
 					Body:   json.RawMessage(`{"models":null}`),
@@ -375,7 +387,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			enrichModelCapabilities(models, s.providerRegistry.GetCapabilities(modelsReq.Provider))
 
 			body, _ := json.Marshal(map[string]interface{}{"models": models})
-			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			w.write(&Response{ID: 0, Status: 200, Body: body})
 			continue
 		}
 
@@ -387,7 +399,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				Config   providers.ProviderConfig `json:"config,omitempty"`
 			}
 			if err := json.Unmarshal(rawMsg, &modelInfoReq); err != nil || modelInfoReq.Provider == "" || modelInfoReq.Model == "" {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 400,
 					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: "model-info requires 'provider' and 'model' fields"},
@@ -410,7 +422,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 			models, err := s.providerRegistry.ListModels(s.ctx, modelInfoReq.Provider, cfg)
 			if err != nil {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 500,
 					Error:  &ErrorDetail{Code: "FETCH_ERROR", Message: fmt.Sprintf("Failed to fetch models: %v", err)},
@@ -426,7 +438,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				}
 			}
 			if found == nil {
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     0,
 					Status: 404,
 					Error:  &ErrorDetail{Code: "NOT_FOUND", Message: fmt.Sprintf("Model '%s' not found for provider '%s'", modelInfoReq.Model, modelInfoReq.Provider)},
@@ -436,14 +448,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 			enrichModelCapabilities([]providers.ModelEntry{*found}, s.providerRegistry.GetCapabilities(modelInfoReq.Provider))
 			body, _ := json.Marshal(map[string]interface{}{"model": found})
-			encoder.Encode(&Response{ID: 0, Status: 200, Body: body})
+			w.write(&Response{ID: 0, Status: 200, Body: body})
 			continue
 		}
 
 		// Regular API request
 		var req Request
 		if err := json.Unmarshal(rawMsg, &req); err != nil {
-			encoder.Encode(&Response{
+			w.write(&Response{
 				ID:     0,
 				Status: 400,
 				Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: fmt.Sprintf("Failed to parse request: %v", err)},
@@ -455,6 +467,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 			req.Timeout = 240000
 		}
 
+		// Validate request before processing
+		if err := providers.ValidateRequest(s.buildProviderRequest(&req)); err != nil {
+			w.write(&Response{
+				ID:     req.ID,
+				Status: 400,
+				Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: err.Error()},
+			})
+			continue
+		}
+
 		// Merge stored provider config (set-provider) into request
 		s.mergeProviderConfig(&req)
 
@@ -462,7 +484,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		// Wait for rate limit token and inflight slot
 		if err := s.rateLimiter.Wait(ctx); err != nil {
-			encoder.Encode(&Response{
+			w.write(&Response{
 				ID:     req.ID,
 				Status: 429,
 				Error:  &ErrorDetail{Code: "RATE_LIMITED", Message: "Gateway queue timeout: too many concurrent requests", Retriable: true},
@@ -473,15 +495,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		if req.Stream {
 			// For streaming: send ack, then stream, then continue loop
-			encoder.Encode(&Response{ID: req.ID, Status: 200})
-			s.handleStreaming(ctx, req.ID, &req, encoder)
+			w.write(&Response{ID: req.ID, Status: 200})
+			s.handleStreaming(ctx, req.ID, &req, w)
 			s.rateLimiter.Release()
 			cancel()
 		} else {
 			// For non-streaming: process and send response
 			resp := s.processRequest(ctx, &req)
 			s.rateLimiter.Release()
-			encoder.Encode(resp)
+			w.write(resp)
 			cancel()
 		}
 	}
@@ -513,6 +535,17 @@ func (s *Server) mergeProviderConfig(req *Request) {
 	}
 	if req.Provider.ProjectID == "" {
 		req.Provider.ProjectID = stored.ProjectID
+	}
+	if stored.Extra != nil {
+		if req.Provider.Extra == nil {
+			req.Provider.Extra = stored.Extra
+		} else {
+			for k, v := range stored.Extra {
+				if _, exists := req.Provider.Extra[k]; !exists {
+					req.Provider.Extra[k] = v
+				}
+			}
+		}
 	}
 }
 
@@ -572,10 +605,10 @@ func (s *Server) buildProviderRequest(req *Request) *providers.Request {
 	}
 }
 
-func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, encoder *json.Encoder) {
+func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w *responseWriter) {
 	handler, err := s.providerRegistry.GetHandler(req.Provider.ID)
 	if err != nil {
-		encoder.Encode(&Response{
+		w.write(&Response{
 			ID:     id,
 			Status: 500,
 			Error:  &ErrorDetail{Code: "PROVIDER_ERROR", Message: err.Error()},
@@ -606,21 +639,21 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 	for {
 		select {
 		case streamErr := <-errChan:
-			encoder.Encode(&Response{
+			w.write(&Response{
 				ID:     id,
 				Status: 500,
 				Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error(), Retriable: providers.IsRetriable(streamErr)},
 			})
 			return
 		case <-ctx.Done():
-			encoder.Encode(&Response{
+			w.write(&Response{
 				ID:     id,
 				Status: 499,
 				Error:  &ErrorDetail{Code: "TIMEOUT", Message: "Request timed out"},
 			})
 			return
 		case chunk := <-chunks:
-			encoder.Encode(&Response{
+			w.write(&Response{
 				ID:     id,
 				Status: 200,
 				Body:   mustMarshal(chunk),
@@ -629,7 +662,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 			// Check for error that arrived simultaneously with done signal
 			select {
 			case streamErr := <-errChan:
-				encoder.Encode(&Response{
+				w.write(&Response{
 					ID:     id,
 					Status: 500,
 					Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error(), Retriable: providers.IsRetriable(streamErr)},
@@ -641,7 +674,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 			for {
 				select {
 				case chunk := <-chunks:
-					encoder.Encode(&Response{
+					w.write(&Response{
 						ID:     id,
 						Status: 200,
 						Body:   mustMarshal(chunk),
@@ -650,7 +683,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 					// Final check: an error may have arrived between the first check and now
 					select {
 					case streamErr := <-errChan:
-						encoder.Encode(&Response{
+						w.write(&Response{
 							ID:     id,
 							Status: 500,
 							Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error(), Retriable: providers.IsRetriable(streamErr)},
@@ -659,7 +692,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 					default:
 					}
 					// Always send complete signal so the client never hangs
-					encoder.Encode(&Response{
+					w.write(&Response{
 						ID:     id,
 						Status: 200,
 						Body:   json.RawMessage(`{"type":"complete"}`),
@@ -672,12 +705,16 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, en
 }
 
 func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler providers.Handler, req *providers.Request) *Response {
-	maxRetries := 3
+	const maxRetries = 8
 	var lastErr error
+	var lastRetriable bool
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			if backoff > 60*time.Second {
+				backoff = 60 * time.Second
+			}
 			log.Printf("Retry attempt %d/%d after %v", attempt, maxRetries, backoff)
 
 			select {
@@ -709,8 +746,9 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 		}
 
 		lastErr = err
+		lastRetriable = providers.IsRetriable(err)
 
-		if !providers.IsRetriable(err) {
+		if !lastRetriable {
 			log.Printf("Non-retriable error, giving up: %v", err)
 			break
 		}

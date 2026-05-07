@@ -376,8 +376,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, mode, isStrea
 			}
 
 			// Show result content for completed tools (both say and ask), or file path for pending asks
-			const contentLines = toolInfo.result?.trim()
-				? formatToolResult(toolInfo.result, 5)
+			const rawResult = toolInfo.result == null ? "" : String(toolInfo.result)
+			const contentLines = rawResult.trim()
+				? formatToolResult(rawResult, 5)
 				: (isToolAsk || isToolSay) && filePath
 					? [filePath as string]
 					: []

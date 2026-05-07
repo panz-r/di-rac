@@ -8,7 +8,6 @@ import (
 	"math"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // OpenCodeGoHandler handles OpenCode Go API requests.
@@ -309,7 +308,7 @@ func (h *OpenCodeGoHandler) ValidateSettings(settings map[string]interface{}, th
 
 // ListModels fetches available models from the OpenCode Go API.
 func (h *OpenCodeGoHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := SharedHTTPClient
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://opencode.ai/zen/go/v1/models", nil)
 	if err != nil {
 		return nil, err

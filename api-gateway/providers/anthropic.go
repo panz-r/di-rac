@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
+	"sync"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -14,7 +14,8 @@ import (
 
 // AnthropicHandler handles Anthropic API requests
 type AnthropicHandler struct {
-	client anthropic.Client
+	client       anthropic.Client
+	clientCache  sync.Map
 }
 
 func NewAnthropicHandler() *AnthropicHandler {
@@ -30,6 +31,13 @@ func NewAnthropicHandlerWithKey(apiKey string) *AnthropicHandler {
 }
 
 func (h *AnthropicHandler) getClient(req *Request) anthropic.Client {
+	if req.Provider.APIKey == "" && req.Provider.BaseURL == "" {
+		return h.client
+	}
+	cacheKey := req.Provider.APIKey + "|" + req.Provider.BaseURL
+	if cached, ok := h.clientCache.Load(cacheKey); ok {
+		return cached.(anthropic.Client)
+	}
 	var opts []option.RequestOption
 	if req.Provider.APIKey != "" {
 		opts = append(opts, option.WithAPIKey(req.Provider.APIKey))
@@ -37,10 +45,9 @@ func (h *AnthropicHandler) getClient(req *Request) anthropic.Client {
 	if req.Provider.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(req.Provider.BaseURL))
 	}
-	if len(opts) > 0 {
-		return anthropic.NewClient(opts...)
-	}
-	return h.client
+	client := anthropic.NewClient(opts...)
+	h.clientCache.Store(cacheKey, client)
+	return client
 }
 
 func (h *AnthropicHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
@@ -485,7 +492,7 @@ func (h *AnthropicHandler) ListModels(ctx context.Context, cfg ProviderConfig) (
 	}
 	apiKey := cfg.APIKey
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := SharedHTTPClient
 	req, err := http.NewRequestWithContext(ctx, "GET", base+"/v1/models?limit=1000", nil)
 	if err != nil {
 		return nil, err

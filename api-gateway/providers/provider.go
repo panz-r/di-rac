@@ -6,10 +6,28 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
+
+// SharedHTTPClient is a reusable HTTP client with tuned transport settings.
+// All provider calls should use this instead of creating throwaway http.Client instances.
+var SharedHTTPClient *http.Client
+
+func init() {
+	SharedHTTPClient = &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+}
+
+const maxModelsCacheSize = 64
 
 // Request represents a standardized API request
 type Request struct {
@@ -375,8 +393,21 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg Provid
 		return nil, err
 	}
 
-	// Cache for 1 hour
+	// Cache for 1 hour, evict oldest if at capacity
 	r.modelsMu.Lock()
+	if len(r.modelsCache) >= maxModelsCacheSize {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, v := range r.modelsCache {
+			if oldestKey == "" || v.expiry.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = v.expiry
+			}
+		}
+		if oldestKey != "" {
+			delete(r.modelsCache, oldestKey)
+		}
+	}
 	r.modelsCache[cacheKey] = modelsCacheEntry{
 		models: models,
 		expiry: time.Now().Add(1 * time.Hour),
@@ -486,9 +517,4 @@ func ValidateRequest(req *Request) error {
 		}
 	}
 	return nil
-}
-
-// ConvertMessages converts internal messages to provider format
-func ConvertMessages(msgs []Message) interface{} {
-	return msgs
 }

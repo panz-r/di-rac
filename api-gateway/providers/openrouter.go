@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 )
 
 // OpenRouterHandler handles OpenRouter API requests via their OpenAI-compatible endpoint.
@@ -561,7 +560,7 @@ func (h *OpenRouterHandler) ListModels(ctx context.Context, cfg ProviderConfig) 
 		baseURL = cfg.BaseURL
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := SharedHTTPClient
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/models", nil)
 	if err != nil {
 		return nil, err
