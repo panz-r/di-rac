@@ -245,6 +245,17 @@ static inline int json_get_int(const char *val, int len, int *out) {
     return 1;
 }
 
+/* Parse a double value. Returns 1 on success, 0 on failure. */
+static inline int json_get_double(const char *val, int len, double *out) {
+    char tmp[64];
+    int copy = len < 63 ? len : 63;
+    memcpy(tmp, val, (size_t)copy);
+    tmp[copy] = '\0';
+    char *endptr;
+    *out = strtod(tmp, &endptr);
+    return (endptr != tmp);
+}
+
 /* Parse a boolean value. Returns 1 on success, 0 on failure. */
 static inline int json_get_bool(const char *val, int len, bool *out) {
     if (len == 4 && memcmp(val, "true", 4) == 0) { *out = true; return 1; }

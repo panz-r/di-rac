@@ -1,4 +1,4 @@
-import { buildObserverConfig, type ObserverConfig, type ObservationEntry } from "./ObserverConfig"
+import { buildObserverConfig, type ObserverConfig, type ObservationEntry, type ObservationType } from "./ObserverConfig"
 import { ObservationStore } from "./ObservationStore"
 import { ObserverAgent } from "./ObserverAgent"
 import { setObserverHealth } from "./index"
@@ -6,20 +6,49 @@ import { ReflectorAgent } from "./ReflectorAgent"
 import type { StateManager } from "@core/storage/StateManager"
 import type { DiracStorageMessage } from "@shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
+import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 
 export interface PrepareContextResult {
 	messages: DiracStorageMessage[]
 	observationBlock: string
+	watcherInsights: string
 	removedCount: number
+}
+
+interface ObserverCost {
+    turnIndex: number
+    type: ObservationType
+    tokens: number
+    latencyMs: number
+}
+
+export class ObserverCostTracker {
+    private costs: ObserverCost[] = []
+
+    add(type: ObservationType, tokens: number, latencyMs: number, turnIndex: number) {
+        this.costs.push({ turnIndex, type, tokens, latencyMs })
+        Logger.info("Observer", `[Cost] ${type} | tokens: ${tokens} | latency: ${latencyMs}ms | turn: ${turnIndex}`)
+    }
+
+    getSummary() {
+        const totalTokens = this.costs.reduce((sum, c) => sum + c.tokens, 0)
+        const totalLatency = this.costs.reduce((sum, c) => sum + c.latencyMs, 0)
+        return {
+            totalInvocations: this.costs.length,
+            totalTokens,
+            totalLatencyMs: totalLatency,
+            avgLatencyMs: this.costs.length > 0 ? totalLatency / this.costs.length : 0
+        }
+    }
 }
 
 export class ObserverOrchestrator {
 	private store: ObservationStore
 	private agent: ObserverAgent | undefined
 	private reflector: ReflectorAgent | undefined
+    private costTracker = new ObserverCostTracker()
 	private lastObservedMessageIndex = 0
-	private pendingObserverPromise: Promise<void> | undefined
-	private pendingReflectionPromise: Promise<void> | undefined
+	private pendingTasks = new Set<Promise<void>>()
 	private _isEnabled: boolean
 	private config: ObserverConfig
 	consecutiveFailures = 0
@@ -28,11 +57,13 @@ export class ObserverOrchestrator {
 	constructor(
 		private taskId: string,
 		private stateManager: StateManager,
+		private getAnalyzerClient?: () => AnalyzerClient | undefined,
 	) {
 		const settings = {
 			observerEnabled: stateManager.getGlobalSettingsKey("observerEnabled"),
 			observerProvider: stateManager.getGlobalSettingsKey("observerProvider"),
 			observerModelId: stateManager.getGlobalSettingsKey("observerModelId"),
+			observerTurns: stateManager.getGlobalSettingsKey("observerTurns"),
 			observerTokenThreshold: stateManager.getGlobalSettingsKey("observerTokenThreshold"),
 			observerBufferActivation: stateManager.getGlobalSettingsKey("observerBufferActivation"),
 			observerBlockAfter: stateManager.getGlobalSettingsKey("observerBlockAfter"),
@@ -57,9 +88,9 @@ export class ObserverOrchestrator {
 	async initialize(history: DiracStorageMessage[]): Promise<void> {
 		if (!this._isEnabled) return
 		await this.store.load()
-		const latest = this.store.getLatestObservation()
+		const latest = this.store.getLatestObservation("summary")
 		if (latest) {
-			this.lastObservedMessageIndex = latest.compressedRange[1] + 1
+			this.lastObservedMessageIndex = (latest.compressedRange?.[1] || 0) + 1
 		} else {
 			this.lastObservedMessageIndex = history.length
 		}
@@ -86,57 +117,56 @@ export class ObserverOrchestrator {
 		return history.slice(sliceStart)
 	}
 
-	/**
-	 * Called after each turn. Implements three-mode catch-up:
-	 * 1. Normal: async compression when tokens >= threshold
-	 * 2. Buffer: halved threshold when at bufferActivation ratio
-	 * 3. Block: synchronous when at blockAfter ratio
-	 */
 	async onTurnComplete(history: DiracStorageMessage[]): Promise<void> {
 		if (!this._isEnabled) return
-		if (this.pendingObserverPromise) return
 
 		const unobserved = this.getUnobservedMessages(history)
-		if (unobserved.length < 4) return
+		
+		// 1. WATCHER (Frequency controlled by observerTurns)
+		const lastMsg = history[history.length - 1]
+		const hasError = lastMsg?.content && JSON.stringify(lastMsg.content).includes("error")
+		
+		if (history.length % this.config.observerTurns === 0 || hasError) {
+			this.triggerSpecializedObservation(history, "watcher")
+		}
 
-		const tokenEstimate = this.estimateTokens(unobserved)
-		const ratio = tokenEstimate / this.config.tokenThreshold
+		// 2. RELEVANCE FILTER (Runs half as often as watcher, min every 5)
+		const filterFreq = Math.max(5, this.config.observerTurns * 2)
+		if (history.length % filterFreq === 0) {
+			this.triggerSpecializedObservation(history, "filter")
+		}
 
-		// Check reflection after each turn (cheap in-memory check)
+		// 3. SUMMARIZER (Context Compression)
+		if (unobserved.length >= 4) {
+			const tokenEstimate = this.estimateTokens(unobserved)
+			const ratio = tokenEstimate / this.config.tokenThreshold
+
+			if (this.config.blockAfter !== false && ratio >= this.config.blockAfter) {
+				await this.runSummarizerSync(history, tokenEstimate)
+			} else if (tokenEstimate >= this.config.tokenThreshold) {
+				this.triggerSpecializedObservation(history, "summary", tokenEstimate)
+			}
+		}
+
 		this.checkReflection()
-
-		// Mode 3: Block mode — synchronous compression
-		if (this.config.blockAfter !== false && ratio >= this.config.blockAfter) {
-			await this.runCompressionSync(history, tokenEstimate)
-			return
-		}
-
-		// Mode 1 or 2: Async compression with adjusted threshold
-		let effectiveThreshold = this.config.tokenThreshold
-		if (ratio >= this.config.bufferActivation) {
-			// Buffer mode: halve the threshold for more frequent compression
-			effectiveThreshold = Math.floor(this.config.tokenThreshold / 2)
-		}
-
-		if (tokenEstimate >= effectiveThreshold) {
-			this.triggerCompression(history, tokenEstimate)
-		}
 	}
 
-	private async runCompressionSync(history: DiracStorageMessage[], tokenEstimate: number): Promise<void> {
+	private async runSummarizerSync(history: DiracStorageMessage[], tokenEstimate: number): Promise<void> {
 		if (!this.agent) return
 		const unobserved = this.getUnobservedMessages(history)
 		if (unobserved.length === 0) return
 
 		const sliceStart = Math.max(this.lastObservedMessageIndex, 2)
 		const compressedRange: [number, number] = [sliceStart, history.length - 1]
+        const startTime = Date.now()
 
 		try {
-			const observationText = await this.agent.compress(unobserved)
+			const observationText = await this.agent.observe(unobserved, "summary")
 			if (!observationText) return
 
 			const entry: ObservationEntry = {
 				timestamp: Date.now(),
+				type: "summary",
 				observationText,
 				compressedRange,
 				tokenEstimate,
@@ -145,10 +175,17 @@ export class ObserverOrchestrator {
 			this.lastObservedMessageIndex = history.length
 			this.consecutiveFailures = 0
 			this.lastError = undefined
+            
+            const latency = Date.now() - startTime
+            this.costTracker.add("summary", tokenEstimate, latency, history.length)
 
-			Logger.debug(
-				`[Observer] SYNC compressed ${unobserved.length} messages (~${tokenEstimate} tokens) — block mode`,
-			)
+            // Index in C daemon if available
+            const analyzer = this.getAnalyzerClient?.()
+            if (analyzer) {
+                await analyzer.indexObservation("summary", observationText, entry.timestamp, tokenEstimate)
+            }
+
+			Logger.debug(`[Observer] SYNC compressed ${unobserved.length} messages — block mode (ratio > ${this.config.blockAfter})`)
 		} catch (error) {
 			Logger.error("[Observer] Sync compression failed:", error)
 			this.consecutiveFailures++
@@ -157,51 +194,63 @@ export class ObserverOrchestrator {
 		}
 	}
 
-	private triggerCompression(history: DiracStorageMessage[], tokenEstimate: number): void {
-		if (!this.agent) return
+	private triggerSpecializedObservation(history: DiracStorageMessage[], type: ObservationType, tokenEstimate?: number): void {
+		if (!this.agent || this.pendingTasks.size > 2) return
 
-		const unobserved = this.getUnobservedMessages(history)
+		const unobserved = type === "summary" ? this.getUnobservedMessages(history) : history.slice(-10)
 		if (unobserved.length === 0) return
 
 		const sliceStart = Math.max(this.lastObservedMessageIndex, 2)
-		const compressedRange: [number, number] = [sliceStart, history.length - 1]
+		const compressedRange: [number, number] | undefined = type === "summary" ? [sliceStart, history.length - 1] : undefined
+        const startTime = Date.now()
 
-		this.pendingObserverPromise = this.agent
-			.compress(unobserved)
-			.then(async (observationText) => {
-				if (!observationText) return
+		const promise = this.agent
+			.observe(unobserved, type)
+			.then(async (text) => {
+				if (!text || text.includes("No alerts") || text.includes("Context clean")) return
 
 				const entry: ObservationEntry = {
 					timestamp: Date.now(),
-					observationText,
+					type,
+					observationText: text,
 					compressedRange,
-					tokenEstimate,
+					tokenEstimate: tokenEstimate || Math.ceil(text.length / 4),
 				}
 
 				await this.store.append(entry)
-				this.lastObservedMessageIndex = history.length
+				if (type === "summary") this.lastObservedMessageIndex = history.length
+				
 				this.consecutiveFailures = 0
 				this.lastError = undefined
 				setObserverHealth(false)
 
-				Logger.debug(
-					`[Observer] Compressed ${unobserved.length} messages (~${tokenEstimate} tokens) into observations`,
-				)
+                const latency = Date.now() - startTime
+                this.costTracker.add(type, entry.tokenEstimate, latency, history.length)
+
+                // Index in C daemon
+                const analyzer = this.getAnalyzerClient?.()
+                if (analyzer) {
+                    await analyzer.indexObservation(type, text, entry.timestamp, entry.tokenEstimate)
+                }
+
+				Logger.debug(`[Observer] Finished ${type} observation (~${entry.tokenEstimate} tokens)`)
 			})
 			.catch((error) => {
-				Logger.error("[Observer] Compression failed:", error)
+				Logger.error(`[Observer] ${type} observation failed:`, error)
 				this.consecutiveFailures++
 				this.lastError = error instanceof Error ? error.message : String(error)
 				setObserverHealth(true, this.lastError)
 			})
 			.finally(() => {
-				this.pendingObserverPromise = undefined
+				this.pendingTasks.delete(promise)
 			})
+		
+		this.pendingTasks.add(promise)
 	}
 
 	private checkReflection(): void {
 		if (!this.config.reflectionEnabled || !this.reflector) return
-		if (this.pendingReflectionPromise) return
+		if (this.pendingTasks.size > 2) return
 
 		const observationTokens = this.store.estimateTokenCount()
 		if (observationTokens < this.config.reflectionTokenThreshold) return
@@ -212,41 +261,52 @@ export class ObserverOrchestrator {
 	private triggerReflection(): void {
 		if (!this.reflector) return
 
-		const observationBlock = this.store.buildObservationBlock()
+		const observationBlock = this.store.buildObservationBlock("summary")
 		if (!observationBlock) return
+        const startTime = Date.now()
 
-		this.pendingReflectionPromise = this.reflector
+		const promise = this.reflector
 			.reflect(observationBlock)
 			.then(async (reflectedText) => {
 				if (!reflectedText) return
 
 				const entry: ObservationEntry = {
 					timestamp: Date.now(),
+					type: "reflection",
 					observationText: reflectedText,
-					compressedRange: [0, 0], // Reflected entries don't map to message ranges
 					tokenEstimate: Math.ceil(reflectedText.length / 4),
 				}
 
 				await this.store.archiveAndReplace(entry)
+                
+                const latency = Date.now() - startTime
+                this.costTracker.add("reflection", entry.tokenEstimate, latency, 0)
 
-				Logger.debug(
-					`[Observer] Reflected observation log (~${observationBlock.length / 4} tokens → ~${reflectedText.length / 4} tokens)`,
-				)
+				Logger.debug(`[Observer] Reflected observation log`)
 			})
 			.catch((error) => {
 				Logger.error("[Observer] Reflection failed:", error)
 			})
 			.finally(() => {
-				this.pendingReflectionPromise = undefined
+				this.pendingTasks.delete(promise)
 			})
+		
+		this.pendingTasks.add(promise)
 	}
 
 	prepareContext(history: DiracStorageMessage[]): PrepareContextResult {
 		if (!this._isEnabled) {
-			return { messages: history, observationBlock: "", removedCount: 0 }
+			return { messages: history, observationBlock: "", watcherInsights: "", removedCount: 0 }
 		}
 
-		const observationBlock = this.store.buildObservationBlock()
+		const observationBlock = this.store.buildObservationBlock("summary")
+		const watcherInsights = this.store.buildObservationBlock("watcher")
+		const filterInsights = this.store.buildObservationBlock("filter")
+
+		const combinedInsights = [
+			watcherInsights,
+			filterInsights
+		].filter(Boolean).join("\n\n")
 
 		if (observationBlock && this.lastObservedMessageIndex > 2) {
 			const slicedMessages = [
@@ -254,21 +314,33 @@ export class ObserverOrchestrator {
 				...history.slice(this.lastObservedMessageIndex),
 			]
 			const removedCount = history.length - slicedMessages.length
-			return { messages: slicedMessages, observationBlock, removedCount }
+			return { messages: slicedMessages, observationBlock, watcherInsights: combinedInsights, removedCount }
 		}
 
-		return { messages: history, observationBlock, removedCount: 0 }
+		return { messages: history, observationBlock: "", watcherInsights: combinedInsights, removedCount: 0 }
 	}
 
 	/**
-	 * Search archived and current observations by keyword.
-	 * Used by the dirac_recall tool.
+	 * Search archived and current observations using the C analyzer's FTS5 index.
 	 */
 	async recall(query: string): Promise<string> {
+        const analyzer = this.getAnalyzerClient?.()
+        if (analyzer) {
+            const results = await analyzer.searchObservations(query)
+            if (results.length > 0) {
+                const lines = results.map((r, i) => {
+                    const date = new Date(r.timestamp).toISOString().replace("T", " ").replace(/\.\d+Z$/, "")
+                    return `${i + 1}. [${r.type.toUpperCase()}] [${date}] (~${r.tokens} tokens)\n${r.content}`
+                })
+                return `Found ${results.length} semantic matches in observation history:\n\n${lines.join("\n\n---\n\n")}`
+            }
+        }
+
+        // Fallback to local keyword search if C daemon search returns nothing or is unavailable
 		await this.store.load()
 		const entries = this.store.getAllObservations()
 		if (entries.length === 0) {
-			return "No observations found. Observations are generated when the observer is enabled and compresses conversation history."
+			return "No observations found."
 		}
 
 		const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
@@ -278,22 +350,18 @@ export class ObserverOrchestrator {
 		})
 
 		if (matches.length === 0) {
-			return `No observations matching "${query}". Try broader keywords or use dirac_recall without arguments to list all.`
+			return `No observations matching "${query}".`
 		}
 
 		const lines = matches.map((entry, i) => {
 			const date = new Date(entry.timestamp).toISOString().replace("T", " ").replace(/\.\d+Z$/, "")
-			return `${i + 1}. [${date}] (~${entry.tokenEstimate} tokens)\n${entry.observationText}`
+			return `${i + 1}. [${entry.type.toUpperCase()}] [${date}] (~${entry.tokenEstimate} tokens)\n${entry.observationText}`
 		})
-		return `Found ${matches.length} observation${matches.length > 1 ? "s" : ""} matching "${query}":\n\n${lines.join("\n\n---\n\n")}`
+		return `Found ${matches.length} keyword matches in observations:\n\n${lines.join("\n\n---\n\n")}`
 	}
 
-	/**
-	 * Run a final compression pass (called on session end).
-	 */
 	async finalCompression(history: DiracStorageMessage[]): Promise<void> {
 		if (!this._isEnabled || !this.agent) return
-
 		const unobserved = this.getUnobservedMessages(history)
 		if (unobserved.length < 2) return
 
@@ -301,17 +369,17 @@ export class ObserverOrchestrator {
 		const tokenEstimate = this.estimateTokens(unobserved)
 
 		try {
-			const observationText = await this.agent.compress(unobserved)
+			const observationText = await this.agent.observe(unobserved, "summary")
 			if (!observationText) return
 
 			const entry: ObservationEntry = {
 				timestamp: Date.now(),
+				type: "summary",
 				observationText,
 				compressedRange: [sliceStart, history.length - 1],
 				tokenEstimate,
 			}
 			await this.store.append(entry)
-			Logger.debug(`[Observer] Final compression: ${unobserved.length} messages captured`)
 		} catch (error) {
 			Logger.error("[Observer] Final compression failed:", error)
 		}
@@ -321,27 +389,21 @@ export class ObserverOrchestrator {
 		if (enabled && !this._isEnabled) {
 			this._isEnabled = true
 			this.config.enabled = true
-			if (!this.agent) {
-				this.agent = new ObserverAgent(this.config, this.stateManager)
-			}
-			if (this.config.reflectionEnabled && !this.reflector) {
-				this.reflector = new ReflectorAgent(this.config, this.stateManager)
-			}
+			if (!this.agent) this.agent = new ObserverAgent(this.config, this.stateManager)
+			if (this.config.reflectionEnabled && !this.reflector) this.reflector = new ReflectorAgent(this.config, this.stateManager)
 		} else if (!enabled && this._isEnabled) {
 			this._isEnabled = false
 			this.config.enabled = false
 			this.agent?.dispose()
 			this.agent = undefined
-			this.reflector?.dispose()
 			this.reflector = undefined
 		}
 	}
 
 	async dispose(): Promise<void> {
-		const pending = [this.pendingObserverPromise, this.pendingReflectionPromise].filter(Boolean)
-		if (pending.length > 0) {
+		if (this.pendingTasks.size > 0) {
 			const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000))
-			await Promise.race([Promise.all(pending), timeout])
+			await Promise.race([Promise.all(Array.from(this.pendingTasks)), timeout])
 		}
 		this.agent?.dispose()
 		this.reflector?.dispose()

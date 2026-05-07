@@ -29,6 +29,18 @@ IndexDB* db_open(const char *path) {
         "  end_line INTEGER NOT NULL,"
         "  handle TEXT"
         ");"
+        "CREATE TABLE IF NOT EXISTS observer_logs ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  type TEXT NOT NULL,"
+        "  content TEXT NOT NULL,"
+        "  timestamp REAL NOT NULL,"
+        "  tokens INTEGER NOT NULL"
+        ");"
+        "CREATE VIRTUAL TABLE IF NOT EXISTS observer_logs_fts USING fts5("
+        "  content, "
+        "  tokenize='trigram',"
+        "  content_rowid='id'"
+        ");"
         "CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);"
         "CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);";
 
@@ -95,8 +107,58 @@ int db_invalidate_file(IndexDB *db, const char *path) {
 }
 
 int db_clear(IndexDB *db) {
-    sqlite3_exec(db->db, "DELETE FROM symbols; DELETE FROM files;", NULL, NULL, NULL);
+    sqlite3_exec(db->db, "DELETE FROM symbols; DELETE FROM files; DELETE FROM observer_logs; DELETE FROM observer_logs_fts;", NULL, NULL, NULL);
     return 0;
+}
+
+int db_index_observation(IndexDB *db, const char *type, const char *content, double timestamp, int token_estimate) {
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs (type, content, timestamp, tokens) VALUES (?, ?, ?, ?)", -1, &stmt, NULL);
+    sqlite3_bind_text(stmt, 1, type, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, content, -1, SQLITE_STATIC);
+    sqlite3_bind_double(stmt, 3, timestamp);
+    sqlite3_bind_int(stmt, 4, token_estimate);
+    sqlite3_step(stmt);
+    int64_t row_id = sqlite3_last_insert_rowid(db->db);
+    sqlite3_finalize(stmt);
+
+    sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs_fts (rowid, content) VALUES (?, ?)", -1, &stmt, NULL);
+    sqlite3_bind_int64(stmt, 1, row_id);
+    sqlite3_bind_text(stmt, 2, content, -1, SQLITE_STATIC);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return 0;
+}
+
+void db_search_observations(IndexDB *db, const char *query, int limit, struct jsonw *w) {
+    sqlite3_stmt *stmt;
+    const char *sql = "SELECT l.type, l.content, l.timestamp, l.tokens "
+                      "FROM observer_logs l JOIN observer_logs_fts f ON l.id = f.rowid "
+                      "WHERE observer_logs_fts MATCH ? ORDER BY rank LIMIT ?";
+    
+    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        jsonw_key(w, "results");
+        jsonw_array_open(w);
+        jsonw_array_close(w);
+        return;
+    }
+
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, limit);
+
+    jsonw_key(w, "results");
+    jsonw_array_open(w);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        jsonw_object_open(w);
+        jsonw_kv_str(w, "type", (const char*)sqlite3_column_text(stmt, 0));
+        jsonw_kv_str(w, "content", (const char*)sqlite3_column_text(stmt, 1));
+        jsonw_kv_double(w, "timestamp", sqlite3_column_double(stmt, 2));
+        jsonw_kv_int(w, "tokens", sqlite3_column_int(stmt, 3));
+        jsonw_object_close(w);
+    }
+    jsonw_array_close(w);
+    sqlite3_finalize(stmt);
 }
 
 void db_search_symbols(IndexDB *db, const char *query, const char *kind_filter, int limit, struct jsonw *w) {

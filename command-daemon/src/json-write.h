@@ -155,6 +155,12 @@ static inline void jsonw_bool(struct jsonw *w, bool val) {
     w->need_comma = true;
 }
 
+static inline void jsonw_double(struct jsonw *w, double val) {
+    jsonw_comma(w);
+    fprintf(w->f, "%f", val);
+    w->need_comma = true;
+}
+
 static inline void jsonw_null(struct jsonw *w) {
     jsonw_comma(w);
     fputs("null", w->f);
@@ -182,6 +188,11 @@ static inline void jsonw_kv_int(struct jsonw *w, const char *key, int64_t val) {
 static inline void jsonw_kv_bool(struct jsonw *w, const char *key, bool val) {
     jsonw_key(w, key);
     jsonw_bool(w, val);
+}
+
+static inline void jsonw_kv_double(struct jsonw *w, const char *key, double val) {
+    jsonw_key(w, key);
+    jsonw_double(w, val);
 }
 
 /* Write key + value, but if val is NULL write key + null instead. */

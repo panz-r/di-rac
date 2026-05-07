@@ -52,6 +52,8 @@ interface TaskOptions {
 	observe?: boolean
 	observeProvider?: string
 	observeModel?: string
+	observerTurns?: string
+	observeBlockAfter?: string
 }
 
 async function disposeCliContext(ctx: CliContext): Promise<void> {
@@ -395,6 +397,14 @@ async function applyTaskOptions(options: TaskOptions): Promise<void> {
 		}
 		if (options.observeModel) {
 			stateManager.setSessionOverride("observerModelId", options.observeModel)
+		}
+		if (options.observerTurns) {
+			const turns = parseInt(options.observerTurns)
+			if (!isNaN(turns)) stateManager.setSessionOverride("observerTurns", turns)
+		}
+		if (options.observeBlockAfter) {
+			const ratio = parseFloat(options.observeBlockAfter)
+			if (!isNaN(ratio)) stateManager.setSessionOverride("observerBlockAfter", ratio)
 		}
 	}
 }
@@ -1213,6 +1223,8 @@ program
 	.option("--observe", "Enable observer agent for context compression")
 	.option("--observe-provider <provider>", "Observer API provider (requires --observe)")
 	.option("--observe-model <model>", "Observer model ID (requires --observe)")
+	.option("--observer-turns <n>", "Frequency of observer runs in turns (default: 2)")
+	.option("--observe-block-after <ratio>", "Context ratio to trigger synchronous compression (default: 0.7)")
 	.option("-T, --taskId <id>", "Resume an existing task by ID")
 	.action((prompt, options) => {
 		if (options.taskId) {
@@ -1449,6 +1461,8 @@ program
 	.option("--observe", "Enable observer agent for context compression")
 	.option("--observe-provider <provider>", "Observer API provider (requires --observe)")
 	.option("--observe-model <model>", "Observer model ID (requires --observe)")
+	.option("--observer-turns <n>", "Frequency of observer runs in turns (default: 2)")
+	.option("--observe-block-after <ratio>", "Context ratio to trigger synchronous compression (default: 0.7)")
 	.option("--kanban", "Run npx kanban --agent dirac")
 	.option("-T, --taskId <id>", "Resume an existing task by ID")
 	.option("--continue", "Resume the most recent task from the current working directory")

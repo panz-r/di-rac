@@ -497,7 +497,11 @@ export class Task {
 			shouldRunBackgroundCheck: () => this.commandExecutor.hasActiveBackgroundCommand(),
 		})
 
-		this.observerOrchestrator = new ObserverOrchestrator(this.taskId, this.stateManager)
+		this.observerOrchestrator = new ObserverOrchestrator(
+			this.taskId,
+			this.stateManager,
+			() => this.analyzerClient,
+		)
 
 		this.lifecycleManager = new LifecycleManager({
 			taskState: this.taskState,
@@ -992,6 +996,9 @@ export class Task {
 			messagesForContext = result.messages
 			if (result.observationBlock) {
 				enrichedSystemPrompt += "\n\n---\n\n# Conversation Observations\n\n" + result.observationBlock
+			}
+			if (result.watcherInsights) {
+				enrichedSystemPrompt += "\n\n---\n\n# OBSERVER FEEDBACK (Background Monitoring)\n\n" + result.watcherInsights
 			}
 			if (result.removedCount > 0) {
 				await this.say("info", `observer compressed ${result.removedCount} messages into observations (${originalCount} → ${messagesForContext.length})`)

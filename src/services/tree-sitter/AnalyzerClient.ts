@@ -575,6 +575,44 @@ export class AnalyzerClient {
 		}
 	}
 
+	async indexObservation(type: string, content: string, timestamp: number, tokens: number): Promise<void> {
+		try {
+			await this.send({
+				command: "index-observation",
+				type,
+				content,
+				timestamp,
+				tokens,
+			})
+		} catch (e) {
+			Logger.warn("AnalyzerClient", `Failed to index observation: ${e}`)
+		}
+	}
+
+	async searchObservations(
+		query: string,
+		limit = 10,
+	): Promise<
+		Array<{
+			type: string
+			content: string
+			timestamp: number
+			tokens: number
+		}>
+	> {
+		try {
+			const resp = await this.send({
+				command: "search-observations",
+				query,
+				limit,
+			})
+			return resp.results || []
+		} catch (e) {
+			Logger.warn("AnalyzerClient", `Failed to search observations: ${e}`)
+			return []
+		}
+	}
+
 	/** Convert daemon symbols to ParsedDefinition[] for backward compatibility */
 	static toParsedDefinitions(symbols: DaemonSymbol[], sourceLines?: string[]): ParsedDefinition[] {
 		return symbols.map((s) => ({

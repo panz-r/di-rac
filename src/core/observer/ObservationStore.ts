@@ -1,7 +1,7 @@
 import { appendFile, readFile, rename } from "fs/promises"
 import path from "path"
 import { ensureTaskDirectoryExists } from "@core/storage/disk"
-import type { ObservationEntry } from "./ObserverConfig"
+import type { ObservationEntry, ObservationType } from "./ObserverConfig"
 import { Logger } from "@/shared/services/Logger"
 
 export class ObservationStore {
@@ -53,17 +53,28 @@ export class ObservationStore {
 		return this.cache
 	}
 
-	getLatestObservation(): ObservationEntry | undefined {
-		return this.cache.length > 0 ? this.cache[this.cache.length - 1] : undefined
+	getLatestObservation(type?: ObservationType): ObservationEntry | undefined {
+		if (!type) return this.cache.length > 0 ? this.cache[this.cache.length - 1] : undefined
+		for (let i = this.cache.length - 1; i >= 0; i--) {
+			if (this.cache[i].type === type) return this.cache[i]
+		}
+		return undefined
 	}
 
 	getAllObservations(): ObservationEntry[] {
 		return [...this.cache]
 	}
 
-	buildObservationBlock(): string {
-		if (this.cache.length === 0) return ""
-		return this.cache.map((e) => e.observationText).join("\n\n")
+	buildObservationBlock(type?: ObservationType): string {
+		const filtered = type ? this.cache.filter((e) => e.type === type) : this.cache
+		if (filtered.length === 0) return ""
+		
+		// For watcher/filter, we only care about the most recent insights to avoid context bloat
+		if (type === "watcher" || type === "filter") {
+			return filtered.slice(-2).map((e) => e.observationText).join("\n")
+		}
+		
+		return filtered.map((e) => e.observationText).join("\n\n")
 	}
 
 	estimateTokenCount(): number {

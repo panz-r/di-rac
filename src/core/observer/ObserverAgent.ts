@@ -1,6 +1,10 @@
 import { buildApiHandler } from "@/core/api"
-import type { ObserverConfig } from "./ObserverConfig"
-import { OBSERVER_SYSTEM_PROMPT } from "./ObserverConfig"
+import type { ObserverConfig, ObservationType } from "./ObserverConfig"
+import { 
+    OBSERVER_SUMMARIZER_PROMPT, 
+    OBSERVER_WATCHER_PROMPT, 
+    OBSERVER_FILTER_PROMPT 
+} from "./ObserverConfig"
 import type { StateManager } from "@core/storage/StateManager"
 import { formatContentBlockToMarkdown } from "@integrations/misc/export-markdown"
 import type { DiracStorageMessage } from "@shared/messages/content"
@@ -35,15 +39,22 @@ export class ObserverAgent {
 			.join("\n\n")
 	}
 
-	async compress(messages: DiracStorageMessage[]): Promise<string> {
+	/**
+	 * Perform a specialized observation task.
+	 */
+	async observe(messages: DiracStorageMessage[], type: ObservationType): Promise<string> {
 		const handler = this.getHandler()
 		const serialized = this.serializeMessages(messages)
+
+		let systemPrompt = OBSERVER_SUMMARIZER_PROMPT
+		if (type === "watcher") systemPrompt = OBSERVER_WATCHER_PROMPT
+		else if (type === "filter") systemPrompt = OBSERVER_FILTER_PROMPT
 
 		const observerMessages: DiracStorageMessage[] = [
 			{ role: "user", content: serialized, ts: Date.now() },
 		]
 
-		const stream = handler.createMessage(OBSERVER_SYSTEM_PROMPT, observerMessages, undefined)
+		const stream = handler.createMessage(systemPrompt, observerMessages, undefined)
 
 		let result = ""
 		for await (const chunk of stream) {
@@ -53,6 +64,11 @@ export class ObserverAgent {
 		}
 
 		return result.trim()
+	}
+
+	/** Legacy alias for backward compatibility */
+	async compress(messages: DiracStorageMessage[]): Promise<string> {
+		return this.observe(messages, "summary")
 	}
 
 	dispose(): void {

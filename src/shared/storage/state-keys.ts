@@ -215,9 +215,10 @@ const USER_SETTINGS_FIELDS = {
 	observerEnabled: { default: false as boolean },
 	observerProvider: { default: undefined as string | undefined },
 	observerModelId: { default: undefined as string | undefined },
+	observerTurns: { default: 2 as number },
 	observerTokenThreshold: { default: 15000 as number },
 	observerBufferActivation: { default: 0.8 as number },
-	observerBlockAfter: { default: 1.2 as number },
+	observerBlockAfter: { default: 0.7 as number },
 	observerReflectionEnabled: { default: true as boolean },
 	observerReflectionTokenThreshold: { default: 10000 as number },
 } satisfies FieldDefinitions

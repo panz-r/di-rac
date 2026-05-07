@@ -33,7 +33,6 @@ static void jsonw_id(struct jsonw *w, const char *raw_id, int id_len) {
     if (!raw_id || id_len <= 0) {
         jsonw_null(w);
     } else {
-        /* Write raw JSON value (could be number or string) */
         fwrite(raw_id, 1, id_len, w->f);
         w->need_comma = true;
     }
@@ -203,6 +202,45 @@ static void handle_search_symbols(pthread_mutex_t *lock, pthread_mutex_t *db_loc
     pthread_mutex_unlock(lock);
 }
 
+static void handle_index_observation(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *type, const char *content, double timestamp, int tokens, AnalyzerCtx *ctx) {
+    if (!ctx->db) { send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open"); return; }
+    
+    pthread_mutex_lock(db_lock);
+    db_index_observation((IndexDB*)ctx->db, type, content, timestamp, tokens);
+    pthread_mutex_unlock(db_lock);
+
+    pthread_mutex_lock(lock);
+    struct jsonw w;
+    jsonw_init(&w, stdout);
+    jsonw_object_open(&w);
+    jsonw_kv_str(&w, "type", "ok");
+    jsonw_id(&w, raw_id, id_len);
+    jsonw_kv_bool(&w, "ok", true);
+    jsonw_object_close(&w);
+    jsonw_flush(&w);
+    pthread_mutex_unlock(lock);
+}
+
+static void handle_search_observations(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *query, int limit, AnalyzerCtx *ctx) {
+    if (!ctx->db) { send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open"); return; }
+
+    pthread_mutex_lock(lock);
+    struct jsonw w;
+    jsonw_init(&w, stdout);
+    jsonw_object_open(&w);
+    jsonw_kv_str(&w, "type", "search_observations_result");
+    jsonw_id(&w, raw_id, id_len);
+    jsonw_kv_bool(&w, "ok", true);
+    
+    pthread_mutex_lock(db_lock);
+    db_search_observations((IndexDB*)ctx->db, query, limit, &w);
+    pthread_mutex_unlock(db_lock);
+
+    jsonw_object_close(&w);
+    jsonw_flush(&w);
+    pthread_mutex_unlock(lock);
+}
+
 static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *file, AnalyzerCtx *ctx) {
     if (!ctx->db) {
         send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open");
@@ -311,8 +349,9 @@ static void* request_worker(void *arg) {
 
     const char *raw_id = NULL;
     int id_len = 0;
-    char command[64] = "", file[4096] = "", content[MAX_LINE] = "", lang[32] = "", dir[4096] = "", query[256] = "", kind[64] = "";
-    int limit = 100;
+    char command[64] = "", file[4096] = "", content[MAX_LINE] = "", lang[32] = "", dir[4096] = "", query[256] = "", kind[64] = "", obs_type[32] = "";
+    int limit = 100, tokens = 0;
+    double timestamp = 0.0;
     char key[64];
     const char *val;
     int vlen;
@@ -326,6 +365,9 @@ static void* request_worker(void *arg) {
         else if (strcmp(key, "dir") == 0 || strcmp(key, "root") == 0) json_get_str(val, vlen, dir, sizeof(dir));
         else if (strcmp(key, "query") == 0) json_get_str(val, vlen, query, sizeof(query));
         else if (strcmp(key, "kind") == 0) json_get_str(val, vlen, kind, sizeof(kind));
+        else if (strcmp(key, "type") == 0) json_get_str(val, vlen, obs_type, sizeof(obs_type));
+        else if (strcmp(key, "timestamp") == 0) json_get_double(val, vlen, &timestamp);
+        else if (strcmp(key, "tokens") == 0) json_get_int(val, vlen, &tokens);
         else if (strcmp(key, "limit") == 0 || strcmp(key, "max_results") == 0) json_get_int(val, vlen, &limit);
     }
 
@@ -377,6 +419,10 @@ static void* request_worker(void *arg) {
         handle_search_symbols(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, kind[0] ? kind : NULL, limit, &task->gctx->base);
     } else if (strcmp(command, "index-file") == 0) {
         handle_index_file(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, file, &task->gctx->base);
+    } else if (strcmp(command, "index-observation") == 0) {
+        handle_index_observation(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, obs_type, content, timestamp, tokens, &task->gctx->base);
+    } else if (strcmp(command, "search-observations") == 0) {
+        handle_search_observations(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, limit, &task->gctx->base);
     } else if (strcmp(command, "invalidate-file") == 0) {
         handle_invalidate_file(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, file, &task->gctx->base);
     } else if (strcmp(command, "clear-index") == 0) {
