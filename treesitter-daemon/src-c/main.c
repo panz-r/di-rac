@@ -560,12 +560,12 @@ static void* request_worker(void *arg) {
     } else if (strcmp(command, "clear-index") == 0) {
         handle_clear_index(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, &task->gctx->base);
     } else if (strcmp(command, "shutdown") == 0) {
-        pthread_mutex_lock(&task->gctx->stdout_lock);
+        /* Send response before jumping to cleanup — lock already held */
         struct jsonw w; jsonw_init(&w, stdout); jsonw_object_open(&w);
         jsonw_kv_bool(&w, "ok", true); jsonw_id(&w, raw_id, id_len); jsonw_kv_str(&w, "status", "shutting_down");
         jsonw_object_close(&w); jsonw_flush(&w);
         pthread_mutex_unlock(&task->gctx->stdout_lock);
-        exit(0);
+        goto cleanup; /* clean up: decrement thread count, free task, return NULL */
     } else {
         send_error(&task->gctx->stdout_lock, raw_id, id_len, "UNKNOWN_COMMAND", "Unknown analyzer command");
     }
