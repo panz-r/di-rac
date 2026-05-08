@@ -361,7 +361,7 @@ static void handle_execute(const char *line, int line_len,
         if (requested_ms < 1000) requested_ms = 1000;
         timeout_ms = requested_ms;
     } else {
-        timeout_ms = executor_is_long_running(command) ? 300000 : 30000;
+        timeout_ms = executor_is_long_running(command) ? 600000 : 300000;
     }
 
     if (executor_fork(command, cwd, slot) < 0) {

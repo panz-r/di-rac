@@ -27,7 +27,7 @@ import { RepoToolHandler } from "./handlers/RepoToolHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
 import { AgentConfigLoader } from "./subagent/AgentConfigLoader"
 import { ToolValidator } from "./ToolValidator"
-import { parseCliCommand, splitCommandChain, hasCliSchema, shouldChainSplit } from "./cli-parser"
+import { parseCliCommand, splitCommandChain, hasCliSchema, shouldChainSplit, getCliSchema } from "./cli-parser"
 import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
 
@@ -168,6 +168,35 @@ export class ToolExecutorCoordinator {
 			const parsed = parseCliCommand(block.name, commandStr)
 			if (parsed) block = { ...block, params: parsed }
 			return this.executeSingle(config, block, handler)
+		}
+
+		// Fallback: when command is missing for a CLI tool, try to use any positional params
+		// the LLM may have sent directly (e.g., { paths: ["."] } instead of { command: "." })
+		if (hasCliSchema(block.name)) {
+			const schema = getCliSchema(block.name)
+			if (schema?.positionals) {
+				const hasPositional = schema.positionals.some((pos) => {
+					const val = block.params?.[pos.param]
+					return val !== undefined && val !== null && val !== ""
+				})
+				if (hasPositional) {
+					return this.executeSingle(config, block, handler)
+				}
+			}
+
+			// Last resort: if block has any unrecognized string values that look like paths,
+			// try to construct a command from them for the CLI parser
+			const stringValues = Object.values(block.params || {}).filter(
+				(v): v is string => typeof v === "string" && v.trim().length > 0
+			)
+			if (stringValues.length > 0) {
+				const syntheticCommand = stringValues.join(" ")
+				const parsed = parseCliCommand(block.name, syntheticCommand)
+				if (parsed) {
+					block = { ...block, params: parsed }
+					return this.executeSingle(config, block, handler)
+				}
+			}
 		}
 
 		return this.executeSingle(config, block, handler)

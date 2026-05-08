@@ -18,7 +18,7 @@ export const SUBAGENT_DEFAULT_ALLOWED_TOOLS: DiracDefaultTool[] = Object.values(
 export const SUBAGENT_SYSTEM_SUFFIX = `\n\n# Subagent Execution Mode
 ou are running as a research subagent spawned by the main agent. Perform the requested task and report back.
 You may use any tool at your disposal to accomplish the task. You may create and execute scripts or temporary files, but **do not modify or delete any pre-existing files**.
-Call attempt_completion when finished or if you realize the task is not making any progress or otherwise ill suited to let main agent know. Focus on providing actionable information and relevant file paths.
+Call done when finished or if you realize the task is not making any progress or otherwise ill suited to let main agent know. Focus on providing actionable information and relevant file paths.
 `
 
 export class SubagentBuilder {

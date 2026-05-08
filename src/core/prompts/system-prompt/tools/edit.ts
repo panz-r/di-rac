@@ -6,7 +6,7 @@ const id = DiracDefaultTool.EDIT_FILE
 export const edit: DiracToolSpec = {
 	id,
 	name: "edit",
-	description: `Edit files using hash-anchored line references. Don't rewrite entire files — use targeted anchors. Don't edit without first reading anchors (e.g. "a3|def foo():"). Types: replace (anchor to end-anchor), insert_after, insert_before.
+	description: `Edit files using hash-anchored line references. Anchors verified against current file content before applying — stale anchors trigger fuzzy matching (≥90% auto-resolves, 70-90% suggests, <70% fails with re-read advice). Don't rewrite entire files — use targeted anchors. Don't edit without first reading anchors (e.g. "a3|def foo():"). Types: replace (anchor to end-anchor), insert_after, insert_before.
 
 Example: edit src/auth.ts --anchor "a3|def login():" --end-anchor "k7|  pass" --content "def login():\\n  ..."
 

@@ -17,6 +17,7 @@ export interface ResolvedEdit {
 	lineIdx: number
 	endIdx: number
 	edit: Edit
+	warnings?: string[]
 }
 
 export interface FailedEdit {

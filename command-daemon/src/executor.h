@@ -30,6 +30,7 @@ typedef struct {
     int timed_out;
     long start_ms;         /* monotonic start time in ms */
     int timeout_ms;        /* command timeout */
+    long last_progress_ms; /* monotonic time of last progress event */
     char cwd[4096];        /* resolved cwd after command */
     int active;            /* slot in use */
 } ExecChild;

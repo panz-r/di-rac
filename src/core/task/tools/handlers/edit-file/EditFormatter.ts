@@ -154,6 +154,17 @@ export class EditFormatter {
 			results.push(this.executor.formatFailureMessage(failed.edit, failed.error))
 		}
 
+		// Surface fuzzy match warnings from auto-resolved anchors
+		const fuzzyWarnings: string[] = []
+		for (const resolved of resolvedEdits) {
+			if (resolved.warnings) {
+				fuzzyWarnings.push(...resolved.warnings)
+			}
+		}
+		if (fuzzyWarnings.length > 0) {
+			results.push(`Fuzzy anchor resolution: ${fuzzyWarnings.join(" ")}`)
+		}
+
 		// Check for accidental literal \n in applied edits
 		for (const applied of appliedEdits) {
 			if (applied.edit.text.includes("\\n")) {
@@ -183,7 +194,7 @@ export class EditFormatter {
 
 		if (autoFormattingEdits) {
 			results.push(
-				`The user's editor also applied the following auto-formatting to your content:\n\n${autoFormattingEdits}\n\n(Note: Pay close attention to changes such as single quotes being converted to double quotes, semicolons being removed or added, long lines being broken into multiple lines, adjusting indentation style, adding/removing trailing commas, etc. This will help you ensure future edit_file operations to this file are accurate.)`,
+				`The user's editor also applied the following auto-formatting to your content:\n\n${autoFormattingEdits}\n\n(Note: Pay close attention to changes such as single quotes being converted to double quotes, semicolons being removed or added, long lines being broken into multiple lines, adjusting indentation style, adding/removing trailing commas, etc. This will help you ensure future edit operations to this file are accurate.)`,
 			)
 		}
 
@@ -191,7 +202,7 @@ export class EditFormatter {
 		const summary = `Applied ${resolvedEdits.length} edit(s) successfully${lineChanges}. NOTE the UPDATED anchors below.${failedEdits.length > 0 ? ` ${failedEdits.length} edit(s) failed.` : ""
 			}`
 		if (wasStringified) {
-			results.push(`Note: Your edit arguments were auto-corrected. Use CLI syntax: edit_file <path> --anchor <id> --content <text>.`)
+			results.push(`Note: Your edit arguments were auto-corrected. Use CLI syntax: edit <path> --anchor <id> --content <text>.`)
 		}
 
 		return formatResponse.toolResult(`${summary}\n\n${results.join("\n\n---\n\n")}`)

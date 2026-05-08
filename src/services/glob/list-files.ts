@@ -86,12 +86,14 @@ export async function listFiles(dirPath: string, recursive: boolean, limit: numb
 	}
 
 	try {
-		const terminalManager = StandaloneTerminalManager.getInstance()
-		const commandClient = terminalManager.getCommandClient()
+		const terminalManager = typeof (StandaloneTerminalManager as any).getInstance === "function"
+			? (StandaloneTerminalManager as any).getInstance()
+			: undefined
+		const commandClient = terminalManager?.getCommandClient?.()
 
-		if (!commandClient.fallback) {
+		if (commandClient && !commandClient.fallback) {
 			const walkResult = await commandClient.walk(absolutePath)
-			const fileInfos: FileInfo[] = walkResult.files.slice(0, limit).map((f) => ({
+			const fileInfos: FileInfo[] = walkResult.files.slice(0, limit).map((f: any) => ({
 				path: f.path,
 				mtime: f.mtime * 1000,
 				size: f.size,
@@ -99,8 +101,8 @@ export async function listFiles(dirPath: string, recursive: boolean, limit: numb
 			}))
 			return [fileInfos, walkResult.files.length >= limit]
 		}
-	} catch (error) {
-		Logger.warn("Services.glob", "Daemon walk failed, falling back to globby", error)
+	} catch {
+		// Daemon walk not available — globby fallback below
 	}
 
 	// globby requires cwd to point to a directory

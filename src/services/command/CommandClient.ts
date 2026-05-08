@@ -45,16 +45,37 @@ export interface RecentFilesResult {
 	files: string[]
 }
 
+export interface RunningCommandProgress {
+	elapsed_ms: number
+	stdout_bytes: number
+	stdout_tail: string
+}
+
+export interface RunningCommandStatus {
+	status: "running"
+	id: string
+	command: string
+	progress: RunningCommandProgress
+}
+
 interface PendingRequest {
 	resolve: (value: any) => void
 	reject: (reason: any) => void
 	timer: ReturnType<typeof setTimeout>
 }
 
+interface RunningCommand {
+	id: number
+	command: string
+	progress: RunningCommandProgress
+	result?: CommandResult
+}
+
 export class CommandClient {
 	private process: ChildProcess | null = null
 	private requestId = 0
 	private pending = new Map<number, PendingRequest>()
+	private runningCommands = new Map<number, RunningCommand>()
 	private buffer = ""
 	private binaryPath: string
 	private workspaceRoot: string
@@ -141,24 +162,38 @@ export class CommandClient {
 			try {
 				const msg = JSON.parse(line)
 				if (msg.id !== undefined) {
-					const pending = this.pending.get(msg.id)
+					// Progress events update running commands but don't resolve/reject pending
+					if (msg.type === "progress") {
+						const id = typeof msg.id === "string" ? parseInt(msg.id) : msg.id
+						const running = this.runningCommands.get(id)
+						if (running) {
+							running.progress = {
+								elapsed_ms: msg.elapsed_ms || 0,
+								stdout_bytes: msg.stdout_bytes || 0,
+								stdout_tail: msg.stdout_tail || "",
+							}
+						}
+						continue
+					}
+
+					const msgId = typeof msg.id === "string" ? parseInt(msg.id) : msg.id
+					const pending = this.pending.get(msgId)
 					if (pending) {
 						if (msg.type === "ack") {
-							// Ack received \u2014 set post-ack timer based on daemon timeout_ms
 							clearTimeout(pending.timer)
 							const daemonTimeout = typeof msg.timeout_ms === "number" ? msg.timeout_ms : 30000
-							const postAckMs = daemonTimeout + 15000 // buffer for process cleanup
+							const postAckMs = daemonTimeout + 15000
 							pending.timer = setTimeout(() => {
-								this.pending.delete(msg.id)
-								pending.reject(new Error(`Request ${msg.id} timed out after no response following ack`))
+								this.pending.delete(msgId)
+								pending.reject(new Error(`Request ${msgId} timed out after no response following ack`))
 							}, postAckMs)
 						} else if (msg.type === "error") {
 							clearTimeout(pending.timer)
-							this.pending.delete(msg.id)
+							this.pending.delete(msgId)
 							pending.reject(new Error(msg.message || "Daemon error"))
 						} else {
 							clearTimeout(pending.timer)
-							this.pending.delete(msg.id)
+							this.pending.delete(msgId)
 							pending.resolve(msg)
 						}
 					}
@@ -170,26 +205,24 @@ export class CommandClient {
 	}
 
 	private handleCrash(): void {
-		// Guard against double-fire from both 'error' and 'exit' events
 		if (this.crashed && !this.process) return
 		this.crashed = true
-		// Reject all pending requests
 		for (const [id, pending] of this.pending) {
 			clearTimeout(pending.timer)
 			pending.reject(new Error("Daemon crashed"))
 		}
 		this.pending.clear()
+		// Running commands are also lost when the daemon crashes
+		this.runningCommands.clear()
 		this.process = null
 
 		if (this.shuttingDown) return
 
-		// Clear any existing restart timer before scheduling a new one
 		if (this.restartTimer) {
 			clearTimeout(this.restartTimer)
 			this.restartTimer = null
 		}
 
-		// Schedule restart with exponential backoff
 		this.restartCount++
 		const delay = Math.min(2000 * Math.pow(2, Math.min(this.restartCount, 5)), 60000)
 		Logger.info("CommandClient", `Scheduling daemon restart in ${delay}ms (attempt ${this.restartCount})`)
@@ -217,6 +250,7 @@ export class CommandClient {
 			this.process.kill()
 			this.process = null
 		}
+		this.runningCommands.clear()
 		this.fallback = true
 	}
 
@@ -270,13 +304,91 @@ export class CommandClient {
 		})
 	}
 
+	/**
+	 * Execute a command with a turn-delay. If the command completes within maxDelayMs,
+	 * returns the full result. Otherwise returns a RunningCommandStatus with partial output.
+	 * Use awaitResult() to retrieve the final result later.
+	 */
+	async executeWithDelay(
+		command: string,
+		maxDelayMs: number,
+		sessionId?: string,
+		timeoutSeconds?: number,
+	): Promise<CommandResult | RunningCommandStatus> {
+		// Use a long client timeout — the daemon will run for up to 300s
+		const clientTimeoutMs = timeoutSeconds ? timeoutSeconds * 1000 + 15000 : 315000
+		const sendPromise = this.send(
+			{
+				type: "execute",
+				command,
+				session_id: sessionId || undefined,
+				timeout: timeoutSeconds || undefined,
+			},
+			clientTimeoutMs,
+		) as Promise<CommandResult>
+
+		const delayPromise = new Promise<"delay">((resolve) =>
+			setTimeout(() => resolve("delay"), maxDelayMs),
+		)
+
+		const raceResult = await Promise.race([sendPromise, delayPromise])
+		if (raceResult !== "delay") {
+			return raceResult as CommandResult
+		}
+
+		// Still running — track in runningCommands, wire sendPromise to store result
+		const commandId = this.requestId
+		const entry: RunningCommand = {
+			id: commandId,
+			command,
+			progress: { elapsed_ms: maxDelayMs, stdout_bytes: 0, stdout_tail: "" },
+		}
+		this.runningCommands.set(commandId, entry)
+
+		sendPromise
+			.then((result) => {
+				const e = this.runningCommands.get(commandId)
+				if (e) e.result = result
+			})
+			.catch(() => {
+				this.runningCommands.delete(commandId)
+			})
+
+		return {
+			status: "running",
+			id: String(commandId),
+			command,
+			progress: entry.progress,
+		}
+	}
+
+	/**
+	 * Await the result of a previously-started command. Polls runningCommands
+	 * until the result is stored (via the background sendPromise resolution).
+	 */
+	async awaitResult(commandId: string, timeoutMs = 120000): Promise<CommandResult> {
+		const id = parseInt(commandId)
+		const start = Date.now()
+		while (Date.now() - start < timeoutMs) {
+			const entry = this.runningCommands.get(id)
+			if (entry?.result) {
+				this.runningCommands.delete(id)
+				return entry.result
+			}
+			await new Promise((r) => setTimeout(r, 500))
+		}
+		this.runningCommands.delete(id)
+		throw new Error(`Command ${commandId} still running after ${timeoutMs}ms`)
+	}
+
 	async execute(command: string, sessionId?: string, timeoutSeconds?: number): Promise<CommandResult> {
+		const clientTimeoutMs = timeoutSeconds ? timeoutSeconds * 1000 + 15000 : 30000
 		return this.send({
 			type: "execute",
 			command,
 			session_id: sessionId || undefined,
 			timeout: timeoutSeconds || undefined,
-		})
+		}, clientTimeoutMs)
 	}
 
 	async sessionInfo(sessionId: string): Promise<SessionInfoResult> {

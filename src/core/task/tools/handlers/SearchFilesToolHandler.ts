@@ -247,7 +247,10 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 		// Validate required parameters
 		if (!regex) {
 			config.taskState.consecutiveMistakeCount++
-			return await config.callbacks.sayAndCreateMissingParamError(this.name, "regex")
+			const hint = "Missing search pattern for search. Provide a 'command' argument with the regex pattern.\n"
+				+ 'Example: use search with command="TODO" or command="--regex \\"function.*init\\": in src --file-pattern *.ts".'
+			await config.callbacks.say("error", "di tried to use search without a search pattern. Retrying...")
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.invalidInput", hint, "recoverable"))
 		}
 
 		// Parse workspace hint from the path and determine search targets.

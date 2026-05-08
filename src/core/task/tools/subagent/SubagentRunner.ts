@@ -384,7 +384,7 @@ export class SubagentRunner {
 				}
 				systemPrompt = buildPrompt({
 					baseSystem: baseSystemPrompt,
-					task: `You must complete your task and call attempt_completion within ${limits.join(" and ")}.`,
+					task: `You must complete your task and call done within ${limits.join(" and ")}.`,
 					phase: 1,
 					constraints: ["noSelfReview", "bareMinimum"],
 				})
@@ -454,7 +454,7 @@ ${partialResult}`
 						content: [
 							{
 								type: "text",
-								text: "NOTE: This is your last turn. You must provide your final findings now using attempt_completion.",
+								text: "NOTE: This is your last turn. You must provide your final findings now using done.",
 							} as DiracTextContentBlock,
 						],
 					})
@@ -485,7 +485,7 @@ ${partialResult}`
 							content: [
 								{
 									type: "text",
-									text: "Timeout reached. Please provide your final findings now using attempt_completion based on what you have so far. This is your absolute last turn.",
+									text: "Timeout reached. Please provide your final findings now using done based on what you have so far. This is your absolute last turn.",
 								} as DiracTextContentBlock,
 							],
 						})
@@ -676,7 +676,7 @@ ${partialResult}`
 				if (finalizedToolCalls.length === 0) {
 					emptyAssistantResponseRetries += 1
 					if (emptyAssistantResponseRetries > MAX_EMPTY_ASSISTANT_RETRIES) {
-						const error = `Subagent did not call attempt_completion. Last response: "${excerpt(assistantText, 200)}"`
+						const error = `Subagent did not call done. Last response: "${excerpt(assistantText, 200)}"`
 						onProgress({ status: "failed", error, stats: { ...stats } })
 						return { status: "failed", error, stats }
 					}

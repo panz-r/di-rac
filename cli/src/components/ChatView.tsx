@@ -102,8 +102,8 @@ import { combineCommandSequences } from "@shared/combineCommandSequences"
 import { combineHookSequences } from "@shared/combineHookSequences"
 import type { DiracAsk, DiracMessage } from "@shared/ExtensionMessage"
 import { getApiMetrics, getLastApiReqTotalTokens } from "@shared/getApiMetrics"
-import { EmptyRequest, StringRequest } from "@shared/proto/dirac/common"
-import type { SlashCommandInfo } from "@shared/proto/dirac/slash"
+import { EmptyRequest, StringRequest } from "../proto/dirac"
+import type { SlashCommandInfo } from "../proto/dirac"
 import { CLI_ONLY_COMMANDS } from "@shared/slashCommands"
 import { getProviderDefaultModelId, getProviderModelIdKey } from "@shared/storage"
 import { getRandomQuote } from "@/shared/quotes"
@@ -944,6 +944,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
 						setRespondedToAsk(pendingAsk.ts)
 						setTextInput("")
 						setCursorPos(0)
+						// Respond to the ask to unblock NewTaskHandler before creating the new task
+						try {
+							await ctrl.task?.handleWebviewAskResponse("yesButtonClicked")
+						} catch (err) {
+							Logger.warn("ChatView", "Failed to respond to ask before new task", err)
+						}
 						await ctrl.initTask(pendingAsk.text || "")
 					} else {
 						// From completion_result or resume_completed_task - full clear

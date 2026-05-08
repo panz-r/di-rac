@@ -123,7 +123,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 
 			await config.callbacks.say(
 				"error",
-				`di tried to use write_to_file for '${relPath}' without providing a value for 'content'. ${
+				`di tried to use write for '${relPath}' without providing a value for 'content'. ${
 					config.taskState.consecutiveMistakeCount >= 2
 						? "This has happened multiple times — di will try a different approach."
 						: "Retrying..."

@@ -26,7 +26,7 @@ export const formatResponse = {
 	) => {
 		const sizeInfo = `File '${relPath.toPosix()}' is ${Math.round(fileSizeKB)} KB`
 		const lineInfo = totalLines !== undefined ? ` (~${totalLines.toLocaleString()} lines)` : ""
-		return `\n\nNOTE: ${sizeInfo}${lineInfo}. Showing first ${previewLines} lines. To view other sections, use read_file --start-line ${previewLines + 1} --end-line ${previewLines + 200}.`
+		return `\n\nNOTE: ${sizeInfo}${lineInfo}. Showing first ${previewLines} lines. To view other sections, use read --start-line ${previewLines + 1} --end-line ${previewLines + 200}.`
 	},
 
 	diracIgnoreError: (path: string) =>
@@ -41,8 +41,8 @@ export const formatResponse = {
 
 # Next Steps
 
-If you have completed the user's task, use the attempt_completion tool. 
-If you require additional information from the user, use the ask_followup_question tool. 
+If you have completed the user's task, use the done tool. 
+If you require additional information from the user, use the ask tool. 
 Otherwise, if you have not completed the task and do not need additional information, then proceed with the next step of the task. 
 (This is an automated message, so do not respond to it conversationally.)`,
 
@@ -53,7 +53,7 @@ Otherwise, if you have not completed the task and do not need additional informa
 		`Missing value for required parameter '${paramName}'. Please retry with complete response.\n`,
 
 	/**
-	 * Specialized error for write_to_file when the 'content' parameter is missing.
+	 * Specialized error for write when the 'content' parameter is missing.
 	 * Provides progressive guidance based on how many times this has happened consecutively,
 	 * and includes token budget awareness to help the model understand output constraints.
 	 */
@@ -66,15 +66,15 @@ Otherwise, if you have not completed the task and do not need additional informa
 				: ""
 
 		if (consecutiveFailures >= 3) {
-			// After 3+ failures, be very directive — stop trying write_to_file entirely
+			// After 3+ failures, be very directive — stop trying write entirely
 			return (
 				`${baseError}${contextWarning}\n\n` +
-				`CRITICAL: You have failed to write this file ${consecutiveFailures} times in a row. You MUST change your approach — do NOT retry write_to_file for this file again.\n\n` +
+				`CRITICAL: You have failed to write this file ${consecutiveFailures} times in a row. You MUST change your approach — do NOT retry write for this file again.\n\n` +
 				`Required action — choose ONE of these strategies:\n` +
-				`1. **Create an empty file first, then use edit_file** to add content in small sections (recommended)\n` +
+				`1. **Create an empty file first, then use edit** to add content in small sections (recommended)\n` +
 				`2. **Break the file into multiple smaller files** if architecturally appropriate\n` +
-				`3. **Write a minimal skeleton** using write_to_file (just imports, class/function signatures, no implementations), then use edit_file to fill in each section one at a time\n\n` +
-				`Each edit_file call should target a specific part of the file.`
+				`3. **Write a minimal skeleton** using write (just imports, class/function signatures, no implementations), then use edit to fill in each section one at a time\n\n` +
+				`Each edit call should target a specific part of the file.`
 			)
 		}
 		if (consecutiveFailures >= 2) {
@@ -83,18 +83,18 @@ Otherwise, if you have not completed the task and do not need additional informa
 				`${baseError}${contextWarning}\n\n` +
 				`This is your ${consecutiveFailures}${consecutiveFailures === 2 ? "nd" : "rd"} failed attempt. The file content is likely too large to generate in one response. You must use a different strategy:\n\n` +
 				`Recommended approaches:\n` +
-				`1. **Use write_to_file with a minimal skeleton** (just the structure — imports, class/function signatures, no implementations), then use edit_file to fill in each section incrementally\n` +
-				`2. **Use edit_file with smaller chunks** — if the file already exists, make targeted edits instead of rewriting the entire file\n` +
+				`1. **Use write with a minimal skeleton** (just the structure — imports, class/function signatures, no implementations), then use edit to fill in each section incrementally\n` +
+				`2. **Use edit with smaller chunks** — if the file already exists, make targeted edits instead of rewriting the entire file\n` +
 				`3. **Break the task into smaller steps** — write one function or section at a time\n\n` +
-				`Do NOT attempt to write the full file content in a single write_to_file call again.`
+				`Do NOT attempt to write the full file content in a single write call again.`
 			)
 		}
 		// First failure — provide helpful guidance
 		return (
 			`${baseError}${contextWarning}\n\n` +
 			`Suggestions:\n` +
-			`- If the file is large, try breaking down the task into smaller steps. Write a skeleton first, then fill in sections using edit_file.\n` +
-			`- If the file already exists, prefer edit_file to make targeted edits instead of rewriting the entire file.\n` +
+			`- If the file is large, try breaking down the task into smaller steps. Write a skeleton first, then fill in sections using edit.\n` +
+			`- If the file already exists, prefer edit to make targeted edits instead of rewriting the entire file.\n` +
 			`- Ensure the --content value contains the complete file content before closing the tool tag.\n\n`
 		)
 	},
@@ -197,7 +197,7 @@ Otherwise, if you have not completed the task and do not need additional informa
 		if (didHitLimit) {
 			return `${note}${summary}\n\n${formatted.join(
 				"\n",
-			)}\n\n(File list truncated. Use list_files on specific subdirectories if you need to explore further.)`
+			)}\n\n(File list truncated. Use repo on specific subdirectories if you need to explore further.)`
 		}
 
 		return `${note}${summary}\n\n${formatted.join("\n")}`
@@ -248,14 +248,14 @@ Otherwise, if you have not completed the task and do not need additional informa
 	) =>
 		`The user made the following updates to your content:\n\n${userEdits}\n\n` +
 		(autoFormattingEdits
-			? `The user's editor also applied the following auto-formatting to your content:\n\n${autoFormattingEdits}\n\n(Note: Pay close attention to changes such as single quotes being converted to double quotes, semicolons being removed or added, long lines being broken into multiple lines, adjusting indentation style, adding/removing trailing commas, etc. This will help you ensure future edit_file operations to this file are accurate.)\n\n`
+			? `The user's editor also applied the following auto-formatting to your content:\n\n${autoFormattingEdits}\n\n(Note: Pay close attention to changes such as single quotes being converted to double quotes, semicolons being removed or added, long lines being broken into multiple lines, adjusting indentation style, adding/removing trailing commas, etc. This will help you ensure future edit operations to this file are accurate.)\n\n`
 			: "") +
 		`The updated content, which includes both your original modifications and the additional edits, has been successfully saved to ${relPath.toPosix()}.\n\n` +
 		`Please note:\n` +
 		`1. You do not need to re-write the file with these changes, as they have already been applied.\n` +
 		`2. Proceed with the task using this updated file state as the new baseline. (You should assume the file now contains your modifications, plus the user edits and any auto-formatting mentioned above.)\n` +
 		`3. If the user's edits have addressed part of the task or changed the requirements, adjust your approach accordingly.` +
-		`4. IMPORTANT: Always base your future edit_file operations on this updated file state. (If you need to verify the current file content for a future edit, you may use the read_file tool.)\n` +
+		`4. IMPORTANT: Always base your future edit operations on this updated file state. (If you need to verify the current file content for a future edit, you may use the read tool.)\n` +
 		`${newProblemsMessage}`,
 
 	fileEditWithoutUserChanges: (
@@ -265,20 +265,20 @@ Otherwise, if you have not completed the task and do not need additional informa
 	) =>
 		`The content was successfully saved to ${relPath.toPosix()}.\n\n` +
 		(autoFormattingEdits
-			? `Along with your edits, the user's editor applied the following auto-formatting to your content:\n\n${autoFormattingEdits}\n\n(Note: Pay close attention to changes such as single quotes being converted to double quotes, semicolons being removed or added, long lines being broken into multiple lines, adjusting indentation style, adding/removing trailing commas, etc. This will help you ensure future edit_file operations to this file are accurate.)\n\n`
+			? `Along with your edits, the user's editor applied the following auto-formatting to your content:\n\n${autoFormattingEdits}\n\n(Note: Pay close attention to changes such as single quotes being converted to double quotes, semicolons being removed or added, long lines being broken into multiple lines, adjusting indentation style, adding/removing trailing commas, etc. This will help you ensure future edit operations to this file are accurate.)\n\n`
 			: "") +
-		`IMPORTANT: Always base your future edit_file operations on this updated file state. (If you need to verify the current file content for a future edit, you may use the read_file tool.)\n\n` +
+		`IMPORTANT: Always base your future edit operations on this updated file state. (If you need to verify the current file content for a future edit, you may use the read tool.)\n\n` +
 		`${newProblemsMessage}`,
 
-	/** @deprecated Use edit_file instead */
+	/** @deprecated Use edit instead */
 	diffError: (relPath: string, originalContent: string | undefined, absolutePath?: string, ulid?: string) =>
 		`This is likely because your edit could not be applied. Ensure your anchors (anchor and end_anchor) match specific, unique words that only appear on those lines. (Do NOT include the line's actual code, spaces, or braces in the anchors. Malformed XML will cause complete tool failure and break the entire editing process.)\n\n` +
 		`The file was reverted to its original state:\n\n` +
 		`<file_content path="${relPath.toPosix()}">\n${hashLines(originalContent || "")}\n</file_content>\n\n` +
-		`Now that you have the latest state of the file, try the operation again with fewer, more precise SEARCH blocks. (If you run into this error 3 times in a row, you may use the write_to_file tool as a fallback.)`,
+		`Now that you have the latest state of the file, try the operation again with fewer, more precise SEARCH blocks. (If you run into this error 3 times in a row, you may use the write tool as a fallback.)`,
 
 	diracIgnoreInstructions: (content: string) =>
-		`# .diracignore\n\n(The following is provided by a root-level .diracignore file where the user has specified files and directories that should not be accessed. When using list_files, you'll notice a ${LOCK_TEXT_SYMBOL} next to files that are blocked. Attempting to access the file's contents e.g. through read_file will result in an error.)\n\n${content}\n.diracignore`,
+		`# .diracignore\n\n(The following is provided by a root-level .diracignore file where the user has specified files and directories that should not be accessed. When using repo, you'll notice a ${LOCK_TEXT_SYMBOL} next to files that are blocked. Attempting to access the file's contents e.g. through read will result in an error.)\n\n${content}\n.diracignore`,
 
 	diracRulesGlobalDirectoryInstructions: (globalDiracRulesFilePath: string, content: string) =>
 		`# .diracrules/\n\nThe following is provided by a global .diracrules/ directory, located at ${globalDiracRulesFilePath.toPosix()}, where the user has specified instructions for all working directories:\n\n${content}`,
@@ -323,9 +323,9 @@ Otherwise, if you have not completed the task and do not need additional informa
 		const filePersonalPronoun = fileCount === 1 ? "it" : "they"
 
 		return (
-			`<explicit_instructions>\nCRITICAL FILE STATE ALERT: ${fileCount} ${fileVerb} been externally modified since your last interaction. Your cached understanding of ${fileDemonstrativePronoun} is now stale and unreliable. Before making ANY modifications to ${fileDemonstrativePronoun}, you must execute read_file to obtain the current state, as ${filePersonalPronoun} may contain completely different content than what you expect:\n` +
+			`<explicit_instructions>\nCRITICAL FILE STATE ALERT: ${fileCount} ${fileVerb} been externally modified since your last interaction. Your cached understanding of ${fileDemonstrativePronoun} is now stale and unreliable. Before making ANY modifications to ${fileDemonstrativePronoun}, you must execute read to obtain the current state, as ${filePersonalPronoun} may contain completely different content than what you expect:\n` +
 			`${editedFiles.map((file) => ` ${path.resolve(file).toPosix()}`).join("\n")}\n` +
-			`Failure to re-read before editing will result in edit_file errors, requiring subsequent attempts and wasting tokens. You DO NOT need to re-read these files after subsequent edits, unless instructed to do so.\n</explicit_instructions>`
+			`Failure to re-read before editing will result in edit errors, requiring subsequent attempts and wasting tokens. You DO NOT need to re-read these files after subsequent edits, unless instructed to do so.\n</explicit_instructions>`
 		)
 	},
 		filesystemStateNotice: (changedFiles: string[], deletedFiles: string[]): string => {
@@ -351,8 +351,8 @@ function formatToolErrorGuidance(error: ToolError): string {
 			return `The specified file could not be found. Double-check the file path and try again.
 
 Suggested next steps:
-1. list_files ${error.details?.dir ?? "<parent-dir>"} — Check what files exist in the parent directory
-2. search_files <path> --regex <pattern> — Search for a file matching the pattern`
+1. repo ${error.details?.dir ?? "<parent-dir>"} — Check what files exist in the parent directory
+2. search <path> --regex <pattern> — Search for a file matching the pattern`
 		case "io.file.permissionDenied":
 			return `Permission denied when accessing the file. You do not have rights to read or write this file.`
 		case "io.file.locked":
@@ -361,23 +361,23 @@ Suggested next steps:
 			return `One or more line anchors could not be found in the current file content. The file may have been modified externally.
 
 Suggested next steps:
-1. get_file_skeleton ${error.details?.path ?? "<path>"} — See the current symbol list for this file
-2. read_file ${error.details?.path ?? "<path>"} --detail outline — Refresh collapsed view with current anchors
-3. search_symbols <symbol> — Search across the repo for this symbol`
+1. symbols ${error.details?.path ?? "<path>"} — See the current symbol list for this file
+2. read ${error.details?.path ?? "<path>"} --detail outline — Refresh collapsed view with current anchors
+3. symbols search <symbol> — Search across the repo for this symbol`
 		case "anchor.contentMismatch":
 			return `The content at an anchor line has changed since you last read the file.
 
 Suggested next steps:
-1. read_file ${error.details?.path ?? "<path>"} — Re-read the file to get current content
-2. get_file_skeleton ${error.details?.path ?? "<path>"} — See current symbols before retrying`
+1. read ${error.details?.path ?? "<path>"} — Re-read the file to get current content
+2. symbols ${error.details?.path ?? "<path>"} — See current symbols before retrying`
 		case "anchor.invalidFormat":
 			return `An anchor was incorrectly formatted. Anchors must follow the format "content" (e.g., "code"). Check your edit parameters and retry.`
 		case "edit.multiFileConflict":
 			return `Conflicting edits were detected across multiple files.
 
 Suggested next steps:
-1. Retry each file separately with individual edit_file calls
-2. read_file <path> — Re-read each conflicting file before retrying`
+1. Retry each file separately with individual edit calls
+2. read <path> — Re-read each conflicting file before retrying`
 		case "lsp.timeout":
 			return `A language server operation timed out. Retry the operation — if it persists, try a different approach.`
 		case "lsp.connectionLost":
@@ -402,8 +402,8 @@ Suggested next steps:
 			return `An unexpected error occurred during tool execution. ${error.message ? error.message + " " : ""}Try a different approach or re-read relevant files to ensure your context is up to date.
 
 Suggested next steps:
-1. read_file <relevant-path> — Re-read files to ensure your context is current
-2. search_files <path> --regex <pattern> — Search for the content you expected`
+1. read <relevant-path> — Re-read files to ensure your context is current
+2. search <path> --regex <pattern> — Search for the content you expected`
 		case "tool.internalError":
 			return `An internal error occurred in the tool infrastructure. ${error.message ? error.message + " " : ""}This is not caused by your action — retry the operation, or try a different approach to accomplish the same goal.
 

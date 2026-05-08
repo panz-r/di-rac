@@ -107,6 +107,42 @@ static void drain_pipe(int fd, ExecChild *child, int is_stdout) {
     }
 }
 
+#define PROGRESS_INTERVAL_MS 3000
+
+/* Send a progress event for a running child */
+static void send_progress(ExecChild *child, long elapsed) {
+    pthread_mutex_lock(&stdout_lock);
+    struct jsonw w;
+    jsonw_init(&w, stdout);
+    jsonw_object_open(&w);
+    jsonw_kv_str(&w, "type", "progress");
+    jsonw_kv_str_or_null(&w, "id", child->id);
+    jsonw_kv_int(&w, "elapsed_ms", (int)elapsed);
+    jsonw_kv_int(&w, "stdout_bytes", (int)child->total_stdout_bytes);
+    jsonw_kv_int(&w, "stderr_bytes", (int)child->total_stderr_bytes);
+    jsonw_key(&w, "stdout_tail");
+    if (child->stdout_buf && child->stdout_len > 0) {
+        size_t tail_start = child->stdout_len > 512 ? child->stdout_len - 512 : 0;
+        jsonw_strn(&w, child->stdout_buf + tail_start,
+                   (int)(child->stdout_len - tail_start), 512);
+    } else {
+        jsonw_str(&w, "");
+    }
+    jsonw_object_close(&w);
+    jsonw_flush(&w);
+    pthread_mutex_unlock(&stdout_lock);
+}
+
+/* Generate a hint string based on command outcome. */
+static const char *compute_hint(ExecChild *child, int truncated) {
+    if (child->timed_out)
+        return "command timed out";
+    if (truncated)
+        return "output exceeded limit";
+    return NULL;
+}
+
+/* Send the final result for a completed child */
 static void send_child_result(ExecChild *child) {
     if (child->stderr_buf && child->stderr_len > 0) {
         extract_cwd(child->stderr_buf, child->stderr_len, child->cwd, sizeof(child->cwd));
@@ -118,6 +154,7 @@ static void send_child_result(ExecChild *child) {
     int truncation_offset = truncated ? (int)(child->total_stdout_bytes > child->total_stderr_bytes
                                               ? child->total_stdout_bytes
                                               : child->total_stderr_bytes) : 0;
+    const char *hint = compute_hint(child, truncated);
 
     pthread_mutex_lock(&stdout_lock);
     struct jsonw w;
@@ -125,18 +162,30 @@ static void send_child_result(ExecChild *child) {
     jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "result");
     jsonw_kv_str_or_null(&w, "id", child->id);
+
     jsonw_key(&w, "stdout");
-    jsonw_strn(&w, child->stdout_buf ? child->stdout_buf : "", (int)child->stdout_len, 0);
+    jsonw_strn(&w, child->stdout_buf ? child->stdout_buf : "",
+               (int)(child->stdout_buf ? child->stdout_len : 0), 8000);
     jsonw_key(&w, "stderr");
-    jsonw_strn(&w, child->stderr_buf ? child->stderr_buf : "", (int)child->stderr_len, 0);
+    jsonw_strn(&w, child->stderr_buf ? child->stderr_buf : "",
+               (int)(child->stderr_buf ? child->stderr_len : 0), 2000);
+
     jsonw_kv_int(&w, "exit_code", child->exit_code);
+
     jsonw_key(&w, "meta");
     jsonw_object_open(&w);
+    jsonw_kv_str(&w, "mode_used", "full");
     jsonw_kv_str(&w, "cwd", child->cwd);
     jsonw_kv_bool(&w, "truncated", truncated);
     jsonw_kv_int(&w, "truncation_offset", truncation_offset);
+    jsonw_kv_str_or_null(&w, "hint", hint);
+    jsonw_kv_str_or_null(&w, "blocked", NULL);
     jsonw_kv_bool(&w, "timed_out", child->timed_out);
+    jsonw_key(&w, "detected_patterns");
+    jsonw_array_open(&w);
+    jsonw_array_close(&w);
     jsonw_object_close(&w);
+
     jsonw_object_close(&w);
     jsonw_flush(&w);
     pthread_mutex_unlock(&stdout_lock);
@@ -274,6 +323,15 @@ int main(int argc, char *argv[]) {
                     c->exit_code = 124;
                     drain_pipe(c->stdout_fd, c, 1); c->stdout_done = 1;
                     drain_pipe(c->stderr_fd, c, 0); c->stderr_done = 1;
+                }
+            }
+            /* Send progress events for running children */
+            if (!c->exited) {
+                long now = now_ms();
+                if (c->last_progress_ms == 0) c->last_progress_ms = c->start_ms;
+                if (now - c->last_progress_ms >= PROGRESS_INTERVAL_MS) {
+                    send_progress(c, now - c->start_ms);
+                    c->last_progress_ms = now;
                 }
             }
             if (c->exited && c->stdout_done && c->stderr_done) {

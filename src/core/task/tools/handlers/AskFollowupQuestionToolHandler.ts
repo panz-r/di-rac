@@ -53,7 +53,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 			)
 
 			return formatResponse.toolResult(
-				`[YOLO MODE: User input is not available in non-interactive mode. You must use available tools (read_file, list_files, search_files, etc.) to gather the information you need instead of asking the user. Proceed with using tools to find the answer to your question: "${question}"]`,
+				`[YOLO MODE: User input is not available in non-interactive mode. You must use available tools (read, repo, search, etc.) to gather the information you need instead of asking the user. Proceed with using tools to find the answer to your question: "${question}"]`,
 			)
 		}
 

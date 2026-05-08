@@ -37,6 +37,7 @@ export type ToolErrorCode =
 	// Generic / legacy
 	| "tool.unknownError"
 	| "tool.internalError"
+	| "tool.invalidInput"
 
 // ── ToolError ───────────────────────────────────────────────────────────────
 
@@ -183,6 +184,7 @@ export function routeToolError(
 			return phase >= 4 ? { type: "ignore" } : { type: "abort" }
 
 		case "arg.invalidArgument":
+		case "tool.invalidInput":
 			// Invalid arguments — retry once with corrected params
 			return { type: "retry", maxTimes: 1 }
 

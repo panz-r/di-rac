@@ -274,14 +274,14 @@ export class BatchProcessor {
                 }
                 if (!Array.isArray(files)) {
                     config.taskState.consecutiveMistakeCount++
-                    return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Invalid edit_file arguments. Use: edit_file <path> --anchor <id> --content <text> [--end-anchor <id>] [--edit-type TYPE]", "recoverable")) }
+                    return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Invalid edit arguments. Use: edit <path> --anchor <id> --content <text> [--end-anchor <id>] [--edit-type TYPE]", "recoverable")) }
                 }
             }
 
             const edits = block.params.edits
             if (!Array.isArray(edits)) {
                 config.taskState.consecutiveMistakeCount++
-                return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Invalid edit_file arguments. Each edit requires --anchor and --content.", "recoverable")) }
+                return { error: formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Invalid edit arguments. Each edit requires --anchor and --content.", "recoverable")) }
             }
 
             for (const edit of edits) {

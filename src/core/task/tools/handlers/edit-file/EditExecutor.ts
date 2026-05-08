@@ -11,6 +11,10 @@ const WHITESPACE_SENSITIVE_EXTENSIONS = new Set([
 const MAX_SUGGESTION_DISTANCE = 2
 const MAX_SUGGESTIONS = 3
 
+const FUZZY_SEARCH_RADIUS = 5
+const FUZZY_AUTO_THRESHOLD = 0.90
+const FUZZY_SUGGEST_THRESHOLD = 0.70
+
 function isWhitespaceSensitive(filePath: string): boolean {
 	if (filePath.endsWith("Makefile") || filePath === "Makefile") return true
 	const lastDot = filePath.lastIndexOf(".")
@@ -39,6 +43,45 @@ function truncate(s: string, maxLen: number = 60): string {
 	return s.length <= maxLen ? s : s.substring(0, maxLen) + "..."
 }
 
+function similarity(a: string, b: string): number {
+	const maxLen = Math.max(a.length, b.length)
+	if (maxLen === 0) return 1.0
+	return 1.0 - levenshtein(a, b) / maxLen
+}
+
+function fuzzyMatchContent(
+	providedContent: string,
+	anchorLineIdx: number,
+	index: FileAnchorIndex,
+	langIsWhitespaceSensitive: boolean,
+): { lineIdx: number; confidence: number } | null {
+	let bestMatch: { lineIdx: number; confidence: number } | null = null
+
+	const startLine = Math.max(0, anchorLineIdx - FUZZY_SEARCH_RADIUS)
+	const endLine = Math.min(index.lineCount - 1, anchorLineIdx + FUZZY_SEARCH_RADIUS)
+
+	for (let i = startLine; i <= endLine; i++) {
+		const candidateContent = index.getLine(i)
+		let cmpProvided = providedContent
+		let cmpCandidate = candidateContent
+
+		if (!langIsWhitespaceSensitive) {
+			cmpProvided = normalizeWhitespace(providedContent)
+			cmpCandidate = normalizeWhitespace(candidateContent)
+		}
+
+		const score = similarity(cmpProvided, cmpCandidate)
+		if (!bestMatch || score > bestMatch.confidence) {
+			bestMatch = { lineIdx: i, confidence: score }
+		}
+	}
+
+	if (bestMatch && bestMatch.confidence >= FUZZY_SUGGEST_THRESHOLD) {
+		return bestMatch
+	}
+	return null
+}
+
 export class EditExecutor {
 	resolveEdits(
 		blocks: ToolUse[],
@@ -56,17 +99,20 @@ export class EditExecutor {
 			const edits = (block.params.edits as Edit[]) || []
 			for (const edit of edits) {
 				const diagnostics: string[] = []
+				const warnings: string[] = []
 				const editType = edit.edit_type
 
-				const { index: lineIdx, error: startError } = this.resolveAnchor(
+				const { index: lineIdx, error: startError, warning: startWarn } = this.resolveAnchor(
 					"anchor", edit.anchor, index, langIsWhitespaceSensitive)
 				if (startError) diagnostics.push(startError)
+				if (startWarn) warnings.push(startWarn)
 
 				let endIdx = lineIdx
 				if (editType === "replace") {
-					const { index: resolvedEndIdx, error: endError } = this.resolveAnchor(
+					const { index: resolvedEndIdx, error: endError, warning: endWarn } = this.resolveAnchor(
 						"end_anchor", edit.end_anchor, index, langIsWhitespaceSensitive)
 					if (endError) diagnostics.push(endError)
+					if (endWarn) warnings.push(endWarn)
 					endIdx = resolvedEndIdx
 				}
 
@@ -77,7 +123,7 @@ export class EditExecutor {
 				if (diagnostics.length > 0) {
 					failedEdits.push({ edit, error: diagnostics.join(" ") })
 				} else {
-					resolvedEdits.push({ lineIdx, endIdx, edit })
+					resolvedEdits.push({ lineIdx, endIdx, edit, warnings: warnings.length > 0 ? warnings : undefined })
 				}
 			}
 		}
@@ -89,7 +135,7 @@ export class EditExecutor {
 		rawAnchor: string | undefined,
 		index: FileAnchorIndex,
 		langIsWhitespaceSensitive: boolean,
-	): { index: number; error?: string } {
+	): { index: number; error?: string; warning?: string } {
 		const anchorRaw = rawAnchor || ""
 		if (!anchorRaw.trim()) return { index: -1, error: `${type} is missing.` }
 
@@ -129,6 +175,21 @@ export class EditExecutor {
 		}
 
 		if (providedCmp !== actualCmp) {
+			// Try fuzzy matching: hash found but content changed — search nearby lines
+			const fuzzy = fuzzyMatchContent(providedContent, lineIdx, index, langIsWhitespaceSensitive)
+
+			if (fuzzy && fuzzy.confidence >= FUZZY_AUTO_THRESHOLD) {
+				return { index: fuzzy.lineIdx, warning: `Anchor "${hash}" drifted — fuzzy-resolved to line ${fuzzy.lineIdx + 1} (${Math.round(fuzzy.confidence * 100)}% match).` }
+			}
+
+			if (fuzzy && fuzzy.confidence >= FUZZY_SUGGEST_THRESHOLD) {
+				const fuzzyLine = index.getLine(fuzzy.lineIdx)
+				return {
+					index: -1,
+					error: `Anchor "${hash}" is stale (current: '${truncate(actualContent)}'). Fuzzy match at line ${fuzzy.lineIdx + 1}: '${truncate(fuzzyLine)}' (${Math.round(fuzzy.confidence * 100)}%). Re-read the file or use the suggested line.`,
+				}
+			}
+
 			return {
 				index: -1,
 				error: `Anchor "${hash}" is stale. Current content: '${truncate(actualContent)}' with new anchor ${index.getHash(lineIdx)}.`,

@@ -297,6 +297,56 @@ test_false_command() {
 	[ "$exit_code" = "1" ] || return 1
 }
 
+
+test_timeout_kills() {
+	# Command sleeps for 10s but timeout is 2s — daemon should kill it
+	local out
+	out=$(send '{"type":"execute","id":"tk1","command":"sleep 10","timeout":2}' 5)
+	local exit_code timed_out
+	exit_code=$(echo "$out" | jtype result exit_code)
+	timed_out=$(echo "$out" | grep '"type":"result"' | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); v=d.get('meta',{}).get('timed_out','null'); print('true' if v else 'false', end='')")
+	[ "$exit_code" = "124" ] || { echo "exit_code=$exit_code (expected 124)"; return 1; }
+	[ "$timed_out" = "true" ] || { echo "timed_out=$timed_out"; return 1; }
+}
+
+test_long_running_detection() {
+	# "npm test" should be detected as long-running (600s timeout)
+	local out
+	out=$(send '{"type":"execute","id":"lr1","command":"echo npm test placeholder"}')
+	local timeout_ms
+	timeout_ms=$(echo "$out" | jtype ack timeout_ms)
+	[ "$timeout_ms" = "600000" ] || { echo "timeout_ms=$timeout_ms (expected 600000)"; return 1; }
+}
+
+test_default_timeout_ms() {
+	# Normal commands should get 300s default
+	local out
+	out=$(send '{"type":"execute","id":"dt1","command":"echo default-timeout-check"}')
+	local timeout_ms
+	timeout_ms=$(echo "$out" | jtype ack timeout_ms)
+	[ "$timeout_ms" = "300000" ] || { echo "timeout_ms=$timeout_ms (expected 300000)"; return 1; }
+}
+
+test_progress_events() {
+	# Slow command should produce progress events between ack and result
+	local out
+	out=$(send '{"type":"execute","id":"p1","command":"sleep 5 && echo done"}' 10)
+	# Check that we got an ack
+	local ack_id
+	ack_id=$(echo "$out" | jtype ack id)
+	[ "$ack_id" = "p1" ] || { echo "ack_id='$ack_id'"; return 1; }
+	# Check that we got at least one progress event (command runs 5s, progress every 3s)
+	local progress_count
+	progress_count=$(echo "$out" | grep -c '"type":"progress"' || true)
+	[ "$progress_count" -ge 1 ] || { echo "progress_count=$progress_count (expected >=1)"; return 1; }
+	# Check result is still correct
+	local stdout exit_code
+	stdout=$(echo "$out" | jtype result stdout)
+	exit_code=$(echo "$out" | jtype result exit_code)
+	[ "$stdout" = "done" ] || { echo "stdout='$stdout'"; return 1; }
+	[ "$exit_code" = "0" ] || { echo "exit_code=$exit_code"; return 1; }
+}
+
 # ---- main ----
 
 echo -e "${BOLD}Command daemon test suite${RESET}"
@@ -335,6 +385,16 @@ echo ""
 echo -e "${BOLD}[Safety]${RESET}"
 run_test "blocked: rm -rf /" test_safety_blocked
 run_test "allowed: rm specific file" test_safety_allowed
+
+echo ""
+echo -e "${BOLD}[Timeout]${RESET}"
+run_test "command killed after timeout" test_timeout_kills
+run_test "long-running pattern detection" test_long_running_detection
+run_test "default 300s timeout for normal commands" test_default_timeout_ms
+
+echo ""
+echo -e "${BOLD}[Progress]${RESET}"
+run_test "progress events during slow command" test_progress_events
 
 # Cleanup
 rm -rf "$WORKSPACE"

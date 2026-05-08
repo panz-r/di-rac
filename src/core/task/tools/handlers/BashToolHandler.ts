@@ -61,6 +61,12 @@ export class BashToolHandler implements IFullyManagedTool {
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "command")
 		}
 
+		// Handle --await <id> to retrieve result of a previously-started command
+		const awaitMatch = command.match(/^--await\s+(\d+)\s*$/)
+		if (awaitMatch) {
+			return this.handleAwait(config, awaitMatch[1], securityViolations)
+		}
+
 		// Approval
 		const bashAutoApproveAll = config.services.stateManager.getGlobalSettingsKey("bashAutoApproveAll")
 		const isYolo = config.yoloModeToggled || config.services.stateManager.getGlobalSettingsKey("autoApproveAllToggled")
@@ -84,21 +90,6 @@ export class BashToolHandler implements IFullyManagedTool {
 			}
 		}
 
-		// Telemetry
-		const apiConfig = config.services.stateManager.getApiConfiguration()
-		const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
-		const provider = (currentMode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
-
-
-		// Execute via command daemon
-		await config.controller.ensureCommandClient(config.cwd)
-		const client = config.controller.getCommandClient()
-
-		if (!client || client.fallback) {
-			config.taskState.consecutiveMistakeCount++
-			return '<tool_error severity="unrecoverable">Command daemon is not available. Ensure di-rvv-cmd binary exists in the dist directory.</tool_error>'
-		}
-
 		// Parse --timeout N from command (stripped before execution)
 		let timeoutSeconds: number | undefined
 		let execCommand = command
@@ -109,11 +100,62 @@ export class BashToolHandler implements IFullyManagedTool {
 			execCommand = command.slice(0, timeoutMatch.index).trimEnd()
 		}
 
-		const result = await client.execute(execCommand, undefined, timeoutSeconds)
+		// Execute via command daemon
+		await config.controller.ensureCommandClient(config.cwd)
+		const client = config.controller.getCommandClient()
 
+		if (!client || client.fallback) {
+			config.taskState.consecutiveMistakeCount++
+			return '<tool_error severity="unrecoverable">Command daemon is not available. Ensure di-rvv-cmd binary exists in the dist directory.</tool_error>'
+		}
+
+		// Use turn-delay: wait up to maxTurnDelay for result, return partial if still running
+		const maxDelay = config.services.stateManager.getGlobalSettingsKey("bashTurnDelayMs") || 10000
+		const result = await client.executeWithDelay(execCommand, maxDelay, undefined, timeoutSeconds)
+
+		// Still running — return partial result for LLM
+		if ("status" in result && (result as any).status === "running") {
+			return this.formatRunningResult(result as import("@/services/command/CommandClient").RunningCommandStatus)
+		}
+
+		// Full result — format as before
+		return this.formatCompleteResult(config, result as import("@/services/command/CommandClient").CommandResult, securityViolations)
+	}
+
+	private async handleAwait(config: TaskConfig, commandId: string, securityViolations: ConstraintViolation[]): Promise<ToolResponse> {
+		await config.controller.ensureCommandClient(config.cwd)
+		const client = config.controller.getCommandClient()
+
+		if (!client || client.fallback) {
+			config.taskState.consecutiveMistakeCount++
+			return '<tool_error severity="unrecoverable">Command daemon is not available.</tool_error>'
+		}
+
+		try {
+			const result = await client.awaitResult(commandId)
+			return this.formatCompleteResult(config, result, securityViolations)
+		} catch (e) {
+			config.taskState.consecutiveMistakeCount++
+			const msg = e instanceof Error ? e.message : String(e)
+			return formatResponse.toolResult(`exit:error\n[await failed] ${msg}`)
+		}
+	}
+
+	private formatRunningResult(status: import("@/services/command/CommandClient").RunningCommandStatus): ToolResponse {
+		const tail = status.progress.stdout_tail || "(no output yet)"
+		const elapsed = Math.round(status.progress.elapsed_ms / 1000)
+		return formatResponse.toolResult(
+			`exit:running\n` +
+			`[Command still running — ${elapsed}s elapsed, ${status.progress.stdout_bytes} bytes output]\n` +
+			`Recent output:\n${tail}\n` +
+			`To get the final result: bash --await ${status.id}\n` +
+			`The command continues running in the background.`,
+		)
+	}
+
+	private formatCompleteResult(config: TaskConfig, result: import("@/services/command/CommandClient").CommandResult, securityViolations: ConstraintViolation[]): ToolResponse {
 		config.taskState.consecutiveMistakeCount = result.exit_code === 0 ? 0 : config.taskState.consecutiveMistakeCount + 1
 
-		// Build plain-text output so the envelope wraps it in pipe format
 		let output = `exit:${result.exit_code}`
 		if (result.stdout) output += `
 ${result.stdout}`

@@ -53,7 +53,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 	}
 
 	/**
-	 * Handle partial block streaming for attempt_completion
+	 * Handle partial block streaming for done
 	 */
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 
@@ -77,7 +77,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 
 		config.taskState.consecutiveMistakeCount = 0
 
-		// Double-check completion: reject attempt_completion calls that haven't been re-verified
+		// Double-check completion: reject done calls that haven't been re-verified
 		if (config.doubleCheckCompletionEnabled && !config.taskState.doubleCheckCompletionPending) {
 			config.taskState.doubleCheckCompletionPending = true
 			// Remove the partial completion_result message that was shown during streaming
@@ -87,16 +87,16 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			const taskSection = taskPreview ? `\n\n<initial_task>\n${taskPreview}\n</initial_task>` : ""
 
 			return formatResponse.formatToolErrorForLLM(createToolError("tool.unknownError", "Before completing, re-verify your work against the original task requirements. Check that:\n" +
-					"1. All requested changes have been made (verify using a script/`exceute_command` when possible)\n" +
+					"1. All requested changes have been made (verify using a script/`bash` when possible)\n" +
 					"2. No steps were skipped or partially completed\n" +
 					"3. Edge cases and error handling are addressed\n" +
 					"4. The solution matches what was asked for, not just what was convenient\n" +
 					"5. Output files contain exactly what was specified - no extra columns, fields, debug output, or commentary\n" +
 					"6. If the task specifies numerical thresholds or accuracy targets, verify your result meets the criteria. If close but not passing, iterate rather than declaring completion" + 
 					taskSection +
-					"\n\nIf everything checks out, call attempt_completion again with your final result.", "recoverable"))
+					"\n\nIf everything checks out, call done again with your final result.", "recoverable"))
 		}
-		// Reset so the next attempt_completion pair triggers double-check again
+		// Reset so the next done pair triggers double-check again
 		config.taskState.doubleCheckCompletionPending = false
 
 		// Run PreToolUse hook before execution
@@ -153,7 +153,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			}
 
 			// Check if command should be auto-approved
-			// attempt_completion commands are treated as safe commands
+			// done commands are treated as safe commands
 			const autoApproveResult = config.autoApprover?.shouldAutoApproveTool(DiracDefaultTool.BASH)
 			const autoApproveSafe = Array.isArray(autoApproveResult) ? autoApproveResult[0] : autoApproveResult
 
@@ -177,7 +177,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			// Execute the command
 			const [userRejected, execCommandResult] = await config.callbacks.executeCommandTool(command!, undefined, {
 				useBackgroundExecution: true,
-			}) // no timeout for attempt_completion command
+			}) // no timeout for done command
 
 			if (userRejected) {
 				config.taskState.didRejectTool = true
@@ -205,13 +205,13 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		await this.runTaskCompleteHook(config, block)
 		await this.runNotificationHook(config, {
 			event: "task_complete",
-			source: "attempt_completion",
+			source: "done",
 			message: result,
 			waitingForUserInput: false,
 		})
 
 		const { response, text, images, files: completionFiles } = await config.callbacks.ask("completion_result", "", false)
-		const prefix = "[attempt_completion] Result: Done"
+		const prefix = "[done] Result: Done"
 		if (response === "yesButtonClicked") {
 			return prefix // signals to recursive loop to stop (for now this never happens since yesButtonClicked will trigger a new task)
 		}

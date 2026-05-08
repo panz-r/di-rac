@@ -18,3 +18,11 @@ target_include_directories(di-rvv-cmd PRIVATE src)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_compile_options(di-rvv-cmd PRIVATE -O2 -Wall -Wextra)
 endif()
+
+# Tests
+enable_testing()
+add_test(
+    NAME daemon_integration
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/run.sh
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)

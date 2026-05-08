@@ -1,5 +1,6 @@
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import * as fs from "fs/promises"
+import * as fsSync from "fs"
 import { Logger } from "@/shared/services/Logger"
 
 /**
@@ -110,10 +111,37 @@ export class FileEditProvider extends DiffViewProvider {
 		}
 
 		try {
-			// Always use UTF-8 for writing - it's the modern standard and handles all characters
-			// including emojis. The detected fileEncoding was used for reading to preserve
-			// compatibility, but writing as UTF-8 ensures no character corruption.
-			await fs.writeFile(this.absolutePath, this.documentContent, { encoding: "utf8" })
+			const targetPath = this.absolutePath
+			const newContent = this.documentContent
+
+			// Idempotency: skip write if content matches existing file (after normalization)
+			// Trailing whitespace normalization is skipped for whitespace-sensitive files (Python, YAML, Makefiles)
+			if (fsSync.existsSync(targetPath)) {
+				const existing = await fs.readFile(targetPath, "utf8")
+				const wsSensitive = /(\.(py|hs|lhs|yaml|yml|mak)$|Makefile$|Makefile\.)/i.test(targetPath)
+				const normalize = (s: string) => {
+					let n = s.replace(/\r\n/g, "\n")
+					if (!wsSensitive) n = n.replace(/[ \t]+$/gm, "")
+					return n
+				}
+				if (normalize(existing) === normalize(newContent)) {
+					this.editType = undefined
+					return true
+				}
+			}
+
+			// Atomic write: temp-file + rename (POSIX atomic, prevents partial-write corruption)
+			const tempPath = `${targetPath}.tmp.${Date.now()}`
+			try {
+				await fs.writeFile(tempPath, newContent, { encoding: "utf8" })
+				await fs.rename(tempPath, targetPath)
+			} catch (renameError) {
+				// Clean up temp file if rename fails
+				try {
+					await fs.unlink(tempPath)
+				} catch {}
+				throw renameError
+			}
 			return true
 		} catch (error) {
 			Logger.error(`Failed to save document to ${this.absolutePath}:`, error)

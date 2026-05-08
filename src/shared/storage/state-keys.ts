@@ -185,6 +185,7 @@ const USER_SETTINGS_FIELDS = {
 	bashToolEnabled: { default: false as boolean },
 	bashAutoApproveAll: { default: false as boolean },
 	bashMaxTimeout: { default: 120 as number }, // max seconds for --timeout flag
+	bashTurnDelayMs: { default: 10000 as number },
 	toolRecoveryEnabled: { default: false as boolean },
 	redirectTmpEnabled: { default: false as boolean },
 	customPrompt: { default: undefined as "compact" | undefined },

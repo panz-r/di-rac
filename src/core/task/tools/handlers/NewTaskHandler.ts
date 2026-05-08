@@ -4,6 +4,7 @@ import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
 import { DiracDefaultTool } from "@/shared/tools"
+import { createToolError } from "@shared/tool-response"
 import type { ToolResponse } from "../../index"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -35,7 +36,18 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 		// Validate required parameters
 		if (!context) {
 			config.taskState.consecutiveMistakeCount++
-			return await config.callbacks.sayAndCreateMissingParamError(block.name, "context")
+			const hint = "Missing context for task. Provide a 'command' argument with a self-contained summary.\n"
+				+ 'Example: use task with command="Refactoring auth middleware. Key files: src/auth.ts, src/middleware.ts. Done: extracted token validation. Next: update session storage. Blockers: none."'
+			await config.callbacks.say("error", "di tried to create a new task without context. Retrying...")
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.invalidInput", hint, "recoverable"))
+		}
+
+		// Reject overly brief context — the new task needs enough detail to continue
+		if (context.trim().length < 100) {
+			config.taskState.consecutiveMistakeCount++
+			const msg = `Task context too brief (${context.trim().length} chars). Provide a comprehensive summary including: current work, key files, what's done, what's next, any blockers. The new task starts with ONLY this context — make it self-contained.`
+			await config.callbacks.say("error", msg)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.invalidInput", msg, "recoverable"))
 		}
 
 		config.taskState.consecutiveMistakeCount = 0

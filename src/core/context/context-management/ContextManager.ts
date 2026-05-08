@@ -9,9 +9,9 @@ import type { CompactionClass } from "@core/prompts/system-prompt/spec"
 
 export class ContextManager {
 	private static readonly COMPACTION_CLASS: Record<string, CompactionClass> = {
-		edit_file: "essential", write_to_file: "essential", replace_symbol: "essential",
-		rename_symbol: "essential", attempt_completion: "essential", ask_followup_question: "essential",
-		read_file: "summarizable", list_files: "summarizable", search_files: "summarizable",
+		edit_file: "essential", edit: "essential", write: "essential", write_to_file: "essential", replace_symbol: "essential", symbols: "essential",
+		rename_symbol: "essential", attempt_completion: "essential", done: "essential", ask_followup_question: "essential", ask: "essential",
+		read_file: "summarizable", read: "summarizable", list_files: "summarizable", repo: "summarizable", search_files: "summarizable", search: "summarizable",
 		repo_map: "summarizable", search_symbols: "summarizable", expand_symbol: "summarizable",
 		get_file_skeleton: "summarizable", get_function: "summarizable",
 		find_symbol_references: "summarizable",

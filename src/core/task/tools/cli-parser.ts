@@ -191,7 +191,12 @@ export function parseCliCommand(toolName: string, input: string): Record<string,
 	}
 
 	// Tokenize
-	const tokens = shellParse(input) as string[]
+	let tokens = shellParse(input) as string[]
+
+	// Strip leading tool name if present (e.g., "write report.md" vs "report.md")
+	if (tokens.length > 0 && tokens[0] === toolName) {
+		tokens = tokens.slice(1)
+	}
 
 	// Parse flags and collect positionals from anywhere in the command
 	const positionalTokens: string[] = []
@@ -482,11 +487,28 @@ const CLI_SCHEMAS: Partial<Record<string, CliSchema>> = {
 	},
 
 	// write <path> --content <text>
+	// Custom parser needed because content can be multi-line - shell-quote would
+	// split on newlines and lose everything after the first line.
 	write: {
-		positionals: [{ name: "path", param: "path", required: true }],
-		flags: [
-			{ name: "--content", param: "content", type: "string", required: true },
-		],
+		noChainSplit: true,
+		parse: (input: string) => {
+			let s = input.trim()
+			if (s.startsWith("write ")) s = s.slice(6).trimStart()
+
+			const flagIdx = s.search(/\s--content(?:\s|$)/)
+			if (flagIdx === -1) return { path: s }
+
+			const pathRaw = s.slice(0, flagIdx).trim()
+			const afterFlag = s.slice(s.indexOf("--content", flagIdx) + "--content".length)
+			const contentPart = afterFlag.startsWith(" ") ? afterFlag.slice(1) : afterFlag
+
+			const path = (pathRaw.startsWith('"') && pathRaw.endsWith('"'))
+				|| (pathRaw.startsWith("'") && pathRaw.endsWith("'"))
+				? pathRaw.slice(1, -1)
+				: pathRaw
+
+			return { path, content: contentPart }
+		},
 	},
 
 	// browser_action <action> [options]

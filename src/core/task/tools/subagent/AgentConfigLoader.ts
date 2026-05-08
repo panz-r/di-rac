@@ -43,7 +43,7 @@ function normalizeToolName(toolName: string): DiracDefaultTool {
 	}
 
 	throw new Error(
-		`Unknown tool '${trimmed}'. Expected a DiracDefaultTool value (for example: read_file, list_files, search_files).`,
+		`Unknown tool '${trimmed}'. Expected a DiracDefaultTool value (for example: read, repo, search).`,
 	)
 }
 

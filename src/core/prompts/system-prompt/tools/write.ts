@@ -6,7 +6,7 @@ const id = DiracDefaultTool.FILE_NEW
 export const write: DiracToolSpec = {
 	id,
 	name: "write",
-	description: `Create or overwrite a file. Auto-creates parent directories.
+	description: `Create or overwrite a file atomically. Skips write if content unchanged (idempotent). Auto-creates parent directories.
 
 Example: write src/new.ts --content "export function foo() { ... }"
 

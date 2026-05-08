@@ -6,15 +6,15 @@ export const getEditingFilesInstructions = () => {
 
 You have 4 file editing tools:
 
-1. \`write_to_file\` (for new files or complete overwrites)
-2. \`edit_file\` (for targeted edits)
-3. \`replace_symbol\` (for direct AST manipulation such as replacing a function or a symbol). updates AST precisely.
-4. \`execute_command\` with commands like grep/awk/sed/find etc for bulk updates. CHEAPEST to execute and very useful for updating files in bulk. You can update the files without necessarily reading them. You can also write scripts that do the work for you (to avoid tedious multi round edits).
+1. \`write\` (for new files or complete overwrites)
+2. \`edit\` (for targeted edits)
+3. \`symbols replace\` (for direct AST manipulation such as replacing a function or a symbol). updates AST precisely.
+4. \`bash\` with commands like grep/awk/sed/find etc for bulk updates. CHEAPEST to execute and very useful for updating files in bulk. You can update the files without necessarily reading them. You can also write scripts that do the work for you (to avoid tedious multi round edits).
 
 
 
 ### LINE-HASH PROTOCOL
-Every line returned by read tools (read_file, get_function, get_file_skeleton, search_files) follows the format: LINE_NUM │ ANCHOR${delimiter}CONTENT
+Every line returned by read tools (read, symbols, search) follows the format: LINE_NUM │ ANCHOR${delimiter}CONTENT
 
 - ANCHOR: A short content-hash code (e.g., "a3", "k7_1") used for stable referencing.
 - CONTENT: The original line text, verbatim. Blank lines are shown as "LINE_NUM │ ANCHOR${delimiter}".
@@ -34,8 +34,8 @@ Example read output:
 3. THE MOST COMMON error type is not balancing braces/indents. You edits must make sure the you neither omit a closing brace not emit an extra closing brace.
 4. NON-OVERLAPPING: Multiple edits in the same file MUST NOT overlap.
 
-### edit_file OPERATIONS
-The \`edit_file\` tool supports three operations via the \`--edit-type\` flag:
+### edit OPERATIONS
+The \`edit\` tool supports three operations via the \`--edit-type\` flag:
 - \`replace\` (default): Replaces an inclusive range of lines from \`--anchor\` to \`--end-anchor\`.
   * MULTI-LINE: You can replace a large block of code with a new multi-line block by using \`\\n\` in your \`--content\` text.
   * SINGLE LINE: To replace or delete a single line, use that exact same line for BOTH \`--anchor\` and \`--end-anchor\`.
@@ -44,12 +44,12 @@ The \`edit_file\` tool supports three operations via the \`--edit-type\` flag:
 - \`insert_before\`: Inserts \`--content\` text as new line(s) immediately before \`--anchor\`.
 
 Chain multiple edits with \`;\`:
-  edit_file src/calculator.py --anchor "..." --content "..." --edit-type insert_before; edit_file src/calculator.py --anchor "..." --end-anchor "..." --content "..."
+  edit src/calculator.py --anchor "..." --content "..." --edit-type insert_before; edit src/calculator.py --anchor "..." --end-anchor "..." --content "..."
 
 ### EXAMPLES
 
 #### Multi-File Edit with Chain Operators
-To add imports, simplify logic, or refactor across multiple files, chain edit_file calls with \`;\`.
+To add imports, simplify logic, or refactor across multiple files, chain edit calls with \`;\`.
 
 Original Code (src/calculator.py):
 \`\`\`
@@ -78,9 +78,9 @@ River${delimiter}  return user.name;
 Snake${delimiter}}
 \`\`\`
 
-Invoke edit_file:
+Invoke edit:
 \`\`\`
-edit_file src/calculator.py --anchor "Apple${delimiter}def calculate_total(items):" --content "from typing import List\\n" --edit-type insert_before; edit_file src/calculator.py --anchor "Brave${delimiter}    total = 0" --end-anchor "Eagle${delimiter}            total += item.price" --content "    total = sum(item.price for item in items if item.price > 0)"; edit_file src/user.ts --anchor "Karma${delimiter}  age: number;" --end-anchor "Karma${delimiter}  age: number;" --content ""; edit_file src/user.ts --anchor "Ocean${delimiter}  if (!user.name) {" --end-anchor "River${delimiter}  return user.name;" --content "  return user.name ? user.name : \\"Anonymous\\";"; edit_file src/user.ts --anchor "Snake${delimiter}}" --content "\\nexport function isAnonymous(user: User): boolean {\\n  return !user.name;\\n}" --edit-type insert_after
+edit src/calculator.py --anchor "Apple${delimiter}def calculate_total(items):" --content "from typing import List\\n" --edit-type insert_before; edit src/calculator.py --anchor "Brave${delimiter}    total = 0" --end-anchor "Eagle${delimiter}            total += item.price" --content "    total = sum(item.price for item in items if item.price > 0)"; edit src/user.ts --anchor "Karma${delimiter}  age: number;" --end-anchor "Karma${delimiter}  age: number;" --content ""; edit src/user.ts --anchor "Ocean${delimiter}  if (!user.name) {" --end-anchor "River${delimiter}  return user.name;" --content "  return user.name ? user.name : \\"Anonymous\\";"; edit src/user.ts --anchor "Snake${delimiter}}" --content "\\nexport function isAnonymous(user: User): boolean {\\n  return !user.name;\\n}" --edit-type insert_after
 \`\`\`
 
 Transformed Code (src/calculator.py):

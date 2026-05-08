@@ -7,12 +7,12 @@
  * Tools that perform file edits (create, modify, delete)
  * Used to determine when to show DiffView and skip dynamic rendering
  */
-export const FILE_EDIT_TOOLS = new Set(["edit_file", "replace_symbol", "write_to_file"])
+export const FILE_EDIT_TOOLS = new Set(["edit", "symbols", "write"])
 
 /**
  * Tools that save/modify files (subset used for "Save" button label)
  */
-export const FILE_SAVE_TOOLS = new Set(["edit_file", "replace_symbol", "write_to_file"])
+export const FILE_SAVE_TOOLS = new Set(["edit", "symbols", "write"])
 
 /**
  * Check if a tool name is a file edit tool
@@ -45,22 +45,19 @@ export function normalizeToolName(toolName: string): string {
  */
 export const TOOL_DESCRIPTIONS: Record<string, { ask: string; say: string }> = {
 	// File operations
-	read_file: { ask: "wants to read this file", say: "read this file" },
-	write_to_file: { ask: "wants to create a new file", say: "created a new file" },
-	edit_file: { ask: "wants to edit this file", say: "edited this file" },
-	replace_symbol: { ask: "wants to replace a symbol in this file", say: "replaced a symbol in this file" },
+	read: { ask: "wants to read this file", say: "read this file" },
+	write: { ask: "wants to create a new file", say: "created a new file" },
+	edit: { ask: "wants to edit this file", say: "edited this file" },
 
 	// Directory operations
-	list_files: { ask: "wants to view files in this directory", say: "viewed files in this directory" },
-	search_files: { ask: "wants to search files", say: "searched files" },
+	repo: { ask: "wants to view files in this directory", say: "viewed files in this directory" },
+	search: { ask: "wants to search files", say: "searched files" },
 
 	// Code Analysis
-	find_symbol_references: { ask: "wants to find references for symbols", say: "found references for symbols" },
-	get_function: { ask: "wants to extract function implementations", say: "extracted function implementations" },
-	get_file_skeleton: { ask: "wants to read the structure of these files", say: "read the structure of these files" },
+	symbols: { ask: "wants to analyze symbols", say: "analyzed symbols" },
 
 	// Command execution
-	execute_command: { ask: "wants to execute this command", say: "executed this command" },
+	bash: { ask: "wants to execute this command", say: "executed this command" },
 
 	// Browser & Web
 	browser_action: { ask: "wants to use the browser", say: "used the browser" },
@@ -71,8 +68,8 @@ export const TOOL_DESCRIPTIONS: Record<string, { ask: string; say: string }> = {
 	use_subagents: { ask: "wants to start subagents", say: "started subagents" },
 	use_skill: { ask: "wants to use a skill", say: "used a skill" },
 	list_skills: { ask: "wants to list available skills", say: "listed available skills" },
-	ask_followup_question: { ask: "wants to ask a question", say: "asked a question" },
-	attempt_completion: { ask: "wants to complete the task", say: "completed the task" },
+	ask: { ask: "wants to ask a question", say: "asked a question" },
+	done: { ask: "wants to complete the task", say: "completed the task" },
 	new_task: { ask: "wants to create a new task", say: "created a new task" },
 	plan_mode_respond: { ask: "wants to propose a plan", say: "proposed a plan" },
 	focus_chain: { ask: "wants to update the todo list", say: "updated the todo list" },

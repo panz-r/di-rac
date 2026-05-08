@@ -4,6 +4,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { createToolError } from "@shared/tool-response"
 import { resolveWorkspacePath } from "@core/workspace"
+import { PathEscapeError } from "@utils/path-utils"
 import { extractFileContent } from "@integrations/misc/extract-file-content"
 import { AnalyzerClient } from "@/services/tree-sitter/AnalyzerClient"
 import type { ParsedDefinition } from "@services/tree-sitter"
@@ -26,6 +27,17 @@ const OVERSIZED_FILE_PREVIEW_LINES = 200
 const AUTO_EXPAND_PREVIEW_LINES = 500
 const TOKEN_ESTIMATE_RATIO = 1 / 3 // approx chars per token
 const SUPPORTED_EXTENSIONS = new Set(["ts", "tsx", "js", "jsx", "py", "rs", "go", "c", "cpp", "h", "hpp", "java", "php", "rb", "swift", "kt"])
+const MD_EXTENSIONS = new Set(["md", "mdx", "txt"])
+
+function buildMarkdownOutline(content: string): string {
+	const lines = content.split("\n")
+	const headings: string[] = []
+	for (let i = 0; i < lines.length; i++) {
+		const m = lines[i].match(/^(#{1,6})\s+(.+)/)
+		if (m) headings.push(`  ${m[1]} ${m[2].trim()} (line ${i + 1})`)
+	}
+	return headings.length > 0 ? headings.join("\n") : "No headings found."
+}
 
 interface Range {
 	start: number
@@ -227,11 +239,15 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 		const provider = (currentMode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider) as string
 
 		// Validate required parameters
+		// LLM sees "command" in schema; CLI parsing maps it to "paths".
+		// Report "command" in errors so the LLM understands what to provide.
 		const pathValidation = this.validator.assertRequiredParams(block, "paths")
 
 		if (!pathValidation.ok) {
 			config.taskState.consecutiveMistakeCount++
-			return await config.callbacks.sayAndCreateMissingParamError(this.name, "paths")
+			const hint = "Missing file path for read. Provide a 'command' argument with the file path to read.\nExample: use read with command=\"src/main.ts\" or command=\"--paths src/main.ts --detail outline\"."
+			await config.callbacks.say("error", `di tried to use read without a file path. Retrying...`)
+			return formatResponse.formatToolErrorForLLM(createToolError("tool.invalidInput", hint, "recoverable"))
 		}
 
 		const absolutePaths: string[] = []
@@ -251,10 +267,21 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			const header = relPaths.length > 1 ? `--- ${relPath} ---\n` : ""
 
 			try {
-				// Resolve the absolute path
-				const pathResult = resolveWorkspacePath(config, relPath, "ReadFileToolHandler.execute")
-				const { absolutePath, displayPath } =
-					typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relPath } : pathResult
+				// Resolve the absolute path — allow absolute paths outside workspace for reads
+				let absolutePath: string
+				let displayPath = relPath
+				try {
+					const pathResult = resolveWorkspacePath(config, relPath, "ReadFileToolHandler.execute")
+					const resolved = typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relPath } : pathResult
+					absolutePath = resolved.absolutePath
+					displayPath = resolved.displayPath
+				} catch (e) {
+					if (e instanceof PathEscapeError && path.isAbsolute(relPath)) {
+						absolutePath = relPath
+					} else {
+						throw e
+					}
+				}
 
 				absolutePaths.push(absolutePath)
 				displayPaths.push(displayPath)
@@ -274,9 +301,9 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 				const fallbackAbsolutePath = path.resolve(config.cwd, relPath)
 				workspaceContexts.push({
 					isMultiRootEnabled: config.isMultiRootEnabled || false,
-					usedWorkspaceHint: typeof pathResult !== "string",
+					usedWorkspaceHint: absolutePath !== relPath || !arePathsEqual(absolutePath, fallbackAbsolutePath),
 					resolvedToNonPrimary: !arePathsEqual(absolutePath, fallbackAbsolutePath),
-					resolutionMethod: (typeof pathResult !== "string" ? "hint" : "primary_fallback") as
+					resolutionMethod: (!arePathsEqual(absolutePath, fallbackAbsolutePath) ? "hint" : "primary_fallback") as
 						| "hint"
 						| "primary_fallback",
 				})
@@ -370,9 +397,17 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 					if (isImage) return (await extractFileContent(absolutePath, supportsImages)).text
 					const cleanExt = ext.startsWith(".") ? ext.slice(1) : ext
 					const isSupported = SUPPORTED_EXTENSIONS.has(cleanExt)
+					const isMarkdown = MD_EXTENSIONS.has(cleanExt)
 
 					switch (mode) {
 						case "hint": {
+							if (isMarkdown) {
+								const content = await fs.readFile(absolutePath, "utf8")
+								const headings = content.split("\n")
+									.filter(l => /^#{1,6}\s+/.test(l))
+									.map(l => l.replace(/^#+\s+/, "").trim())
+								return headings.length > 0 ? headings.join("\n") : "No headings found."
+							}
 							if (!isSupported) return "Hint not available for this file type."
 							const daemonSymbols = await config.services.analyzer.outline(absolutePath)
 							const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols)
@@ -380,6 +415,10 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 							return definitions.map(d => `${d.kind} ${d.name}`).join("\n")
 						}
 						case "outline": {
+							if (isMarkdown) {
+								const content = await fs.readFile(absolutePath, "utf8")
+								return buildMarkdownOutline(content)
+							}
 							if (!isSupported) return "Outline not available for this file type."
 							const daemonSymbols = await config.services.analyzer.outline(absolutePath)
 							const definitions = AnalyzerClient.toParsedDefinitions(daemonSymbols)
@@ -405,7 +444,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 											.map(d => `  - [${d.id}] ${d.name} (lines ${d.fullBodyRange?.startLine || d.lineIndex + 1}-${d.fullBodyRange?.endLine || d.lineIndex + 1})`)
 											.join("\n")
 										if (filtered.length > 50) {
-											chunkMap += `\n  ... and ${filtered.length - 50} more symbols. Use read_file --detail outline to see all.`
+											chunkMap += `\n  ... and ${filtered.length - 50} more symbols. Use read --detail outline to see all.`
 										}
 									}
 								} catch (e) {

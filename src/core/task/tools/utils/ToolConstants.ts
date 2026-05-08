@@ -77,12 +77,12 @@ export const TASK_CALLBACKS_KEYS = [
  * Used for validation in ToolErrorHandler
  */
 export const PATH_REQUIRED_TOOLS = [
-	"read_file",
-	"write_to_file",
+	"read",
+	"write",
 
 	"new_rule",
-	"list_files",
-	"search_files",
+	"repo",
+	"search",
 ] as const
 
 /**
