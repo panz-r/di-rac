@@ -395,8 +395,12 @@ static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, c
     }
 
     pthread_mutex_lock(db_lock);
-    db_index_file((IndexDB*)ctx->db, file, 0.0, "TODO_HASH", sr, ir);
+    int db_ok = db_index_file((IndexDB*)ctx->db, file, 0.0, "TODO_HASH", sr, ir);
     pthread_mutex_unlock(db_lock);
+
+    if (db_ok != 0) {
+        fprintf(stderr, "[warn] db_index_file failed for %s\n", file);
+    }
 
     pthread_mutex_lock(lock);
     struct jsonw w;
@@ -405,7 +409,7 @@ static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, c
     jsonw_kv_str(&w, "type", "index_file_result");
     jsonw_id(&w, raw_id, id_len);
     jsonw_kv_bool(&w, "ok", true);
-    if (sr && sr->error_code != 0) jsonw_kv_bool(&w, "truncated", true);
+    if ((sr && sr->error_code != 0) || db_ok != 0) jsonw_kv_bool(&w, "truncated", true);
     jsonw_key(&w, "data");
     jsonw_object_open(&w);
     write_outline_payload(&w, sr, ir, true);

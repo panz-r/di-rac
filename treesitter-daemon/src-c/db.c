@@ -72,20 +72,20 @@ void db_close(IndexDB *db) {
 int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash, SymbolResult *sr, ImportResult *ir) {
     (void)ir;
     sqlite3_stmt *stmt;
-    
-    sqlite3_exec(db->db, "BEGIN TRANSACTION", NULL, NULL, NULL);
+
+    if (sqlite3_exec(db->db, "BEGIN TRANSACTION", NULL, NULL, NULL) != SQLITE_OK) return -1;
 
     sqlite3_prepare_v2(db->db, "INSERT OR REPLACE INTO files (path, mtime, content_hash) VALUES (?, ?, ?)", -1, &stmt, NULL);
     sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT);
     sqlite3_bind_double(stmt, 2, mtime);
     sqlite3_bind_text(stmt, 3, hash, -1, SQLITE_TRANSIENT);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     int64_t file_id = sqlite3_last_insert_rowid(db->db);
     sqlite3_finalize(stmt);
 
     sqlite3_prepare_v2(db->db, "DELETE FROM symbols WHERE file_id = ?", -1, &stmt, NULL);
     sqlite3_bind_int64(stmt, 1, file_id);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     sqlite3_finalize(stmt);
 
     if (sr) {
@@ -98,12 +98,12 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
             sqlite3_bind_int(stmt, 4, sr->symbols[i].start_line);
             sqlite3_bind_int(stmt, 5, sr->symbols[i].end_line);
             sqlite3_bind_text(stmt, 6, sr->symbols[i].handle, -1, SQLITE_TRANSIENT);
-            sqlite3_step(stmt);
+            if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
         }
         sqlite3_finalize(stmt);
     }
 
-    sqlite3_exec(db->db, "COMMIT", NULL, NULL, NULL);
+    if (sqlite3_exec(db->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) return -1;
     return 0;
 }
 
