@@ -176,7 +176,7 @@ export class ToolExecutorCoordinator {
 			const schema = getCliSchema(block.name)
 			if (schema?.positionals) {
 				const hasPositional = schema.positionals.some((pos) => {
-					const val = block.params?.[pos.param]
+					const val = (block.params as Record<string, unknown>)?.[pos.param]
 					return val !== undefined && val !== null && val !== ""
 				})
 				if (hasPositional) {

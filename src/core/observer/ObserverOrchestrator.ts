@@ -156,7 +156,7 @@ export class ObserverOrchestrator {
     private getMonotonicityScore(history: DiracStorageMessage[]): number {
         if (!this.config.proceduralMonotonicityEnabled) return 1.0
         
-        const lastToolMsg = history.filter(m => m.role === "tool").pop()
+        const lastToolMsg = history.filter(m => String(m.role) === "tool").pop()
         if (!lastToolMsg) return 1.0
 
         const content = JSON.stringify(lastToolMsg.content)
@@ -195,7 +195,7 @@ export class ObserverOrchestrator {
         signals.push(Math.min(filesTouched.size / 5, 1.0))
         signals.push(0.5)
 
-        const outcomes = history.slice(-6).filter(m => m.role === "tool").map(m => {
+        const outcomes = history.slice(-6).filter(m => String(m.role) === "tool").map(m => {
             const c = JSON.stringify(m.content)
             return c.includes("error") ? "FAIL" : "PASS"
         })
@@ -268,7 +268,7 @@ export class ObserverOrchestrator {
         if (last3.length < 3) return "PRODUCTIVE"
 
         const actions = this.extractActionFeatures(last3)
-        const toolResults = history.filter(m => m.role === "tool").slice(-3)
+        const toolResults = history.filter(m => String(m.role) === "tool").slice(-3)
         const errorSigs = toolResults.map(m => JSON.stringify(m.content).substring(0, 50))
         const uniqueErrors = new Set(errorSigs).size
 
@@ -396,7 +396,7 @@ export class ObserverOrchestrator {
 			this.triggerSpecializedObservation(history, "watcher")
 		}
 
-        const lastError = history.filter(m => m.role === "tool").pop()?.content as string
+        const lastError = history.filter(m => String(m.role) === "tool").pop()?.content as string
         const dynamicCooldown = this.getAdaptiveCooldown(status, lastError, history)
 
 		if (history.length % this.config.criticFrequency === 0 && this.turnsSinceLastReflection >= dynamicCooldown) {
