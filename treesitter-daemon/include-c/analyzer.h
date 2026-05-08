@@ -67,6 +67,7 @@ typedef struct {
     size_t calls_count;
     char **definitions;
     size_t definitions_count;
+    int error_code; /* 0 = ok, -1 = OOM during collection (partial results) */
 } ApiDependencies;
 
 /* --- Core Analysis Functions --- */

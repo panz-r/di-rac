@@ -350,6 +350,7 @@ ApiDependencies* analyzer_extract_apis(ParsedSource *ps) {
     ts_query_cursor_exec(cursor, query, ts_tree_root_node(ps->tree));
 
     ApiDependencies *ad = calloc(1, sizeof(ApiDependencies));
+    if (!ad) return NULL;
     TSQueryMatch match;
     while (ts_query_cursor_next_match(cursor, &match)) {
         for (uint32_t i = 0; i < match.capture_count; i++) {
@@ -357,10 +358,14 @@ ApiDependencies* analyzer_extract_apis(ParsedSource *ps) {
             uint32_t name_len;
             const char *cap_name = ts_query_capture_name_for_id(query, cap.index, &name_len);
             if (strcmp(cap_name, "func.name") == 0 || strcmp(cap_name, "method.name") == 0) {
-                ad->definitions = realloc(ad->definitions, sizeof(char*) * (ad->definitions_count + 1));
+                void *tmp = realloc(ad->definitions, sizeof(char*) * (ad->definitions_count + 1));
+                if (!tmp) { ad->error_code = -1; break; }
+                ad->definitions = tmp;
                 ad->definitions[ad->definitions_count++] = get_node_text(cap.node, ps->source);
             } else if (strcmp(cap_name, "call.name") == 0) {
-                ad->calls = realloc(ad->calls, sizeof(char*) * (ad->calls_count + 1));
+                void *tmp = realloc(ad->calls, sizeof(char*) * (ad->calls_count + 1));
+                if (!tmp) { ad->error_code = -1; break; }
+                ad->calls = tmp;
                 ad->calls[ad->calls_count++] = get_node_text(cap.node, ps->source);
             }
         }
