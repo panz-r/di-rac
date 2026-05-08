@@ -66,12 +66,14 @@ impl ToolCoordinator {
 
         let mut result = executor.execute_raw(call).await;
         let mut attempts = 0;
+        let mut errors: Vec<String> = Vec::new();
 
         while attempts < max_retries {
             match &result {
                 Ok(val) => {
                     let s = val.to_string();
                     if s.starts_with("<tool_error") {
+                        errors.push(s.clone());
                         attempts += 1;
                         let delay = std::cmp::min(500 * 2i64.pow(attempts as u32 - 1), 4000);
                         tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
@@ -80,7 +82,8 @@ impl ToolCoordinator {
                     }
                     break;
                 }
-                Err(_) => {
+                Err(e) => {
+                    errors.push(e.to_string());
                     attempts += 1;
                     let delay = std::cmp::min(500 * 2i64.pow(attempts as u32 - 1), 4000);
                     tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
@@ -93,7 +96,13 @@ impl ToolCoordinator {
         let value = match result {
             Ok(v) => v,
             Err(ref e) => {
-                match self.recovery.handle_error(&call.name, &e.to_string()) {
+                let retry_history = if errors.len() > 1 {
+                    Some(format!("{} prior attempts failed: {}", errors.len(), errors.join("; ")))
+                } else {
+                    None
+                };
+                let error_context = retry_history.as_deref().unwrap_or("");
+                match self.recovery.handle_error(&call.name, &format!("{}{}", e, error_context)) {
                     RecoveryAction::Retry { max_attempts, delay } => {
                         let mut recovery_result = executor.execute_raw(call).await;
                         for _ in 0..max_attempts {
