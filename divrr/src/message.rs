@@ -1,0 +1,96 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
+
+/// Events emitted by di-core on stdout (NDJSON).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum CoreEvent {
+    TaskInitialized {
+        agent_id: Uuid,
+        history_count: usize,
+    },
+    ThoughtDelta {
+        agent_id: Uuid,
+        text: String,
+    },
+    ThoughtFinished {
+        agent_id: Uuid,
+    },
+    ToolCallStarted {
+        agent_id: Uuid,
+        tool: String,
+        args: Value,
+    },
+    ToolCallFinished {
+        agent_id: Uuid,
+        result: Value,
+    },
+    BackgroundCommandStarted {
+        agent_id: Uuid,
+        command_id: String,
+        command: String,
+    },
+    BackgroundCommandFinished {
+        agent_id: Uuid,
+        command_id: String,
+        exit_code: Option<i32>,
+    },
+    ContextCompacted {
+        agent_id: Uuid,
+        remaining_tokens: usize,
+    },
+    ApprovalNeeded {
+        agent_id: Uuid,
+        tool: String,
+        args: Value,
+        description: String,
+    },
+    FollowupQuestion {
+        agent_id: Uuid,
+        question: String,
+        options: Option<Vec<String>>,
+    },
+    ObserverSignal {
+        agent_id: Uuid,
+        source: String,
+        confidence: f32,
+        message: String,
+        action: Option<String>,
+    },
+    MetricsUpdate {
+        agent_id: Uuid,
+        sqs: f32,
+        token_usage: usize,
+        latency_ms: u64,
+    },
+    TaskFinished {
+        agent_id: Uuid,
+        success: bool,
+        message: String,
+    },
+}
+
+/// Messages sent by the frontend to di-core on stdin (NDJSON).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum FrontendMessage {
+    SpawnAgent {
+        task: String,
+    },
+    UserResponse {
+        agent_id: Uuid,
+        text: String,
+    },
+    Interrupt {
+        agent_id: Uuid,
+    },
+    ApprovalResponse {
+        agent_id: Uuid,
+        approved: bool,
+    },
+    FollowupAnswer {
+        agent_id: Uuid,
+        text: String,
+    },
+}

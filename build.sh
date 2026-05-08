@@ -59,6 +59,11 @@ echo "==> Building di-core (Rust execution engine)..."
 cp di-core/target/release/di-core dist/di-core
 echo "    OK"
 
+echo "==> Building divrr (Rust TUI)..."
+(cd divrr && cargo build --release)
+cp divrr/target/release/divrr dist/divrr
+echo "    OK"
+
 echo "==> Building TypeScript CLI..."
 npm install --silent
 npm run build
