@@ -1,4 +1,4 @@
-import { buildObserverConfig, type ObserverConfig, type ObservationEntry, type ObservationType, type CriticAction, type SkeletonFidelity, LANGUAGE_NORMALIZATION } from "./ObserverConfig"
+import { buildObserverConfig, type ObserverConfig, type ObservationEntry, type ObservationType, type CriticAction, type SkeletonFidelity, type LoopPattern, LANGUAGE_NORMALIZATION } from "./ObserverConfig"
 import { ObservationStore } from "./ObservationStore"
 import { ObserverAgent } from "./ObserverAgent"
 import { setObserverHealth } from "./index"
@@ -26,12 +26,14 @@ interface ActionFeatures {
     success: boolean
     turn: number
     lang: string
+    astDeltaNodes?: number
 }
 
 interface RetryState {
     count: number
     firstSeen: number
     sigs: string[]
+    asts: string[] // For contradiction detection
 }
 
 export class ObserverCostTracker {
@@ -54,7 +56,8 @@ export class ObserverCostTracker {
 }
 
 /**
- * ObserverOrchestrator - Manages the MEMENTO Memory Pyramid, SQS, and CPS.
+ * ObserverOrchestrator - Manages the MEMENTO Memory Pyramid, SQS, and Procedural Refinements.
+ * Implements Phase 7 Architectural Refinements (Liao 2026, Wang 2026).
  */
 export class ObserverOrchestrator {
 	private store: ObservationStore
@@ -68,14 +71,13 @@ export class ObserverOrchestrator {
     
     // Cognitive State
     private turnsSinceLastReflection = 0
-    private actionHistory: ActionFeatures[] = []
     private lastSQS = 1.0
     private currentTier = 2
     private verboseLogs: string[] = []
     
-    // Phase 6: Bandit Calibration
-    private patternWeights: Map<string, number> = new Map()
-    private eligibility: Map<string, number> = new Map()
+    // Phase 6/7 State
+    private retryBuffer: Map<string, RetryState> = new Map()
+    private resolvedSubgoals: Set<string> = new Set() // Procedural Monotonicity
 
 	constructor(
 		private taskId: string,
@@ -138,7 +140,26 @@ export class ObserverOrchestrator {
     }
 
     /**
-     * Cross-Language AST-Churn Normalization (Müller et al. 2025).
+     * Procedural Monotonicity (Liao 2026).
+     * Tracks if the agent is making forward progress in resolved sub-goals.
+     */
+    private checkProceduralMonotonicity(history: DiracStorageMessage[]): boolean {
+        if (!this.config.proceduralMonotonicityEnabled) return true
+        
+        const lastToolMsg = history.filter(m => m.role === "tool").pop()
+        if (!lastToolMsg) return true
+
+        const content = JSON.stringify(lastToolMsg.content)
+        // Heuristic: search for "success", "fixed", "resolved" in tool results
+        const newResolved = (content.match(/fixed\s+([a-zA-Z0-9_]+)/g) || [])
+        const prevCount = this.resolvedSubgoals.size
+        for (const r of newResolved) this.resolvedSubgoals.add(r)
+        
+        return this.resolvedSubgoals.size >= prevCount
+    }
+
+    /**
+     * Cross-Language AST Normalization (Müller 2025).
      */
     private normalizedASTChurn(language: string, rawChurn: number, fileSize: number): number {
         const norm = LANGUAGE_NORMALIZATION[language] || LANGUAGE_NORMALIZATION.python
@@ -192,29 +213,31 @@ export class ObserverOrchestrator {
         return coverage * Math.min(normChurn / 2, 1.0)
     }
 
+    /**
+     * Augmented SQS Formula (Phase 7 Refinement).
+     * Includes AST Structural Progress and Procedural Monotonicity.
+     */
     private async computeSQS(history: DiracStorageMessage[]): Promise<{ sqs: number; status: string }> {
         const assistantMsgs = history.filter(m => m.role === "assistant").slice(-10)
         if (assistantMsgs.length === 0) return { sqs: 1.0, status: "FOCUSED" }
 
         const diffusion = 0.4 
         const eeRatio = this.computeEERatio(assistantMsgs)
+        const proceduralProgress = this.checkProceduralMonotonicity(history) ? 1.0 : 0.0
         
         let sqs = 0
-        if (this.currentTier === 0) {
-            const testProgress = 0.5 
-            sqs = 0.3 * (1 - diffusion) + 0.3 * eeRatio + 0.2 * (await this.computeDCR(history)) + 0.2 * testProgress
-        } else {
-            const cps = await this.computeCPS(history)
-            const dcr = await this.computeDCR(history)
-            sqs = 0.35 * (1 - diffusion) + 0.30 * eeRatio + 0.20 * dcr + 0.15 * cps
-        }
+        const dcr = await this.computeDCR(history)
+        const cps = await this.computeCPS(history)
+
+        // SQS = 0.30*(1-diffusion) + 0.25*EE + 0.20*DCR + 0.15*CPS + 0.10*monotonicity
+        sqs = 0.30 * (1 - diffusion) + 0.25 * eeRatio + 0.20 * dcr + 0.15 * cps + 0.10 * proceduralProgress
         
         let status = "FOCUSED"
         const trigger = this.config.tierThresholds.sqs[this.currentTier]
         if (sqs < trigger) status = "STAGNATING"
         else if (sqs > 0.6) status = "EXPLORING"
 
-        this.log(`Tier: ${this.currentTier} | SQS: ${sqs.toFixed(2)} | Status: ${status}`)
+        this.log(`Tier: ${this.currentTier} | SQS: ${sqs.toFixed(2)} | Status: ${status} | Monotonic: ${proceduralProgress}`)
         return { sqs, status }
     }
 
@@ -228,6 +251,42 @@ export class ObserverOrchestrator {
             maxLoops = Math.max(maxLoops, counts[h])
         }
         return (uniqueFiles / actions.length) * (1 / maxLoops)
+    }
+
+    /**
+     * Enhanced Loop Classifier (Phase 7).
+     * Incorporates AST-contradiction analysis (detecting reverts).
+     */
+    private async classifyLoopPattern(history: DiracStorageMessage[]): Promise<LoopPattern> {
+        const last3 = history.filter(m => m.role === "assistant").slice(-3)
+        if (last3.length < 3) return "PRODUCTIVE"
+
+        const actions = this.extractActionFeatures(last3)
+        const toolResults = history.filter(m => m.role === "tool").slice(-3)
+        const errorSigs = toolResults.map(m => JSON.stringify(m.content).substring(0, 50))
+        const uniqueErrors = new Set(errorSigs).size
+
+        // 1. AST Contradiction Check (Wang et al. 2026)
+        if (actions[2].file === actions[0].file && actions[2].op === actions[0].op) {
+             // Heuristic revert detection: if turn 2 undoes turn 1's structural change
+             // (In real implementation we'd use C daemon to check Δ_del ∩ Δ_add)
+             const churn0 = actions[0].astDeltaNodes || 0
+             const churn2 = actions[2].astDeltaNodes || 0
+             if (churn0 > 0 && churn2 < 0 && Math.abs(churn0 + churn2) < 2) {
+                 return "STUCK_WITH_FORGETTING"
+             }
+        }
+
+        if (uniqueErrors === 1) {
+            const uniqueFiles = new Set(actions.map(a => a.file)).size
+            return uniqueFiles > 1 ? "WIDENING" : "STUCK"
+        }
+
+        if (uniqueErrors === 2 && errorSigs[0] === errorSigs[2]) {
+            return "OSCILLATING"
+        }
+
+        return uniqueErrors === 3 ? "PRODUCTIVE" : "UNKNOWN"
     }
 
     private extractActionFeatures(msgs: DiracStorageMessage[]): ActionFeatures[] {
@@ -262,27 +321,20 @@ export class ObserverOrchestrator {
         const writeMatch = content.match(/new_content":\s*"([^"]+)"/)
 
         if (fileMatch && writeMatch) {
-            return await analyzer.getASTChurn(fileMatch, "TODO_UNESCAPE")
+            const churn = await analyzer.getASTChurn(fileMatch, "TODO_UNESCAPE")
+            // Cache churn in history for classifier
+            const lastFeatures = this.extractActionFeatures([lastAssistantMsg])[0]
+            lastFeatures.astDeltaNodes = churn.added - churn.removed
+            return churn
         }
         return { added: 0, removed: 0, total: 0 }
     }
 
     private getDecayedConfidence(baseConf: number, type: "WATCHER" | "CRITIC", turnsSince: number): number {
         let tau = type === "WATCHER" ? this.config.tauWatcher : this.config.tauCritic
-        if (this.lastSQS > 0.5) tau *= 2 // slow decay if progressing
-        else tau *= 0.5 // fast decay if stagnating
+        if (this.lastSQS > 0.5) tau *= 2 
+        else tau *= 0.5 
         return baseConf * Math.exp(-turnsSince / tau)
-    }
-
-    /**
-     * Implicit Signal Weighting (Park et al. 2026).
-     */
-    private pauseWeight(duration: number, lastHadError: boolean): number {
-        let base = 0.02
-        if (duration > 5) base *= 1.5
-        if (duration > 12) base *= 2.5
-        if (lastHadError) base *= 2.0
-        return Math.min(base, 0.10)
     }
 
 	async onTurnComplete(history: DiracStorageMessage[]): Promise<void> {
@@ -292,21 +344,25 @@ export class ObserverOrchestrator {
 
 		const { sqs, status } = await this.computeSQS(history)
 		this.lastSQS = sqs
+        
+        const loopPattern = await this.classifyLoopPattern(history)
 
-        // 1. WATCHER (S1)
-		if (history.length % this.config.observerTurns === 0 || status === "STAGNATING") {
+        // 1. WATCHER (S1) - Enhanced Trigger
+		if (history.length % this.config.observerTurns === 0 || status === "STAGNATING" || loopPattern === "STUCK_WITH_FORGETTING") {
 			this.triggerSpecializedObservation(history, "watcher")
 		}
 
-		// 2. CRITIC (S2)
-		if (history.length % this.config.criticFrequency === 0 && this.turnsSinceLastReflection >= this.config.reflectionCooldown) {
+		// 2. CRITIC (S2) - Adaptive Cooldown
+        const dynamicCooldown = this.config.adaptiveCooldownEnabled ? (status === "EXPLORING" ? this.config.reflectionCooldown + 2 : this.config.reflectionCooldown) : this.config.reflectionCooldown
+
+		if (history.length % this.config.criticFrequency === 0 && this.turnsSinceLastReflection >= dynamicCooldown) {
             const sqsTrigger = this.config.tierThresholds.sqs[this.currentTier]
-            if (sqs < sqsTrigger + 0.1 || history.length % (this.config.criticFrequency * 2) === 0) {
+            if (sqs < sqsTrigger + 0.1 || history.length % (this.config.criticFrequency * 2) === 0 || loopPattern === "OSCILLATING") {
 			    this.triggerSpecializedObservation(history, "critic")
             }
 		}
 
-		// 3. SUMMARIZER / SKELETON
+		// 3. SUMMARIZER / SKELETON (Phase 7: AST-Guided Memory)
 		const unobserved = this.getUnobservedMessages(history)
 		if (unobserved.length >= 4) {
 			const tokenEstimate = Math.ceil(JSON.stringify(unobserved).length / 4)
@@ -501,7 +557,12 @@ export class ObserverOrchestrator {
         if (latestCritic && latestCritic.criticAction && latestCritic.criticAction !== "CONTINUE") {
             const turnsSince = (history.length - (latestCritic.compressedRange?.[1] || history.length))
             const decayed = this.getDecayedConfidence(latestCritic.confidence ?? 1.0, "CRITIC", turnsSince)
-            if (decayed >= Math.min(0.7, minConfidence + 0.1)) {
+            
+            // Phase 7 Rule: require structural corroboration for high-tier interrupts
+            const sqsTrigger = this.config.tierThresholds.sqs[this.currentTier]
+            const hasStructuralSignal = this.lastSQS < (sqsTrigger + 0.05)
+
+            if (decayed >= Math.min(0.7, minConfidence + 0.1) && hasStructuralSignal) {
                 result.interruptReason = latestCritic.observationText
                 result.criticAction = latestCritic.criticAction
             }

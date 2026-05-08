@@ -4,6 +4,8 @@ export type CriticAction = "CONTINUE" | "REFLECT" | "RESTART"
 
 export type SkeletonFidelity = "full" | "structural" | "decision"
 
+export type LoopPattern = "PRODUCTIVE" | "STUCK" | "WIDENING" | "OSCILLATING" | "STUCK_WITH_FORGETTING" | "UNKNOWN"
+
 export interface LanguageNorm {
 	medianEditChurn: number
 	medianFileSize: number
@@ -40,11 +42,16 @@ export interface ObserverConfig {
 	tauCritic: number // Time constant for S2 decay
 	permissiveBufferSize: number // Wong et al. 2025
 
-	// Phase 5: Test-less Progress (Park & Lee 2025)
+	// Phase 5/7: Refined Thresholds
 	tierThresholds: {
 		sqs: [number, number, number, number] // SQS triggers for Tier 0, 1, 2, 3
 		confidence: [number, number, number, number] // Min confidence for Tier 0, 1, 2, 3
 	}
+    
+    // Phase 7: AST & Procedural Refinements
+    proceduralMonotonicityEnabled: boolean
+    astGuidedMemoryEnabled: boolean
+    adaptiveCooldownEnabled: boolean
 }
 
 export interface ObservationEntry {
@@ -110,14 +117,15 @@ REASON: [Reason]
 `
 
 /**
- * SKELETON: Structured Pruning (H2O 2025)
+ * SKELETON: Structured Pruning (H2O 2025 / CodeMEM 2026)
  */
 export const OBSERVER_SKELETON_PROMPT = `You are a Structured Pruner. Extract a lossless skeleton of the last 15-20 turns.
 
 FORMAT:
-- EDITS: {file: [signatures/types]}
+- EDITS: {file: [signatures/types, ast_delta_nodes]}
+- API_DEPS: {external_calls: [], internal_refs: []}
 - ERRORS: [Brief error signatures]
-- DECISIONS: [Key strategy shifts]
+- DECISIONS: [Key strategy shifts & rationales]
 - TESTS: [Pass/Fail delta]
 
 Output ONLY the JSON-like structure.
@@ -172,5 +180,8 @@ export function buildObserverConfig(settings: {
 			sqs: [0.3, 0.32, 0.35, 0.4],
 			confidence: [0.5, 0.55, 0.6, 0.7],
 		},
+        proceduralMonotonicityEnabled: true,
+        astGuidedMemoryEnabled: true,
+        adaptiveCooldownEnabled: true,
 	}
 }
