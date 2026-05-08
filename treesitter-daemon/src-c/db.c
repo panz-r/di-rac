@@ -144,17 +144,19 @@ int db_index_observation(IndexDB *db, const char *type, const char *content, dou
     return 0;
 }
 
-void db_search_observations(IndexDB *db, const char *query, int limit, struct jsonw *w) {
+int db_search_observations(IndexDB *db, const char *query, int limit, struct jsonw *w) {
     sqlite3_stmt *stmt;
     const char *sql = "SELECT l.type, l.content, l.timestamp, l.tokens "
                       "FROM observer_logs l JOIN observer_logs_fts f ON l.id = f.rowid "
                       "WHERE observer_logs_fts MATCH ? ORDER BY rank LIMIT ?";
-    
+
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         jsonw_key(w, "results");
         jsonw_array_open(w);
         jsonw_array_close(w);
-        return;
+        jsonw_key(w, "ok");
+        jsonw_bool(w, 0);
+        return -1;
     }
 
     sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
@@ -172,6 +174,9 @@ void db_search_observations(IndexDB *db, const char *query, int limit, struct js
     }
     jsonw_array_close(w);
     sqlite3_finalize(stmt);
+    jsonw_key(w, "ok");
+    jsonw_bool(w, 1);
+    return 0;
 }
 
 int db_index_critic_decision(IndexDB *db, const char *text, int turn, double confidence) {

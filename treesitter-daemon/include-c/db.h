@@ -18,7 +18,7 @@ int db_invalidate_file(IndexDB *db, const char *path);
 int db_clear(IndexDB *db);
 
 int db_index_observation(IndexDB *db, const char *type, const char *content, double timestamp, int token_estimate);
-void db_search_observations(IndexDB *db, const char *query, int limit, struct jsonw *w);
+int db_search_observations(IndexDB *db, const char *query, int limit, struct jsonw *w);
 
 int db_index_critic_decision(IndexDB *db, const char *text, int turn, double confidence);
 void db_search_critic_decisions(IndexDB *db, const char *query, int limit, struct jsonw *w);
