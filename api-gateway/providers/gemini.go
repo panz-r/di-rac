@@ -92,15 +92,74 @@ func (h *GeminiHandler) Stream(ctx context.Context, req *Request, callback func(
 	model := h.configureModel(client, req)
 	session, lastParts := h.buildSession(model, req)
 
+	toolCallIdx := 0
+
 	iter := session.SendMessageStream(ctx, lastParts...)
 	for {
 		resp, err := iter.Next()
 		if err != nil {
 			break
 		}
-		chunk := h.convertChunk(resp)
-		if err := callback(chunk); err != nil {
-			return err
+		if len(resp.Candidates) == 0 {
+			continue
+		}
+		candidate := resp.Candidates[0]
+
+		// Process parts: emit text deltas and tool calls in standard protocol format
+		if candidate.Content != nil {
+			for _, part := range candidate.Content.Parts {
+				switch p := part.(type) {
+				case genai.Text:
+					if string(p) != "" {
+						if err := callback(StreamChunk{Type: "delta", TextDelta: string(p)}); err != nil {
+							return err
+						}
+					}
+				case genai.FunctionCall:
+					argsJSON, _ := json.Marshal(p.Args)
+					callID := fmt.Sprintf("gemini_%d_%s", toolCallIdx, p.Name)
+					idx := toolCallIdx
+					toolCallIdx++
+
+					// Phase 1: content_block_start
+					if err := callback(StreamChunk{
+						Type:         "content",
+						Index:        idx,
+						Content:      "tool_use",
+						ToolCallID:   callID,
+						ToolCallName: p.Name,
+					}); err != nil {
+						return err
+					}
+					// Phase 2: input_json_delta (full args in one shot)
+					if string(argsJSON) != "" {
+						if err := callback(StreamChunk{
+							Type:      "delta",
+							Index:     idx,
+							JSONDelta: string(argsJSON),
+						}); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+
+		// Finish reason → stop chunk with usage
+		if candidate.FinishReason != 0 && candidate.FinishReason.String() != "FINISH_REASON_UNSPECIFIED" {
+			usage := &Usage{}
+			if resp.UsageMetadata != nil {
+				usage.InputTokens = int(resp.UsageMetadata.PromptTokenCount)
+				usage.OutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
+				usage.TotalTokens = int(resp.UsageMetadata.TotalTokenCount)
+			}
+			if err := callback(StreamChunk{
+				Type:         "stop",
+				FinishReason: mapGeminiFinishReason(candidate.FinishReason),
+				Usage:        usage,
+			}); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -545,17 +604,6 @@ func (h *GeminiHandler) Capabilities() *ProviderInfo {
 				Group:       "sampling",
 				Description: "Nucleus sampling threshold.",
 				ValidRange:  "0 – 1",
-			},
-			{
-				Key:         "top_k",
-				Label:       "Top K",
-				Type:        SettingSlider,
-				Min:         fPtr(1),
-				Max:         fPtr(100),
-				Step:        fPtr(1),
-				Group:       "sampling",
-				Description: "Consider only top K tokens at each step.",
-				ValidRange:  "1 – 100",
 			},
 			{
 				Key:         "max_tokens",
