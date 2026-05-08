@@ -500,7 +500,7 @@ export class Task {
 		this.observerOrchestrator = new ObserverOrchestrator(
 			this.taskId,
 			this.stateManager,
-			() => this.analyzerClient,
+			() => this.analyzer,
 		)
 
 		this.lifecycleManager = new LifecycleManager({
@@ -992,7 +992,7 @@ export class Task {
 
 		if (this.observerOrchestrator?.isEnabled) {
 			const originalCount = messagesForContext.length
-			const result = this.observerOrchestrator.prepareContext(messagesForContext)
+			const result = await this.observerOrchestrator.prepareContext(messagesForContext)
 			messagesForContext = result.messages
 
             // Verbose Output

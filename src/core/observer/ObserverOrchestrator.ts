@@ -76,8 +76,12 @@ export class ObserverOrchestrator {
     
     // Phase 6/7 State
     private retryBuffer: Map<string, RetryState> = new Map()
-    private resolvedSubgoals: Set<string> = new Set() 
-    
+    private resolvedSubgoals: Set<string> = new Set()
+
+	private getUnobservedMessages(history: DiracStorageMessage[]): DiracStorageMessage[] {
+		return history.slice(this.lastObservedMessageIndex)
+	}
+
     // Phase 8: Metrics
     private metrics: ObserverMetrics = {
         sqsComponents: { diffusion: 0, eeRatio: 0, dcr: 0, cps: 0, monotonicity: 0 },
