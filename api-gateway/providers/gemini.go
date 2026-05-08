@@ -113,7 +113,7 @@ func (h *GeminiHandler) configureModel(client *genai.Client, req *Request) *gena
 		modelName = req.ModelOverride
 	}
 	if modelName == "" {
-		modelName = "gemini-2.0-flash"
+		modelName = "gemini-3-flash-preview"
 	}
 
 	model := client.GenerativeModel(modelName)
@@ -206,7 +206,10 @@ func (h *GeminiHandler) buildSession(model *genai.GenerativeModel, req *Request)
 				parts = append(parts, genai.Text(msg.Thinking))
 			}
 			if msg.ToolResult != nil {
-				name := toolUseIDToName[msg.ToolResult.ToolUseID]
+				name := msg.ToolResult.ToolUseID
+				if n, ok := toolUseIDToName[msg.ToolResult.ToolUseID]; ok {
+					name = n
+				}
 				parts = append(parts, genai.FunctionResponse{
 					Name:     name,
 					Response: map[string]any{"result": msg.ToolResult.Content},
@@ -270,7 +273,10 @@ func (h *GeminiHandler) buildContents(req *Request) []*genai.Content {
 				parts = append(parts, genai.Text(msg.Thinking))
 			}
 			if msg.ToolResult != nil {
-				name := toolUseIDToName[msg.ToolResult.ToolUseID]
+				name := msg.ToolResult.ToolUseID
+				if n, ok := toolUseIDToName[msg.ToolResult.ToolUseID]; ok {
+					name = n
+				}
 				parts = append(parts, genai.FunctionResponse{
 					Name: name,
 					Response: map[string]any{
@@ -321,7 +327,10 @@ func (h *GeminiHandler) convertContentBlocks(blocks []ContentBlock, toolUseIDToN
 			}
 		case "tool_result":
 			if block.ToolResult != nil {
-				name := toolUseIDToName[block.ToolResult.ToolUseID]
+				name := block.ToolResult.ToolUseID
+				if n, ok := toolUseIDToName[block.ToolResult.ToolUseID]; ok {
+					name = n
+				}
 				parts = append(parts, genai.FunctionResponse{
 					Name: name,
 					Response: map[string]any{
@@ -398,7 +407,7 @@ func mapGeminiFinishReason(reason genai.FinishReason) string {
 		return "end_turn"
 	case "MAX_TOKENS":
 		return "max_tokens"
-	case "SAFETY", "RECITATION", "OTHER":
+	case "SAFETY", "RECITATION", "OTHER", "BLOCKED":
 		return "stop_sequence"
 	default:
 		return string(reason)
@@ -503,7 +512,7 @@ func (h *GeminiHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]M
 func (h *GeminiHandler) Capabilities() *ProviderInfo {
 	return &ProviderInfo{
 		ID:           "gemini",
-		DefaultModel: "gemini-2.0-flash",
+		DefaultModel: "gemini-3-flash-preview",
 		Features: ProviderFeatures{
 			SupportsThinking:        true,
 			SupportsReasoningEffort: false,
