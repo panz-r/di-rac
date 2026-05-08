@@ -609,6 +609,13 @@ int main(int argc, char *argv[]) {
             task->line = strdup(line);
             task->gctx = &gctx;
             pthread_mutex_lock(&gctx.thread_count_lock);
+            if (gctx.active_threads >= MAX_THREADS) {
+                pthread_mutex_unlock(&gctx.thread_count_lock);
+                send_error(&gctx.stdout_lock, NULL, 0, "THREAD_REJECTED", "Server at maximum thread capacity");
+                free(task->line);
+                free(task);
+                continue;
+            }
             gctx.active_threads++;
             pthread_mutex_unlock(&gctx.thread_count_lock);
             pthread_t thread;
