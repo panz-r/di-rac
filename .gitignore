@@ -72,3 +72,4 @@ tmp_*.txt
 .dirac-state/
 .dirac/outputs/
 treesitter-daemon/target/
+api-gateway/dirac-api-gateway

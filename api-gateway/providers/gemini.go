@@ -5,6 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"strings"
 
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
@@ -27,24 +30,27 @@ func NewGeminiHandlerWithKey(apiKey string) (*GeminiHandler, error) {
 	return &GeminiHandler{client: client}, nil
 }
 
-func (h *GeminiHandler) getClient(req *Request) (*genai.Client, error) {
+func (h *GeminiHandler) getClient(req *Request) (client *genai.Client, owned bool, err error) {
 	if req.Provider.APIKey != "" {
 		client, err := genai.NewClient(context.Background(), option.WithAPIKey(req.Provider.APIKey))
 		if err != nil {
-			return nil, fmt.Errorf("failed to create Gemini client: %w", err)
+			return nil, false, fmt.Errorf("failed to create Gemini client: %w", err)
 		}
-		return client, nil
+		return client, true, nil
 	}
 	if h.client == nil {
-		return nil, fmt.Errorf("Gemini client not configured (no API key)")
+		return nil, false, fmt.Errorf("Gemini client not configured (no API key)")
 	}
-	return h.client, nil
+	return h.client, false, nil
 }
 
 func (h *GeminiHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
-	client, err := h.getClient(req)
+	client, owned, err := h.getClient(req)
 	if err != nil {
 		return nil, err
+	}
+	if owned {
+		defer client.Close()
 	}
 
 	model := h.configureModel(client, req)
@@ -58,7 +64,11 @@ func (h *GeminiHandler) Send(ctx context.Context, req *Request) (*SendResult, er
 	for {
 		resp, err := iter.Next()
 		if err != nil {
-			break
+			if err == io.EOF || err.Error() == "no more items in iterator" {
+				break
+			}
+			log.Printf("[Gemini:Send] stream error: %v", err)
+			return nil, fmt.Errorf("gemini stream error: %w", err)
 		}
 		result := h.convertChunk(resp)
 		if result.ContentBlocks != nil {
@@ -84,13 +94,18 @@ func (h *GeminiHandler) Send(ctx context.Context, req *Request) (*SendResult, er
 }
 
 func (h *GeminiHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	client, err := h.getClient(req)
+	client, owned, err := h.getClient(req)
 	if err != nil {
 		return err
+	}
+	if owned {
+		defer client.Close()
 	}
 
 	model := h.configureModel(client, req)
 	session, lastParts := h.buildSession(model, req)
+
+	log.Printf("[Gemini:Stream] model=%s msgs=%d history=%d tools=%d", req.Provider.Model, len(req.Messages), len(session.History), len(req.Tools))
 
 	toolCallIdx := 0
 
@@ -98,14 +113,17 @@ func (h *GeminiHandler) Stream(ctx context.Context, req *Request, callback func(
 	for {
 		resp, err := iter.Next()
 		if err != nil {
-			break
+			if err == io.EOF || err.Error() == "no more items in iterator" {
+				break
+			}
+			log.Printf("[Gemini:Stream] stream error: %v", err)
+			return fmt.Errorf("gemini stream error: %w", err)
 		}
 		if len(resp.Candidates) == 0 {
 			continue
 		}
 		candidate := resp.Candidates[0]
 
-		// Process parts: emit text deltas and tool calls in standard protocol format
 		if candidate.Content != nil {
 			for _, part := range candidate.Content.Parts {
 				switch p := part.(type) {
@@ -121,7 +139,6 @@ func (h *GeminiHandler) Stream(ctx context.Context, req *Request, callback func(
 					idx := toolCallIdx
 					toolCallIdx++
 
-					// Phase 1: content_block_start
 					if err := callback(StreamChunk{
 						Type:         "content",
 						Index:        idx,
@@ -131,7 +148,6 @@ func (h *GeminiHandler) Stream(ctx context.Context, req *Request, callback func(
 					}); err != nil {
 						return err
 					}
-					// Phase 2: input_json_delta (full args in one shot)
 					if string(argsJSON) != "" {
 						if err := callback(StreamChunk{
 							Type:      "delta",
@@ -141,11 +157,13 @@ func (h *GeminiHandler) Stream(ctx context.Context, req *Request, callback func(
 							return err
 						}
 					}
+				default:
+					log.Printf("[Gemini] unknown part type: %T", part)
 				}
 			}
 		}
 
-		// Finish reason → stop chunk with usage
+	log.Printf("[Gemini] finish_reason=%s", candidate.FinishReason.String())
 		if candidate.FinishReason != 0 && candidate.FinishReason.String() != "FINISH_REASON_UNSPECIFIED" {
 			usage := &Usage{}
 			if resp.UsageMetadata != nil {
@@ -153,6 +171,7 @@ func (h *GeminiHandler) Stream(ctx context.Context, req *Request, callback func(
 				usage.OutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
 				usage.TotalTokens = int(resp.UsageMetadata.TotalTokenCount)
 			}
+			log.Printf("[Gemini] stop: input=%d output=%d", usage.InputTokens, usage.OutputTokens)
 			if err := callback(StreamChunk{
 				Type:         "stop",
 				FinishReason: mapGeminiFinishReason(candidate.FinishReason),
@@ -163,7 +182,7 @@ func (h *GeminiHandler) Stream(ctx context.Context, req *Request, callback func(
 		}
 	}
 
-	return callback(StreamChunk{Type: "complete"})
+	return nil
 }
 
 func (h *GeminiHandler) configureModel(client *genai.Client, req *Request) *genai.GenerativeModel {
@@ -201,7 +220,7 @@ func (h *GeminiHandler) configureModel(client *genai.Client, req *Request) *gena
 		model.StopSequences = req.Stop
 	}
 
-	// Tools
+	// Tools — supports both Anthropic format (input_schema) and Google format (parameters)
 	if len(req.Tools) > 0 {
 		var decls []*genai.FunctionDeclaration
 		for _, toolJSON := range req.Tools {
@@ -209,6 +228,7 @@ func (h *GeminiHandler) configureModel(client *genai.Client, req *Request) *gena
 				Name        string          `json:"name"`
 				Description string          `json:"description"`
 				InputSchema json.RawMessage `json:"input_schema"`
+				Parameters  json.RawMessage `json:"parameters"`
 			}
 			if err := json.Unmarshal(toolJSON, &tool); err != nil {
 				continue
@@ -217,7 +237,14 @@ func (h *GeminiHandler) configureModel(client *genai.Client, req *Request) *gena
 				Name:        tool.Name,
 				Description: tool.Description,
 			}
-			if len(tool.InputSchema) > 0 {
+			// Google format: parameters is already a genai-compatible schema
+			if len(tool.Parameters) > 0 {
+				var schema genai.Schema
+				if err := json.Unmarshal(tool.Parameters, &schema); err == nil {
+					fd.Parameters = &schema
+				}
+			} else if len(tool.InputSchema) > 0 {
+				// Anthropic format: convert JSON Schema to genai schema
 				fd.Parameters = jsonSchemaToGeminiSchema(tool.InputSchema)
 			}
 			decls = append(decls, fd)
@@ -536,7 +563,7 @@ func mapJSONTypeToGemini(t string) genai.Type {
 
 // ListModels fetches available Gemini models via the Google Genai SDK.
 func (h *GeminiHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
-	client, err := h.getClient(&Request{Provider: cfg})
+	client, _, err := h.getClient(&Request{Provider: cfg})
 	if err != nil {
 		return nil, err
 	}
@@ -558,7 +585,7 @@ func (h *GeminiHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]M
 		}
 		if hasGen {
 			entries = append(entries, ModelEntry{
-				ID:            m.Name,
+				ID:            strings.TrimPrefix(m.Name, "models/"),
 				Name:          m.DisplayName,
 				ContextWindow: int(m.InputTokenLimit),
 				MaxTokens:     int(m.OutputTokenLimit),

@@ -57,6 +57,7 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		providerId: "gemini",
 		label: "Google Gemini",
 		apiKeyFields: "geminiApiKey",
+		defaultModelId: "gemini-3-flash-preview",
 	},
 	{
 		providerId: "openai",

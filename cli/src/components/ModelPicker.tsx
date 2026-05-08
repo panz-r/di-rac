@@ -115,7 +115,7 @@ export const ModelPicker: React.FC<ModelPickerProps> = ({ provider, controller, 
 				})
 				if (cancelled) return
 				if (gwModels && gwModels.length > 0) {
-					const ids = gwModels.map((m) => m.id).sort((a, b) => a.localeCompare(b))
+					const ids = gwModels.map((m) => m.id).filter(Boolean).sort((a, b) => a.localeCompare(b))
 					gatewayModelsCache.set(provider, ids)
 					setGatewayModels(ids)
 					setDiagnostic(null)

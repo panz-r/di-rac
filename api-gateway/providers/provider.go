@@ -170,7 +170,7 @@ type ThinkingConfig struct {
 // StreamChunk represents a streaming response chunk with typed delta fields
 type StreamChunk struct {
 	Type          string          `json:"type"`
-	Index         int             `json:"index,omitempty"`
+	Index         int             `json:"index"`
 	TextDelta     string          `json:"text_delta,omitempty"`
 	JSONDelta     string          `json:"json_delta,omitempty"`
 	ToolCallID    string          `json:"tool_call_id,omitempty"`

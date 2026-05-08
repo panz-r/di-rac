@@ -1,6 +1,6 @@
 import { AgentConfigLoader } from "@core/task/tools/subagent/AgentConfigLoader"
 import { DiracDefaultTool } from "@/shared/tools"
-import { type DiracToolSpec, toolSpecFunctionDeclarations, toolSpecInputSchema } from "../spec"
+import { type DiracToolSpec, toolSpecInputSchema } from "../spec"
 import { SystemPromptContext } from "../types"
 
 export class DiracToolSet {
@@ -84,18 +84,8 @@ export class DiracToolSet {
 	 * Get the appropriate native tool converter for the given provider
 	 */
 	public static getNativeConverter(providerId: string, modelId?: string) {
-		switch (providerId) {
-			case "gemini":
-				return toolSpecFunctionDeclarations
-			case "vertex":
-				if (modelId?.includes("gemini")) {
-					return toolSpecFunctionDeclarations
-				}
-				return toolSpecInputSchema
-			default:
-				// All gateway-routed and Anthropic/Bedrock providers use input_schema format
-				return toolSpecInputSchema
-		}
+		// All gateway-routed providers use input_schema format — the gateway handles conversion
+		return toolSpecInputSchema
 	}
 
 	public static getNativeTools(context: SystemPromptContext) {
