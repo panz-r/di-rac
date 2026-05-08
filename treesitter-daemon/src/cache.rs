@@ -1,7 +1,7 @@
 use crate::parser::ParsedSource;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// In-memory parse cache for the daemon.
 /// Stores parsed ASTs keyed by canonical file path.
@@ -15,6 +15,12 @@ pub struct CacheStatus {
     pub entries: usize,
 }
 
+impl Default for ParseCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParseCache {
     pub fn new() -> Self {
         Self {
@@ -23,7 +29,7 @@ impl ParseCache {
     }
 
     /// Look up a previously parsed file.
-    pub fn get(&self, path: &PathBuf) -> Option<&ParsedSource> {
+    pub fn get(&self, path: &Path) -> Option<&ParsedSource> {
         self.entries.get(path)
     }
 
@@ -34,7 +40,7 @@ impl ParseCache {
 
     /// Remove a single entry from the cache.
     #[allow(dead_code)]
-    pub fn remove(&mut self, path: &PathBuf) -> Option<ParsedSource> {
+    pub fn remove(&mut self, path: &Path) -> Option<ParsedSource> {
         self.entries.remove(path)
     }
 

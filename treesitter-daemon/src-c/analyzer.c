@@ -5,6 +5,8 @@
 #include <stdio.h>
 
 ParsedSource* analyzer_parse(const char *source, Language lang) {
+    if (!source) return NULL;
+
     const TSLanguage *ts_lang = get_ts_language(lang);
     if (!ts_lang) return NULL;
 
@@ -17,6 +19,7 @@ ParsedSource* analyzer_parse(const char *source, Language lang) {
     if (!tree) return NULL;
 
     ParsedSource *ps = malloc(sizeof(ParsedSource));
+    if (!ps) return NULL;
     ps->source = strdup(source);
     ps->lang = lang;
     ps->tree = tree;
@@ -96,8 +99,11 @@ static void walk_collect_functions(TSNode node, const char *source, AnalyzerCtx 
         char *name = get_c_function_name(node, source);
         if (!name) name = strdup("unknown");
         if (*count == *cap) {
-            *cap = *cap ? *cap * 2 : 16;
-            *symbols = realloc(*symbols, sizeof(Symbol) * (*cap));
+            size_t new_cap = *cap ? *cap * 2 : 16;
+            void *tmp = realloc(*symbols, sizeof(Symbol) * new_cap);
+            if (!tmp) return;
+            *symbols = tmp;
+            *cap = new_cap;
         }
         Symbol *sym = &((*symbols)[(*count)++]);
         memset(sym, 0, sizeof(Symbol));
@@ -126,8 +132,11 @@ static void walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *c
         TSNode name_node = ts_node_child_by_field_name(node, "name", strlen("name"));
         char *name = !ts_node_is_null(name_node) ? get_node_text(name_node, source) : strdup("unknown");
         if (*count == *cap) {
-            *cap = *cap ? *cap * 2 : 16;
-            *symbols = realloc(*symbols, sizeof(Symbol) * (*cap));
+            size_t new_cap = *cap ? *cap * 2 : 16;
+            void *tmp = realloc(*symbols, sizeof(Symbol) * new_cap);
+            if (!tmp) return;
+            *symbols = tmp;
+            *cap = new_cap;
         }
         Symbol *sym = &((*symbols)[(*count)++]);
         memset(sym, 0, sizeof(Symbol));
@@ -243,11 +252,15 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
             const char *cap_name = ts_query_capture_name_for_id(query, cap_node.index, &name_len);
             if (strcmp(cap_name, "module") == 0) {
                 char *raw = get_node_text(cap_node.node, ps->source);
+                size_t rl = strlen(raw);
                 if (raw[0] == '"' || raw[0] == '\'') {
-                    size_t rl = strlen(raw);
-                    imp.module = malloc(rl);
-                    strncpy(imp.module, raw + 1, rl - 2);
-                    imp.module[rl - 2] = '\0';
+                    if (rl > 2) {
+                        imp.module = malloc(rl);
+                        strncpy(imp.module, raw + 1, rl - 2);
+                        imp.module[rl - 2] = '\0';
+                    } else {
+                        imp.module = strdup("");
+                    }
                     free(raw);
                 } else {
                     imp.module = raw;
@@ -256,6 +269,7 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
                 imp.line = ts_node_start_point(cap_node.node).row + 1;
             } else if (strcmp(cap_name, "name") == 0 || strcmp(cap_name, "default_import") == 0) {
                 imp.names = realloc(imp.names, sizeof(char*) * (imp.names_count + 1));
+                if (!imp.names) { imp.names_count = 0; /* leak raw but not much we can do */ }
                 imp.names[imp.names_count++] = get_node_text(cap_node.node, ps->source);
             }
         }
