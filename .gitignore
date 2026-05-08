@@ -1,4 +1,5 @@
 out
+di-core/target
 treesitter-daemon/build
 central-deamon/build
 command-daemon/build
