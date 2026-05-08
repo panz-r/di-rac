@@ -71,11 +71,17 @@ interface RunningCommand {
 	result?: CommandResult
 }
 
+interface CompletedResult {
+	result: CommandResult
+	expiresAt: number
+}
+
 export class CommandClient {
 	private process: ChildProcess | null = null
 	private requestId = 0
 	private pending = new Map<number, PendingRequest>()
 	private runningCommands = new Map<number, RunningCommand>()
+	private completedResults = new Map<number, CompletedResult>()
 	private buffer = ""
 	private binaryPath: string
 	private workspaceRoot: string
@@ -214,6 +220,7 @@ export class CommandClient {
 		this.pending.clear()
 		// Running commands are also lost when the daemon crashes
 		this.runningCommands.clear()
+		this.completedResults.clear()
 		this.process = null
 
 		if (this.shuttingDown) return
@@ -251,6 +258,7 @@ export class CommandClient {
 			this.process = null
 		}
 		this.runningCommands.clear()
+		this.completedResults.clear()
 		this.fallback = true
 	}
 
@@ -368,11 +376,21 @@ export class CommandClient {
 	 */
 	async awaitResult(commandId: string, timeoutMs = 120000): Promise<CommandResult> {
 		const id = parseInt(commandId)
+
+		// Check completed cache first (re-await is idempotent)
+		const cached = this.completedResults.get(id)
+		if (cached && Date.now() < cached.expiresAt) {
+			return cached.result
+		}
+		this.completedResults.delete(id)
+
 		const start = Date.now()
 		while (Date.now() - start < timeoutMs) {
 			const entry = this.runningCommands.get(id)
 			if (entry?.result) {
 				this.runningCommands.delete(id)
+				// Cache for 5 minutes so re-await works
+				this.completedResults.set(id, { result: entry.result, expiresAt: Date.now() + 300_000 })
 				return entry.result
 			}
 			await new Promise((r) => setTimeout(r, 500))

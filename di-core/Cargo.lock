@@ -310,6 +310,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "uuid",

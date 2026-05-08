@@ -1,15 +1,36 @@
-use crate::agent::trajectory::{Trajectory, Role, Message};
+use crate::agent::trajectory::{Trajectory, Role};
+use crate::agent::parser::{ResponseParser, StreamingToolAccumulator};
+use crate::agent::file_context::FileContextTracker;
+use crate::agent::environment::EnvironmentManager;
 use crate::observer::Observer;
 use crate::context::ContextManager;
-use crate::daemons::{UnixDaemonClient, HttpDaemonClient, CentralRequest, CentralResponse, ApiGatewayRequest};
-use crate::protocol::CoreEvent;
-use crate::tools::{ToolExecutor, ToolCall};
-use crate::agent::parser::ResponseParser;
+use crate::daemons::{
+    UnixDaemonClient, GatewayStreamClient, GatewayRequest, GatewayMessage,
+    CentralRequest, CentralResponse, StreamChunk,
+};
+use crate::protocol::{CoreEvent, FrontendMessage};
+use crate::tools::{ToolExecutor, ToolCall, ToolCoordinator};
+use crate::tools::background::BackgroundCommandTracker;
+use crate::tools::approval::ApprovalManager;
 use anyhow::{Result, anyhow};
 use serde_json::{json, Value};
 use std::collections::{HashSet, HashMap};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::mpsc;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentMode {
+    Plan,
+    Act,
+}
+
+/// Tools allowed in Plan mode (read-only + ask + done + plan + compact).
+const PLAN_MODE_TOOLS: &[&str] = &[
+    "read", "search", "repo", "symbols",
+    "ask", "done", "plan", "compact", "tools",
+];
 
 pub struct AgentEngine {
     pub id: Uuid,
@@ -19,19 +40,33 @@ pub struct AgentEngine {
     pub analyzer_client: Arc<UnixDaemonClient>,
     pub command_client: Arc<UnixDaemonClient>,
     pub central_client: Arc<UnixDaemonClient>,
-    pub gateway_client: Arc<HttpDaemonClient>,
+    pub gateway_client: Arc<GatewayStreamClient>,
     pub tool_executor: ToolExecutor,
+    pub coordinator: ToolCoordinator,
+    pub approval_manager: ApprovalManager,
+    pub background_tracker: Arc<BackgroundCommandTracker>,
     pub parser: ResponseParser,
+    pub abort: Arc<AtomicBool>,
+    pub consecutive_mistake_count: usize,
+    pub max_consecutive_mistakes: usize,
+    pub request_id_counter: i64,
+    pub frontend_rx: Option<mpsc::Receiver<FrontendMessage>>,
+    pub frontend_tx: mpsc::Sender<FrontendMessage>,
+    pub mode: AgentMode,
+    pub file_context: FileContextTracker,
+    pub environment: EnvironmentManager,
 }
 
 impl AgentEngine {
     pub fn new(
-        id: Uuid, 
-        analyzer_client: Arc<UnixDaemonClient>, 
+        id: Uuid,
+        analyzer_client: Arc<UnixDaemonClient>,
         command_client: Arc<UnixDaemonClient>,
         central_client: Arc<UnixDaemonClient>,
-        gateway_client: Arc<HttpDaemonClient>,
+        gateway_client: Arc<GatewayStreamClient>,
     ) -> Self {
+        let background_tracker = Arc::new(BackgroundCommandTracker::new());
+        let (frontend_tx, frontend_rx) = mpsc::channel(32);
         Self {
             id,
             trajectory: Trajectory::new(),
@@ -41,92 +76,411 @@ impl AgentEngine {
             command_client: command_client.clone(),
             central_client,
             gateway_client,
-            tool_executor: ToolExecutor::new(analyzer_client, command_client),
+            tool_executor: ToolExecutor::new(analyzer_client, command_client, background_tracker.clone()),
+            coordinator: ToolCoordinator::new(),
+            approval_manager: ApprovalManager::new(),
+            background_tracker,
             parser: ResponseParser::new(),
+            abort: Arc::new(AtomicBool::new(false)),
+            consecutive_mistake_count: 0,
+            max_consecutive_mistakes: 3,
+            request_id_counter: 0,
+            frontend_rx: Some(frontend_rx),
+            frontend_tx,
+            mode: AgentMode::Act,
+            file_context: FileContextTracker::new(),
+            environment: EnvironmentManager::new(),
         }
     }
 
-    /// Execute one turn of the agent loop.
-    pub async fn run_turn(&mut self) -> Result<()> {
-        // 0. Fetch Config from Central Daemon
+    pub fn is_aborted(&self) -> bool {
+        self.abort.load(Ordering::Relaxed)
+    }
+
+    pub fn request_abort(&self) {
+        self.abort.store(true, Ordering::Relaxed);
+    }
+
+    /// Run a complete task: loop over turns until completion, abort, or mistake limit.
+    pub async fn run_task(&mut self, initial_task: String) -> Result<()> {
+        self.trajectory.add_message(Role::User, json!(initial_task), initial_task.len() / 4);
+        self.emit_event(CoreEvent::TaskInitialized {
+            agent_id: self.id,
+            history_count: 0,
+        })?;
+
+        loop {
+            if self.is_aborted() {
+                self.emit_event(CoreEvent::TaskFinished {
+                    agent_id: self.id,
+                    success: false,
+                    message: "Interrupted by user".to_string(),
+                })?;
+                return Ok(());
+            }
+
+            let tools_used = match self.run_turn().await {
+                Ok(count) => count,
+                Err(e) => {
+                    self.emit_event(CoreEvent::TaskFinished {
+                        agent_id: self.id,
+                        success: false,
+                        message: format!("Error: {}", e),
+                    })?;
+                    return Err(e);
+                }
+            };
+
+            if self.is_aborted() {
+                self.emit_event(CoreEvent::TaskFinished {
+                    agent_id: self.id,
+                    success: false,
+                    message: "Interrupted by user".to_string(),
+                })?;
+                return Ok(());
+            }
+
+            if tools_used == 0 {
+                self.consecutive_mistake_count += 1;
+                if self.consecutive_mistake_count >= self.max_consecutive_mistakes {
+                    self.emit_event(CoreEvent::TaskFinished {
+                        agent_id: self.id,
+                        success: false,
+                        message: "Too many consecutive turns without tool use".to_string(),
+                    })?;
+                    return Ok(());
+                }
+                // Inject nudge
+                self.trajectory.add_message(
+                    Role::User,
+                    json!("You must respond with a tool call. Use the available tools to make progress on the task."),
+                    20,
+                );
+            } else {
+                self.consecutive_mistake_count = 0;
+            }
+        }
+    }
+
+    /// Execute one turn of the agent loop. Returns the number of tools used.
+    pub async fn run_turn(&mut self) -> Result<usize> {
+        // 0. Fetch config and gather environment
         let system_prompt = self.get_config("system_prompt").await?
             .as_str().unwrap_or("You are a helpful assistant.").to_string();
-        let model = self.get_config("model").await?
+        let _model = self.get_config("model").await?
             .as_str().unwrap_or("gpt-4").to_string();
 
-        // 1. Structural Analysis (API Extraction)
+        // Refresh environment details if not yet gathered
+        if self.environment.get_details().is_none() {
+            self.environment.gather();
+        }
+
+        // 1. API extraction
         let current_apis = self.extract_current_apis()?;
 
-        // 2. Build Prompt (Memory Pyramid)
-        let messages = self.context_manager.build_prompt(&system_prompt, &self.trajectory, &current_apis);
-        
-        // 3. Observer Pass (System 1)
+        // 2. Auto-compaction check
+        if self.context_manager.should_auto_compact(&self.trajectory) {
+            self.trajectory.add_message(
+                Role::User,
+                json!(ContextManager::auto_compact_instruction()),
+                100,
+            );
+        }
+
+        // 3. Build prompt with environment and file context
+        let bg_summary = self.background_tracker.get_summary();
+        let env_details = self.environment.get_details().map(String::from);
+        let file_ctx = self.file_context.get_summary();
+        let file_ctx_ref = if file_ctx.is_empty() { None } else { Some(file_ctx.as_str()) };
+
+        let mut enriched_prompt = system_prompt.clone();
+        if let Some(env) = &env_details {
+            enriched_prompt.push_str(&format!("\n\n{}", env));
+        }
+        if let Some(fc) = file_ctx_ref {
+            enriched_prompt.push_str(&format!("\n\n{}", fc));
+        }
+        if self.mode == AgentMode::Plan {
+            enriched_prompt.push_str("\n\n[Plan Mode] You may only use read-only tools, ask_followup_question, attempt_completion, and compact. Do not modify any files.");
+        }
+
+        let messages = self.context_manager.build_prompt(
+            &enriched_prompt,
+            &self.trajectory,
+            &current_apis,
+            bg_summary.as_deref(),
+        );
+
+        // 4. Observer
         let sqs = self.observer.compute_sqs(&self.trajectory);
-        
         self.emit_event(CoreEvent::MetricsUpdate {
             agent_id: self.id,
             sqs: sqs.score,
             token_usage: messages.iter().map(|m| m.tokens).sum(),
-            latency_ms: 0, 
+            latency_ms: 0,
         })?;
 
-        // 4. Think (LLM Interaction)
-        // Convert Trajectory messages to API Gateway format
-        let gateway_msgs: Vec<Value> = messages.iter().map(|m| json!({
-            "role": match m.role {
-                Role::User => "user",
-                Role::Assistant => "assistant",
-                Role::System => "system",
-                Role::Tool => "tool",
+        // 5. Streaming LLM call
+        self.request_id_counter += 1;
+        let gateway_msgs: Vec<GatewayMessage> = messages.iter().map(|m| GatewayMessage {
+            role: match m.role {
+                Role::User => "user".to_string(),
+                Role::Assistant => "assistant".to_string(),
+                Role::System => "system".to_string(),
+                Role::Tool => "tool".to_string(),
             },
-            "content": m.content
-        })).collect();
+            content: m.content.clone(),
+        }).collect();
 
-        // In a real streaming implementation, we'd handle chunks. 
-        // For now, let's assume a full response for logic porting.
-        let resp: Value = self.gateway_client.post("chat/completions", ApiGatewayRequest {
-            model: model.clone(),
+        let request = GatewayRequest {
+            id: self.request_id_counter,
+            stream: true,
+            provider: None, // uses the gateway's default provider
             messages: gateway_msgs,
-            stream: false,
-        }).await?;
+            system: None,
+            tools: None,
+            max_tokens: None,
+            temperature: None,
+            thinking: None,
+            timeout: Some(240000),
+        };
 
-        let response_text = resp["choices"][0]["message"]["content"].as_str()
-            .ok_or_else(|| anyhow!("Invalid response from api-gateway"))?;
+        let mut chunk_rx = self.gateway_client.stream_chat(request).await?;
 
-        // 5. Parse Response
-        let (thought, tools) = self.parser.parse(response_text);
-        
-        // Record Assistant's thought
-        self.trajectory.add_message(Role::Assistant, json!(thought), thought.len() / 4);
+        // 6. Accumulate streaming response
+        let mut full_text = String::new();
+        let mut tool_accumulator = StreamingToolAccumulator::new();
+        let mut usage_total: Option<crate::daemons::Usage> = None;
+
+        while let Some(result) = chunk_rx.recv().await {
+            if self.is_aborted() {
+                full_text.push_str("\n[interrupted by user]");
+                break;
+            }
+
+            let chunk = match result {
+                Ok(c) => c,
+                Err(e) => {
+                    self.trajectory.add_message(Role::Assistant, json!(full_text.clone()), full_text.len() / 4);
+                    return Err(e);
+                }
+            };
+
+            match chunk.chunk_type.as_str() {
+                "delta" => {
+                    if !tool_accumulator.feed_chunk(&chunk) {
+                        // Text delta
+                        if let Some(text) = &chunk.text_delta {
+                            full_text.push_str(text);
+                            let _ = self.emit_event(CoreEvent::ThoughtDelta {
+                                agent_id: self.id,
+                                text: text.clone(),
+                            });
+                        }
+                        if let Some(thinking) = &chunk.thinking {
+                            // Reasoning delta — emit for UI but don't add to main text
+                            let _ = self.emit_event(CoreEvent::ThoughtDelta {
+                                agent_id: self.id,
+                                text: format!("[thinking] {}", thinking),
+                            });
+                        }
+                    }
+                }
+                "content" => {
+                    tool_accumulator.feed_chunk(&chunk);
+                }
+                "stop" => {
+                    if let Some(usage) = &chunk.usage {
+                        usage_total = Some(usage.clone());
+                    }
+                }
+                "complete" => break,
+                _ => {}
+            }
+        }
+
+        // Record assistant thought
+        self.trajectory.add_message(Role::Assistant, json!(full_text.clone()), full_text.len() / 4);
         self.emit_event(CoreEvent::ThoughtFinished { agent_id: self.id })?;
 
-        // 6. Act (Process Tool Calls)
-        for tool in tools {
-            self.emit_event(CoreEvent::ToolCallStarted { 
-                agent_id: self.id, 
-                tool: tool.name.clone(), 
-                args: tool.args.clone() 
+        // Finalize tool calls (native + XML fallback)
+        let tools = tool_accumulator.finalize(&full_text);
+
+        // 7. Execute tools
+        for tool in &tools {
+            if self.is_aborted() {
+                break;
+            }
+
+            // Mode gate: Plan mode restricts to read-only tools
+            if self.mode == AgentMode::Plan && !PLAN_MODE_TOOLS.contains(&tool.name.as_str()) {
+                let skip_msg = json!({ "status": "blocked", "message": format!("Tool '{}' not allowed in Plan mode", tool.name) });
+                self.trajectory.add_message(Role::Tool, skip_msg.clone(), 50);
+                self.emit_event(CoreEvent::ToolCallFinished {
+                    agent_id: self.id,
+                    result: skip_msg,
+                })?;
+                continue;
+            }
+
+            // Track file context
+            match tool.name.as_str() {
+                "read" | "search" | "repo" | "symbols" => {
+                    if let Some(path) = tool.args.get("path").and_then(|v| v.as_str()) {
+                        self.file_context.mark_read(path);
+                    }
+                }
+                "write" | "edit" => {
+                    if let Some(path) = tool.args.get("path").and_then(|v| v.as_str()) {
+                        self.file_context.mark_edited(path);
+                    }
+                }
+                _ => {}
+            }
+
+            // Approval gate: check if tool needs user approval
+            if !self.approval_manager.should_auto_approve(&tool.name) {
+                let description = format!("Execute {} on behalf of agent", tool.name);
+                self.emit_event(CoreEvent::ApprovalNeeded {
+                    agent_id: self.id,
+                    tool: tool.name.clone(),
+                    args: tool.args.clone(),
+                    description: description.clone(),
+                })?;
+
+                // Block waiting for approval response from frontend
+                let approved = if let Some(rx) = &mut self.frontend_rx {
+                    match rx.recv().await {
+                        Some(FrontendMessage::ApprovalResponse { approved, .. }) => approved,
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+
+                if !approved {
+                    let skip_msg = json!({ "status": "denied", "message": "User denied tool execution" });
+                    self.trajectory.add_message(Role::Tool, skip_msg.clone(), 50);
+                    self.emit_event(CoreEvent::ToolCallFinished {
+                        agent_id: self.id,
+                        result: skip_msg,
+                    })?;
+                    continue;
+                }
+            }
+
+            self.emit_event(CoreEvent::ToolCallStarted {
+                agent_id: self.id,
+                tool: tool.name.clone(),
+                args: tool.args.clone(),
             })?;
 
-            match self.tool_executor.execute(&tool).await {
+            match self.tool_executor.execute(tool, &mut self.coordinator).await {
                 Ok(result) => {
-                    self.trajectory.add_message(Role::Tool, result.clone(), 100); // TODO: proper token count
-                    self.emit_event(CoreEvent::ToolCallFinished { 
-                        agent_id: self.id, 
-                        result 
-                    })?;
+                    // Handle frontend-interactive tools
+                    let action = result.get("_frontend_action").and_then(|v| v.as_str());
+
+                    if action == Some("attempt_completion") || action == Some("plan_response") {
+                        // Both done and plan tools can signal completion
+                        if action == Some("plan_response") {
+                            // Plan mode: emit the plan, don't abort
+                            let plan = result.get("plan").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let plan_json = json!({ "plan": plan, "status": "planned" });
+                            self.trajectory.add_message(Role::Tool, plan_json.clone(), 50);
+                            self.emit_event(CoreEvent::ToolCallFinished {
+                                agent_id: self.id,
+                                result: plan_json,
+                            })?;
+                        } else {
+                        let message = result.get("result").and_then(|v| v.as_str()).unwrap_or("Task complete").to_string();
+                        self.emit_event(CoreEvent::ToolCallFinished {
+                            agent_id: self.id,
+                            result: json!({ "status": "completed", "message": &message }),
+                        })?;
+                        self.emit_event(CoreEvent::TaskFinished {
+                            agent_id: self.id,
+                            success: true,
+                            message,
+                        })?;
+                        self.request_abort();
+                        return Ok(tools.len());
+                        }
+                    } else if action == Some("followup_question") {
+                        let question = result.get("question").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let options = result.get("options").as_ref().and_then(|v| {
+                            v.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        });
+                        self.emit_event(CoreEvent::FollowupQuestion {
+                            agent_id: self.id,
+                            question: question.clone(),
+                            options: options.clone(),
+                        })?;
+
+                        // Block waiting for followup answer from frontend
+                        let answer_text = if let Some(rx) = &mut self.frontend_rx {
+                            match rx.recv().await {
+                                Some(FrontendMessage::FollowupAnswer { text, .. }) => text,
+                                _ => String::new(),
+                            }
+                        } else {
+                            String::new()
+                        };
+
+                        let answer_json = json!({ "question": question, "answer": answer_text, "status": "answered" });
+                        self.trajectory.add_message(Role::Tool, answer_json.clone(), 50);
+                        self.emit_event(CoreEvent::ToolCallFinished {
+                            agent_id: self.id,
+                            result: answer_json,
+                        })?;
+                    } else if action == Some("new_task") {
+                        // New task: emit event for orchestrator to spawn a new agent
+                        let task_text = result.get("task").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        self.emit_event(CoreEvent::TaskFinished {
+                            agent_id: self.id,
+                            success: true,
+                            message: format!("Spawning new task: {}", task_text),
+                        })?;
+                        self.request_abort();
+                        return Ok(tools.len());
+                    } else if result.get("compact").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        let summary = result.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                        self.perform_compaction(summary)?;
+                        self.emit_event(CoreEvent::ToolCallFinished {
+                            agent_id: self.id,
+                            result: json!({ "status": "compacted" }),
+                        })?;
+                    } else {
+                        self.trajectory.add_message(Role::Tool, result.clone(), 100);
+                        self.emit_event(CoreEvent::ToolCallFinished {
+                            agent_id: self.id,
+                            result,
+                        })?;
+                    }
                 }
                 Err(e) => {
                     let error_msg = json!({ "error": e.to_string() });
                     self.trajectory.add_message(Role::Tool, error_msg.clone(), 50);
-                    self.emit_event(CoreEvent::ToolCallFinished { 
-                        agent_id: self.id, 
-                        result: error_msg 
+                    self.emit_event(CoreEvent::ToolCallFinished {
+                        agent_id: self.id,
+                        result: error_msg,
                     })?;
                 }
             }
         }
 
+        Ok(tools.len())
+    }
+
+    fn perform_compaction(&mut self, summary: &str) -> Result<()> {
+        let mut continuation = ContextManager::continuation_prompt(summary);
+        if let Some(bg) = self.background_tracker.get_summary() {
+            continuation.push_str(&format!("\n\n{}", bg));
+        }
+        self.trajectory.truncate_with_continuation(continuation);
+        self.emit_event(CoreEvent::ContextCompacted {
+            agent_id: self.id,
+            remaining_tokens: self.trajectory.get_total_tokens(),
+        })?;
         Ok(())
     }
 
@@ -164,34 +518,56 @@ impl AgentEngine {
 
 pub struct MultiAgentOrchestrator {
     pub agents: HashMap<Uuid, AgentEngine>,
+    pub frontend_channels: HashMap<Uuid, mpsc::Sender<FrontendMessage>>,
     pub analyzer_client: Arc<UnixDaemonClient>,
     pub command_client: Arc<UnixDaemonClient>,
     pub central_client: Arc<UnixDaemonClient>,
-    pub gateway_client: Arc<HttpDaemonClient>,
+    pub gateway_client: Arc<GatewayStreamClient>,
 }
 
 impl MultiAgentOrchestrator {
-    pub fn new(analyzer_socket: &str, command_socket: &str, central_socket: &str, gateway_url: &str) -> Self {
+    pub fn new(analyzer_socket: &str, command_socket: &str, central_socket: &str, gateway_socket: &str) -> Self {
         Self {
             agents: HashMap::new(),
+            frontend_channels: HashMap::new(),
             analyzer_client: Arc::new(UnixDaemonClient::new(analyzer_socket)),
             command_client: Arc::new(UnixDaemonClient::new(command_socket)),
             central_client: Arc::new(UnixDaemonClient::new(central_socket)),
-            gateway_client: Arc::new(HttpDaemonClient::new(gateway_url)),
+            gateway_client: Arc::new(GatewayStreamClient::with_socket(gateway_socket)),
         }
     }
 
-    pub fn spawn_agent(&mut self, _task: String) -> Uuid {
+    pub fn spawn_agent(&mut self, task: String) -> Uuid {
         let id = Uuid::new_v4();
-        let agent = AgentEngine::new(
-            id, 
-            self.analyzer_client.clone(), 
+        let mut agent = AgentEngine::new(
+            id,
+            self.analyzer_client.clone(),
             self.command_client.clone(),
             self.central_client.clone(),
             self.gateway_client.clone(),
         );
+        // Store the sender for routing frontend messages to this agent
+        self.frontend_channels.insert(id, agent.frontend_tx.clone());
         self.agents.insert(id, agent);
         id
+    }
+
+    /// Route a frontend message (approval, followup answer) to the agent's channel.
+    pub async fn send_to_agent(&self, agent_id: Uuid, msg: FrontendMessage) -> bool {
+        if let Some(tx) = self.frontend_channels.get(&agent_id) {
+            tx.send(msg).await.is_ok()
+        } else {
+            false
+        }
+    }
+
+    pub fn abort_agent(&mut self, agent_id: Uuid) -> bool {
+        if let Some(agent) = self.agents.get(&agent_id) {
+            agent.request_abort();
+            true
+        } else {
+            false
+        }
     }
 
     pub async fn handle_user_response(&mut self, agent_id: Uuid, text: String) -> Result<()> {

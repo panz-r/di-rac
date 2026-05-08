@@ -139,6 +139,9 @@ export interface TaskCallbacks {
 	clearActiveHookExecution: () => Promise<void>
 	getActiveHookExecution: () => Promise<HookExecution | undefined>
 
+	// Background command access
+	getBackgroundCommandSummary?: () => string | undefined
+
 	// User prompt hook callback
 	runUserPromptSubmitHook: (
 		userContent: DiracContent[],

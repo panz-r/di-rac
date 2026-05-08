@@ -432,6 +432,7 @@ export class Task {
 			this.removeLastPartialMessageIfExistsWithType.bind(this),
 			this.executeCommandTool.bind(this),
 			this.cancelBackgroundCommand.bind(this),
+				this.commandExecutor.getBackgroundCommandSummary.bind(this.commandExecutor),
 			this.switchToActModeCallback.bind(this),
 			this.cancelTask,
 			this.postStateToWebview.bind(this),

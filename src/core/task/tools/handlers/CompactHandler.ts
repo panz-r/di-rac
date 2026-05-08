@@ -168,6 +168,12 @@ export class CompactHandler implements IToolHandler, IPartialBlockHandler {
 
 			let toolResultContent = continuationPrompt(context) + fileContents
 
+			// Inject running background command IDs so they survive compaction
+			const bgSummary = config.callbacks.getBackgroundCommandSummary?.()
+			if (bgSummary) {
+				toolResultContent += `\n\n${bgSummary}\nUse the TaskOutput tool with these IDs to retrieve results.`
+			}
+
 			if (hookContextModification) {
 				toolResultContent += `\n\n[Context Modification from PreCompact Hook]\n${hookContextModification}`
 			}

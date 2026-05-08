@@ -125,6 +125,7 @@ export class ToolExecutor {
 			options?: CommandExecutionOptions,
 		) => Promise<[boolean, any]>,
 		private cancelRunningCommandTool: () => Promise<boolean>,
+		private getBackgroundCommandSummary: () => string | undefined,
 		private switchToActMode: () => Promise<boolean>,
 		private cancelTask: () => Promise<void>,
 		private postStateToWebview: () => Promise<void>,
@@ -192,6 +193,7 @@ export class ToolExecutor {
 				updateTaskHistory: this.noopUpdateHistory,
 				executeCommandTool: this.executeCommandTool,
 				cancelRunningCommandTool: this.cancelRunningCommandTool,
+				getBackgroundCommandSummary: this.getBackgroundCommandSummary,
 				getDiracMessages: () => this.messageStateHandler.getDiracMessages(),
 				updateDiracMessage: async (index: number, updates: Partial<DiracMessage>) => {
 					await this.messageStateHandler.updateDiracMessage(index, updates)

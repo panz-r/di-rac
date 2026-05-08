@@ -595,7 +595,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		const lines = [`# Background Commands (${running.length} running)`]
 		for (const c of running) {
 			const duration = Math.round((Date.now() - c.startTime) / 1000 / 60)
-			lines.push(`- ${c.command} (running ${duration}m, ${c.lineCount} lines, log: ${c.logFilePath})`)
+			lines.push(`- ID: ${c.id}, command: "${c.command}" (running ${duration}m, ${c.lineCount} lines, log: ${c.logFilePath})`)
 		}
 		return lines.join("\n")
 	}

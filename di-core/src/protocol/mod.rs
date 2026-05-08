@@ -4,47 +4,66 @@ use uuid::Uuid;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum CoreEvent {
-    /// Initial task context or resume state
     TaskInitialized {
         agent_id: Uuid,
         history_count: usize,
     },
-    /// Agent is generating a thought
     ThoughtDelta {
         agent_id: Uuid,
         text: String,
     },
-    /// Agent has finished thinking
     ThoughtFinished {
         agent_id: Uuid,
     },
-    /// A tool call is being executed
     ToolCallStarted {
         agent_id: Uuid,
         tool: String,
         args: serde_json::Value,
     },
-    /// Tool result received
     ToolCallFinished {
         agent_id: Uuid,
         result: serde_json::Value,
     },
-    /// Observer (System 1/2) has an insight
+    BackgroundCommandStarted {
+        agent_id: Uuid,
+        command_id: String,
+        command: String,
+    },
+    BackgroundCommandFinished {
+        agent_id: Uuid,
+        command_id: String,
+        exit_code: Option<i32>,
+    },
+    ContextCompacted {
+        agent_id: Uuid,
+        remaining_tokens: usize,
+    },
+    /// Agent needs user approval before executing a tool.
+    ApprovalNeeded {
+        agent_id: Uuid,
+        tool: String,
+        args: serde_json::Value,
+        description: String,
+    },
+    /// Agent is asking the user a follow-up question.
+    FollowupQuestion {
+        agent_id: Uuid,
+        question: String,
+        options: Option<Vec<String>>,
+    },
     ObserverSignal {
         agent_id: Uuid,
-        source: String, 
+        source: String,
         confidence: f32,
         message: String,
         action: Option<String>,
     },
-    /// Performance metrics for the turn
     MetricsUpdate {
         agent_id: Uuid,
         sqs: f32,
         token_usage: usize,
         latency_ms: u64,
     },
-    /// Terminal state reached
     TaskFinished {
         agent_id: Uuid,
         success: bool,
@@ -55,17 +74,24 @@ pub enum CoreEvent {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum FrontendMessage {
-    /// Start a new agent for a task
     SpawnAgent {
         task: String,
     },
-    /// User provided input to a specific agent
     UserResponse {
         agent_id: Uuid,
         text: String,
     },
-    /// User requested an interrupt for a specific agent
     Interrupt {
         agent_id: Uuid,
+    },
+    /// Frontend responds to an approval request.
+    ApprovalResponse {
+        agent_id: Uuid,
+        approved: bool,
+    },
+    /// Frontend responds to a follow-up question.
+    FollowupAnswer {
+        agent_id: Uuid,
+        text: String,
     },
 }

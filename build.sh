@@ -54,6 +54,11 @@ else
     echo "    SKIPPED (go not found)"
 fi
 
+echo "==> Building di-core (Rust execution engine)..."
+(cd di-core && cargo build --release)
+cp di-core/target/release/di-core dist/di-core
+echo "    OK"
+
 echo "==> Building TypeScript CLI..."
 npm install --silent
 npm run build
