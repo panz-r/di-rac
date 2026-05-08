@@ -86,13 +86,21 @@ void analyzer_search_symbols(AnalyzerCtx *ctx, const char *query, const char *ki
                         fseek(f, 0, SEEK_END);
                         long size = ftell(f);
                         fseek(f, 0, SEEK_SET);
-                        if (size < 512000) {
+                        if (size < 0 || size >= 512000) {
+                            fclose(f);
+                            continue;
+                        }
                             char *content = malloc(size + 1);
                             if (!content) {
                                 fclose(f);
                                 continue;
                             }
                             size_t bytes_read = fread(content, 1, size, f);
+                            if (bytes_read != (size_t)size) {
+                                free(content);
+                                fclose(f);
+                                continue;
+                            }
                             content[bytes_read] = '\0';
                             
                             ParsedSource *ps = analyzer_parse(content, lang);
