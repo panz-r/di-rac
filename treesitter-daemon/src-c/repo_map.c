@@ -10,12 +10,14 @@ typedef struct {
     char (*paths)[4096];
     int count;
     int capacity;
+    int had_error; /* -1 = OOM occurred, results may be incomplete */
 } WalkQueue;
 
 static void queue_init(WalkQueue *q) {
     q->capacity = 256;
     q->paths = malloc(sizeof(char[4096]) * q->capacity);
     q->count = 0;
+    q->had_error = (q->paths == NULL) ? -1 : 0;
 }
 
 static void queue_free(WalkQueue *q) {
@@ -23,10 +25,11 @@ static void queue_free(WalkQueue *q) {
 }
 
 static int queue_push(WalkQueue *q, const char *path) {
+    if (q->capacity == 0) { q->had_error = -1; return -1; }
     if (q->count == q->capacity) {
         int new_cap = q->capacity * 2;
         char (*tmp)[4096] = realloc(q->paths, sizeof(char[4096]) * new_cap);
-        if (!tmp) return -1;  /* out of memory — drop this path */
+        if (!tmp) { q->had_error = -1; return -1; }
         q->paths = tmp;
         q->capacity = new_cap;
     }
@@ -35,6 +38,7 @@ static int queue_push(WalkQueue *q, const char *path) {
 }
 
 static int queue_pop(WalkQueue *q, char *out) {
+    if (q->capacity == 0) return -1; /* OOM state — queue unusable */
     if (q->count == 0) return -1;
     strncpy(out, q->paths[--q->count], 4095);
     return 0;
@@ -69,6 +73,18 @@ static Language get_lang_from_ext(const char *path) {
 void analyzer_repo_map(const char *root, struct jsonw *w) {
     WalkQueue queue;
     queue_init(&queue);
+    if (queue.capacity == 0) {
+        /* OOM at init — report and bail */
+        jsonw_key(w, "files");
+        jsonw_array_open(w);
+        jsonw_array_close(w);
+        jsonw_key(w, "partial");
+        jsonw_bool(w, 1);
+        jsonw_key(w, "error");
+        jsonw_str(w, "out of memory during initialization");
+        queue_free(&queue);
+        return;
+    }
     queue_push(&queue, root);  /* root is already NUL-terminated from strncpy */
 
     jsonw_key(w, "files");
@@ -140,5 +156,9 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
         closedir(d);
     }
     jsonw_array_close(w);
+    if (queue.had_error) {
+        jsonw_key(w, "partial");
+        jsonw_bool(w, 1);
+    }
     queue_free(&queue);
 }
