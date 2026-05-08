@@ -33,6 +33,7 @@ typedef struct {
 typedef struct {
     Symbol *symbols;
     size_t count;
+    int error_code; /* 0 = ok, -1 = OOM during collection (partial results) */
 } SymbolResult;
 
 typedef struct {
@@ -40,11 +41,13 @@ typedef struct {
     char **names;
     size_t names_count;
     uint32_t line;
+    int error_code; /* 0 = ok, -1 = OOM during collection (partial results) */
 } Import;
 
 typedef struct {
     Import *imports;
     size_t count;
+    int error_code; /* 0 = ok, -1 = OOM during collection (partial results) */
 } ImportResult;
 
 typedef struct {

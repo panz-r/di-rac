@@ -124,7 +124,20 @@ static void handle_outline(pthread_mutex_t *lock, const char *raw_id, int id_len
 
     SymbolResult *sr = analyzer_extract_symbols(ps, ctx);
     ImportResult *ir = analyzer_extract_imports(ps, ctx);
-    
+
+    if (!sr && !ir) {
+        send_error(lock, raw_id, id_len, "EXTRACTION_FAILED", "Symbol extraction returned NULL");
+        analyzer_free_source(ps);
+        return;
+    }
+
+    if (sr && sr->error_code != 0) {
+        fprintf(stderr, "[warn] symbol extraction OOM at content — %zu symbols collected\n", sr->count);
+    }
+    if (ir && ir->error_code != 0) {
+        fprintf(stderr, "[warn] import extraction OOM at content — %zu imports collected\n", ir->count);
+    }
+
     pthread_mutex_lock(lock);
     struct jsonw w;
     jsonw_init(&w, stdout);
@@ -132,6 +145,7 @@ static void handle_outline(pthread_mutex_t *lock, const char *raw_id, int id_len
     jsonw_kv_str(&w, "type", "outline_result");
     jsonw_id(&w, raw_id, id_len);
     jsonw_kv_bool(&w, "ok", true);
+    if (sr && sr->error_code != 0) jsonw_kv_bool(&w, "truncated", true);
     write_outline_payload(&w, sr, ir, false);
     jsonw_object_close(&w);
     jsonw_flush(&w);
@@ -366,6 +380,20 @@ static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, c
     SymbolResult *sr = analyzer_extract_symbols(ps, ctx);
     ImportResult *ir = analyzer_extract_imports(ps, ctx);
 
+    if (!sr && !ir) {
+        send_error(lock, raw_id, id_len, "EXTRACTION_FAILED", "Symbol extraction returned NULL");
+        analyzer_free_source(ps);
+        free(content);
+        return;
+    }
+
+    if (sr && sr->error_code != 0) {
+        fprintf(stderr, "[warn] symbol extraction OOM at file %s — %zu symbols collected\n", file, sr->count);
+    }
+    if (ir && ir->error_code != 0) {
+        fprintf(stderr, "[warn] import extraction OOM at file %s — %zu imports collected\n", file, ir->count);
+    }
+
     pthread_mutex_lock(db_lock);
     db_index_file((IndexDB*)ctx->db, file, 0.0, "TODO_HASH", sr, ir);
     pthread_mutex_unlock(db_lock);
@@ -377,6 +405,7 @@ static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, c
     jsonw_kv_str(&w, "type", "index_file_result");
     jsonw_id(&w, raw_id, id_len);
     jsonw_kv_bool(&w, "ok", true);
+    if (sr && sr->error_code != 0) jsonw_kv_bool(&w, "truncated", true);
     jsonw_key(&w, "data");
     jsonw_object_open(&w);
     write_outline_payload(&w, sr, ir, true);

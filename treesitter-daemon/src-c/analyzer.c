@@ -91,7 +91,9 @@ static char* get_c_function_name(TSNode node, const char *source) {
     return NULL;
 }
 
-static void walk_collect_functions(TSNode node, const char *source, AnalyzerCtx *ctx, Symbol **symbols, size_t *count, size_t *cap) {
+static int walk_collect_functions(TSNode node, const char *source, AnalyzerCtx *ctx, Symbol **symbols, size_t *count, size_t *cap, int *out_error) {
+    if (*out_error) return *out_error;
+
     const char *kind = ts_node_type(node);
     bool is_func = (strcmp(kind, "function_definition") == 0 || strcmp(kind, "method_declaration") == 0);
 
@@ -101,7 +103,7 @@ static void walk_collect_functions(TSNode node, const char *source, AnalyzerCtx 
         if (*count == *cap) {
             size_t new_cap = *cap ? *cap * 2 : 16;
             void *tmp = realloc(*symbols, sizeof(Symbol) * new_cap);
-            if (!tmp) return;
+            if (!tmp) { *out_error = -1; return -1; }
             *symbols = tmp;
             *cap = new_cap;
         }
@@ -120,11 +122,14 @@ static void walk_collect_functions(TSNode node, const char *source, AnalyzerCtx 
 
     uint32_t n = ts_node_child_count(node);
     for (uint32_t i = 0; i < n; i++) {
-        walk_collect_functions(ts_node_child(node, i), source, ctx, symbols, count, cap);
+        if (walk_collect_functions(ts_node_child(node, i), source, ctx, symbols, count, cap, out_error) < 0) return -1;
     }
+    return 0;
 }
 
-static void walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *ctx, Symbol **symbols, size_t *count, size_t *cap) {
+static int walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *ctx, Symbol **symbols, size_t *count, size_t *cap, int *out_error) {
+    if (*out_error) return *out_error;
+
     const char *kind = ts_node_type(node);
     bool is_class = (strcmp(kind, "class_declaration") == 0 || strcmp(kind, "struct_specifier") == 0);
 
@@ -134,7 +139,7 @@ static void walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *c
         if (*count == *cap) {
             size_t new_cap = *cap ? *cap * 2 : 16;
             void *tmp = realloc(*symbols, sizeof(Symbol) * new_cap);
-            if (!tmp) return;
+            if (!tmp) { *out_error = -1; return -1; }
             *symbols = tmp;
             *cap = new_cap;
         }
@@ -153,8 +158,9 @@ static void walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *c
 
     uint32_t n = ts_node_child_count(node);
     for (uint32_t i = 0; i < n; i++) {
-        walk_collect_classes(ts_node_child(node, i), source, ctx, symbols, count, cap);
+        if (walk_collect_classes(ts_node_child(node, i), source, ctx, symbols, count, cap, out_error) < 0) return -1;
     }
+    return 0;
 }
 
 SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
@@ -162,11 +168,14 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
         Symbol *symbols = NULL;
         size_t count = 0;
         size_t cap = 0;
-        walk_collect_functions(ts_tree_root_node(ps->tree), ps->source, ctx, &symbols, &count, &cap);
-        walk_collect_classes(ts_tree_root_node(ps->tree), ps->source, ctx, &symbols, &count, &cap);
+        int error_code = 0;
+        int err = walk_collect_functions(ts_tree_root_node(ps->tree), ps->source, ctx, &symbols, &count, &cap, &error_code);
+        (void)err; /* no further action needed — partial results are returned */
+        if (!err) err = walk_collect_classes(ts_tree_root_node(ps->tree), ps->source, ctx, &symbols, &count, &cap, &error_code);
         SymbolResult *res = malloc(sizeof(SymbolResult));
         res->symbols = symbols;
         res->count = count;
+        res->error_code = error_code;
         return res;
     }
 
@@ -184,6 +193,7 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
     Symbol *symbols = NULL;
     size_t count = 0;
     size_t cap = 0;
+    int error_code = 0;
 
     TSQueryMatch match;
     while (ts_query_cursor_next_match(cursor, &match)) {
@@ -209,7 +219,7 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
             if (count == cap) {
                 size_t new_cap = cap ? cap * 2 : 16;
                 void *tmp = realloc(symbols, sizeof(Symbol) * new_cap);
-                if (!tmp) break;
+                if (!tmp) { error_code = -1; break; }
                 symbols = tmp;
                 cap = new_cap;
             }
@@ -226,6 +236,7 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
     SymbolResult *res = malloc(sizeof(SymbolResult));
     res->symbols = symbols;
     res->count = count;
+    res->error_code = error_code;
     return res;
 }
 
@@ -244,6 +255,7 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
     Import *imports = NULL;
     size_t count = 0;
     size_t cap = 0;
+    int error_code = 0;
 
     TSQueryMatch match;
     while (ts_query_cursor_next_match(cursor, &match)) {
@@ -271,8 +283,15 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
                 valid = true;
                 imp.line = ts_node_start_point(cap_node.node).row + 1;
             } else if (strcmp(cap_name, "name") == 0 || strcmp(cap_name, "default_import") == 0) {
+                if (count == cap) {
+                    size_t new_cap = cap ? cap * 2 : 16;
+                    void *tmp = realloc(imports, sizeof(Import) * new_cap);
+                    if (!tmp) { error_code = -1; /* imp.module and imp.names leak but we must continue */ break; }
+                    imports = tmp;
+                    cap = new_cap;
+                }
                 imp.names = realloc(imp.names, sizeof(char*) * (imp.names_count + 1));
-                if (!imp.names) { imp.names_count = 0; /* leak raw but not much we can do */ }
+                if (!imp.names) { imp.names_count = 0; /* continue — already added count */ }
                 imp.names[imp.names_count++] = get_node_text(cap_node.node, ps->source);
             }
         }
@@ -280,7 +299,7 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
             if (count == cap) {
                 size_t new_cap = cap ? cap * 2 : 16;
                 void *tmp = realloc(imports, sizeof(Import) * new_cap);
-                if (!tmp) break;
+                if (!tmp) { error_code = -1; break; }
                 imports = tmp;
                 cap = new_cap;
             }
@@ -292,6 +311,7 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
     ImportResult *res = malloc(sizeof(ImportResult));
     res->imports = imports;
     res->count = count;
+    res->error_code = error_code;
     return res;
 }
 
