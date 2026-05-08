@@ -139,7 +139,12 @@ func (h *FireworksHandler) Capabilities() *ProviderInfo {
 	return h.inner.Capabilities()
 }
 
+func (h *FireworksHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.inner.Capabilities(), settings, thinking)
+}
+
 var _ CapableHandler = (*FireworksHandler)(nil)
+var _ SettingsValidator = (*FireworksHandler)(nil)
 
 func (h *FireworksHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
 	return h.inner.ListModels(ctx, cfg)

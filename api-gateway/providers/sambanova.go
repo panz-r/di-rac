@@ -15,6 +15,18 @@ func NewSambaNovaHandler() *SambaNovaHandler {
 	return &SambaNovaHandler{
 		inner: newOpenAICompatHandler(OpenAICompatConfig{
 			BaseURL:       "https://api.sambanova.ai/v1",
+			Capabilities: &ProviderInfo{
+				ID: "sambanova",
+				Features: ProviderFeatures{
+					SupportsTools:     true,
+					SupportsStreaming: true,
+				},
+				Settings: []ProviderSetting{
+					{Key: "temperature", Label: "Temperature", Type: SettingSlider, Min: fPtr(0), Max: fPtr(2), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
+					{Key: "top_p", Label: "Top P", Type: SettingSlider, Min: fPtr(0), Max: fPtr(1), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
+					{Key: "max_tokens", Label: "Max Tokens", Type: SettingNumber, Min: fPtr(1), Group: "sampling"},
+				},
+			},
 			DefaultModel:  "Meta-Llama-3.3-70B-Instruct",
 			ModifyMessages: func(messages []map[string]interface{}, req *Request) []map[string]interface{} {
 				model := strings.ToLower(req.Provider.Model)
@@ -48,6 +60,12 @@ func (h *SambaNovaHandler) Capabilities() *ProviderInfo {
 func (h *SambaNovaHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
 	return h.inner.ListModels(ctx, cfg)
 }
+
+func (h *SambaNovaHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.Capabilities(), settings, thinking)
+}
+
+var _ SettingsValidator = (*SambaNovaHandler)(nil)
 
 var _ CapableHandler = (*SambaNovaHandler)(nil)
 var _ ModelLister = (*SambaNovaHandler)(nil)

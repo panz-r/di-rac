@@ -14,7 +14,19 @@ type TogetherHandler struct {
 func NewTogetherHandler() *TogetherHandler {
 	return &TogetherHandler{
 		inner: newOpenAICompatHandler(OpenAICompatConfig{
-			BaseURL:  "https://api.together.xyz/v1",
+			BaseURL: "https://api.together.xyz/v1",
+			Capabilities: &ProviderInfo{
+				ID: "together",
+				Features: ProviderFeatures{
+					SupportsTools:     true,
+					SupportsStreaming: true,
+				},
+				Settings: []ProviderSetting{
+					{Key: "temperature", Label: "Temperature", Type: SettingSlider, Min: fPtr(0), Max: fPtr(2), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
+					{Key: "top_p", Label: "Top P", Type: SettingSlider, Min: fPtr(0), Max: fPtr(1), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
+					{Key: "max_tokens", Label: "Max Tokens", Type: SettingNumber, Min: fPtr(1), Group: "sampling"},
+				},
+			},
 			ModifyMessages: func(messages []map[string]interface{}, req *Request) []map[string]interface{} {
 				model := req.Provider.Model
 				if req.ModelOverride != "" {
@@ -47,6 +59,12 @@ func (h *TogetherHandler) Capabilities() *ProviderInfo {
 func (h *TogetherHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
 	return h.inner.ListModels(ctx, cfg)
 }
+
+func (h *TogetherHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.Capabilities(), settings, thinking)
+}
+
+var _ SettingsValidator = (*TogetherHandler)(nil)
 
 var _ CapableHandler = (*TogetherHandler)(nil)
 var _ ModelLister = (*TogetherHandler)(nil)

@@ -162,5 +162,35 @@ func (h *OpenAIHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]M
 	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", cfg.APIKey)
 }
 
+func (h *OpenAIHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.inner.Capabilities(), settings, thinking,
+		CrossParamRule(func(key string, val interface{}, allSettings map[string]interface{}) *SettingValidation {
+			if key == "response_format" {
+				validFormats := map[string]bool{"": true, "json_object": true, "text": true}
+				strVal, _ := val.(string)
+				if strVal != "" && !validFormats[strVal] {
+					return &SettingValidation{
+						Error: "Must be one of: text, json_object",
+						Value: "",
+					}
+				}
+			}
+			if key == "stop" {
+				strVal, _ := val.(string)
+				if strVal != "" {
+					seqs := strings.Split(strVal, ",")
+					if len(seqs) > 4 {
+						return &SettingValidation{
+							Error: "Maximum 4 stop sequences allowed",
+						}
+					}
+				}
+			}
+			return nil
+		}),
+	)
+}
+
 var _ CapableHandler = (*OpenAIHandler)(nil)
+var _ SettingsValidator = (*OpenAIHandler)(nil)
 var _ ModelLister = (*OpenAIHandler)(nil)

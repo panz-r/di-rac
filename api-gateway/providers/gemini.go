@@ -560,6 +560,11 @@ func (h *GeminiHandler) Capabilities() *ProviderInfo {
 	}
 }
 
+func (h *GeminiHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.Capabilities(), settings, thinking)
+}
+
 var _ CapableHandler = (*GeminiHandler)(nil)
+var _ SettingsValidator = (*GeminiHandler)(nil)
 
 var _ ModelLister = (*GeminiHandler)(nil)

@@ -15,6 +15,18 @@ func NewMoonshotHandler() *MoonshotHandler {
 	return &MoonshotHandler{
 		inner: newOpenAICompatHandler(OpenAICompatConfig{
 			BaseURL:      "https://api.moonshot.cn/v1",
+			Capabilities: &ProviderInfo{
+				ID: "moonshot",
+				Features: ProviderFeatures{
+					SupportsTools:     true,
+					SupportsStreaming: true,
+				},
+				Settings: []ProviderSetting{
+					{Key: "temperature", Label: "Temperature", Type: SettingSlider, Min: fPtr(0), Max: fPtr(2), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
+					{Key: "top_p", Label: "Top P", Type: SettingSlider, Min: fPtr(0), Max: fPtr(1), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
+					{Key: "max_tokens", Label: "Max Tokens", Type: SettingNumber, Min: fPtr(1), Group: "sampling"},
+				},
+			},
 			DefaultModel: "kimi-k2.6",
 			ModifyMessages: func(messages []map[string]interface{}, req *Request) []map[string]interface{} {
 				model := req.Provider.Model
@@ -63,6 +75,12 @@ func (h *MoonshotHandler) Capabilities() *ProviderInfo {
 func (h *MoonshotHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
 	return h.inner.ListModels(ctx, cfg)
 }
+
+func (h *MoonshotHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.Capabilities(), settings, thinking)
+}
+
+var _ SettingsValidator = (*MoonshotHandler)(nil)
 
 var _ CapableHandler = (*MoonshotHandler)(nil)
 var _ ModelLister = (*MoonshotHandler)(nil)

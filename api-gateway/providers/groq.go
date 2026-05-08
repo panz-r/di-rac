@@ -165,6 +165,11 @@ func (h *GroqHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]Mod
 	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", cfg.APIKey)
 }
 
+func (h *GroqHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.inner.Capabilities(), settings, thinking)
+}
+
 var _ Handler = (*GroqHandler)(nil)
 var _ CapableHandler = (*GroqHandler)(nil)
+var _ SettingsValidator = (*GroqHandler)(nil)
 var _ ModelLister = (*GroqHandler)(nil)

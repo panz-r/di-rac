@@ -14,6 +14,19 @@ func NewLmStudioHandler() *LmStudioHandler {
 		inner: newOpenAICompatHandler(OpenAICompatConfig{
 			BaseURL:             "http://localhost:1234/api/v0",
 			MaxCompletionTokens: true,
+			Capabilities: &ProviderInfo{
+				ID: "lmstudio",
+				Features: ProviderFeatures{
+					SupportsTools:     true,
+					SupportsStreaming: true,
+					SupportsImages:    true,
+				},
+				Settings: []ProviderSetting{
+					{Key: "temperature", Label: "Temperature", Type: SettingSlider, Min: fPtr(0), Max: fPtr(2), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
+					{Key: "top_p", Label: "Top P", Type: SettingSlider, Min: fPtr(0), Max: fPtr(1), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
+					{Key: "max_tokens", Label: "Max Tokens", Type: SettingNumber, Min: fPtr(1), Group: "sampling"},
+				},
+			},
 		}),
 	}
 }
@@ -36,6 +49,12 @@ func (h *LmStudioHandler) Capabilities() *ProviderInfo {
 func (h *LmStudioHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
 	return h.inner.ListModels(ctx, cfg)
 }
+
+func (h *LmStudioHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.Capabilities(), settings, thinking)
+}
+
+var _ SettingsValidator = (*LmStudioHandler)(nil)
 
 var _ CapableHandler = (*LmStudioHandler)(nil)
 var _ ModelLister = (*LmStudioHandler)(nil)

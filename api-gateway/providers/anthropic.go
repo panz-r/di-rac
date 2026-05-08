@@ -615,6 +615,25 @@ func (h *AnthropicHandler) Capabilities() *ProviderInfo {
 	}
 }
 
+func (h *AnthropicHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.Capabilities(), settings, thinking,
+		InactiveInThinking("top_k"),
+		CrossParamRule(func(key string, val interface{}, allSettings map[string]interface{}) *SettingValidation {
+			if key == "thinking_budget_tokens" {
+				isThinking := thinking != nil && thinking.Type == "enabled"
+				if !isThinking {
+					return &SettingValidation{
+						Status:  StatusInactive,
+						Message: "Only applies in thinking mode",
+					}
+				}
+			}
+			return nil
+		}),
+	)
+}
+
 var _ CapableHandler = (*AnthropicHandler)(nil)
+var _ SettingsValidator = (*AnthropicHandler)(nil)
 
 var _ ModelLister = (*AnthropicHandler)(nil)

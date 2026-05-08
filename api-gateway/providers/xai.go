@@ -145,6 +145,11 @@ func (h *XAIHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]Mode
 	return fetchModelsHTTP(ctx, strings.TrimRight(base, "/")+"/models", cfg.APIKey)
 }
 
+func (h *XAIHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.inner.Capabilities(), settings, thinking)
+}
+
 var _ Handler = (*XAIHandler)(nil)
 var _ CapableHandler = (*XAIHandler)(nil)
+var _ SettingsValidator = (*XAIHandler)(nil)
 var _ ModelLister = (*XAIHandler)(nil)

@@ -127,8 +127,13 @@ func (h *CerebrasHandler) Capabilities() *ProviderInfo {
 	return h.inner.Capabilities()
 }
 
+func (h *CerebrasHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.inner.Capabilities(), settings, thinking)
+}
+
 var _ Handler = (*CerebrasHandler)(nil)
 var _ CapableHandler = (*CerebrasHandler)(nil)
+var _ SettingsValidator = (*CerebrasHandler)(nil)
 
 func (h *CerebrasHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
 	return h.inner.ListModels(ctx, cfg)

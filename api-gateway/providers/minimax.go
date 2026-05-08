@@ -463,3 +463,4 @@ func (h *MiniMaxHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]
 }
 
 var _ ModelLister = (*MiniMaxHandler)(nil)
+var _ CapableHandler = (*MiniMaxHandler)(nil)
