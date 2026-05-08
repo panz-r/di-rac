@@ -2,6 +2,26 @@ export type ObservationType = "summary" | "watcher" | "filter" | "critic" | "ref
 
 export type CriticAction = "CONTINUE" | "REFLECT" | "RESTART"
 
+export type SkeletonFidelity = "full" | "structural" | "decision"
+
+export interface LanguageNorm {
+	medianEditChurn: number
+	medianFileSize: number
+	sci: number
+}
+
+export const LANGUAGE_NORMALIZATION: Record<string, LanguageNorm> = {
+	python: { medianEditChurn: 15, medianFileSize: 200, sci: 12.0 },
+	javascript: { medianEditChurn: 12, medianFileSize: 150, sci: 14.0 },
+	typescript: { medianEditChurn: 12, medianFileSize: 150, sci: 14.0 },
+	java: { medianEditChurn: 8, medianFileSize: 300, sci: 65.0 },
+	go: { medianEditChurn: 10, medianFileSize: 200, sci: 31.0 },
+	rust: { medianEditChurn: 6, medianFileSize: 250, sci: 80.0 },
+	c: { medianEditChurn: 5, medianFileSize: 180, sci: 95.0 },
+	cpp: { medianEditChurn: 5, medianFileSize: 180, sci: 122.0 },
+	ruby: { medianEditChurn: 18, medianFileSize: 120, sci: 10.0 },
+}
+
 export interface ObserverConfig {
 	enabled: boolean
 	provider?: string
@@ -13,18 +33,18 @@ export interface ObserverConfig {
 	blockAfter: number | false
 	reflectionEnabled: boolean
 	reflectionTokenThreshold: number
-    confidenceThreshold: number
-    reflectionCooldown: number // Min turns between reflections (Singh et al. 2025)
-    verbose: boolean
-    tauWatcher: number // Time constant for S1 decay (Shen et al. 2025)
-    tauCritic: number // Time constant for S2 decay
-    permissiveBufferSize: number // Wong et al. 2025
-    
-    // Phase 5: Test-less Progress (Park & Lee 2025)
-    tierThresholds: {
-        sqs: [number, number, number, number] // SQS triggers for Tier 0, 1, 2, 3
-        confidence: [number, number, number, number] // Min confidence for Tier 0, 1, 2, 3
-    }
+	confidenceThreshold: number
+	reflectionCooldown: number // Min turns between reflections (Singh et al. 2025)
+	verbose: boolean
+	tauWatcher: number // Time constant for S1 decay (Shen et al. 2025)
+	tauCritic: number // Time constant for S2 decay
+	permissiveBufferSize: number // Wong et al. 2025
+
+	// Phase 5: Test-less Progress (Park & Lee 2025)
+	tierThresholds: {
+		sqs: [number, number, number, number] // SQS triggers for Tier 0, 1, 2, 3
+		confidence: [number, number, number, number] // Min confidence for Tier 0, 1, 2, 3
+	}
 }
 
 export interface ObservationEntry {
@@ -35,7 +55,8 @@ export interface ObservationEntry {
 	tokenEstimate: number
 	confidence?: number
 	criticAction?: CriticAction
-    sqs?: number // Search Quality Score (Zheng et al. 2026)
+	sqs?: number // Search Quality Score (Zheng et al. 2026)
+	fidelity?: SkeletonFidelity
 }
 
 /**
@@ -94,7 +115,7 @@ REASON: [Reason]
 export const OBSERVER_SKELETON_PROMPT = `You are a Structured Pruner. Extract a lossless skeleton of the last 15-20 turns.
 
 FORMAT:
-- EDITS: {file: [lines]}
+- EDITS: {file: [signatures/types]}
 - ERRORS: [Brief error signatures]
 - DECISIONS: [Key strategy shifts]
 - TESTS: [Pass/Fail delta]
@@ -123,7 +144,7 @@ export function buildObserverConfig(settings: {
 	observerModelId?: string
 	observerTurns: number
 	observerCriticFrequency?: number
-    observerVerbose?: boolean
+	observerVerbose?: boolean
 	observerTokenThreshold: number
 	observerBufferActivation: number
 	observerBlockAfter: number
@@ -141,15 +162,15 @@ export function buildObserverConfig(settings: {
 		blockAfter: settings.observerBlockAfter,
 		reflectionEnabled: settings.observerReflectionEnabled,
 		reflectionTokenThreshold: settings.observerReflectionTokenThreshold,
-        confidenceThreshold: 0.5,
-        reflectionCooldown: 4,
-        verbose: settings.observerVerbose || false,
-        tauWatcher: 7,
-        tauCritic: 15,
-        permissiveBufferSize: 2,
-        tierThresholds: {
-            sqs: [0.30, 0.32, 0.35, 0.40],
-            confidence: [0.50, 0.55, 0.60, 0.70]
-        }
+		confidenceThreshold: 0.5,
+		reflectionCooldown: 4,
+		verbose: settings.observerVerbose || false,
+		tauWatcher: 7,
+		tauCritic: 15,
+		permissiveBufferSize: 2,
+		tierThresholds: {
+			sqs: [0.3, 0.32, 0.35, 0.4],
+			confidence: [0.5, 0.55, 0.6, 0.7],
+		},
 	}
 }

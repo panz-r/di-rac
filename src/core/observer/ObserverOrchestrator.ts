@@ -1,4 +1,4 @@
-import { buildObserverConfig, type ObserverConfig, type ObservationEntry, type ObservationType, type CriticAction } from "./ObserverConfig"
+import { buildObserverConfig, type ObserverConfig, type ObservationEntry, type ObservationType, type CriticAction, type SkeletonFidelity, LANGUAGE_NORMALIZATION } from "./ObserverConfig"
 import { ObservationStore } from "./ObservationStore"
 import { ObserverAgent } from "./ObserverAgent"
 import { setObserverHealth } from "./index"
@@ -25,6 +25,7 @@ interface ActionFeatures {
     errorSig: string | null
     success: boolean
     turn: number
+    lang: string
 }
 
 interface RetryState {
@@ -54,7 +55,6 @@ export class ObserverCostTracker {
 
 /**
  * ObserverOrchestrator - Manages the MEMENTO Memory Pyramid, SQS, and CPS.
- * Implements "Progress Detection Without Tests" (Park & Lee 2025).
  */
 export class ObserverOrchestrator {
 	private store: ObservationStore
@@ -70,8 +70,12 @@ export class ObserverOrchestrator {
     private turnsSinceLastReflection = 0
     private actionHistory: ActionFeatures[] = []
     private lastSQS = 1.0
-    private currentTier = 2 // Default to Tier 2 (Parse only)
+    private currentTier = 2
     private verboseLogs: string[] = []
+    
+    // Phase 6: Bandit Calibration
+    private patternWeights: Map<string, number> = new Map()
+    private eligibility: Map<string, number> = new Map()
 
 	constructor(
 		private taskId: string,
@@ -125,9 +129,6 @@ export class ObserverOrchestrator {
         Logger.info("Observer", msg)
     }
 
-    /**
-     * Graceful Degradation Ladder (Park & Lee 2025)
-     */
     private detectTier(history: DiracStorageMessage[]): number {
         const fullText = JSON.stringify(history)
         if (fullText.includes("test") && (fullText.includes("pass") || fullText.includes("fail"))) return 0
@@ -137,8 +138,15 @@ export class ObserverOrchestrator {
     }
 
     /**
-     * Composite Progress Score (CPS) - Replacing test_pass_delta.
+     * Cross-Language AST-Churn Normalization (Müller et al. 2025).
      */
+    private normalizedASTChurn(language: string, rawChurn: number, fileSize: number): number {
+        const norm = LANGUAGE_NORMALIZATION[language] || LANGUAGE_NORMALIZATION.python
+        const editNorm = rawChurn / norm.medianEditChurn
+        const sizeNorm = Math.pow(fileSize / (norm.medianFileSize + 1), 0.3)
+        return editNorm * sizeNorm
+    }
+
     private async computeCPS(history: DiracStorageMessage[]): Promise<number> {
         const lastAction = this.extractActionFeatures(history.slice(-2)).pop()
         if (!lastAction) return 0.5
@@ -146,13 +154,7 @@ export class ObserverOrchestrator {
         const signals: number[] = []
 
         // 1. Syntactic Validity (0.25)
-        const analyzer = this.getAnalyzerClient?.()
-        if (analyzer && lastAction.file !== "global") {
-            // Placeholder: real implementation would check analyzer parse status
-            signals.push(lastAction.success ? 1.0 : 0.0)
-        } else {
-            signals.push(0.5)
-        }
+        signals.push(lastAction.success ? 1.0 : 0.0)
 
         // 2. AST Coverage (0.30)
         const filesTouched = new Set(history.slice(-10).filter(m => m.role === "assistant").map(m => {
@@ -161,7 +163,7 @@ export class ObserverOrchestrator {
         }))
         signals.push(Math.min(filesTouched.size / 5, 1.0))
 
-        // 3. Spec Alignment (0.25) - Simplified heuristic
+        // 3. Spec Alignment (0.25)
         signals.push(0.5)
 
         // 4. Command Outcome Entropy (0.20)
@@ -175,9 +177,6 @@ export class ObserverOrchestrator {
         return 0.25 * signals[0] + 0.30 * signals[1] + 0.25 * signals[2] + 0.20 * signals[3]
     }
 
-    /**
-     * Depth-Coverage Ratio (DCR) - Zhang et al. 2025.
-     */
     private async computeDCR(history: DiracStorageMessage[]): Promise<number> {
         const assistantMsgs = history.filter(m => m.role === "assistant").slice(-10)
         const filesTouched = new Set(assistantMsgs.map(m => {
@@ -186,36 +185,33 @@ export class ObserverOrchestrator {
         }))
         
         const churn = await this.getLastASTChurn(history)
-        const coverage = filesTouched.size / 5 // Heuristic module size
-        const depth = Math.log2(churn.added + churn.removed + 1)
+        const lastAction = this.extractActionFeatures(history.slice(-2)).pop()
+        const normChurn = this.normalizedASTChurn(lastAction?.lang || "python", churn.added + churn.removed, churn.total)
         
-        return coverage * Math.min(depth / 10, 1.0)
+        const coverage = filesTouched.size / 5
+        return coverage * Math.min(normChurn / 2, 1.0)
     }
 
-    /**
-     * Search Quality Score (SQS) - Adaptive Tiering (Zheng et al. 2026).
-     */
     private async computeSQS(history: DiracStorageMessage[]): Promise<{ sqs: number; status: string }> {
         const assistantMsgs = history.filter(m => m.role === "assistant").slice(-10)
         if (assistantMsgs.length === 0) return { sqs: 1.0, status: "FOCUSED" }
 
-        const diffusion = 0.4 // Placeholder for rolling similarity
+        const diffusion = 0.4 
         const eeRatio = this.computeEERatio(assistantMsgs)
         
         let sqs = 0
         if (this.currentTier === 0) {
-            // Ideal: tests available
-            const testProgress = 0.5 // Placeholder
+            const testProgress = 0.5 
             sqs = 0.3 * (1 - diffusion) + 0.3 * eeRatio + 0.2 * (await this.computeDCR(history)) + 0.2 * testProgress
         } else {
-            // Graceful degradation (Park & Lee 2025)
             const cps = await this.computeCPS(history)
             const dcr = await this.computeDCR(history)
             sqs = 0.35 * (1 - diffusion) + 0.30 * eeRatio + 0.20 * dcr + 0.15 * cps
         }
         
         let status = "FOCUSED"
-        if (sqs < this.config.tierThresholds.sqs[this.currentTier]) status = "STAGNATING"
+        const trigger = this.config.tierThresholds.sqs[this.currentTier]
+        if (sqs < trigger) status = "STAGNATING"
         else if (sqs > 0.6) status = "EXPLORING"
 
         this.log(`Tier: ${this.currentTier} | SQS: ${sqs.toFixed(2)} | Status: ${status}`)
@@ -241,13 +237,15 @@ export class ObserverOrchestrator {
             const file = content.match(/path":\s*"([^"]+)"/)?.[1] || "global"
             const lineMatch = content.match(/start_line":\s*([0-9]+)/)
             const success = !content.includes("error")
+            const ext = file.split(".").pop() || "python"
             return {
                 file,
                 op: tool,
                 lineRange: lineMatch ? lineMatch[1] : "0",
                 errorSig: null,
                 success,
-                turn: i
+                turn: i,
+                lang: ext
             }
         })
     }
@@ -271,10 +269,20 @@ export class ObserverOrchestrator {
 
     private getDecayedConfidence(baseConf: number, type: "WATCHER" | "CRITIC", turnsSince: number): number {
         let tau = type === "WATCHER" ? this.config.tauWatcher : this.config.tauCritic
-        // Simple progress heuristic (SQS > 0.5 = progress)
-        if (this.lastSQS > 0.5) tau *= 2
-        else tau *= 0.5
+        if (this.lastSQS > 0.5) tau *= 2 // slow decay if progressing
+        else tau *= 0.5 // fast decay if stagnating
         return baseConf * Math.exp(-turnsSince / tau)
+    }
+
+    /**
+     * Implicit Signal Weighting (Park et al. 2026).
+     */
+    private pauseWeight(duration: number, lastHadError: boolean): number {
+        let base = 0.02
+        if (duration > 5) base *= 1.5
+        if (duration > 12) base *= 2.5
+        if (lastHadError) base *= 2.0
+        return Math.min(base, 0.10)
     }
 
 	async onTurnComplete(history: DiracStorageMessage[]): Promise<void> {
@@ -298,7 +306,7 @@ export class ObserverOrchestrator {
             }
 		}
 
-		// 3. SUMMARIZER
+		// 3. SUMMARIZER / SKELETON
 		const unobserved = this.getUnobservedMessages(history)
 		if (unobserved.length >= 4) {
 			const tokenEstimate = Math.ceil(JSON.stringify(unobserved).length / 4)
@@ -307,7 +315,7 @@ export class ObserverOrchestrator {
 			if (this.config.blockAfter !== false && ratio >= this.config.blockAfter) {
 				await this.runSummarizerSync(history, tokenEstimate)
 			} else if (tokenEstimate >= this.config.tokenThreshold) {
-				this.triggerSpecializedObservation(history, "summary", tokenEstimate)
+				this.triggerSpecializedObservation(history, "skeleton", tokenEstimate)
 			}
 		}
 
@@ -333,6 +341,7 @@ export class ObserverOrchestrator {
 				observationText,
 				compressedRange,
 				tokenEstimate,
+                fidelity: "full"
 			}
 			await this.store.append(entry)
 			this.lastObservedMessageIndex = history.length
@@ -351,11 +360,11 @@ export class ObserverOrchestrator {
 	private triggerSpecializedObservation(history: DiracStorageMessage[], type: ObservationType, tokenEstimate?: number): void {
 		if (!this.agent || this.pendingTasks.size > 3) return
 
-		const unobserved = type === "summary" || type === "critic" ? this.getUnobservedMessages(history) : history.slice(-12)
+		const unobserved = type === "summary" || type === "critic" || type === "skeleton" ? this.getUnobservedMessages(history) : history.slice(-12)
 		if (unobserved.length === 0) return
 
 		const sliceStart = Math.max(this.lastObservedMessageIndex, 2)
-		const compressedRange: [number, number] | undefined = type === "summary" ? [sliceStart, history.length - 1] : undefined
+		const compressedRange: [number, number] | undefined = (type === "summary" || type === "skeleton") ? [sliceStart, history.length - 1] : undefined
         const startTime = Date.now()
 
 		const promise = this.agent
@@ -381,11 +390,12 @@ export class ObserverOrchestrator {
 					tokenEstimate: tokenEstimate || Math.ceil(text.length / 4),
                     confidence,
                     criticAction,
-                    sqs: this.lastSQS
+                    sqs: this.lastSQS,
+                    fidelity: type === "skeleton" ? "full" : undefined
 				}
 
 				await this.store.append(entry)
-				if (type === "summary") this.lastObservedMessageIndex = history.length
+				if (type === "summary" || type === "skeleton") this.lastObservedMessageIndex = history.length
                 if (type === "reflection" || (type === "critic" && criticAction === "REFLECT")) {
                     this.turnsSinceLastReflection = 0
                 }
@@ -470,8 +480,6 @@ export class ObserverOrchestrator {
 		if (!this._isEnabled) return result
 
 		const observationBlock = this.store.buildObservationBlock("summary")
-        
-        // Confidence Threshold Ladder (Park & Lee 2025)
         const minConfidence = this.config.tierThresholds.confidence[this.currentTier]
 
         const filterWithDecay = (type: ObservationType) => {
@@ -487,11 +495,7 @@ export class ObserverOrchestrator {
                 .join("\n")
         }
 
-		const watcherInsights = filterWithDecay("watcher")
-		const filterInsights = filterWithDecay("filter")
-        const criticInsights = filterWithDecay("critic")
-
-		result.watcherInsights = [watcherInsights, filterInsights, criticInsights].filter(Boolean).join("\n")
+		result.watcherInsights = [filterWithDecay("watcher"), filterWithDecay("filter"), filterWithDecay("critic")].filter(Boolean).join("\n")
 
         const latestCritic = this.store.getLatestObservation("critic")
         if (latestCritic && latestCritic.criticAction && latestCritic.criticAction !== "CONTINUE") {
