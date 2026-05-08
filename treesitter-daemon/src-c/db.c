@@ -56,8 +56,11 @@ IndexDB* db_open(const char *path) {
 
     char *err = NULL;
     if (sqlite3_exec(db->db, schema, NULL, NULL, &err) != SQLITE_OK) {
-        fprintf(stderr, "[db] Schema error: %s\n", err);
+        fprintf(stderr, "[db] Schema init failed: %s\n", err);
         sqlite3_free(err);
+        sqlite3_close(db->db);
+        free(db);
+        return NULL;
     }
 
     return db;
