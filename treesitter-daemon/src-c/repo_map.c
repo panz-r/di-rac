@@ -73,7 +73,12 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
                         fseek(f, 0, SEEK_SET);
                         if (size < 102400) { /* 100KB limit for repo map parsing */
                             char *content = malloc(size + 1);
-                            fread(content, 1, size, f);
+                            size_t bytes_read = fread(content, 1, size, f);
+                            if (bytes_read != (size_t)size) {
+                                free(content);
+                                fclose(f);
+                                continue;  /* skip file on incomplete read */
+                            }
                             content[size] = '\0';
                             
                             ParsedSource *ps = analyzer_parse(content, lang);
