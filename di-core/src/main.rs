@@ -85,6 +85,10 @@ async fn main() -> Result<()> {
                             eprintln!("Agent {} not found for followup answer", agent_id);
                         }
                     }
+                    FrontendMessage::Timeout { duration_ms } => {
+                        orchestrator.set_all_frontend_timeouts(duration_ms);
+                        eprintln!("Frontend timeout set to {}ms for all agents", duration_ms);
+                    }
                 }
             }
             Err(e) => {

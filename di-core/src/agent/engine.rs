@@ -55,6 +55,9 @@ pub struct AgentEngine {
     pub mode: AgentMode,
     pub file_context: FileContextTracker,
     pub environment: EnvironmentManager,
+    /// How long (ms) to wait for frontend responses before timing out.
+    /// Set to Some(0) to disable timeout (indefinite wait). None uses default.
+    pub frontend_timeout_ms: Option<u64>,
 }
 
 impl AgentEngine {
@@ -90,6 +93,26 @@ impl AgentEngine {
             mode: AgentMode::Act,
             file_context: FileContextTracker::new(),
             environment: EnvironmentManager::new(),
+            frontend_timeout_ms: None,
+        }
+    }
+
+    /// Receive from the frontend channel with the current timeout.
+    /// Returns None on timeout or channel closure.
+    async fn recv_frontend(&mut self) -> Option<FrontendMessage> {
+        match &mut self.frontend_rx {
+            Some(rx) => {
+                match self.frontend_timeout_ms {
+                    Some(0) | None => rx.recv().await,
+                    Some(ms) => {
+                        match tokio::time::timeout(std::time::Duration::from_millis(ms), rx.recv()).await {
+                            Ok(msg) => msg,
+                            Err(_) => None, // timed out
+                        }
+                    }
+                }
+            }
+            None => None,
         }
     }
 
@@ -349,17 +372,31 @@ impl AgentEngine {
                 })?;
 
                 // Block waiting for approval response from frontend
-                let approved = if let Some(rx) = &mut self.frontend_rx {
-                    match rx.recv().await {
-                        Some(FrontendMessage::ApprovalResponse { approved, .. }) => approved,
-                        _ => false,
+                let msg = self.recv_frontend().await;
+                let approved = match msg {
+                    Some(FrontendMessage::ApprovalResponse { approved, .. }) => approved,
+                    Some(FrontendMessage::Timeout { duration_ms }) => {
+                        self.frontend_timeout_ms = Some(duration_ms);
+                        self.emit_event(CoreEvent::FrontendTimeout {
+                            agent_id: self.id,
+                            tool: Some(tool.name.clone()),
+                            question: None,
+                        })?;
+                        false
                     }
-                } else {
-                    false
+                    _ => {
+                        // Channel closed or unexpected message — treat as denial
+                        self.emit_event(CoreEvent::FrontendTimeout {
+                            agent_id: self.id,
+                            tool: Some(tool.name.clone()),
+                            question: None,
+                        })?;
+                        false
+                    }
                 };
 
                 if !approved {
-                    let skip_msg = json!({ "status": "denied", "message": "User denied tool execution" });
+                    let skip_msg = json!({ "status": "denied", "message": "Frontend timeout or denial" });
                     self.trajectory.add_message(Role::Tool, skip_msg.clone(), 50);
                     self.emit_event(CoreEvent::ToolCallFinished {
                         agent_id: self.id,
@@ -417,13 +454,26 @@ impl AgentEngine {
                         })?;
 
                         // Block waiting for followup answer from frontend
-                        let answer_text = if let Some(rx) = &mut self.frontend_rx {
-                            match rx.recv().await {
-                                Some(FrontendMessage::FollowupAnswer { text, .. }) => text,
-                                _ => String::new(),
+                        let msg = self.recv_frontend().await;
+                        let answer_text = match msg {
+                            Some(FrontendMessage::FollowupAnswer { text, .. }) => text,
+                            Some(FrontendMessage::Timeout { duration_ms }) => {
+                                self.frontend_timeout_ms = Some(duration_ms);
+                                self.emit_event(CoreEvent::FrontendTimeout {
+                                    agent_id: self.id,
+                                    tool: None,
+                                    question: Some(question.clone()),
+                                })?;
+                                String::new()
                             }
-                        } else {
-                            String::new()
+                            _ => {
+                                self.emit_event(CoreEvent::FrontendTimeout {
+                                    agent_id: self.id,
+                                    tool: None,
+                                    question: Some(question.clone()),
+                                })?;
+                                String::new()
+                            }
                         };
 
                         let answer_json = json!({ "question": question, "answer": answer_text, "status": "answered" });
@@ -558,6 +608,13 @@ impl MultiAgentOrchestrator {
             tx.send(msg).await.is_ok()
         } else {
             false
+        }
+    }
+
+    /// Update the frontend response timeout for all agents.
+    pub fn set_all_frontend_timeouts(&mut self, duration_ms: u64) {
+        for agent in self.agents.values_mut() {
+            agent.frontend_timeout_ms = Some(duration_ms);
         }
     }
 

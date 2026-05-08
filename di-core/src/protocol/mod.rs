@@ -69,6 +69,12 @@ pub enum CoreEvent {
         success: bool,
         message: String,
     },
+    /// Agent timed out waiting for frontend response (approval or followup).
+    FrontendTimeout {
+        agent_id: Uuid,
+        tool: Option<String>,
+        question: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -93,5 +99,9 @@ pub enum FrontendMessage {
     FollowupAnswer {
         agent_id: Uuid,
         text: String,
+    },
+    /// Frontend tells agent how long to wait for responses (ms).
+    Timeout {
+        duration_ms: u64,
     },
 }
