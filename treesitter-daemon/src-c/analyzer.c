@@ -38,6 +38,7 @@ static char* get_node_text(TSNode node, const char *source) {
     uint32_t end = ts_node_end_byte(node);
     uint32_t len = end - start;
     char *text = malloc(len + 1);
+    if (!text) return NULL;
     memcpy(text, source + start, len);
     text[len] = '\0';
     return text;
@@ -63,6 +64,7 @@ static char* get_node_signature(TSNode node, const char *source, Language lang) 
     }
 
     char *sig = malloc(len + 1);
+    if (!sig) return NULL;
     memcpy(sig, snippet, len);
     sig[len] = '\0';
     
@@ -117,7 +119,11 @@ static int walk_collect_functions(TSNode node, const char *source, AnalyzerCtx *
         sym->end_byte = ts_node_end_byte(node);
         sym->signature = get_node_signature(node, source, LANG_C);
         sym->handle = malloc(strlen(name) + 10);
-        sprintf(sym->handle, "fn:%s", name);
+        if (sym->handle) {
+            sprintf(sym->handle, "fn:%s", name);
+        } else {
+            sym->handle = NULL;
+        }
     }
 
     uint32_t n = ts_node_child_count(node);
@@ -153,7 +159,11 @@ static int walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *ct
         sym->end_byte = ts_node_end_byte(node);
         sym->signature = get_node_signature(node, source, LANG_C);
         sym->handle = malloc(strlen(name) + 10);
-        sprintf(sym->handle, "class:%s", name);
+        if (sym->handle) {
+            sprintf(sym->handle, "class:%s", name);
+        } else {
+            sym->handle = NULL;
+        }
     }
 
     uint32_t n = ts_node_child_count(node);
@@ -173,6 +183,7 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
         (void)err; /* no further action needed — partial results are returned */
         if (!err) err = walk_collect_classes(ts_tree_root_node(ps->tree), ps->source, ctx, &symbols, &count, &cap, &error_code);
         SymbolResult *res = malloc(sizeof(SymbolResult));
+        if (!res) { free(symbols); return NULL; }
         res->symbols = symbols;
         res->count = count;
         res->error_code = error_code;
@@ -226,6 +237,10 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
             if (sym.name) {
                 const char *prefix = (sym.kind == KIND_CLASS) ? "class" : "fn";
                 sym.handle = malloc(strlen(sym.name) + 10);
+                if (!sym.handle) {
+                    error_code = -1;
+                    break;
+                }
                 sprintf(sym.handle, "%s:%s", prefix, sym.name);
             }
             symbols[count++] = sym;
@@ -234,6 +249,7 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
     ts_query_cursor_delete(cursor);
     ts_query_delete(query);
     SymbolResult *res = malloc(sizeof(SymbolResult));
+    if (!res) { free(symbols); return NULL; }
     res->symbols = symbols;
     res->count = count;
     res->error_code = error_code;
@@ -309,6 +325,7 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
     ts_query_cursor_delete(cursor);
     ts_query_delete(query);
     ImportResult *res = malloc(sizeof(ImportResult));
+    if (!res) { free(imports); return NULL; }
     res->imports = imports;
     res->count = count;
     res->error_code = error_code;
