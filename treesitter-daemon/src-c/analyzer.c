@@ -399,7 +399,17 @@ void analyzer_ast_churn(const char *file_path, const char *new_content, struct j
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
+
+    /* Reject files larger than 10MB to prevent ftell overflow and huge allocs */
+    if (fsize < 0 || fsize > 10 * 1024 * 1024) {
+        fclose(f);
+        jsonw_kv_int(w, "added", (int)new_count); jsonw_kv_int(w, "removed", 0); jsonw_kv_int(w, "total", (int)new_count);
+        analyzer_free_source(ps_new);
+        return;
+    }
+
     char *old_content = malloc(fsize + 1);
+    if (!old_content) { fclose(f); analyzer_free_source(ps_new); return; }
     if (fread(old_content, 1, fsize, f) != (size_t)fsize) {
         free(old_content); fclose(f);
         jsonw_kv_int(w, "added", (int)new_count); jsonw_kv_int(w, "removed", 0); jsonw_kv_int(w, "total", (int)new_count);
