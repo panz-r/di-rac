@@ -345,30 +345,39 @@ impl GatewayStreamClient {
             let buf_reader = BufReader::new(async_stream);
             let mut lines = buf_reader.lines();
 
-            while let Ok(Some(line)) = lines.next_line().await {
-                if line.trim().is_empty() {
-                    continue;
-                }
-
-                match serde_json::from_str::<GatewayResponse>(&line) {
-                    Ok(resp) => {
-                        if resp.status != 200 {
-                            let _ = tx.send(Err(anyhow!("Gateway error {}: {}", resp.status, resp.error.unwrap_or_default()))).await;
-                            break;
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if line.trim().is_empty() {
+                            continue;
                         }
 
-                        if let Some(chunk) = resp.body {
-                            let is_complete = chunk.chunk_type == "complete";
-                            if tx.send(Ok(chunk)).await.is_err() {
-                                break; // receiver dropped
+                        match serde_json::from_str::<GatewayResponse>(&line) {
+                            Ok(resp) => {
+                                if resp.status != 200 {
+                                    let _ = tx.send(Err(anyhow!("Gateway error {}: {}", resp.status, resp.error.unwrap_or_default()))).await;
+                                    break;
+                                }
+
+                                if let Some(chunk) = resp.body {
+                                    let is_complete = chunk.chunk_type == "complete";
+                                    if tx.send(Ok(chunk)).await.is_err() {
+                                        break; // receiver dropped
+                                    }
+                                    if is_complete {
+                                        break;
+                                    }
+                                }
                             }
-                            if is_complete {
+                            Err(e) => {
+                                let _ = tx.send(Err(anyhow!("Failed to parse gateway response: {}", e))).await;
                                 break;
                             }
                         }
                     }
+                    Ok(None) => break, // stream ended
                     Err(e) => {
-                        let _ = tx.send(Err(anyhow!("Failed to parse gateway response: {}", e))).await;
+                        let _ = tx.send(Err(anyhow!("Read error: {}", e))).await;
                         break;
                     }
                 }

@@ -305,11 +305,14 @@ impl ToolExecutor {
                 .map(String::from);
             if let Some(dir) = parent {
                 if !dir.is_empty() {
-                    let _mkdir_resp: Result<CommandResponse> = self.command_client.send_request(CommandRequest {
+                    let mkdir_resp: CommandResponse = self.command_client.send_request(CommandRequest {
                         command: "shell".to_string(),
                         args: vec![format!("mkdir -p {}", dir)],
                         cwd: None,
-                    });
+                    })?;
+                    if !mkdir_resp.ok {
+                        return Err(anyhow!("Failed to create directory {}: {}", dir, mkdir_resp.stderr));
+                    }
                 }
             }
         }

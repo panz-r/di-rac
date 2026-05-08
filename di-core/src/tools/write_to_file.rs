@@ -17,18 +17,20 @@ pub async fn write_to_file(
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    // Optionally create parent directories via mkdir -p
     if create_dirs {
         let parent = std::path::Path::new(path).parent()
             .and_then(|p| p.to_str())
             .map(String::from);
         if let Some(dir) = parent {
             if !dir.is_empty() {
-                let _mkdir_resp: Result<CommandResponse> = command_client.send_request(CommandRequest {
+                let mkdir_resp: CommandResponse = command_client.send_request(CommandRequest {
                     command: "shell".to_string(),
                     args: vec![format!("mkdir -p {}", dir)],
                     cwd: None,
-                });
+                })?;
+                if !mkdir_resp.ok {
+                    return Err(anyhow!("Failed to create directory {}: {}", dir, mkdir_resp.stderr));
+                }
             }
         }
     }
