@@ -2,12 +2,7 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"math"
-	"net/http"
-	"sort"
 	"strings"
 )
 
@@ -152,107 +147,26 @@ func (h *OpenAICodexHandler) Capabilities() *ProviderInfo {
 	return h.inner.Capabilities()
 }
 
-// ListModels fetches available Codex models from the ChatGPT backend.
-// Falls back to a static list on error.
-func (h *OpenAICodexHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
-	base := h.inner.config.BaseURL
-	if cfg.BaseURL != "" {
-		base = cfg.BaseURL
-	}
-	modelsURL := strings.TrimRight(base, "/") + "/models"
-
-	entries, err := fetchCodexModels(ctx, modelsURL, cfg.APIKey)
-	if err != nil || len(entries) == 0 {
-		return staticCodexModels(), nil
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].ID < entries[j].ID
-	})
-	return entries, nil
+// ListModels returns the static list of Codex models.
+// The Codex backend (chatgpt.com/backend-api/codex) does not expose a /models
+// endpoint for OAuth tokens, so we use a hardcoded list.
+func (h *OpenAICodexHandler) ListModels(_ context.Context, _ ProviderConfig) ([]ModelEntry, error) {
+	return staticCodexModels(), nil
 }
 
 func staticCodexModels() []ModelEntry {
 	return []ModelEntry{
-		{ID: "gpt-5.4", Name: "GPT-5.4", ContextWindow: 192000},
-		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", ContextWindow: 192000},
-		{ID: "gpt-5.3-codex", Name: "GPT-5.3 Codex", ContextWindow: 192000},
-		{ID: "gpt-5.2", Name: "GPT-5.2", ContextWindow: 192000},
+		{ID: "gpt-5.5", Name: "GPT-5.5", ContextWindow: 128000},
+		{ID: "gpt-5.4", Name: "GPT-5.4", ContextWindow: 128000},
+		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", ContextWindow: 128000},
+		{ID: "gpt-5.3-codex", Name: "GPT-5.3 Codex", ContextWindow: 128000},
+		{ID: "gpt-5.3-codex-spark", Name: "GPT-5.3 Codex Spark", ContextWindow: 128000},
+		{ID: "gpt-5.2-codex", Name: "GPT-5.2 Codex", ContextWindow: 128000},
+		{ID: "gpt-5.2", Name: "GPT-5.2", ContextWindow: 128000},
+		{ID: "gpt-5.1-codex", Name: "GPT-5.1 Codex", ContextWindow: 128000},
+		{ID: "gpt-5.1-codex-mini", Name: "GPT-5.1 Codex Mini", ContextWindow: 128000},
+		{ID: "codex", Name: "Codex (Default)", ContextWindow: 32768},
 	}
-}
-
-// fetchCodexModels fetches models from the ChatGPT Codex backend.
-// The response format may differ from the standard OpenAI /v1/models endpoint,
-// so we try multiple parse strategies.
-func fetchCodexModels(ctx context.Context, modelsURL, apiKey string) ([]ModelEntry, error) {
-	client := SharedHTTPClient
-	req, err := http.NewRequestWithContext(ctx, "GET", modelsURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("/models returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
-	if err != nil {
-		return nil, err
-	}
-
-	// Try standard OpenAI format: {"data": [{"id": "...", ...}]}
-	var standard struct {
-		Data []struct {
-			ID   string `json:"id"`
-			Name string `json:"name,omitempty"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &standard); err == nil && len(standard.Data) > 0 {
-		var entries []ModelEntry
-		for _, m := range standard.Data {
-			name := m.Name
-			if name == "" {
-				name = m.ID
-			}
-			entries = append(entries, ModelEntry{ID: m.ID, Name: name, ContextWindow: 192000})
-		}
-		return entries, nil
-	}
-
-	// Try flat array format: [{"id": "...", ...}]
-	var flat []struct {
-		ID   string `json:"id"`
-		Name string `json:"name,omitempty"`
-		Slug string `json:"slug,omitempty"`
-	}
-	if err := json.Unmarshal(body, &flat); err == nil && len(flat) > 0 {
-		var entries []ModelEntry
-		for _, m := range flat {
-			id := m.ID
-			if id == "" {
-				id = m.Slug
-			}
-			name := m.Name
-			if name == "" {
-				name = id
-			}
-			if id != "" {
-				entries = append(entries, ModelEntry{ID: id, Name: name, ContextWindow: 192000})
-			}
-		}
-		return entries, nil
-	}
-
-	return nil, fmt.Errorf("unsupported models response format")
 }
 
 // ValidateSettings validates user-provided settings for the Codex provider.
