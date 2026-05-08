@@ -76,9 +76,9 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
     sqlite3_exec(db->db, "BEGIN TRANSACTION", NULL, NULL, NULL);
 
     sqlite3_prepare_v2(db->db, "INSERT OR REPLACE INTO files (path, mtime, content_hash) VALUES (?, ?, ?)", -1, &stmt, NULL);
-    sqlite3_bind_text(stmt, 1, path, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT);
     sqlite3_bind_double(stmt, 2, mtime);
-    sqlite3_bind_text(stmt, 3, hash, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, hash, -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt);
     int64_t file_id = sqlite3_last_insert_rowid(db->db);
     sqlite3_finalize(stmt);
@@ -93,11 +93,11 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
         for (size_t i = 0; i < sr->count; i++) {
             sqlite3_reset(stmt);
             sqlite3_bind_int64(stmt, 1, file_id);
-            sqlite3_bind_text(stmt, 2, sr->symbols[i].name, -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt, 3, symbol_kind_to_str(sr->symbols[i].kind), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt, 2, sr->symbols[i].name, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 3, symbol_kind_to_str(sr->symbols[i].kind), -1, SQLITE_TRANSIENT);
             sqlite3_bind_int(stmt, 4, sr->symbols[i].start_line);
             sqlite3_bind_int(stmt, 5, sr->symbols[i].end_line);
-            sqlite3_bind_text(stmt, 6, sr->symbols[i].handle, -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt, 6, sr->symbols[i].handle, -1, SQLITE_TRANSIENT);
             sqlite3_step(stmt);
         }
         sqlite3_finalize(stmt);
@@ -110,7 +110,7 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
 int db_invalidate_file(IndexDB *db, const char *path) {
     sqlite3_stmt *stmt;
     sqlite3_prepare_v2(db->db, "DELETE FROM files WHERE path = ?", -1, &stmt, NULL);
-    sqlite3_bind_text(stmt, 1, path, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return 0;
@@ -124,8 +124,8 @@ int db_clear(IndexDB *db) {
 int db_index_observation(IndexDB *db, const char *type, const char *content, double timestamp, int token_estimate) {
     sqlite3_stmt *stmt;
     sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs (type, content, timestamp, tokens) VALUES (?, ?, ?, ?)", -1, &stmt, NULL);
-    sqlite3_bind_text(stmt, 1, type, -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, content, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, type, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, content, -1, SQLITE_TRANSIENT);
     sqlite3_bind_double(stmt, 3, timestamp);
     sqlite3_bind_int(stmt, 4, token_estimate);
     sqlite3_step(stmt);
@@ -134,7 +134,7 @@ int db_index_observation(IndexDB *db, const char *type, const char *content, dou
 
     sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs_fts (rowid, content) VALUES (?, ?)", -1, &stmt, NULL);
     sqlite3_bind_int64(stmt, 1, row_id);
-    sqlite3_bind_text(stmt, 2, content, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, content, -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 
@@ -154,7 +154,7 @@ void db_search_observations(IndexDB *db, const char *query, int limit, struct js
         return;
     }
 
-    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, limit);
 
     jsonw_key(w, "results");
@@ -174,7 +174,7 @@ void db_search_observations(IndexDB *db, const char *query, int limit, struct js
 int db_index_critic_decision(IndexDB *db, const char *text, int turn, double confidence) {
     sqlite3_stmt *stmt;
     sqlite3_prepare_v2(db->db, "INSERT INTO critic_decisions_fts (decision_text, turn_number, confidence) VALUES (?, ?, ?)", -1, &stmt, NULL);
-    sqlite3_bind_text(stmt, 1, text, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, text, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, turn);
     sqlite3_bind_double(stmt, 3, confidence);
     sqlite3_step(stmt);
@@ -189,7 +189,7 @@ void db_search_critic_decisions(IndexDB *db, const char *query, int limit, struc
         jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
         return;
     }
-    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, limit);
     jsonw_key(w, "results");
     jsonw_array_open(w);
@@ -207,8 +207,8 @@ void db_search_critic_decisions(IndexDB *db, const char *query, int limit, struc
 int db_index_watcher_pattern(IndexDB *db, const char *text, const char *file_hash, int turn) {
     sqlite3_stmt *stmt;
     sqlite3_prepare_v2(db->db, "INSERT INTO watcher_patterns_fts (pattern_text, file_hash, turn_number) VALUES (?, ?, ?)", -1, &stmt, NULL);
-    sqlite3_bind_text(stmt, 1, text, -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, file_hash ? file_hash : "", -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, text, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, file_hash ? file_hash : "", -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 3, turn);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -222,7 +222,7 @@ void db_search_watcher_patterns(IndexDB *db, const char *query, int limit, struc
         jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
         return;
     }
-    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, limit);
     jsonw_key(w, "results");
     jsonw_array_open(w);
@@ -254,9 +254,9 @@ void db_search_symbols(IndexDB *db, const char *query, const char *kind_filter, 
     }
 
     sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
-    sqlite3_bind_text(stmt, 1, pattern, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, pattern, -1, SQLITE_TRANSIENT);
     if (kind_filter) {
-        sqlite3_bind_text(stmt, 2, kind_filter, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, kind_filter, -1, SQLITE_TRANSIENT);
         sqlite3_bind_int(stmt, 3, limit);
     } else {
         sqlite3_bind_int(stmt, 2, limit);
