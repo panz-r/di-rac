@@ -207,8 +207,11 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
         }
         if (valid) {
             if (count == cap) {
-                cap = cap ? cap * 2 : 16;
-                symbols = realloc(symbols, sizeof(Symbol) * cap);
+                size_t new_cap = cap ? cap * 2 : 16;
+                void *tmp = realloc(symbols, sizeof(Symbol) * new_cap);
+                if (!tmp) break;
+                symbols = tmp;
+                cap = new_cap;
             }
             if (sym.name) {
                 const char *prefix = (sym.kind == KIND_CLASS) ? "class" : "fn";
@@ -275,8 +278,11 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
         }
         if (valid) {
             if (count == cap) {
-                cap = cap ? cap * 2 : 16;
-                imports = realloc(imports, sizeof(Import) * cap);
+                size_t new_cap = cap ? cap * 2 : 16;
+                void *tmp = realloc(imports, sizeof(Import) * new_cap);
+                if (!tmp) break;
+                imports = tmp;
+                cap = new_cap;
             }
             imports[count++] = imp;
         }
