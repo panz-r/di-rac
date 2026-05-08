@@ -50,6 +50,7 @@ void analyzer_search_symbols(AnalyzerCtx *ctx, const char *query, const char *ki
 
     /* Fallback to live walk if no DB */
     WalkStack *stack = malloc(sizeof(WalkStack) * 1024);
+    if (!stack) return;
     int stack_ptr = 0;
     strncpy(stack[stack_ptr++].path, ctx->workspace_root, 4095);
 
@@ -87,8 +88,12 @@ void analyzer_search_symbols(AnalyzerCtx *ctx, const char *query, const char *ki
                         fseek(f, 0, SEEK_SET);
                         if (size < 512000) {
                             char *content = malloc(size + 1);
-                            fread(content, 1, size, f);
-                            content[size] = '\0';
+                            if (!content) {
+                                fclose(f);
+                                continue;
+                            }
+                            size_t bytes_read = fread(content, 1, size, f);
+                            content[bytes_read] = '\0';
                             
                             ParsedSource *ps = analyzer_parse(content, lang);
                             if (ps) {

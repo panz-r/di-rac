@@ -6,8 +6,11 @@
 static void append_to_skeleton(char **skel, size_t *len, size_t *cap, const char *str) {
     size_t str_len = strlen(str);
     if (*len + str_len >= *cap) {
-        *cap = (*cap + str_len) * 2;
-        *skel = realloc(*skel, *cap);
+        size_t new_cap = (*cap + str_len) * 2;
+        void *tmp = realloc(*skel, new_cap);
+        if (!tmp) return;
+        *skel = tmp;
+        *cap = new_cap;
     }
     memcpy(*skel + *len, str, str_len);
     *len += str_len;

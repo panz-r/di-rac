@@ -399,7 +399,9 @@ impl ToolExecutor {
             Some(cmd) => {
                 match cmd.status {
                     CommandStatus::Running => {
-                        let log = std::fs::read_to_string(&cmd.log_path).unwrap_or_default();
+                        let log = std::fs::read_to_string(&cmd.log_path)
+                            .map_err(|e| anyhow!("Failed to read log {}: {}", cmd.log_path, e))
+                            .unwrap_or_default();
                         Ok(json!({
                             "id": id,
                             "status": "running",
@@ -408,7 +410,9 @@ impl ToolExecutor {
                         }))
                     }
                     CommandStatus::Completed => {
-                        let log = std::fs::read_to_string(&cmd.log_path).unwrap_or_default();
+                        let log = std::fs::read_to_string(&cmd.log_path)
+                            .map_err(|e| anyhow!("Failed to read log {}: {}", cmd.log_path, e))
+                            .unwrap_or_default();
                         Ok(json!({
                             "id": id,
                             "status": "completed",
@@ -417,7 +421,9 @@ impl ToolExecutor {
                         }))
                     }
                     CommandStatus::Failed => {
-                        let log = std::fs::read_to_string(&cmd.log_path).unwrap_or_default();
+                        let log = std::fs::read_to_string(&cmd.log_path)
+                            .map_err(|e| anyhow!("Failed to read log {}: {}", cmd.log_path, e))
+                            .unwrap_or_default();
                         Ok(json!({
                             "id": id,
                             "status": "failed",

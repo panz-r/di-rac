@@ -295,7 +295,7 @@ impl GatewayStreamClient {
         &self,
         request: GatewayRequest,
     ) -> Result<mpsc::Receiver<Result<StreamChunk>>> {
-        let (tx, rx) = mpsc::channel(usize::MAX);
+        let (tx, rx) = mpsc::channel(16384);
         let socket_path = self.socket_path.clone();
 
         // Connect, write request, then hand off to async reader — single connection.

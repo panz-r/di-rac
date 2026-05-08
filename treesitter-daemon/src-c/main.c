@@ -475,10 +475,9 @@ static void* request_worker(void *arg) {
                 fseek(f, 0, SEEK_SET);
                 char *fcontent = malloc(fsize + 1);
                 if (fcontent) {
-                    if (fread(fcontent, 1, fsize, f) == (size_t)fsize) {
-                        fcontent[fsize] = '\0';
-                        handle_outline(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang, &task->gctx->base);
-                    }
+                    size_t bytes_read = fread(fcontent, 1, fsize, f);
+                    fcontent[bytes_read] = '\0';
+                    handle_outline(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang, &task->gctx->base);
                     free(fcontent);
                 }
                 fclose(f);
@@ -497,10 +496,9 @@ static void* request_worker(void *arg) {
                 fseek(f, 0, SEEK_SET);
                 char *fcontent = malloc(fsize + 1);
                 if (fcontent) {
-                    if (fread(fcontent, 1, fsize, f) == (size_t)fsize) {
-                        fcontent[fsize] = '\0';
-                        handle_skeleton(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang);
-                    }
+                    size_t bytes_read = fread(fcontent, 1, fsize, f);
+                    fcontent[bytes_read] = '\0';
+                    handle_skeleton(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang);
                     free(fcontent);
                 }
                 fclose(f);
