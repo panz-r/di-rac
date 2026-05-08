@@ -56,6 +56,8 @@ async fn main() -> Result<()> {
                                 eprintln!("Agent {} failed: {}", id, e);
                             }
                         }
+                        // Clean up agent to release Arc reference counts
+                        orchestrator.remove_agent(id);
                     }
                     FrontendMessage::UserResponse { agent_id, text } => {
                         if let Err(e) = orchestrator.handle_user_response(agent_id, text).await {

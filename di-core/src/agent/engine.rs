@@ -570,6 +570,10 @@ impl MultiAgentOrchestrator {
         }
     }
 
+    pub fn remove_agent(&mut self, agent_id: Uuid) -> Option<AgentEngine> {
+        self.agents.remove(&agent_id)
+    }
+
     pub async fn handle_user_response(&mut self, agent_id: Uuid, text: String) -> Result<()> {
         if let Some(agent) = self.agents.get_mut(&agent_id) {
             agent.trajectory.add_message(Role::User, json!(text), text.len() / 4);
