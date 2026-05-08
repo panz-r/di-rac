@@ -1,5 +1,5 @@
 #ifndef QUERIES_H
-#define ANALYZER_H
+#define QUERIES_H
 
 #include "languages.h"
 

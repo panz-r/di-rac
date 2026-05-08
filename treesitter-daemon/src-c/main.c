@@ -307,7 +307,7 @@ static void handle_search_critic_decisions(pthread_mutex_t *lock, pthread_mutex_
     if (!ctx->db) { send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open"); return; }
     pthread_mutex_lock(lock);
     struct jsonw w; jsonw_init(&w, stdout); jsonw_object_open(&w);
-    jsonw_kv_str(&w, "type", "search_critic_decisions_result"); jsonw_id(&w, raw_id, id_len); jsonw_kv_bool(&w, "ok", true);
+    jsonw_kv_str(&w, "type", "search_critic_decisions_result"); jsonw_id(&w, raw_id, id_len);
     pthread_mutex_lock(db_lock);
     db_search_critic_decisions((IndexDB*)ctx->db, query, limit, &w);
     pthread_mutex_unlock(db_lock);
@@ -332,7 +332,7 @@ static void handle_search_watcher_patterns(pthread_mutex_t *lock, pthread_mutex_
     if (!ctx->db) { send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open"); return; }
     pthread_mutex_lock(lock);
     struct jsonw w; jsonw_init(&w, stdout); jsonw_object_open(&w);
-    jsonw_kv_str(&w, "type", "search_watcher_patterns_result"); jsonw_id(&w, raw_id, id_len); jsonw_kv_bool(&w, "ok", true);
+    jsonw_kv_str(&w, "type", "search_watcher_patterns_result"); jsonw_id(&w, raw_id, id_len);
     pthread_mutex_lock(db_lock);
     db_search_watcher_patterns((IndexDB*)ctx->db, query, limit, &w);
     pthread_mutex_unlock(db_lock);

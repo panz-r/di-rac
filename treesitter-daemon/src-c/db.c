@@ -78,7 +78,10 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
 
     if (sqlite3_exec(db->db, "BEGIN TRANSACTION", NULL, NULL, NULL) != SQLITE_OK) return -1;
 
-    sqlite3_prepare_v2(db->db, "INSERT OR REPLACE INTO files (path, mtime, content_hash) VALUES (?, ?, ?)", -1, &stmt, NULL);
+    if (sqlite3_prepare_v2(db->db, "INSERT OR REPLACE INTO files (path, mtime, content_hash) VALUES (?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
     sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT);
     sqlite3_bind_double(stmt, 2, mtime);
     sqlite3_bind_text(stmt, 3, hash, -1, SQLITE_TRANSIENT);
@@ -86,13 +89,19 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
     int64_t file_id = sqlite3_last_insert_rowid(db->db);
     sqlite3_finalize(stmt);
 
-    sqlite3_prepare_v2(db->db, "DELETE FROM symbols WHERE file_id = ?", -1, &stmt, NULL);
+    if (sqlite3_prepare_v2(db->db, "DELETE FROM symbols WHERE file_id = ?", -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
     sqlite3_bind_int64(stmt, 1, file_id);
     if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     sqlite3_finalize(stmt);
 
     if (sr) {
-        sqlite3_prepare_v2(db->db, "INSERT INTO symbols (file_id, name, kind, start_line, end_line, handle) VALUES (?, ?, ?, ?, ?, ?)", -1, &stmt, NULL);
+        if (sqlite3_prepare_v2(db->db, "INSERT INTO symbols (file_id, name, kind, start_line, end_line, handle) VALUES (?, ?, ?, ?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) {
+            sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
+            return -1;
+        }
         for (size_t i = 0; i < sr->count; i++) {
             sqlite3_reset(stmt);
             sqlite3_bind_int64(stmt, 1, file_id);
@@ -156,6 +165,10 @@ int db_search_observations(IndexDB *db, const char *query, int limit, struct jso
         jsonw_array_close(w);
         jsonw_key(w, "ok");
         jsonw_bool(w, 0);
+        jsonw_key(w, "code");
+        jsonw_str(w, "SEARCH_FAILED");
+        jsonw_key(w, "message");
+        jsonw_str(w, sqlite3_errmsg(db->db));
         return -1;
     }
 
@@ -190,12 +203,15 @@ int db_index_critic_decision(IndexDB *db, const char *text, int turn, double con
     return 0;
 }
 
-void db_search_critic_decisions(IndexDB *db, const char *query, int limit, struct jsonw *w) {
+int db_search_critic_decisions(IndexDB *db, const char *query, int limit, struct jsonw *w) {
     sqlite3_stmt *stmt;
     const char *sql = "SELECT decision_text, turn_number, confidence FROM critic_decisions_fts WHERE critic_decisions_fts MATCH ? ORDER BY rank LIMIT ?";
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
-        return;
+        jsonw_key(w, "ok"); jsonw_bool(w, 0);
+        jsonw_key(w, "code"); jsonw_str(w, "SEARCH_FAILED");
+        jsonw_key(w, "message"); jsonw_str(w, sqlite3_errmsg(db->db));
+        return -1;
     }
     sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, limit);
@@ -210,6 +226,8 @@ void db_search_critic_decisions(IndexDB *db, const char *query, int limit, struc
     }
     jsonw_array_close(w);
     sqlite3_finalize(stmt);
+    jsonw_key(w, "ok"); jsonw_bool(w, 1);
+    return 0;
 }
 
 int db_index_watcher_pattern(IndexDB *db, const char *text, const char *file_hash, int turn) {
@@ -223,12 +241,15 @@ int db_index_watcher_pattern(IndexDB *db, const char *text, const char *file_has
     return 0;
 }
 
-void db_search_watcher_patterns(IndexDB *db, const char *query, int limit, struct jsonw *w) {
+int db_search_watcher_patterns(IndexDB *db, const char *query, int limit, struct jsonw *w) {
     sqlite3_stmt *stmt;
     const char *sql = "SELECT pattern_text, file_hash, turn_number FROM watcher_patterns_fts WHERE watcher_patterns_fts MATCH ? ORDER BY rank LIMIT ?";
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
-        return;
+        jsonw_key(w, "ok"); jsonw_bool(w, 0);
+        jsonw_key(w, "code"); jsonw_str(w, "SEARCH_FAILED");
+        jsonw_key(w, "message"); jsonw_str(w, sqlite3_errmsg(db->db));
+        return -1;
     }
     sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, limit);
@@ -243,6 +264,8 @@ void db_search_watcher_patterns(IndexDB *db, const char *query, int limit, struc
     }
     jsonw_array_close(w);
     sqlite3_finalize(stmt);
+    jsonw_key(w, "ok"); jsonw_bool(w, 1);
+    return 0;
 }
 
 void db_search_symbols(IndexDB *db, const char *query, const char *kind_filter, int limit, struct jsonw *w) {
@@ -290,4 +313,6 @@ void db_search_symbols(IndexDB *db, const char *query, const char *kind_filter, 
     }
     jsonw_array_close(w);
     sqlite3_finalize(stmt);
+    jsonw_key(w, "ok");
+    jsonw_bool(w, 1);
 }

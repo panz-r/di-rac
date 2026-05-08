@@ -122,6 +122,7 @@ static int walk_collect_functions(TSNode node, const char *source, AnalyzerCtx *
         if (sym->handle) {
             sprintf(sym->handle, "fn:%s", name);
         } else {
+            *out_error = -1;
             sym->handle = NULL;
         }
     }
@@ -162,6 +163,7 @@ static int walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *ct
         if (sym->handle) {
             sprintf(sym->handle, "class:%s", name);
         } else {
+            *out_error = -1;
             sym->handle = NULL;
         }
     }

@@ -118,36 +118,43 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
                         fseek(f, 0, SEEK_END);
                         long size = ftell(f);
                         fseek(f, 0, SEEK_SET);
-                        if (size < 102400) { /* 100KB limit for repo map parsing */
-                            char *content = malloc(size + 1);
-                            if (content) {
-                                size_t bytes_read = fread(content, 1, size, f);
-                                if (bytes_read == (size_t)size) {
-                                    content[size] = '\0';
-                                    ParsedSource *ps = analyzer_parse(content, lang);
-                                    if (ps) {
-                                        SymbolResult *sr = analyzer_extract_symbols(ps, NULL);
-                                        if (sr && sr->count > 0) {
-                                            jsonw_object_open(w);
-                                            jsonw_kv_str(w, "file", full_path + strlen(root) + (full_path[strlen(root)] == '/' ? 1 : 0));
-                                            jsonw_key(w, "symbols");
-                                            jsonw_array_open(w);
-                                            for (size_t i = 0; i < sr->count; i++) {
-                                                jsonw_object_open(w);
-                                                jsonw_kv_str(w, "name", sr->symbols[i].name);
-                                                jsonw_kv_str(w, "kind", symbol_kind_to_str(sr->symbols[i].kind));
-                                                jsonw_object_close(w);
-                                            }
-                                            jsonw_array_close(w);
-                                            jsonw_object_close(w);
-                                        }
-                                        analyzer_free_symbols(sr);
-                                        analyzer_free_source(ps);
-                                    }
-                                }
-                                free(content);
-                            }
+                        if (size < 0 || size >= 102400) {
+                            fclose(f);
+                            continue;
                         }
+                        char *content = malloc(size + 1);
+                        if (!content) {
+                            fclose(f);
+                            continue;
+                        }
+                        size_t bytes_read = fread(content, 1, size, f);
+                        if (bytes_read != (size_t)size) {
+                            free(content);
+                            fclose(f);
+                            continue;
+                        }
+                        content[bytes_read] = '\0';
+                        ParsedSource *ps = analyzer_parse(content, lang);
+                        if (ps) {
+                            SymbolResult *sr = analyzer_extract_symbols(ps, NULL);
+                            if (sr && sr->count > 0) {
+                                jsonw_object_open(w);
+                                jsonw_kv_str(w, "file", full_path + strlen(root) + (full_path[strlen(root)] == '/' ? 1 : 0));
+                                jsonw_key(w, "symbols");
+                                jsonw_array_open(w);
+                                for (size_t i = 0; i < sr->count; i++) {
+                                    jsonw_object_open(w);
+                                    jsonw_kv_str(w, "name", sr->symbols[i].name);
+                                    jsonw_kv_str(w, "kind", symbol_kind_to_str(sr->symbols[i].kind));
+                                    jsonw_object_close(w);
+                                }
+                                jsonw_array_close(w);
+                                jsonw_object_close(w);
+                            }
+                            analyzer_free_symbols(sr);
+                            analyzer_free_source(ps);
+                        }
+                        free(content);
                         fclose(f);
                     }
                 }
