@@ -361,7 +361,7 @@ static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, c
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
     char *content = malloc(size + 1);
-    if (!content) { fclose(f); return; }
+    if (!content) { fclose(f); send_error(lock, raw_id, id_len, "OOM", "Failed to allocate buffer for file content"); return; }
     if (fread(content, 1, size, f) != (size_t)size) { free(content); fclose(f); send_error(lock, raw_id, id_len, "READ_ERROR", "Incomplete read"); return; }
     content[size] = '\0';
     fclose(f);
