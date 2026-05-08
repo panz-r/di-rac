@@ -142,6 +142,39 @@ static void handle_outline(pthread_mutex_t *lock, const char *raw_id, int id_len
     analyzer_free_source(ps);
 }
 
+static void handle_extract_apis(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *content, const char *lang_name) {
+    Language lang = parse_language_name(lang_name);
+    ParsedSource *ps = analyzer_parse(content, lang);
+    if (!ps) {
+        send_error(lock, raw_id, id_len, "PARSE_FAILED", "Failed to parse source code");
+        return;
+    }
+
+    ApiDependencies *ad = analyzer_extract_apis(ps);
+    
+    pthread_mutex_lock(lock);
+    struct jsonw w;
+    jsonw_init(&w, stdout);
+    jsonw_object_open(&w);
+    jsonw_kv_str(&w, "type", "extract_apis_result");
+    jsonw_id(&w, raw_id, id_len);
+    jsonw_kv_bool(&w, "ok", true);
+    jsonw_key(&w, "calls");
+    jsonw_array_open(&w);
+    if (ad) for (size_t i = 0; i < ad->calls_count; i++) jsonw_str(&w, ad->calls[i]);
+    jsonw_array_close(&w);
+    jsonw_key(&w, "definitions");
+    jsonw_array_open(&w);
+    if (ad) for (size_t i = 0; i < ad->definitions_count; i++) jsonw_str(&w, ad->definitions[i]);
+    jsonw_array_close(&w);
+    jsonw_object_close(&w);
+    jsonw_flush(&w);
+    pthread_mutex_unlock(lock);
+
+    analyzer_free_apis(ad);
+    analyzer_free_source(ps);
+}
+
 static void handle_skeleton(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *content, const char *lang_name) {
     Language lang = parse_language_name(lang_name);
     ParsedSource *ps = analyzer_parse(content, lang);
@@ -453,6 +486,8 @@ static void* request_worker(void *arg) {
         } else {
             handle_outline(&task->gctx->stdout_lock, raw_id, id_len, content, lang, &task->gctx->base);
         }
+    } else if (strcmp(command, "extract-apis") == 0) {
+        handle_extract_apis(&task->gctx->stdout_lock, raw_id, id_len, content, lang);
     } else if (strcmp(command, "skeleton") == 0) {
         if (content[0] == '\0' && file[0] != '\0') {
             FILE *f = fopen(file, "r");

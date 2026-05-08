@@ -685,6 +685,23 @@ export class AnalyzerClient {
 		}
 	}
 
+	async extractApis(content: string, language: string): Promise<{ calls: string[]; definitions: string[] }> {
+		try {
+			const resp = await this.send({
+				command: "extract-apis",
+				content,
+				language,
+			})
+			return {
+				calls: resp.calls || [],
+				definitions: resp.definitions || [],
+			}
+		} catch (e) {
+			Logger.warn("AnalyzerClient", `Failed to extract APIs: ${e}`)
+			return { calls: [], definitions: [] }
+		}
+	}
+
 	/** Convert daemon symbols to ParsedDefinition[] for backward compatibility */
 	static toParsedDefinitions(symbols: DaemonSymbol[], sourceLines?: string[]): ParsedDefinition[] {
 		return symbols.map((s) => ({

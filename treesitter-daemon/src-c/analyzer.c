@@ -297,6 +297,48 @@ void analyzer_free_imports(ImportResult *ir) {
     free(ir);
 }
 
+ApiDependencies* analyzer_extract_apis(ParsedSource *ps) {
+    LanguageQueries queries = get_queries(ps->lang);
+    if (!queries.symbol_query) return NULL;
+
+    uint32_t error_offset;
+    TSQueryError error_type;
+    TSQuery *query = ts_query_new(get_ts_language(ps->lang), queries.symbol_query, strlen(queries.symbol_query), &error_offset, &error_type);
+    if (!query) return NULL;
+
+    TSQueryCursor *cursor = ts_query_cursor_new();
+    ts_query_cursor_exec(cursor, query, ts_tree_root_node(ps->tree));
+
+    ApiDependencies *ad = calloc(1, sizeof(ApiDependencies));
+    TSQueryMatch match;
+    while (ts_query_cursor_next_match(cursor, &match)) {
+        for (uint32_t i = 0; i < match.capture_count; i++) {
+            TSQueryCapture cap = match.captures[i];
+            uint32_t name_len;
+            const char *cap_name = ts_query_capture_name_for_id(query, cap.index, &name_len);
+            if (strcmp(cap_name, "func.name") == 0 || strcmp(cap_name, "method.name") == 0) {
+                ad->definitions = realloc(ad->definitions, sizeof(char*) * (ad->definitions_count + 1));
+                ad->definitions[ad->definitions_count++] = get_node_text(cap.node, ps->source);
+            } else if (strcmp(cap_name, "call.name") == 0) {
+                ad->calls = realloc(ad->calls, sizeof(char*) * (ad->calls_count + 1));
+                ad->calls[ad->calls_count++] = get_node_text(cap.node, ps->source);
+            }
+        }
+    }
+    ts_query_cursor_delete(cursor);
+    ts_query_delete(query);
+    return ad;
+}
+
+void analyzer_free_apis(ApiDependencies *ad) {
+    if (!ad) return;
+    for (size_t i = 0; i < ad->calls_count; i++) free(ad->calls[i]);
+    free(ad->calls);
+    for (size_t i = 0; i < ad->definitions_count; i++) free(ad->definitions[i]);
+    free(ad->definitions);
+    free(ad);
+}
+
 const char* symbol_kind_to_str(SymbolKind kind) {
     switch (kind) {
         case KIND_FUNCTION: return "function";

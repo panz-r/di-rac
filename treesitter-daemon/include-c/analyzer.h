@@ -59,6 +59,13 @@ typedef struct {
     void *db; /* Pointer to IndexDB (opaque here to avoid sqlite3.h in header) */
 } AnalyzerCtx;
 
+typedef struct {
+    char **calls;
+    size_t calls_count;
+    char **definitions;
+    size_t definitions_count;
+} ApiDependencies;
+
 /* --- Core Analysis Functions --- */
 
 ParsedSource* analyzer_parse(const char *source, Language lang);
@@ -69,6 +76,9 @@ void analyzer_free_symbols(SymbolResult *sr);
 
 ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx);
 void analyzer_free_imports(ImportResult *ir);
+
+ApiDependencies* analyzer_extract_apis(ParsedSource *ps);
+void analyzer_free_apis(ApiDependencies *ad);
 
 char* analyzer_generate_skeleton(ParsedSource *ps);
 void analyzer_repo_map(const char *root, struct jsonw *w);

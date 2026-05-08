@@ -27,13 +27,13 @@ interface ActionFeatures {
     turn: number
     lang: string
     astDeltaNodes?: number
+    instruction?: string
 }
 
 interface RetryState {
     count: number
     firstSeen: number
     sigs: string[]
-    asts: string[] // For contradiction detection
 }
 
 export class ObserverCostTracker {
@@ -56,8 +56,7 @@ export class ObserverCostTracker {
 }
 
 /**
- * ObserverOrchestrator - Manages the MEMENTO Memory Pyramid, SQS, and Procedural Refinements.
- * Implements Phase 7 Architectural Refinements (Liao 2026, Wang 2026).
+ * ObserverOrchestrator - Manages the MEMENTO Memory Pyramid, SQS, and CPS.
  */
 export class ObserverOrchestrator {
 	private store: ObservationStore
@@ -71,13 +70,14 @@ export class ObserverOrchestrator {
     
     // Cognitive State
     private turnsSinceLastReflection = 0
+    private actionHistory: ActionFeatures[] = []
     private lastSQS = 1.0
     private currentTier = 2
     private verboseLogs: string[] = []
     
     // Phase 6/7 State
     private retryBuffer: Map<string, RetryState> = new Map()
-    private resolvedSubgoals: Set<string> = new Set() // Procedural Monotonicity
+    private resolvedSubgoals: Set<string> = new Set() 
 
 	constructor(
 		private taskId: string,
@@ -140,27 +140,29 @@ export class ObserverOrchestrator {
     }
 
     /**
-     * Procedural Monotonicity (Liao 2026).
-     * Tracks if the agent is making forward progress in resolved sub-goals.
+     * Information Forgetting Ratio (IFR) - CodeMEM 2026.
      */
-    private checkProceduralMonotonicity(history: DiracStorageMessage[]): boolean {
-        if (!this.config.proceduralMonotonicityEnabled) return true
+    private getMonotonicityScore(history: DiracStorageMessage[]): number {
+        if (!this.config.proceduralMonotonicityEnabled) return 1.0
         
         const lastToolMsg = history.filter(m => m.role === "tool").pop()
-        if (!lastToolMsg) return true
+        if (!lastToolMsg) return 1.0
 
         const content = JSON.stringify(lastToolMsg.content)
-        // Heuristic: search for "success", "fixed", "resolved" in tool results
         const newResolved = (content.match(/fixed\s+([a-zA-Z0-9_]+)/g) || [])
         const prevCount = this.resolvedSubgoals.size
         for (const r of newResolved) this.resolvedSubgoals.add(r)
         
-        return this.resolvedSubgoals.size >= prevCount
+        if (this.resolvedSubgoals.size === 0) return 1.0
+        
+        // IFR = forgotten / total. We heuristic: if a previous resolution is mentioned as "failing" again.
+        const forgotten = (content.match(/error\s+in\s+([a-zA-Z0-9_]+)/g) || [])
+            .filter(e => this.resolvedSubgoals.has(e.split(" ").pop()!)).length
+            
+        const ifr = forgotten / this.resolvedSubgoals.size
+        return 1.0 - ifr
     }
 
-    /**
-     * Cross-Language AST Normalization (Müller 2025).
-     */
     private normalizedASTChurn(language: string, rawChurn: number, fileSize: number): number {
         const norm = LANGUAGE_NORMALIZATION[language] || LANGUAGE_NORMALIZATION.python
         const editNorm = rawChurn / norm.medianEditChurn
@@ -173,21 +175,15 @@ export class ObserverOrchestrator {
         if (!lastAction) return 0.5
 
         const signals: number[] = []
-
-        // 1. Syntactic Validity (0.25)
         signals.push(lastAction.success ? 1.0 : 0.0)
 
-        // 2. AST Coverage (0.30)
         const filesTouched = new Set(history.slice(-10).filter(m => m.role === "assistant").map(m => {
              const c = JSON.stringify(m.content)
              return c.match(/path":\s*"([^"]+)"/)?.[1] || "global"
         }))
         signals.push(Math.min(filesTouched.size / 5, 1.0))
-
-        // 3. Spec Alignment (0.25)
         signals.push(0.5)
 
-        // 4. Command Outcome Entropy (0.20)
         const outcomes = history.slice(-6).filter(m => m.role === "tool").map(m => {
             const c = JSON.stringify(m.content)
             return c.includes("error") ? "FAIL" : "PASS"
@@ -213,31 +209,26 @@ export class ObserverOrchestrator {
         return coverage * Math.min(normChurn / 2, 1.0)
     }
 
-    /**
-     * Augmented SQS Formula (Phase 7 Refinement).
-     * Includes AST Structural Progress and Procedural Monotonicity.
-     */
     private async computeSQS(history: DiracStorageMessage[]): Promise<{ sqs: number; status: string }> {
         const assistantMsgs = history.filter(m => m.role === "assistant").slice(-10)
         if (assistantMsgs.length === 0) return { sqs: 1.0, status: "FOCUSED" }
 
         const diffusion = 0.4 
         const eeRatio = this.computeEERatio(assistantMsgs)
-        const proceduralProgress = this.checkProceduralMonotonicity(history) ? 1.0 : 0.0
+        const mono = this.getMonotonicityScore(history)
         
-        let sqs = 0
         const dcr = await this.computeDCR(history)
         const cps = await this.computeCPS(history)
 
-        // SQS = 0.30*(1-diffusion) + 0.25*EE + 0.20*DCR + 0.15*CPS + 0.10*monotonicity
-        sqs = 0.30 * (1 - diffusion) + 0.25 * eeRatio + 0.20 * dcr + 0.15 * cps + 0.10 * proceduralProgress
+        // SQS = 0.30×(1-diffusion) + 0.25×EE + 0.20×DCR + 0.15×CPS + 0.10×monotonicity
+        const sqs = 0.30 * (1 - diffusion) + 0.25 * eeRatio + 0.20 * dcr + 0.15 * cps + 0.10 * mono
         
         let status = "FOCUSED"
         const trigger = this.config.tierThresholds.sqs[this.currentTier]
         if (sqs < trigger) status = "STAGNATING"
         else if (sqs > 0.6) status = "EXPLORING"
 
-        this.log(`Tier: ${this.currentTier} | SQS: ${sqs.toFixed(2)} | Status: ${status} | Monotonic: ${proceduralProgress}`)
+        this.log(`Tier: ${this.currentTier} | SQS: ${sqs.toFixed(2)} | Status: ${status} | IFR: ${(1-mono).toFixed(2)}`)
         return { sqs, status }
     }
 
@@ -253,10 +244,6 @@ export class ObserverOrchestrator {
         return (uniqueFiles / actions.length) * (1 / maxLoops)
     }
 
-    /**
-     * Enhanced Loop Classifier (Phase 7).
-     * Incorporates AST-contradiction analysis (detecting reverts).
-     */
     private async classifyLoopPattern(history: DiracStorageMessage[]): Promise<LoopPattern> {
         const last3 = history.filter(m => m.role === "assistant").slice(-3)
         if (last3.length < 3) return "PRODUCTIVE"
@@ -266,10 +253,9 @@ export class ObserverOrchestrator {
         const errorSigs = toolResults.map(m => JSON.stringify(m.content).substring(0, 50))
         const uniqueErrors = new Set(errorSigs).size
 
-        // 1. AST Contradiction Check (Wang et al. 2026)
-        if (actions[2].file === actions[0].file && actions[2].op === actions[0].op) {
-             // Heuristic revert detection: if turn 2 undoes turn 1's structural change
-             // (In real implementation we'd use C daemon to check Δ_del ∩ Δ_add)
+        // Instruction-similarity filtering (CodeMEM Eq 8)
+        const instSim = this.getInstructionSimilarity(actions[2].instruction, actions[0].instruction)
+        if (instSim > 0.95 && actions[2].file === actions[0].file) {
              const churn0 = actions[0].astDeltaNodes || 0
              const churn2 = actions[2].astDeltaNodes || 0
              if (churn0 > 0 && churn2 < 0 && Math.abs(churn0 + churn2) < 2) {
@@ -281,12 +267,19 @@ export class ObserverOrchestrator {
             const uniqueFiles = new Set(actions.map(a => a.file)).size
             return uniqueFiles > 1 ? "WIDENING" : "STUCK"
         }
-
-        if (uniqueErrors === 2 && errorSigs[0] === errorSigs[2]) {
-            return "OSCILLATING"
-        }
+        if (uniqueErrors === 2 && errorSigs[0] === errorSigs[2]) return "OSCILLATING"
 
         return uniqueErrors === 3 ? "PRODUCTIVE" : "UNKNOWN"
+    }
+
+    private getInstructionSimilarity(a?: string, b?: string): number {
+        if (!a || !b) return 0
+        if (a === b) return 1.0
+        // Heuristic: common words
+        const wordsA = new Set(a.split(" "))
+        const wordsB = new Set(b.split(" "))
+        const intersect = new Set([...wordsA].filter(x => wordsB.has(x))).size
+        return intersect / Math.max(wordsA.size, wordsB.size)
     }
 
     private extractActionFeatures(msgs: DiracStorageMessage[]): ActionFeatures[] {
@@ -295,6 +288,7 @@ export class ObserverOrchestrator {
             const tool = content.match(/tool_code":\s*"([a-zA-Z0-9_]+)"/)?.[1] || "think"
             const file = content.match(/path":\s*"([^"]+)"/)?.[1] || "global"
             const lineMatch = content.match(/start_line":\s*([0-9]+)/)
+            const instMatch = content.match(/instruction":\s*"([^"]+)"/)
             const success = !content.includes("error")
             const ext = file.split(".").pop() || "python"
             return {
@@ -304,7 +298,8 @@ export class ObserverOrchestrator {
                 errorSig: null,
                 success,
                 turn: i,
-                lang: ext
+                lang: ext,
+                instruction: instMatch ? instMatch[1] : undefined
             }
         })
     }
@@ -322,7 +317,6 @@ export class ObserverOrchestrator {
 
         if (fileMatch && writeMatch) {
             const churn = await analyzer.getASTChurn(fileMatch, "TODO_UNESCAPE")
-            // Cache churn in history for classifier
             const lastFeatures = this.extractActionFeatures([lastAssistantMsg])[0]
             lastFeatures.astDeltaNodes = churn.added - churn.removed
             return churn
@@ -337,6 +331,13 @@ export class ObserverOrchestrator {
         return baseConf * Math.exp(-turnsSince / tau)
     }
 
+    private getAdaptiveCooldown(status: string, lastError: string | null): number {
+        let cd = this.config.reflectionCooldown
+        if (status === "EXPLORING") cd += 2
+        if (lastError?.includes("syntax")) cd = Math.max(2, cd - 1)
+        return cd
+    }
+
 	async onTurnComplete(history: DiracStorageMessage[]): Promise<void> {
 		if (!this._isEnabled) return
         this.turnsSinceLastReflection++
@@ -347,13 +348,14 @@ export class ObserverOrchestrator {
         
         const loopPattern = await this.classifyLoopPattern(history)
 
-        // 1. WATCHER (S1) - Enhanced Trigger
+        // 1. WATCHER (S1)
 		if (history.length % this.config.observerTurns === 0 || status === "STAGNATING" || loopPattern === "STUCK_WITH_FORGETTING") {
 			this.triggerSpecializedObservation(history, "watcher")
 		}
 
-		// 2. CRITIC (S2) - Adaptive Cooldown
-        const dynamicCooldown = this.config.adaptiveCooldownEnabled ? (status === "EXPLORING" ? this.config.reflectionCooldown + 2 : this.config.reflectionCooldown) : this.config.reflectionCooldown
+		// 2. CRITIC (S2)
+        const lastError = history.filter(m => m.role === "tool").pop()?.content as string
+        const dynamicCooldown = this.getAdaptiveCooldown(status, lastError)
 
 		if (history.length % this.config.criticFrequency === 0 && this.turnsSinceLastReflection >= dynamicCooldown) {
             const sqsTrigger = this.config.tierThresholds.sqs[this.currentTier]
@@ -362,7 +364,7 @@ export class ObserverOrchestrator {
             }
 		}
 
-		// 3. SUMMARIZER / SKELETON (Phase 7: AST-Guided Memory)
+		// 3. SUMMARIZER / SKELETON
 		const unobserved = this.getUnobservedMessages(history)
 		if (unobserved.length >= 4) {
 			const tokenEstimate = Math.ceil(JSON.stringify(unobserved).length / 4)
@@ -523,7 +525,30 @@ export class ObserverOrchestrator {
 		this.pendingTasks.add(promise)
 	}
 
-	prepareContext(history: DiracStorageMessage[]): PrepareContextResult {
+    /**
+     * API-Intersection Filtering (CodeMEM 2026).
+     */
+    private async filterMemoryByApi(history: DiracStorageMessage[], observationBlock: string): Promise<string> {
+        const analyzer = this.getAnalyzerClient?.()
+        if (!analyzer || !this.config.astGuidedMemoryEnabled) return observationBlock
+
+        const lastAssistantMsg = history.filter(m => m.role === "assistant").pop()
+        if (!lastAssistantMsg) return observationBlock
+
+        const content = JSON.stringify(lastAssistantMsg.content)
+        const ext = "python" // Placeholder
+        const apis = await analyzer.extractApis(content, ext)
+        
+        // Simple intersection check: keep observations that mention called APIs
+        const lines = observationBlock.split("\n")
+        const relevantLines = lines.filter(line => {
+            return apis.calls.some(call => line.includes(call)) || apis.definitions.some(def => line.includes(def))
+        })
+
+        return relevantLines.length > 5 ? relevantLines.join("\n") : observationBlock
+    }
+
+	async prepareContext(history: DiracStorageMessage[]): Promise<PrepareContextResult> {
         const result: PrepareContextResult = { 
             messages: history, 
             observationBlock: "", 
@@ -535,7 +560,9 @@ export class ObserverOrchestrator {
 
 		if (!this._isEnabled) return result
 
-		const observationBlock = this.store.buildObservationBlock("summary")
+		let observationBlock = this.store.buildObservationBlock("summary")
+        observationBlock = await this.filterMemoryByApi(history, observationBlock)
+
         const minConfidence = this.config.tierThresholds.confidence[this.currentTier]
 
         const filterWithDecay = (type: ObservationType) => {
@@ -558,11 +585,11 @@ export class ObserverOrchestrator {
             const turnsSince = (history.length - (latestCritic.compressedRange?.[1] || history.length))
             const decayed = this.getDecayedConfidence(latestCritic.confidence ?? 1.0, "CRITIC", turnsSince)
             
-            // Phase 7 Rule: require structural corroboration for high-tier interrupts
             const sqsTrigger = this.config.tierThresholds.sqs[this.currentTier]
             const hasStructuralSignal = this.lastSQS < (sqsTrigger + 0.05)
+            const mono = this.getMonotonicityScore(history)
 
-            if (decayed >= Math.min(0.7, minConfidence + 0.1) && hasStructuralSignal) {
+            if (decayed >= Math.min(0.7, minConfidence + 0.1) && (hasStructuralSignal || mono < 0.85)) {
                 result.interruptReason = latestCritic.observationText
                 result.criticAction = latestCritic.criticAction
             }
