@@ -109,33 +109,33 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
 
 int db_invalidate_file(IndexDB *db, const char *path) {
     sqlite3_stmt *stmt;
-    sqlite3_prepare_v2(db->db, "DELETE FROM files WHERE path = ?", -1, &stmt, NULL);
+    if (sqlite3_prepare_v2(db->db, "DELETE FROM files WHERE path = ?", -1, &stmt, NULL) != SQLITE_OK) return -1;
     sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); return -1; }
     sqlite3_finalize(stmt);
     return 0;
 }
 
 int db_clear(IndexDB *db) {
-    sqlite3_exec(db->db, "DELETE FROM symbols; DELETE FROM files; DELETE FROM observer_logs; DELETE FROM observer_logs_fts; DELETE FROM critic_decisions_fts; DELETE FROM watcher_patterns_fts;", NULL, NULL, NULL);
+    if (sqlite3_exec(db->db, "DELETE FROM symbols; DELETE FROM files; DELETE FROM observer_logs; DELETE FROM observer_logs_fts; DELETE FROM critic_decisions_fts; DELETE FROM watcher_patterns_fts;", NULL, NULL, NULL) != SQLITE_OK) return -1;
     return 0;
 }
 
 int db_index_observation(IndexDB *db, const char *type, const char *content, double timestamp, int token_estimate) {
     sqlite3_stmt *stmt;
-    sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs (type, content, timestamp, tokens) VALUES (?, ?, ?, ?)", -1, &stmt, NULL);
+    if (sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs (type, content, timestamp, tokens) VALUES (?, ?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) return -1;
     sqlite3_bind_text(stmt, 1, type, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, content, -1, SQLITE_TRANSIENT);
     sqlite3_bind_double(stmt, 3, timestamp);
     sqlite3_bind_int(stmt, 4, token_estimate);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); return -1; }
     int64_t row_id = sqlite3_last_insert_rowid(db->db);
     sqlite3_finalize(stmt);
 
-    sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs_fts (rowid, content) VALUES (?, ?)", -1, &stmt, NULL);
+    if (sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs_fts (rowid, content) VALUES (?, ?)", -1, &stmt, NULL) != SQLITE_OK) return -1;
     sqlite3_bind_int64(stmt, 1, row_id);
     sqlite3_bind_text(stmt, 2, content, -1, SQLITE_TRANSIENT);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); return -1; }
     sqlite3_finalize(stmt);
 
     return 0;
@@ -173,11 +173,11 @@ void db_search_observations(IndexDB *db, const char *query, int limit, struct js
 
 int db_index_critic_decision(IndexDB *db, const char *text, int turn, double confidence) {
     sqlite3_stmt *stmt;
-    sqlite3_prepare_v2(db->db, "INSERT INTO critic_decisions_fts (decision_text, turn_number, confidence) VALUES (?, ?, ?)", -1, &stmt, NULL);
+    if (sqlite3_prepare_v2(db->db, "INSERT INTO critic_decisions_fts (decision_text, turn_number, confidence) VALUES (?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) return -1;
     sqlite3_bind_text(stmt, 1, text, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, turn);
     sqlite3_bind_double(stmt, 3, confidence);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); return -1; }
     sqlite3_finalize(stmt);
     return 0;
 }
@@ -206,11 +206,11 @@ void db_search_critic_decisions(IndexDB *db, const char *query, int limit, struc
 
 int db_index_watcher_pattern(IndexDB *db, const char *text, const char *file_hash, int turn) {
     sqlite3_stmt *stmt;
-    sqlite3_prepare_v2(db->db, "INSERT INTO watcher_patterns_fts (pattern_text, file_hash, turn_number) VALUES (?, ?, ?)", -1, &stmt, NULL);
+    if (sqlite3_prepare_v2(db->db, "INSERT INTO watcher_patterns_fts (pattern_text, file_hash, turn_number) VALUES (?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) return -1;
     sqlite3_bind_text(stmt, 1, text, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, file_hash ? file_hash : "", -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 3, turn);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); return -1; }
     sqlite3_finalize(stmt);
     return 0;
 }

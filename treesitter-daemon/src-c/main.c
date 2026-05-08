@@ -251,10 +251,12 @@ static void handle_search_symbols(pthread_mutex_t *lock, pthread_mutex_t *db_loc
 
 static void handle_index_observation(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *type, const char *content, double timestamp, int tokens, AnalyzerCtx *ctx) {
     if (!ctx->db) { send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open"); return; }
-    
+
     pthread_mutex_lock(db_lock);
-    db_index_observation((IndexDB*)ctx->db, type, content, timestamp, tokens);
+    int ok = db_index_observation((IndexDB*)ctx->db, type, content, timestamp, tokens);
     pthread_mutex_unlock(db_lock);
+
+    if (ok != 0) fprintf(stderr, "[warn] db_index_observation failed\n");
 
     pthread_mutex_lock(lock);
     struct jsonw w;
@@ -262,7 +264,7 @@ static void handle_index_observation(pthread_mutex_t *lock, pthread_mutex_t *db_
     jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "ok");
     jsonw_id(&w, raw_id, id_len);
-    jsonw_kv_bool(&w, "ok", true);
+    jsonw_kv_bool(&w, "ok", ok == 0);
     jsonw_object_close(&w);
     jsonw_flush(&w);
     pthread_mutex_unlock(lock);
@@ -291,11 +293,12 @@ static void handle_search_observations(pthread_mutex_t *lock, pthread_mutex_t *d
 static void handle_index_critic_decision(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *text, int turn, double confidence, AnalyzerCtx *ctx) {
     if (!ctx->db) { send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open"); return; }
     pthread_mutex_lock(db_lock);
-    db_index_critic_decision((IndexDB*)ctx->db, text, turn, confidence);
+    int ok = db_index_critic_decision((IndexDB*)ctx->db, text, turn, confidence);
     pthread_mutex_unlock(db_lock);
+    if (ok != 0) fprintf(stderr, "[warn] db_index_critic_decision failed\n");
     pthread_mutex_lock(lock);
     struct jsonw w; jsonw_init(&w, stdout); jsonw_object_open(&w);
-    jsonw_kv_str(&w, "type", "ok"); jsonw_id(&w, raw_id, id_len); jsonw_kv_bool(&w, "ok", true);
+    jsonw_kv_str(&w, "type", "ok"); jsonw_id(&w, raw_id, id_len); jsonw_kv_bool(&w, "ok", ok == 0);
     jsonw_object_close(&w); jsonw_flush(&w);
     pthread_mutex_unlock(lock);
 }
@@ -315,11 +318,12 @@ static void handle_search_critic_decisions(pthread_mutex_t *lock, pthread_mutex_
 static void handle_index_watcher_pattern(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *text, const char *file_hash, int turn, AnalyzerCtx *ctx) {
     if (!ctx->db) { send_error(lock, raw_id, id_len, "DB_NOT_OPEN", "Index database is not open"); return; }
     pthread_mutex_lock(db_lock);
-    db_index_watcher_pattern((IndexDB*)ctx->db, text, file_hash, turn);
+    int ok = db_index_watcher_pattern((IndexDB*)ctx->db, text, file_hash, turn);
     pthread_mutex_unlock(db_lock);
+    if (ok != 0) fprintf(stderr, "[warn] db_index_watcher_pattern failed\n");
     pthread_mutex_lock(lock);
     struct jsonw w; jsonw_init(&w, stdout); jsonw_object_open(&w);
-    jsonw_kv_str(&w, "type", "ok"); jsonw_id(&w, raw_id, id_len); jsonw_kv_bool(&w, "ok", true);
+    jsonw_kv_str(&w, "type", "ok"); jsonw_id(&w, raw_id, id_len); jsonw_kv_bool(&w, "ok", ok == 0);
     jsonw_object_close(&w); jsonw_flush(&w);
     pthread_mutex_unlock(lock);
 }
@@ -425,10 +429,12 @@ static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, c
 }
 
 static void handle_invalidate_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *file, AnalyzerCtx *ctx) {
+    int ok = 1;
     if (ctx->db) {
         pthread_mutex_lock(db_lock);
-        db_invalidate_file((IndexDB*)ctx->db, file);
+        ok = db_invalidate_file((IndexDB*)ctx->db, file);
         pthread_mutex_unlock(db_lock);
+        if (ok != 0) fprintf(stderr, "[warn] db_invalidate_file failed for %s\n", file);
     }
     pthread_mutex_lock(lock);
     struct jsonw w;
@@ -436,17 +442,19 @@ static void handle_invalidate_file(pthread_mutex_t *lock, pthread_mutex_t *db_lo
     jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "ok");
     jsonw_id(&w, raw_id, id_len);
-    jsonw_kv_bool(&w, "ok", true);
+    jsonw_kv_bool(&w, "ok", ok == 0);
     jsonw_object_close(&w);
     jsonw_flush(&w);
     pthread_mutex_unlock(lock);
 }
 
 static void handle_clear_index(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, AnalyzerCtx *ctx) {
+    int ok = 1;
     if (ctx->db) {
         pthread_mutex_lock(db_lock);
-        db_clear((IndexDB*)ctx->db);
+        ok = db_clear((IndexDB*)ctx->db);
         pthread_mutex_unlock(db_lock);
+        if (ok != 0) fprintf(stderr, "[warn] db_clear failed\n");
     }
     pthread_mutex_lock(lock);
     struct jsonw w;
@@ -454,7 +462,7 @@ static void handle_clear_index(pthread_mutex_t *lock, pthread_mutex_t *db_lock, 
     jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "ok");
     jsonw_id(&w, raw_id, id_len);
-    jsonw_kv_bool(&w, "ok", true);
+    jsonw_kv_bool(&w, "ok", ok == 0);
     jsonw_object_close(&w);
     jsonw_flush(&w);
     pthread_mutex_unlock(lock);
