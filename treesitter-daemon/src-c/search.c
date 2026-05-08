@@ -90,43 +90,42 @@ void analyzer_search_symbols(AnalyzerCtx *ctx, const char *query, const char *ki
                             fclose(f);
                             continue;
                         }
-                            char *content = malloc(size + 1);
-                            if (!content) {
-                                fclose(f);
-                                continue;
-                            }
-                            size_t bytes_read = fread(content, 1, size, f);
-                            if (bytes_read != (size_t)size) {
-                                free(content);
-                                fclose(f);
-                                continue;
-                            }
-                            content[bytes_read] = '\0';
-                            
-                            ParsedSource *ps = analyzer_parse(content, lang);
-                            if (ps) {
-                                SymbolResult *sr = analyzer_extract_symbols(ps, ctx);
-                                if (sr) {
-                                    for (size_t i = 0; i < sr->count && results_found < limit; i++) {
-                                        if (strcasestr_portable(sr->symbols[i].name, query)) {
-                                            if (kind_filter && strcmp(symbol_kind_to_str(sr->symbols[i].kind), kind_filter) != 0) continue;
-
-                                            jsonw_object_open(w);
-                                            jsonw_kv_str(w, "name", sr->symbols[i].name);
-                                            jsonw_kv_str(w, "kind", symbol_kind_to_str(sr->symbols[i].kind));
-                                            jsonw_kv_str(w, "handle", sr->symbols[i].handle);
-                                            jsonw_kv_str(w, "file", full_path);
-                                            jsonw_kv_int(w, "start_line", sr->symbols[i].start_line);
-                                            jsonw_object_close(w);
-                                            results_found++;
-                                        }
-                                    }
-                                    analyzer_free_symbols(sr);
-                                }
-                                analyzer_free_source(ps);
-                            }
-                            free(content);
+                        char *content = malloc(size + 1);
+                        if (!content) {
+                            fclose(f);
+                            continue;
                         }
+                        size_t bytes_read = fread(content, 1, size, f);
+                        if (bytes_read != (size_t)size) {
+                            free(content);
+                            fclose(f);
+                            continue;
+                        }
+                        content[bytes_read] = '\0';
+
+                        ParsedSource *ps = analyzer_parse(content, lang);
+                        if (ps) {
+                            SymbolResult *sr = analyzer_extract_symbols(ps, ctx);
+                            if (sr) {
+                                for (size_t i = 0; i < sr->count && results_found < limit; i++) {
+                                    if (strcasestr_portable(sr->symbols[i].name, query)) {
+                                        if (kind_filter && strcmp(symbol_kind_to_str(sr->symbols[i].kind), kind_filter) != 0) continue;
+
+                                        jsonw_object_open(w);
+                                        jsonw_kv_str(w, "name", sr->symbols[i].name);
+                                        jsonw_kv_str(w, "kind", symbol_kind_to_str(sr->symbols[i].kind));
+                                        jsonw_kv_str(w, "handle", sr->symbols[i].handle);
+                                        jsonw_kv_str(w, "file", full_path);
+                                        jsonw_kv_int(w, "start_line", sr->symbols[i].start_line);
+                                        jsonw_object_close(w);
+                                        results_found++;
+                                    }
+                                }
+                                analyzer_free_symbols(sr);
+                            }
+                            analyzer_free_source(ps);
+                        }
+                        free(content);
                         fclose(f);
                     }
                 }

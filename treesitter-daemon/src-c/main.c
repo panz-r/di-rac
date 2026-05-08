@@ -514,14 +514,17 @@ static void* request_worker(void *arg) {
                 fseek(f, 0, SEEK_END);
                 long fsize = ftell(f);
                 fseek(f, 0, SEEK_SET);
+                if (fsize <= 0) { fclose(f); goto send_err; }
                 char *fcontent = malloc(fsize + 1);
-                if (fcontent) {
-                    size_t bytes_read = fread(fcontent, 1, fsize, f);
-                    fcontent[bytes_read] = '\0';
-                    handle_outline(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang, &task->gctx->base);
-                    free(fcontent);
-                }
+                if (!fcontent) { fclose(f); goto send_err; }
+                size_t bytes_read = fread(fcontent, 1, fsize, f);
+                if (bytes_read != (size_t)fsize) { free(fcontent); fclose(f); goto send_err; }
+                fcontent[bytes_read] = '\0';
+                handle_outline(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang, &task->gctx->base);
+                free(fcontent);
                 fclose(f);
+            } else {
+                goto send_err;
             }
         } else {
             handle_outline(&task->gctx->stdout_lock, raw_id, id_len, content, lang, &task->gctx->base);
@@ -535,14 +538,17 @@ static void* request_worker(void *arg) {
                 fseek(f, 0, SEEK_END);
                 long fsize = ftell(f);
                 fseek(f, 0, SEEK_SET);
+                if (fsize <= 0) { fclose(f); goto send_err; }
                 char *fcontent = malloc(fsize + 1);
-                if (fcontent) {
-                    size_t bytes_read = fread(fcontent, 1, fsize, f);
-                    fcontent[bytes_read] = '\0';
-                    handle_skeleton(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang);
-                    free(fcontent);
-                }
+                if (!fcontent) { fclose(f); goto send_err; }
+                size_t bytes_read = fread(fcontent, 1, fsize, f);
+                if (bytes_read != (size_t)fsize) { free(fcontent); fclose(f); goto send_err; }
+                fcontent[bytes_read] = '\0';
+                handle_skeleton(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang);
+                free(fcontent);
                 fclose(f);
+            } else {
+                goto send_err;
             }
         } else {
             handle_skeleton(&task->gctx->stdout_lock, raw_id, id_len, content, lang);
@@ -582,6 +588,11 @@ static void* request_worker(void *arg) {
         send_error(&task->gctx->stdout_lock, raw_id, id_len, "UNKNOWN_COMMAND", "Unknown analyzer command");
     }
 
+send_err:
+    pthread_mutex_lock(&task->gctx->stdout_lock);
+    send_error(&task->gctx->stdout_lock, raw_id, id_len, "FILE_ERROR", "Failed to read file");
+    pthread_mutex_unlock(&task->gctx->stdout_lock);
+
 cleanup:
     pthread_mutex_lock(&task->gctx->thread_count_lock);
     task->gctx->active_threads--;
@@ -608,7 +619,7 @@ int main(int argc, char *argv[]) {
             i++;
         }
     }
-    if (!gctx.base.workspace_root[0]) getcwd(gctx.base.workspace_root, sizeof(gctx.base.workspace_root));
+    if (!gctx.base.workspace_root[0]) (void)getcwd(gctx.base.workspace_root, sizeof(gctx.base.workspace_root));
     if (db_path[0]) gctx.base.db = db_open(db_path);
 
     if (!gctx.base.oneshot) {
