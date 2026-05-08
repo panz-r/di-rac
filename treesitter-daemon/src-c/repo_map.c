@@ -33,14 +33,14 @@ static int queue_push(WalkQueue *q, const char *path) {
         q->paths = tmp;
         q->capacity = new_cap;
     }
-    strncpy(q->paths[q->count++], path, 4095);
+    if (snprintf(q->paths[q->count++], 4096, "%s", path) >= 4096) return -1;
     return 0;
 }
 
 static int queue_pop(WalkQueue *q, char *out) {
     if (q->capacity == 0) return -1; /* OOM state — queue unusable */
     if (q->count == 0) return -1;
-    strncpy(out, q->paths[--q->count], 4095);
+    if (snprintf(out, 4096, "%s", q->paths[--q->count]) >= 4096) return -1;
     return 0;
 }
 
@@ -100,7 +100,8 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
             if (should_ignore(de->d_name)) continue;
 
             char full_path[4096];
-            snprintf(full_path, sizeof(full_path), "%s/%s", current_dir, de->d_name);
+            int len = snprintf(full_path, sizeof(full_path), "%s/%s", current_dir, de->d_name);
+            if (len < 0 || len >= (int)sizeof(full_path)) continue;  // truncation or error
 
             struct stat st;
             if (lstat(full_path, &st) < 0) continue;
