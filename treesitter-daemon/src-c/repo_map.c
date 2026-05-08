@@ -5,9 +5,40 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
+/* Dynamic BFS queue for directory traversal — grows as needed */
 typedef struct {
-    char path[4096];
-} WalkStack;
+    char (*paths)[4096];
+    int count;
+    int capacity;
+} WalkQueue;
+
+static void queue_init(WalkQueue *q) {
+    q->capacity = 256;
+    q->paths = malloc(sizeof(char[4096]) * q->capacity);
+    q->count = 0;
+}
+
+static void queue_free(WalkQueue *q) {
+    free(q->paths);
+}
+
+static int queue_push(WalkQueue *q, const char *path) {
+    if (q->count == q->capacity) {
+        int new_cap = q->capacity * 2;
+        char (*tmp)[4096] = realloc(q->paths, sizeof(char[4096]) * new_cap);
+        if (!tmp) return -1;  /* out of memory — drop this path */
+        q->paths = tmp;
+        q->capacity = new_cap;
+    }
+    strncpy(q->paths[q->count++], path, 4095);
+    return 0;
+}
+
+static int queue_pop(WalkQueue *q, char *out) {
+    if (q->count == 0) return -1;
+    strncpy(out, q->paths[--q->count], 4095);
+    return 0;
+}
 
 static int should_ignore(const char *name) {
     if (name[0] == '.') return 1;
@@ -36,17 +67,15 @@ static Language get_lang_from_ext(const char *path) {
 }
 
 void analyzer_repo_map(const char *root, struct jsonw *w) {
-    WalkStack *stack = malloc(sizeof(WalkStack) * 1024);
-    int stack_ptr = 0;
-    strncpy(stack[stack_ptr++].path, root, 4095);
+    WalkQueue queue;
+    queue_init(&queue);
+    queue_push(&queue, root);  /* root is already NUL-terminated from strncpy */
 
     jsonw_key(w, "files");
     jsonw_array_open(w);
 
-    while (stack_ptr > 0) {
-        char current_dir[4096];
-        strncpy(current_dir, stack[--stack_ptr].path, 4095);
-
+    char current_dir[4096];
+    while (queue_pop(&queue, current_dir) == 0) {
         DIR *d = opendir(current_dir);
         if (!d) continue;
 
@@ -61,7 +90,9 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
             if (lstat(full_path, &st) < 0) continue;
 
             if (S_ISDIR(st.st_mode)) {
-                if (stack_ptr < 1024) strncpy(stack[stack_ptr++].path, full_path, 4095);
+                if (queue_push(&queue, full_path) < 0) {
+                    /* out of memory — skip this directory silently */
+                }
             } else if (S_ISREG(st.st_mode)) {
                 Language lang = get_lang_from_ext(full_path);
                 if (lang != LANG_UNKNOWN) {
@@ -73,35 +104,33 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
                         fseek(f, 0, SEEK_SET);
                         if (size < 102400) { /* 100KB limit for repo map parsing */
                             char *content = malloc(size + 1);
-                            size_t bytes_read = fread(content, 1, size, f);
-                            if (bytes_read != (size_t)size) {
-                                free(content);
-                                fclose(f);
-                                continue;  /* skip file on incomplete read */
-                            }
-                            content[size] = '\0';
-                            
-                            ParsedSource *ps = analyzer_parse(content, lang);
-                            if (ps) {
-                                SymbolResult *sr = analyzer_extract_symbols(ps, NULL);
-                                if (sr && sr->count > 0) {
-                                    jsonw_object_open(w);
-                                    jsonw_kv_str(w, "file", full_path + strlen(root) + (full_path[strlen(root)] == '/' ? 1 : 0));
-                                    jsonw_key(w, "symbols");
-                                    jsonw_array_open(w);
-                                    for (size_t i = 0; i < sr->count; i++) {
-                                        jsonw_object_open(w);
-                                        jsonw_kv_str(w, "name", sr->symbols[i].name);
-                                        jsonw_kv_str(w, "kind", symbol_kind_to_str(sr->symbols[i].kind));
-                                        jsonw_object_close(w);
+                            if (content) {
+                                size_t bytes_read = fread(content, 1, size, f);
+                                if (bytes_read == (size_t)size) {
+                                    content[size] = '\0';
+                                    ParsedSource *ps = analyzer_parse(content, lang);
+                                    if (ps) {
+                                        SymbolResult *sr = analyzer_extract_symbols(ps, NULL);
+                                        if (sr && sr->count > 0) {
+                                            jsonw_object_open(w);
+                                            jsonw_kv_str(w, "file", full_path + strlen(root) + (full_path[strlen(root)] == '/' ? 1 : 0));
+                                            jsonw_key(w, "symbols");
+                                            jsonw_array_open(w);
+                                            for (size_t i = 0; i < sr->count; i++) {
+                                                jsonw_object_open(w);
+                                                jsonw_kv_str(w, "name", sr->symbols[i].name);
+                                                jsonw_kv_str(w, "kind", symbol_kind_to_str(sr->symbols[i].kind));
+                                                jsonw_object_close(w);
+                                            }
+                                            jsonw_array_close(w);
+                                            jsonw_object_close(w);
+                                        }
+                                        analyzer_free_symbols(sr);
+                                        analyzer_free_source(ps);
                                     }
-                                    jsonw_array_close(w);
-                                    jsonw_object_close(w);
                                 }
-                                analyzer_free_symbols(sr);
-                                analyzer_free_source(ps);
+                                free(content);
                             }
-                            free(content);
                         }
                         fclose(f);
                     }
@@ -111,5 +140,5 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
         closedir(d);
     }
     jsonw_array_close(w);
-    free(stack);
+    queue_free(&queue);
 }
