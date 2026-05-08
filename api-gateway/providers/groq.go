@@ -24,6 +24,7 @@ func NewGroqHandler() *GroqHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "groq",
 				DefaultModel: defaultModel,
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:        true,
 					SupportsReasoningEffort: false,
@@ -76,14 +77,6 @@ func NewGroqHandler() *GroqHandler {
 						Step:       fPtr(0.1),
 						Group:      "sampling",
 						ValidRange: "-2 – 2",
-					},
-					{
-						Key:         "max_tokens",
-						Label:       "Max Tokens",
-						Type:        SettingNumber,
-						Min:         fPtr(1),
-						Group:       "sampling",
-						Description: "Maximum number of tokens to generate.",
 					},
 				},
 			},

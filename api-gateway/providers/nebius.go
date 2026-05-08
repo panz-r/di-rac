@@ -16,6 +16,7 @@ func NewNebiusHandler() *NebiusHandler {
 			BaseURL:      "https://api.studio.nebius.ai/v1",
 			Capabilities: &ProviderInfo{
 				ID: "nebius",
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsTools:     true,
 					SupportsStreaming: true,
@@ -23,7 +24,6 @@ func NewNebiusHandler() *NebiusHandler {
 				Settings: []ProviderSetting{
 					{Key: "temperature", Label: "Temperature", Type: SettingSlider, Min: fPtr(0), Max: fPtr(2), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
 					{Key: "top_p", Label: "Top P", Type: SettingSlider, Min: fPtr(0), Max: fPtr(1), Step: fPtr(0.01), Default: 1.0, Group: "sampling"},
-					{Key: "max_tokens", Label: "Max Tokens", Type: SettingNumber, Min: fPtr(1), Group: "sampling"},
 				},
 			},
 			DefaultModel: "Qwen/Qwen2.5-32B-Instruct-fast",

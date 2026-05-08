@@ -58,10 +58,37 @@ type ProviderFeatures struct {
 
 // ProviderInfo is the full capability descriptor for a provider.
 type ProviderInfo struct {
-	ID           string            `json:"id"`
-	DefaultModel string            `json:"default_model"`
-	Settings     []ProviderSetting `json:"settings,omitempty"`
-	Features     ProviderFeatures  `json:"features"`
+	ID               string            `json:"id"`
+	DefaultModel     string            `json:"default_model"`
+	MaxTokensDefault int               `json:"max_tokens_default,omitempty"`
+	Settings         []ProviderSetting `json:"settings,omitempty"`
+	Features         ProviderFeatures  `json:"features"`
+}
+
+// WithMaxTokensSetting returns a copy of ProviderInfo with a standard max_tokens
+// setting auto-injected. If the provider already declares max_tokens or
+// max_completion_tokens in Settings, the existing entry is kept.
+func (info *ProviderInfo) WithMaxTokensSetting() *ProviderInfo {
+	if info.MaxTokensDefault <= 0 {
+		return info
+	}
+	for _, s := range info.Settings {
+		if s.Key == "max_tokens" || s.Key == "max_completion_tokens" {
+			return info
+		}
+	}
+	cp := *info
+	cp.Settings = append(cp.Settings, ProviderSetting{
+		Key:         "max_tokens",
+		Label:       "Max Output Tokens",
+		Type:        SettingNumber,
+		Min:         fPtr(1),
+		Default:     info.MaxTokensDefault,
+		Scope:       ScopePerMode,
+		Group:       "output",
+		Description: "Maximum number of tokens in the response.",
+	})
+	return &cp
 }
 
 // SettingStatus describes whether a setting is currently in effect.

@@ -34,6 +34,7 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "openrouter",
 				DefaultModel: "anthropic/claude-sonnet-4.5",
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:        true,
 					SupportsReasoningEffort: true,
@@ -131,14 +132,6 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 						Group:       "sampling",
 						Description: "OpenRouter-specific penalty for repeated tokens.",
 						ValidRange:  "0 – 2",
-					},
-					{
-						Key:         "max_completion_tokens",
-						Label:       "Max Completion Tokens",
-						Type:        SettingNumber,
-						Min:         fPtr(1),
-						Group:       "sampling",
-						Description: "Maximum tokens in completion (preferred over max_tokens).",
 					},
 					{
 						Key:         "stop",
@@ -335,10 +328,6 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 					result["repetition_penalty"] = rp
 				}
 
-				// Max completion tokens (preferred over max_tokens)
-				if mct := int(req.SettingFloat("max_completion_tokens")); mct > 0 {
-					result["max_completion_tokens"] = mct
-				}
 
 				if stop := req.SettingString("stop"); stop != "" {
 					result["stop"] = strings.Split(stop, ",")

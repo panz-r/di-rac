@@ -28,6 +28,7 @@ func NewDeepSeekHandler() *DeepSeekHandler {
 			StrictTools:         true,
 			Capabilities: &ProviderInfo{
 				ID:           "deepseek",
+				MaxTokensDefault: 16384,
 				DefaultModel: defaultModel,
 				Features: ProviderFeatures{
 					SupportsThinking:        true,

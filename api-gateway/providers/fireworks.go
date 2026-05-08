@@ -25,6 +25,7 @@ func NewFireworksHandler() *FireworksHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "fireworks",
 				DefaultModel: defaultModel,
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:    true,
 					SupportsTools:       true,
@@ -56,14 +57,6 @@ func NewFireworksHandler() *FireworksHandler {
 						Group:       "sampling",
 						Description: "Nucleus sampling threshold.",
 						ValidRange:  "0 – 1",
-					},
-					{
-						Key:         "max_tokens",
-						Label:       "Max Tokens",
-						Type:        SettingNumber,
-						Min:         fPtr(1),
-						Group:       "sampling",
-						Description: "Maximum tokens in the response.",
 					},
 					{
 						Key:        "presence_penalty",

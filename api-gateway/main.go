@@ -689,12 +689,27 @@ func (s *Server) processRequest(ctx context.Context, req *Request) *Response {
 }
 
 func (s *Server) buildProviderRequest(req *Request) *providers.Request {
+	maxTokens := req.MaxTokens
+	// User's per-role max_tokens setting overrides modelInfo default
+	if mt, ok := req.Settings["max_tokens"]; ok {
+		if v, ok := mt.(float64); ok && v > 0 {
+			maxTokens = int(v)
+		}
+	}
+	// If no max_tokens from caller or settings, use provider's default
+	if maxTokens == 0 {
+		if caps := s.providerRegistry.GetCapabilities(req.Provider.ID); caps != nil {
+			if caps.MaxTokensDefault > 0 {
+				maxTokens = caps.MaxTokensDefault
+			}
+		}
+	}
 	return &providers.Request{
 		Provider:         req.Provider,
 		Messages:         req.Messages,
 		System:           req.System,
 		Tools:            req.Tools,
-		MaxTokens:        req.MaxTokens,
+		MaxTokens:        maxTokens,
 		Temperature:      req.Temperature,
 		TopP:             req.TopP,
 		Stop:             req.Stop,

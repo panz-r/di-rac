@@ -262,6 +262,7 @@ const SECRETS_KEYS = [
 	"openCodeZenApiKey",
 	"kiloCodeApiKey",
 	"byteplusApiKey",
+	"xiaomiMimoApiKey",
 ] as const
 
 // WARNING, these are not ALL of the local state keys in practice. For example, FileContextTracker

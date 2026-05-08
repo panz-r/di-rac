@@ -23,6 +23,7 @@ func NewNvidiaNimHandler() *NvidiaNimHandler {
 			DefaultModel: "nvidia/llama-3.1-nemotron-ultra-253b-v1",
 			Capabilities: &ProviderInfo{
 				ID:           "nvidia_nim",
+				MaxTokensDefault: 16384,
 				DefaultModel: "nvidia/llama-3.1-nemotron-ultra-253b-v1",
 				Features: ProviderFeatures{
 					SupportsThinking:    true,

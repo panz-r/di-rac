@@ -24,6 +24,7 @@ func NewXAIHandler() *XAIHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "xai",
 				DefaultModel: defaultModel,
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:        true,
 					SupportsReasoningEffort: true,
@@ -56,14 +57,6 @@ func NewXAIHandler() *XAIHandler {
 						Group:       "sampling",
 						Description: "Nucleus sampling threshold.",
 						ValidRange:  "0 – 1",
-					},
-					{
-						Key:         "max_completion_tokens",
-						Label:       "Max Completion Tokens",
-						Type:        SettingNumber,
-						Min:         fPtr(1),
-						Group:       "sampling",
-						Description: "Maximum tokens in the completion.",
 					},
 					{
 						Key:   "reasoning_effort",

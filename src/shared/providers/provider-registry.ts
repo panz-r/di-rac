@@ -235,6 +235,12 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 			return true
 		},
 	},
+	{
+		providerId: "xiaomi_mimo",
+		label: "Xiaomi MiMo",
+		apiKeyFields: "xiaomiMimoApiKey",
+		defaultModelId: "mimo-v2.5-pro",
+	},
 ]
 
 // ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ func NewZAIHandler() *ZAIHandler {
 			},
 			Capabilities: &ProviderInfo{
 				ID:           "zai",
+				MaxTokensDefault: 16384,
 				DefaultModel: "glm-5",
 				Features: ProviderFeatures{
 					SupportsThinking:        true,

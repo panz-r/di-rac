@@ -26,6 +26,7 @@ func NewBytePlusCodingPlanHandler() *BytePlusCodingPlanHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "byteplus_coding_plan",
 				DefaultModel: defaultModel,
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:        true,
 					SupportsReasoningEffort: false,
@@ -99,13 +100,6 @@ func NewBytePlusCodingPlanHandler() *BytePlusCodingPlanHandler {
 						Type:        SettingText,
 						Group:       "sampling",
 						Description: "Custom stop sequences (comma-separated, max 4).",
-					},					{
-						Key:         "max_completion_tokens",
-						Label:       "Max Completion Tokens",
-						Type:        SettingNumber,
-						Min:         fPtr(1),
-						Group:       "output",
-						Description: "Maximum output tokens.",
 					},
 					{
 						Key:         "seed",
@@ -157,9 +151,6 @@ func NewBytePlusCodingPlanHandler() *BytePlusCodingPlanHandler {
 
 				if stop := req.SettingString("stop"); stop != "" {
 					result["stop"] = splitStopSequences(stop)
-				}
-				if maxTokens := req.SettingInt("max_completion_tokens"); maxTokens > 0 {
-					result["max_completion_tokens"] = maxTokens
 				}
 				if seed := req.SettingInt("seed"); seed > 0 {
 					result["seed"] = seed

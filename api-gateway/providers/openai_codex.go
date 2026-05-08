@@ -20,6 +20,7 @@ func NewOpenAICodexHandler() *OpenAICodexHandler {
 			DefaultModel: defaultModel,
 			Capabilities: &ProviderInfo{
 				ID:           "openai_codex",
+				MaxTokensDefault: 16384,
 				DefaultModel: defaultModel,
 				Features: ProviderFeatures{
 					SupportsThinking:        true,

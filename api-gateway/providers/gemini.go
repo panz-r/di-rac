@@ -597,8 +597,9 @@ func (h *GeminiHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]M
 
 func (h *GeminiHandler) Capabilities() *ProviderInfo {
 	return &ProviderInfo{
-		ID:           "gemini",
-		DefaultModel: "gemini-3-flash-preview",
+		ID:               "gemini",
+		DefaultModel:     "gemini-3-flash-preview",
+		MaxTokensDefault: 16384,
 		Features: ProviderFeatures{
 			SupportsThinking:        true,
 			SupportsReasoningEffort: false,
@@ -631,14 +632,6 @@ func (h *GeminiHandler) Capabilities() *ProviderInfo {
 				Group:       "sampling",
 				Description: "Nucleus sampling threshold.",
 				ValidRange:  "0 – 1",
-			},
-			{
-				Key:         "max_tokens",
-				Label:       "Max Output Tokens",
-				Type:        SettingNumber,
-				Min:         fPtr(1),
-				Group:       "sampling",
-				Description: "Maximum number of tokens in the response.",
 			},
 		},
 	}

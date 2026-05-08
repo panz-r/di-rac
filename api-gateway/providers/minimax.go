@@ -54,6 +54,7 @@ func NewMiniMaxHandler() *MiniMaxHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "minimax",
 				DefaultModel: defaultModel,
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:    false,
 					SupportsTools:       true,
@@ -85,14 +86,6 @@ func NewMiniMaxHandler() *MiniMaxHandler {
 						Group:       "sampling",
 						Description: "Nucleus sampling threshold.",
 						ValidRange:  "0 – 1",
-					},
-					{
-						Key:         "max_tokens",
-						Label:       "Max Tokens",
-						Type:        SettingNumber,
-						Min:         fPtr(1),
-						Group:       "sampling",
-						Description: "Maximum tokens in the response.",
 					},
 				},
 			},

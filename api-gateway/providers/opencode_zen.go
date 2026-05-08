@@ -28,6 +28,7 @@ func NewOpenCodeZenHandler() *OpenCodeZenHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "opencode_zen",
 				DefaultModel: "opencode/gpt-4",
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:        true,
 					SupportsReasoningEffort: true,
@@ -60,14 +61,6 @@ func NewOpenCodeZenHandler() *OpenCodeZenHandler {
 							Group:       "sampling",
 							Description: "Nucleus sampling threshold.",
 							ValidRange:  "0 – 1",
-						},
-						{
-							Key:         "max_tokens",
-							Label:       "Max Tokens",
-							Type:        SettingNumber,
-							Min:         fPtr(1),
-							Group:       "sampling",
-							Description: "Maximum tokens to generate.",
 						},
 						{
 							Key:         "stop",
@@ -291,13 +284,6 @@ func (h *OpenCodeZenHandler) ValidateSettings(settings map[string]interface{}, t
 					v.Error = "Must be > 0 when logprobs is enabled"
 					v.Value = float64(1)
 				}
-			}
-		}
-
-		if s.Key == "max_tokens" {
-			if num, ok := val.(float64); ok && num < 1 {
-				v.Error = "Must be >= 1"
-				v.Value = float64(1)
 			}
 		}
 

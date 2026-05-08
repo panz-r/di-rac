@@ -319,7 +319,7 @@ func (r *Registry) GetCapabilities(providerID string) *ProviderInfo {
 		return nil
 	}
 	if ch, ok := handler.(CapableHandler); ok {
-		return ch.Capabilities()
+		return ch.Capabilities().WithMaxTokensSetting()
 	}
 	return nil
 }
@@ -490,6 +490,7 @@ func (r *Registry) registerProviders() {
 	r.Register("byteplus", NewBytePlusHandler(), ProviderMeta{ID: "byteplus", Label: "BytePlus"})
 	r.Register("byteplus_coding_plan", NewBytePlusCodingPlanHandler(), ProviderMeta{ID: "byteplus_coding_plan", Label: "BytePlus Coding Plan"})
 	r.Register("openai_codex", NewOpenAICodexHandler(), ProviderMeta{ID: "openai_codex", Label: "OpenAI Codex"})
+	r.Register("xiaomi_mimo", NewXiaomiMimoHandler(), ProviderMeta{ID: "xiaomi_mimo", Label: "Xiaomi MiMo"})
 }
 
 // ValidateRequest validates a request before processing

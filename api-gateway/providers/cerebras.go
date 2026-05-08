@@ -25,6 +25,7 @@ func NewCerebrasHandler() *CerebrasHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "cerebras",
 				DefaultModel: defaultModel,
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:        false,
 					SupportsReasoningEffort: false,
@@ -58,25 +59,10 @@ func NewCerebrasHandler() *CerebrasHandler {
 						Description: "Nucleus sampling threshold.",
 						ValidRange:  "0 – 1",
 					},
-					{
-						Key:         "max_tokens",
-						Label:       "Max Tokens",
-						Type:        SettingNumber,
-						Min:         fPtr(1),
-						Default:     16384,
-						Group:       "sampling",
-						Description: "Maximum number of tokens to generate.",
-					},
 				},
 			},
 			ModifyMessages: func(messages []map[string]interface{}, req *Request) []map[string]interface{} {
 				return cerebrasConvertTextMessages(messages, req)
-			},
-			ModifyRequest: func(req *Request, result map[string]interface{}) {
-				// Cerebras default max_tokens
-				if req.MaxTokens == 0 {
-					result["max_tokens"] = 16384
-				}
 			},
 		}),
 	}

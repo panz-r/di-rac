@@ -19,6 +19,7 @@ func NewOpenAIHandler() *OpenAIHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "openai",
 				DefaultModel: defaultModel,
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:        true,
 					SupportsReasoningEffort: true,
@@ -65,14 +66,6 @@ func NewOpenAIHandler() *OpenAIHandler {
 						},
 						Group:       "reasoning",
 						Description: "Controls reasoning depth for o-series models. Only applies in thinking mode.",
-					},
-					{
-						Key:         "max_completion_tokens",
-						Label:       "Max Completion Tokens",
-						Type:        SettingNumber,
-						Min:         fPtr(1),
-						Group:       "sampling",
-						Description: "Maximum tokens in the completion.",
 					},
 					{
 						Key:        "presence_penalty",

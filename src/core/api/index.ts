@@ -276,6 +276,12 @@ function createHandlerForProvider(
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				settings: providerSettings,
 			})
+		case "xiaomi_mimo":
+			return gatewayHandler("xiaomi_mimo", {
+				apiKey: options.xiaomiMimoApiKey,
+				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
+				settings: providerSettings,
+			})
 		case "api-gateway": {
 			const gwModel = mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId
 			const gwModelInfo = resolveModelInfo(gwModel)

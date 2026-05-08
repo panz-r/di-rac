@@ -28,6 +28,7 @@ func NewQwenHandler() *QwenHandler {
 			Capabilities: &ProviderInfo{
 				ID:           "qwen",
 				DefaultModel: defaultModel,
+				MaxTokensDefault: 16384,
 				Features: ProviderFeatures{
 					SupportsThinking:    true,
 					SupportsTools:       true,
@@ -59,14 +60,6 @@ func NewQwenHandler() *QwenHandler {
 						Group:       "sampling",
 						Description: "Nucleus sampling threshold.",
 						ValidRange:  "0 – 1",
-					},
-					{
-						Key:         "max_tokens",
-						Label:       "Max Tokens",
-						Type:        SettingNumber,
-						Min:         fPtr(1),
-						Group:       "sampling",
-						Description: "Maximum tokens in the response (sent as max_completion_tokens).",
 					},
 					{
 						Key:         "enable_thinking",

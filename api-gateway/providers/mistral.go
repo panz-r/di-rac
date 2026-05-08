@@ -25,6 +25,7 @@ func NewMistralHandler() *MistralHandler {
 			ContentArraySupport: true,
 			Capabilities: &ProviderInfo{
 				ID:           "mistral",
+				MaxTokensDefault: 16384,
 				DefaultModel: "mistral-large",
 				Features: ProviderFeatures{
 					SupportsThinking:  false,

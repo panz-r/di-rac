@@ -540,8 +540,9 @@ func (h *AnthropicHandler) ListModels(ctx context.Context, cfg ProviderConfig) (
 
 func (h *AnthropicHandler) Capabilities() *ProviderInfo {
 	return &ProviderInfo{
-		ID:           "anthropic",
-		DefaultModel: "claude-sonnet-4-20250514",
+		ID:               "anthropic",
+		DefaultModel:     "claude-sonnet-4-20250514",
+		MaxTokensDefault: 8192,
 		Features: ProviderFeatures{
 			SupportsThinking:        true,
 			SupportsReasoningEffort: false,
@@ -585,15 +586,6 @@ func (h *AnthropicHandler) Capabilities() *ProviderInfo {
 				Group:       "sampling",
 				Description: "Only sample from the top K options for each subsequent token.",
 				ValidRange:  "0 – 500",
-			},
-			{
-				Key:         "max_tokens",
-				Label:       "Max Tokens",
-				Type:        SettingNumber,
-				Min:         fPtr(1),
-				Default:     8192,
-				Group:       "sampling",
-				Description: "Maximum number of tokens to generate.",
 			},
 			{
 				Key:         "stop_sequences",

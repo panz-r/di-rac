@@ -31,6 +31,7 @@ export type ApiProvider =
 	| "byteplus"
 	| "byteplus_coding_plan"
 	| "openai_codex"
+	| "xiaomi_mimo"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
 	"anthropic",
@@ -62,6 +63,7 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"byteplus",
 	"byteplus_coding_plan",
 	"openai_codex",
+	"xiaomi_mimo",
 ]
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider

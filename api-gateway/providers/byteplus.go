@@ -26,6 +26,7 @@ func NewBytePlusHandler() *BytePlusHandler {
 			MaxCompletionTokens: true,
 			Capabilities: &ProviderInfo{
 				ID:           "byteplus",
+				MaxTokensDefault: 16384,
 				DefaultModel: defaultModel,
 				Features: ProviderFeatures{
 					SupportsThinking:        true,
