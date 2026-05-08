@@ -199,7 +199,7 @@ impl AgentEngine {
         }
 
         // 1. API extraction
-        let current_apis = self.extract_current_apis()?;
+        let current_apis = self.extract_current_apis().await?;
 
         // 2. Auto-compaction check
         if self.context_manager.should_auto_compact(&self.trajectory) {
@@ -539,7 +539,7 @@ impl AgentEngine {
             command: "get".to_string(),
             key: Some(key.to_string()),
             value: None,
-        })?;
+        }).await?;
 
         if resp.ok {
             Ok(resp.value.unwrap_or(Value::Null))
@@ -548,11 +548,11 @@ impl AgentEngine {
         }
     }
 
-    fn extract_current_apis(&self) -> Result<HashSet<String>> {
+    async fn extract_current_apis(&self) -> Result<HashSet<String>> {
         let mut apis = HashSet::new();
         if let Some(msg) = self.trajectory.messages.iter().filter(|m| matches!(m.role, Role::Assistant)).last() {
             let content = msg.content.to_string();
-            if let Ok(resp) = self.analyzer_client.extract_apis(&content, "python") {
+            if let Ok(resp) = self.analyzer_client.extract_apis(&content, "python").await {
                 for call in resp.calls { apis.insert(call); }
                 for def in resp.definitions { apis.insert(def); }
             }

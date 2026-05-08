@@ -43,7 +43,7 @@ pub async fn search_files(
             file: Some(path.clone()),
             content: None,
             language: None,
-        })?;
+        }).await?;
 
         results.push(json!({
             "path": path,

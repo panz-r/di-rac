@@ -37,7 +37,7 @@ async fn symbol_search(
         file: Some(path.to_string()),
         content: if kind.is_empty() { None } else { Some(kind.to_string()) },
         language: None,
-    })?;
+    }).await?;
 
     if resp.ok {
         Ok(resp.data)
@@ -61,7 +61,7 @@ async fn symbol_replace(
         file: None,
         content: Some(text.to_string()),
         language: None,
-    })?;
+    }).await?;
 
     if resp.ok {
         Ok(resp.data)
@@ -85,7 +85,7 @@ async fn symbol_rename(
         file: None,
         content: None,
         language: None,
-    })?;
+    }).await?;
 
     if resp.ok {
         Ok(resp.data)
@@ -107,7 +107,7 @@ async fn symbol_refs(
         file: None,
         content: None,
         language: None,
-    })?;
+    }).await?;
 
     if resp.ok {
         Ok(resp.data)

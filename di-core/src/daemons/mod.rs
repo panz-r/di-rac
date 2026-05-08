@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use anyhow::{Result, anyhow};
 use reqwest::Client;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -22,27 +21,31 @@ impl UnixDaemonClient {
         }
     }
 
-    pub fn send_request<T: Serialize, R: for<'de> Deserialize<'de>>(&self, request: T) -> Result<R> {
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .map_err(|e| anyhow!("Failed to connect to socket {}: {}", self.socket_path, e))?;
-
+    pub async fn send_request<T: Serialize, R: for<'de> Deserialize<'de>>(&self, request: T) -> Result<R> {
         let json = serde_json::to_string(&request)?;
-        stream.write_all(json.as_bytes())?;
-        stream.write_all(b"\n")?;
+        let socket_path = self.socket_path.clone();
 
-        let mut response = String::new();
-        stream.read_to_string(&mut response)?;
+        let response = tokio::task::spawn_blocking(move || {
+            let mut stream = std::os::unix::net::UnixStream::connect(&socket_path)
+                .map_err(|e| anyhow!("Failed to connect to socket {}: {}", socket_path, e))?;
+            stream.write_all(json.as_bytes())?;
+            stream.write_all(b"\n")?;
+            let mut response = String::new();
+            stream.read_to_string(&mut response)?;
+            Ok::<String, anyhow::Error>(response)
+        })
+        .await
+        .map_err(|e| anyhow!("Blocking I/O task failed: {}", e))??;
 
         if response.is_empty() {
             return Err(anyhow!("Empty response from daemon {}", self.socket_path));
         }
 
-        let result = serde_json::from_str(&response)
-            .map_err(|e| anyhow!("Failed to parse response from {}: {}. Response: {}", self.socket_path, e, response))?;
-        Ok(result)
+        serde_json::from_str(&response)
+            .map_err(|e| anyhow!("Failed to parse response from {}: {}. Response: {}", self.socket_path, e, response))
     }
 
-    pub fn extract_apis(&self, content: &str, language: &str) -> Result<ApiResponse> {
+    pub async fn extract_apis(&self, content: &str, language: &str) -> Result<ApiResponse> {
         self.send_request(AnalyzerRequest {
             command: "extract-apis".to_string(),
             file: None,
@@ -50,6 +53,7 @@ impl UnixDaemonClient {
             language: Some(language.to_string()),
             query: None,
         })
+        .await
     }
 }
 

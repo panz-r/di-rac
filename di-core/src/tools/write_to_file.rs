@@ -27,7 +27,7 @@ pub async fn write_to_file(
                     command: "shell".to_string(),
                     args: vec![format!("mkdir -p {}", dir)],
                     cwd: None,
-                })?;
+                }).await?;
                 if !mkdir_resp.ok {
                     return Err(anyhow!("Failed to create directory {}: {}", dir, mkdir_resp.stderr));
                 }
@@ -39,7 +39,7 @@ pub async fn write_to_file(
         command: "write-file".to_string(),
         args: vec![path.to_string(), content.to_string()],
         cwd: None,
-    })?;
+    }).await?;
 
     if resp.ok {
         Ok(json!({

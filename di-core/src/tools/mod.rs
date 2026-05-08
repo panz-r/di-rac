@@ -38,6 +38,9 @@ pub struct ToolCoordinator {
     recovery: RecoveryEngine,
 }
 
+/// Maximum number of cache entries to prevent unbounded memory growth.
+const MAX_CACHE_ENTRIES: usize = 256;
+
 impl ToolCoordinator {
     pub fn new() -> Self {
         Self { cache: HashMap::new(), recovery: RecoveryEngine::new() }
@@ -132,8 +135,14 @@ impl ToolCoordinator {
             value
         };
 
-        // 4. Cache store
+        // 4. Cache store with bounded eviction
         if is_cacheable {
+            if self.cache.len() >= MAX_CACHE_ENTRIES {
+                // Remove oldest 25% to avoid unbounded growth
+                let evict_count = MAX_CACHE_ENTRIES / 4;
+                let keys: Vec<_> = self.cache.keys().take(evict_count).cloned().collect();
+                for k in keys { self.cache.remove(&k); }
+            }
             let serialized = value.to_string();
             self.cache.insert(cache_key, serialized);
         }
@@ -280,7 +289,7 @@ impl ToolExecutor {
             content: None,
             language: None,
             query: None,
-        })?;
+        }).await?;
 
         if resp.ok {
             Ok(resp.data)
@@ -309,7 +318,7 @@ impl ToolExecutor {
                         command: "shell".to_string(),
                         args: vec![format!("mkdir -p {}", dir)],
                         cwd: None,
-                    })?;
+                    }).await?;
                     if !mkdir_resp.ok {
                         return Err(anyhow!("Failed to create directory {}: {}", dir, mkdir_resp.stderr));
                     }
@@ -321,7 +330,7 @@ impl ToolExecutor {
             command: "write-file".to_string(),
             args: vec![path.to_string(), content.to_string()],
             cwd: None,
-        })?;
+        }).await?;
 
         if resp.ok {
             Ok(json!({
@@ -363,7 +372,7 @@ impl ToolExecutor {
             command: "shell".to_string(),
             args: vec![command.to_string()],
             cwd: call.args.get("cwd").and_then(|v| v.as_str()).map(String::from),
-        })?;
+        }).await?;
 
         // Check if still running (daemon returns special exit code for background)
         if resp.exit_code == -1 {

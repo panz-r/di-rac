@@ -53,7 +53,7 @@ pub async fn edit_file(
             command: "replace".to_string(),
             args: vec![path.clone(), old, new],
             cwd: None,
-        })?;
+        }).await?;
 
         results.push(if resp.ok {
             json!({ "path": path, "status": "success" })

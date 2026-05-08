@@ -30,7 +30,7 @@ pub async fn list_files(
             content: None,
             language: None,
             query: None,
-        })?;
+        }).await?;
 
         if resp.ok {
             results.push(json!({
