@@ -287,8 +287,12 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
                 if (raw[0] == '"' || raw[0] == '\'') {
                     if (rl > 2) {
                         imp.module = malloc(rl);
-                        strncpy(imp.module, raw + 1, rl - 2);
-                        imp.module[rl - 2] = '\0';
+                        if (imp.module) {
+                            strncpy(imp.module, raw + 1, rl - 2);
+                            imp.module[rl - 2] = '\0';
+                        } else {
+                            imp.module = strdup("");
+                        }
                     } else {
                         imp.module = strdup("");
                     }
@@ -306,9 +310,12 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
                     imports = tmp;
                     cap = new_cap;
                 }
-                imp.names = realloc(imp.names, sizeof(char*) * (imp.names_count + 1));
-                if (!imp.names) { imp.names_count = 0; /* continue — already added count */ }
-                imp.names[imp.names_count++] = get_node_text(cap_node.node, ps->source);
+                void *tmp = realloc(imp.names, sizeof(char*) * (imp.names_count + 1));
+                if (!tmp) { error_code = -1; }
+                else {
+                    imp.names = tmp;
+                    imp.names[imp.names_count++] = get_node_text(cap_node.node, ps->source);
+                }
             }
         }
         if (valid) {
