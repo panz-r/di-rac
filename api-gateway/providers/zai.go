@@ -251,12 +251,16 @@ func (h *ZAIHandler) resolveBaseURL(req *Request) string {
 }
 
 func (h *ZAIHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
-	h.inner.config.BaseURL = h.resolveBaseURL(req)
+	if req.Provider.BaseURL == "" {
+		req.Provider.BaseURL = h.resolveBaseURL(req)
+	}
 	return h.inner.Send(ctx, req)
 }
 
 func (h *ZAIHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	h.inner.config.BaseURL = h.resolveBaseURL(req)
+	if req.Provider.BaseURL == "" {
+		req.Provider.BaseURL = h.resolveBaseURL(req)
+	}
 	return h.inner.Stream(ctx, req, callback)
 }
 

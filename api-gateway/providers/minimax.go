@@ -462,5 +462,10 @@ func (h *MiniMaxHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]
 	return h.inner.ListModels(ctx, cfg)
 }
 
+func (h *MiniMaxHandler) ValidateSettings(settings map[string]interface{}, thinking *ThinkingConfig) *ValidateSettingsResult {
+	return BaseValidateSettings(h.Capabilities(), settings, thinking)
+}
+
 var _ ModelLister = (*MiniMaxHandler)(nil)
 var _ CapableHandler = (*MiniMaxHandler)(nil)
+var _ SettingsValidator = (*MiniMaxHandler)(nil)
