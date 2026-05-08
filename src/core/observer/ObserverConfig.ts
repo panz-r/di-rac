@@ -52,6 +52,19 @@ export interface ObserverConfig {
     proceduralMonotonicityEnabled: boolean
     astGuidedMemoryEnabled: boolean
     adaptiveCooldownEnabled: boolean
+    
+    // Weights for SQS
+    sqsWeights: {
+        diffusion: number
+        eeRatio: number
+        dcr: number
+        cps: number
+        monotonicity: number
+    }
+
+	// Phase 8: Resource Guarding
+	latencyBudgetMs: number
+	memoryCapTokens: number
 }
 
 export interface ObservationEntry {
@@ -64,6 +77,90 @@ export interface ObservationEntry {
 	criticAction?: CriticAction
 	sqs?: number // Search Quality Score (Zheng et al. 2026)
 	fidelity?: SkeletonFidelity
+    
+    // Key-Value Skeleton (CodeMEM 2026)
+    key?: {
+        signature: string
+        apisCalled: string[]
+        apisDefined: string[]
+        docstringHash: string
+    }
+}
+
+export interface ObserverMetrics {
+	sqsComponents: {
+		diffusion: number
+		eeRatio: number
+		dcr: number
+		cps: number
+		monotonicity: number
+	}
+	interventionTrigger: {
+		structuralOnly: boolean
+		userOnly: boolean
+		combined: boolean
+		confidenceCalibrated: number
+	}
+	forgettingEvents: {
+		detected: number
+		falsePositive: number
+		resolvedByIntervention: number
+		ifrScore: number
+	}
+	tokenEfficiency: {
+		layer1CompressionRatio: number
+		s2ValueLoads: number
+		retrievalStageUsed: 1 | 2 | 3
+	}
+}
+
+export function buildObserverConfig(settings: {
+	observerEnabled: boolean
+	observerProvider?: string
+	observerModelId?: string
+	observerTurns: number
+	observerCriticFrequency?: number
+	observerVerbose?: boolean
+	observerTokenThreshold: number
+	observerBufferActivation: number
+	observerBlockAfter: number
+	observerReflectionEnabled: boolean
+	observerReflectionTokenThreshold: number
+}): ObserverConfig {
+	return {
+		enabled: settings.observerEnabled,
+		provider: settings.observerProvider,
+		modelId: settings.observerModelId,
+		observerTurns: settings.observerTurns,
+		criticFrequency: settings.observerCriticFrequency || 6,
+		tokenThreshold: settings.observerTokenThreshold,
+		bufferActivation: settings.observerBufferActivation,
+		blockAfter: settings.observerBlockAfter,
+		reflectionEnabled: settings.observerReflectionEnabled,
+		reflectionTokenThreshold: settings.observerReflectionTokenThreshold,
+		confidenceThreshold: 0.5,
+		reflectionCooldown: 4,
+		verbose: settings.observerVerbose || false,
+		tauWatcher: 7,
+		tauCritic: 15,
+		permissiveBufferSize: 2,
+		tierThresholds: {
+			sqs: [0.3, 0.32, 0.35, 0.4],
+			confidence: [0.5, 0.55, 0.6, 0.7],
+		},
+        proceduralMonotonicityEnabled: true,
+        astGuidedMemoryEnabled: true,
+        adaptiveCooldownEnabled: true,
+        sqsWeights: {
+            diffusion: 0.30,
+            eeRatio: 0.25,
+            dcr: 0.20,
+            cps: 0.15,
+            monotonicity: 0.10
+        },
+		latencyBudgetMs: 200,
+		memoryCapTokens: 15000,
+	}
 }
 
 /**
@@ -145,43 +242,3 @@ RULES:
 2. Preserve all 📕 (critical) details.
 3. Output ONLY the structured context document.
 `
-
-export function buildObserverConfig(settings: {
-	observerEnabled: boolean
-	observerProvider?: string
-	observerModelId?: string
-	observerTurns: number
-	observerCriticFrequency?: number
-	observerVerbose?: boolean
-	observerTokenThreshold: number
-	observerBufferActivation: number
-	observerBlockAfter: number
-	observerReflectionEnabled: boolean
-	observerReflectionTokenThreshold: number
-}): ObserverConfig {
-	return {
-		enabled: settings.observerEnabled,
-		provider: settings.observerProvider,
-		modelId: settings.observerModelId,
-		observerTurns: settings.observerTurns,
-		criticFrequency: settings.observerCriticFrequency || 6,
-		tokenThreshold: settings.observerTokenThreshold,
-		bufferActivation: settings.observerBufferActivation,
-		blockAfter: settings.observerBlockAfter,
-		reflectionEnabled: settings.observerReflectionEnabled,
-		reflectionTokenThreshold: settings.observerReflectionTokenThreshold,
-		confidenceThreshold: 0.5,
-		reflectionCooldown: 4,
-		verbose: settings.observerVerbose || false,
-		tauWatcher: 7,
-		tauCritic: 15,
-		permissiveBufferSize: 2,
-		tierThresholds: {
-			sqs: [0.3, 0.32, 0.35, 0.4],
-			confidence: [0.5, 0.55, 0.6, 0.7],
-		},
-        proceduralMonotonicityEnabled: true,
-        astGuidedMemoryEnabled: true,
-        adaptiveCooldownEnabled: true,
-	}
-}

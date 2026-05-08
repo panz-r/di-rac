@@ -1,4 +1,4 @@
-import { buildObserverConfig, type ObserverConfig, type ObservationEntry, type ObservationType, type CriticAction, type SkeletonFidelity, type LoopPattern, LANGUAGE_NORMALIZATION } from "./ObserverConfig"
+import { buildObserverConfig, type ObserverConfig, type ObservationEntry, type ObservationType, type CriticAction, type SkeletonFidelity, type LoopPattern, type ObserverMetrics, LANGUAGE_NORMALIZATION } from "./ObserverConfig"
 import { ObservationStore } from "./ObservationStore"
 import { ObserverAgent } from "./ObserverAgent"
 import { setObserverHealth } from "./index"
@@ -70,7 +70,6 @@ export class ObserverOrchestrator {
     
     // Cognitive State
     private turnsSinceLastReflection = 0
-    private actionHistory: ActionFeatures[] = []
     private lastSQS = 1.0
     private currentTier = 2
     private verboseLogs: string[] = []
@@ -78,6 +77,14 @@ export class ObserverOrchestrator {
     // Phase 6/7 State
     private retryBuffer: Map<string, RetryState> = new Map()
     private resolvedSubgoals: Set<string> = new Set() 
+    
+    // Phase 8: Metrics
+    private metrics: ObserverMetrics = {
+        sqsComponents: { diffusion: 0, eeRatio: 0, dcr: 0, cps: 0, monotonicity: 0 },
+        interventionTrigger: { structuralOnly: false, userOnly: false, combined: false, confidenceCalibrated: 0 },
+        forgettingEvents: { detected: 0, falsePositive: 0, resolvedByIntervention: 0, ifrScore: 0 },
+        tokenEfficiency: { layer1CompressionRatio: 0, s2ValueLoads: 0, retrievalStageUsed: 1 }
+    }
 
 	constructor(
 		private taskId: string,
@@ -155,11 +162,11 @@ export class ObserverOrchestrator {
         
         if (this.resolvedSubgoals.size === 0) return 1.0
         
-        // IFR = forgotten / total. We heuristic: if a previous resolution is mentioned as "failing" again.
         const forgotten = (content.match(/error\s+in\s+([a-zA-Z0-9_]+)/g) || [])
             .filter(e => this.resolvedSubgoals.has(e.split(" ").pop()!)).length
             
         const ifr = forgotten / this.resolvedSubgoals.size
+        this.metrics.forgettingEvents.ifrScore = ifr
         return 1.0 - ifr
     }
 
@@ -191,7 +198,9 @@ export class ObserverOrchestrator {
         const uniqueOutcomes = new Set(outcomes).size
         signals.push(uniqueOutcomes > 1 ? 0.8 : (outcomes[0] === "PASS" ? 0.6 : 0.1))
 
-        return 0.25 * signals[0] + 0.30 * signals[1] + 0.25 * signals[2] + 0.20 * signals[3]
+        const score = 0.25 * signals[0] + 0.30 * signals[1] + 0.25 * signals[2] + 0.20 * signals[3]
+        this.metrics.sqsComponents.cps = score
+        return score
     }
 
     private async computeDCR(history: DiracStorageMessage[]): Promise<number> {
@@ -206,7 +215,9 @@ export class ObserverOrchestrator {
         const normChurn = this.normalizedASTChurn(lastAction?.lang || "python", churn.added + churn.removed, churn.total)
         
         const coverage = filesTouched.size / 5
-        return coverage * Math.min(normChurn / 2, 1.0)
+        const score = coverage * Math.min(normChurn / 2, 1.0)
+        this.metrics.sqsComponents.dcr = score
+        return score
     }
 
     private async computeSQS(history: DiracStorageMessage[]): Promise<{ sqs: number; status: string }> {
@@ -220,9 +231,13 @@ export class ObserverOrchestrator {
         const dcr = await this.computeDCR(history)
         const cps = await this.computeCPS(history)
 
-        // SQS = 0.30×(1-diffusion) + 0.25×EE + 0.20×DCR + 0.15×CPS + 0.10×monotonicity
-        const sqs = 0.30 * (1 - diffusion) + 0.25 * eeRatio + 0.20 * dcr + 0.15 * cps + 0.10 * mono
+        const w = this.config.sqsWeights
+        const sqs = w.diffusion * (1 - diffusion) + w.eeRatio * eeRatio + w.dcr * dcr + w.cps * cps + w.monotonicity * mono
         
+        this.metrics.sqsComponents.diffusion = diffusion
+        this.metrics.sqsComponents.eeRatio = eeRatio
+        this.metrics.sqsComponents.monotonicity = mono
+
         let status = "FOCUSED"
         const trigger = this.config.tierThresholds.sqs[this.currentTier]
         if (sqs < trigger) status = "STAGNATING"
@@ -253,12 +268,12 @@ export class ObserverOrchestrator {
         const errorSigs = toolResults.map(m => JSON.stringify(m.content).substring(0, 50))
         const uniqueErrors = new Set(errorSigs).size
 
-        // Instruction-similarity filtering (CodeMEM Eq 8)
         const instSim = this.getInstructionSimilarity(actions[2].instruction, actions[0].instruction)
         if (instSim > 0.95 && actions[2].file === actions[0].file) {
              const churn0 = actions[0].astDeltaNodes || 0
              const churn2 = actions[2].astDeltaNodes || 0
              if (churn0 > 0 && churn2 < 0 && Math.abs(churn0 + churn2) < 2) {
+                 this.metrics.forgettingEvents.detected++
                  return "STUCK_WITH_FORGETTING"
              }
         }
@@ -275,7 +290,6 @@ export class ObserverOrchestrator {
     private getInstructionSimilarity(a?: string, b?: string): number {
         if (!a || !b) return 0
         if (a === b) return 1.0
-        // Heuristic: common words
         const wordsA = new Set(a.split(" "))
         const wordsB = new Set(b.split(" "))
         const intersect = new Set([...wordsA].filter(x => wordsB.has(x))).size
@@ -331,11 +345,36 @@ export class ObserverOrchestrator {
         return baseConf * Math.exp(-turnsSince / tau)
     }
 
-    private getAdaptiveCooldown(status: string, lastError: string | null): number {
+    private getAdaptiveCooldown(status: string, lastError: string | null, history: DiracStorageMessage[]): number {
         let cd = this.config.reflectionCooldown
-        if (status === "EXPLORING") cd += 2
+        
+        // Task-scope adaptive cooldown (Singh et al. 2025)
+        const filesTouched = new Set(history.slice(-20).filter(m => m.role === "assistant").map(m => {
+             const c = JSON.stringify(m.content)
+             return c.match(/path":\s*"([^"]+)"/)?.[1] || "global"
+        })).size
+        
+        if (filesTouched > 3) cd += 2 // repository wide sweep
+        else if (filesTouched <= 1) cd = Math.max(2, cd - 2) // local fix
+
+        if (status === "EXPLORING") cd += 1
         if (lastError?.includes("syntax")) cd = Math.max(2, cd - 1)
+        
         return cd
+    }
+
+    private computePauseWeight(duration: number, context: { afterError: boolean; afterWatcher: boolean; commandEntropy: number; astContradiction: boolean }): number {
+        let base = 0.02
+        if (duration > 12) base *= 2.5
+        else if (duration > 8) base *= 2.0
+        else if (duration > 5) base *= 1.5
+
+        if (context.afterError) base *= 2.0
+        if (context.afterWatcher) base *= 3.0
+        if (context.commandEntropy > 0.6) return base * 0.3
+        if (context.astContradiction) base *= 1.8
+        
+        return Math.min(base, 0.10)
     }
 
 	async onTurnComplete(history: DiracStorageMessage[]): Promise<void> {
@@ -343,19 +382,18 @@ export class ObserverOrchestrator {
         this.turnsSinceLastReflection++
         this.currentTier = this.detectTier(history)
 
+        const startTime = Date.now()
 		const { sqs, status } = await this.computeSQS(history)
 		this.lastSQS = sqs
         
         const loopPattern = await this.classifyLoopPattern(history)
 
-        // 1. WATCHER (S1)
 		if (history.length % this.config.observerTurns === 0 || status === "STAGNATING" || loopPattern === "STUCK_WITH_FORGETTING") {
 			this.triggerSpecializedObservation(history, "watcher")
 		}
 
-		// 2. CRITIC (S2)
         const lastError = history.filter(m => m.role === "tool").pop()?.content as string
-        const dynamicCooldown = this.getAdaptiveCooldown(status, lastError)
+        const dynamicCooldown = this.getAdaptiveCooldown(status, lastError, history)
 
 		if (history.length % this.config.criticFrequency === 0 && this.turnsSinceLastReflection >= dynamicCooldown) {
             const sqsTrigger = this.config.tierThresholds.sqs[this.currentTier]
@@ -364,7 +402,6 @@ export class ObserverOrchestrator {
             }
 		}
 
-		// 3. SUMMARIZER / SKELETON
 		const unobserved = this.getUnobservedMessages(history)
 		if (unobserved.length >= 4) {
 			const tokenEstimate = Math.ceil(JSON.stringify(unobserved).length / 4)
@@ -378,6 +415,11 @@ export class ObserverOrchestrator {
 		}
 
 		this.checkReflection()
+
+        const elapsed = Date.now() - startTime
+        if (elapsed > this.config.latencyBudgetMs) {
+            this.log(`Latency budget exceeded: ${elapsed}ms > ${this.config.latencyBudgetMs}ms`)
+        }
 	}
 
 	private async runSummarizerSync(history: DiracStorageMessage[], tokenEstimate: number): Promise<void> {
@@ -440,6 +482,20 @@ export class ObserverOrchestrator {
                     if (actionMatch) criticAction = actionMatch[1] as CriticAction
                 }
 
+                let keyMetadata = undefined
+                if (type === "skeleton") {
+                    const analyzer = this.getAnalyzerClient?.()
+                    if (analyzer) {
+                        const apis = await analyzer.extractApis(text, "python")
+                        keyMetadata = {
+                            signature: "TODO_EXTRACT_PRIMARY_SIG",
+                            apisCalled: apis.calls,
+                            apisDefined: apis.definitions,
+                            docstringHash: "TODO_HASH"
+                        }
+                    }
+                }
+
 				const entry: ObservationEntry = {
 					timestamp: Date.now(),
 					type,
@@ -449,7 +505,8 @@ export class ObserverOrchestrator {
                     confidence,
                     criticAction,
                     sqs: this.lastSQS,
-                    fidelity: type === "skeleton" ? "full" : undefined
+                    fidelity: type === "skeleton" ? "full" : undefined,
+                    key: keyMetadata
 				}
 
 				await this.store.append(entry)
@@ -484,6 +541,8 @@ export class ObserverOrchestrator {
 		if (this.pendingTasks.size > 2) return
 
 		const observationTokens = this.store.estimateTokenCount()
+        this.metrics.tokenEfficiency.layer1CompressionRatio = observationTokens / this.config.memoryCapTokens
+
 		if (observationTokens < this.config.reflectionTokenThreshold) return
 
 		this.triggerReflection()
@@ -525,9 +584,6 @@ export class ObserverOrchestrator {
 		this.pendingTasks.add(promise)
 	}
 
-    /**
-     * API-Intersection Filtering (CodeMEM 2026).
-     */
     private async filterMemoryByApi(history: DiracStorageMessage[], observationBlock: string): Promise<string> {
         const analyzer = this.getAnalyzerClient?.()
         if (!analyzer || !this.config.astGuidedMemoryEnabled) return observationBlock
@@ -536,16 +592,19 @@ export class ObserverOrchestrator {
         if (!lastAssistantMsg) return observationBlock
 
         const content = JSON.stringify(lastAssistantMsg.content)
-        const ext = "python" // Placeholder
+        const ext = "python"
         const apis = await analyzer.extractApis(content, ext)
         
-        // Simple intersection check: keep observations that mention called APIs
         const lines = observationBlock.split("\n")
         const relevantLines = lines.filter(line => {
             return apis.calls.some(call => line.includes(call)) || apis.definitions.some(def => line.includes(def))
         })
 
-        return relevantLines.length > 5 ? relevantLines.join("\n") : observationBlock
+        if (relevantLines.length > 5) {
+            this.metrics.tokenEfficiency.retrievalStageUsed = 1
+            return relevantLines.join("\n")
+        }
+        return observationBlock
     }
 
 	async prepareContext(history: DiracStorageMessage[]): Promise<PrepareContextResult> {
@@ -592,6 +651,8 @@ export class ObserverOrchestrator {
             if (decayed >= Math.min(0.7, minConfidence + 0.1) && (hasStructuralSignal || mono < 0.85)) {
                 result.interruptReason = latestCritic.observationText
                 result.criticAction = latestCritic.criticAction
+                this.metrics.interventionTrigger.confidenceCalibrated = decayed
+                this.metrics.interventionTrigger.combined = true
             }
         }
 
@@ -608,7 +669,7 @@ export class ObserverOrchestrator {
 	}
 
 	async recall(query: string): Promise<string> {
-        if (query === "--stats") return JSON.stringify(this.costTracker.getSummary())
+        if (query === "--stats") return JSON.stringify(this.metrics, null, 2)
 
         const analyzer = this.getAnalyzerClient?.()
         if (analyzer) {
@@ -647,7 +708,7 @@ export class ObserverOrchestrator {
 		if (unobserved.length < 2) return
 
 		const sliceStart = Math.max(this.lastObservedMessageIndex, 2)
-		const tokenEstimate = this.estimateTokens(unobserved)
+		const tokenEstimate = Math.ceil(JSON.stringify(unobserved).length / 4)
 
 		try {
 			const observationText = await this.agent.observe(unobserved, "summary")
