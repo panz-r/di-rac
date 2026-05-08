@@ -253,7 +253,14 @@ void db_search_symbols(IndexDB *db, const char *query, const char *kind_filter, 
               "WHERE s.name LIKE ? LIMIT ?";
     }
 
-    sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        jsonw_key(w, "results");
+        jsonw_array_open(w);
+        jsonw_array_close(w);
+        jsonw_key(w, "ok");
+        jsonw_bool(w, 0);
+        return;
+    }
     sqlite3_bind_text(stmt, 1, pattern, -1, SQLITE_TRANSIENT);
     if (kind_filter) {
         sqlite3_bind_text(stmt, 2, kind_filter, -1, SQLITE_TRANSIENT);
