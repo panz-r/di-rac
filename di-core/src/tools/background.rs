@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum CommandStatus {
@@ -26,6 +26,12 @@ pub struct BackgroundCommandTracker {
     commands: Mutex<HashMap<String, BackgroundCommand>>,
 }
 
+impl Default for BackgroundCommandTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BackgroundCommandTracker {
     pub fn new() -> Self {
         Self {
@@ -33,35 +39,36 @@ impl BackgroundCommandTracker {
         }
     }
 
-    pub fn track(&self, cmd: BackgroundCommand) {
-        self.commands.lock().unwrap().insert(cmd.id.clone(), cmd);
+    pub async fn track(&self, cmd: BackgroundCommand) {
+        self.commands.lock().await.insert(cmd.id.clone(), cmd);
     }
 
-    pub fn update_status(&self, id: &str, status: CommandStatus, exit_code: Option<i32>) {
-        if let Some(cmd) = self.commands.lock().unwrap().get_mut(id) {
+    pub async fn update_status(&self, id: &str, status: CommandStatus, exit_code: Option<i32>) {
+        let mut guard = self.commands.lock().await;
+        if let Some(cmd) = guard.get_mut(id) {
             cmd.status = status;
             cmd.exit_code = exit_code;
         }
     }
 
-    pub fn get(&self, id: &str) -> Option<BackgroundCommand> {
-        self.commands.lock().unwrap().get(id).cloned()
+    pub async fn get(&self, id: &str) -> Option<BackgroundCommand> {
+        self.commands.lock().await.get(id).cloned()
     }
 
-    pub fn get_running(&self) -> Vec<BackgroundCommand> {
+    pub async fn get_running(&self) -> Vec<BackgroundCommand> {
         self.commands
             .lock()
-            .unwrap()
+            .await
             .values()
             .filter(|c| c.status == CommandStatus::Running)
             .cloned()
             .collect()
     }
 
-    pub fn count_running(&self) -> usize {
+    pub async fn count_running(&self) -> usize {
         self.commands
             .lock()
-            .unwrap()
+            .await
             .values()
             .filter(|c| c.status == CommandStatus::Running)
             .count()
@@ -69,8 +76,8 @@ impl BackgroundCommandTracker {
 
     /// Formatted summary for prompt injection. Includes command IDs so the
     /// model can reference them with TaskOutput after context management.
-    pub fn get_summary(&self) -> Option<String> {
-        let running = self.get_running();
+    pub async fn get_summary(&self) -> Option<String> {
+        let running = self.get_running().await;
         if running.is_empty() {
             return None;
         }
@@ -87,8 +94,9 @@ impl BackgroundCommandTracker {
         Some(lines.join("\n"))
     }
 
-    pub fn cancel(&self, id: &str) -> bool {
-        if let Some(cmd) = self.commands.lock().unwrap().get_mut(id) {
+    pub async fn cancel(&self, id: &str) -> bool {
+        let mut guard = self.commands.lock().await;
+        if let Some(cmd) = guard.get_mut(id) {
             if cmd.status == CommandStatus::Running {
                 cmd.status = CommandStatus::Cancelled;
                 return true;

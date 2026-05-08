@@ -188,7 +188,7 @@ impl AgentEngine {
         }
 
         // 3. Build prompt with environment and file context
-        let bg_summary = self.background_tracker.get_summary();
+        let bg_summary = self.background_tracker.get_summary().await;
         let env_details = self.environment.get_details().map(String::from);
         let file_ctx = self.file_context.get_summary();
         let file_ctx_ref = if file_ctx.is_empty() { None } else { Some(file_ctx.as_str()) };
@@ -444,7 +444,7 @@ impl AgentEngine {
                         return Ok(tools.len());
                     } else if result.get("compact").and_then(|v| v.as_bool()).unwrap_or(false) {
                         let summary = result.get("summary").and_then(|v| v.as_str()).unwrap_or("");
-                        self.perform_compaction(summary)?;
+                        self.perform_compaction(summary).await?;
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
                             result: json!({ "status": "compacted" }),
@@ -471,9 +471,9 @@ impl AgentEngine {
         Ok(tools.len())
     }
 
-    fn perform_compaction(&mut self, summary: &str) -> Result<()> {
+    async fn perform_compaction(&mut self, summary: &str) -> Result<()> {
         let mut continuation = ContextManager::continuation_prompt(summary);
-        if let Some(bg) = self.background_tracker.get_summary() {
+        if let Some(bg) = self.background_tracker.get_summary().await {
             continuation.push_str(&format!("\n\n{}", bg));
         }
         self.trajectory.truncate_with_continuation(continuation);

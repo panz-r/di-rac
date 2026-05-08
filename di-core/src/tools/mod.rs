@@ -338,7 +338,7 @@ impl ToolExecutor {
             .unwrap_or(300_000);
 
         // Check if we're at background command capacity
-        let running = self.background_tracker.count_running();
+        let running = self.background_tracker.count_running().await;
         if running >= 8 {
             return Ok(json!({
                 "status": "error",
@@ -365,7 +365,7 @@ impl ToolExecutor {
                 status: CommandStatus::Running,
                 log_path: log_path.clone(),
                 exit_code: None,
-            });
+            }).await;
 
             return Ok(json!({
                 "id": id,
@@ -383,7 +383,7 @@ impl ToolExecutor {
     }
 
     async fn await_background_command(&self, id: &str) -> Result<serde_json::Value> {
-        match self.background_tracker.get(id) {
+        match self.background_tracker.get(id).await {
             Some(cmd) => {
                 match cmd.status {
                     CommandStatus::Running => {
