@@ -1,6 +1,6 @@
 use crate::daemons::{AnalyzerRequest, AnalyzerResponse, UnixDaemonClient};
 use crate::tools::ToolCall;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde_json::json;
 use std::sync::Arc;
 

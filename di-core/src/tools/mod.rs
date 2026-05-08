@@ -345,7 +345,7 @@ impl ToolExecutor {
         let command = call.args.get("command").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing command argument"))?;
 
-        let timeout_ms: i64 = call.args.get("timeout")
+        let _timeout_ms: i64 = call.args.get("timeout")
             .and_then(|v| v.as_i64())
             .unwrap_or(300_000);
 

@@ -6,10 +6,10 @@ use crate::observer::Observer;
 use crate::context::ContextManager;
 use crate::daemons::{
     UnixDaemonClient, GatewayStreamClient, GatewayRequest, GatewayMessage,
-    CentralRequest, CentralResponse, StreamChunk,
+    CentralRequest, CentralResponse,
 };
 use crate::protocol::{CoreEvent, FrontendMessage};
-use crate::tools::{ToolExecutor, ToolCall, ToolCoordinator};
+use crate::tools::{ToolExecutor, ToolCoordinator};
 use crate::tools::background::BackgroundCommandTracker;
 use crate::tools::approval::ApprovalManager;
 use anyhow::{Result, anyhow};
@@ -250,7 +250,7 @@ impl AgentEngine {
         // 6. Accumulate streaming response
         let mut full_text = String::new();
         let mut tool_accumulator = StreamingToolAccumulator::new();
-        let mut usage_total: Option<crate::daemons::Usage> = None;
+        let mut _usage_total: Option<crate::daemons::Usage> = None;
 
         while let Some(result) = chunk_rx.recv().await {
             if self.is_aborted() {
@@ -291,7 +291,7 @@ impl AgentEngine {
                 }
                 "stop" => {
                     if let Some(usage) = &chunk.usage {
-                        usage_total = Some(usage.clone());
+                        _usage_total = Some(usage.clone());
                     }
                 }
                 "complete" => break,
@@ -539,7 +539,7 @@ impl MultiAgentOrchestrator {
 
     pub fn spawn_agent(&mut self, task: String) -> Uuid {
         let id = Uuid::new_v4();
-        let mut agent = AgentEngine::new(
+        let agent = AgentEngine::new(
             id,
             self.analyzer_client.clone(),
             self.command_client.clone(),

@@ -22,7 +22,7 @@ pub async fn search_files(
         })
         .unwrap_or_else(|| vec![".".to_string()]);
 
-    let context_lines = call.args.get("context_lines")
+    let _context_lines = call.args.get("context_lines")
         .and_then(|v| v.as_u64())
         .unwrap_or(3);
 
