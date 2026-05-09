@@ -133,7 +133,6 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		label: "Together",
 		modelIdKeySuffix: "TogetherModelId",
 		apiKeyFields: "togetherApiKey",
-		defaultModelId: openRouterDefaultModelId,
 	},
 	{
 		providerId: "qwen",
