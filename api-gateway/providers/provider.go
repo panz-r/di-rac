@@ -493,6 +493,8 @@ func (r *Registry) registerProviders() {
 	r.Register("xiaomi_mimo", NewXiaomiMimoHandler(), ProviderMeta{ID: "xiaomi_mimo", Label: "Xiaomi MiMo"})
 	r.Register("synthetic", NewSyntheticHandler(), ProviderMeta{ID: "synthetic", Label: "Synthetic"})
 	r.Register("wafer", NewWaferHandler(), ProviderMeta{ID: "wafer", Label: "Wafer"})
+	r.Register("venice", NewVeniceHandler(), ProviderMeta{ID: "venice", Label: "Venice AI"})
+	r.Register("inference_net", NewInferenceNetHandler(), ProviderMeta{ID: "inference_net", Label: "Inference.net"})
 }
 
 // ValidateRequest validates a request before processing

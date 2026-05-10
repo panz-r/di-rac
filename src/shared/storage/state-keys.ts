@@ -117,6 +117,10 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	planModeHuggingFaceModelInfo: { default: undefined as ModelInfo | undefined },
 	planModeNvidiaNimModelId: { default: undefined as string | undefined },
 	nvidiaNimBaseUrl: { default: "https://integrate.api.nvidia.com/v1" as string },
+	planModeSyntheticModelId: { default: undefined as string | undefined },
+	planModeWaferModelId: { default: undefined as string | undefined },
+	planModeVeniceModelId: { default: undefined as string | undefined },
+	planModeInferenceNetModelId: { default: undefined as string | undefined },
 
 	// Act mode configurations
 	actModeApiModelId: { default: undefined as string | undefined },
@@ -141,6 +145,10 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	actModeHuggingFaceModelId: { default: undefined as string | undefined },
 	actModeHuggingFaceModelInfo: { default: undefined as ModelInfo | undefined },
 	actModeNvidiaNimModelId: { default: undefined as string | undefined },
+	actModeSyntheticModelId: { default: undefined as string | undefined },
+	actModeWaferModelId: { default: undefined as string | undefined },
+	actModeVeniceModelId: { default: undefined as string | undefined },
+	actModeInferenceNetModelId: { default: undefined as string | undefined },
 
 	// Model-specific settings
 	planModeApiProvider: { default: DEFAULT_API_PROVIDER as ApiProvider },
@@ -265,6 +273,8 @@ const SECRETS_KEYS = [
 	"xiaomiMimoApiKey",
 	"syntheticApiKey",
 	"waferApiKey",
+	"veniceApiKey",
+	"inferenceNetApiKey",
 ] as const
 
 // WARNING, these are not ALL of the local state keys in practice. For example, FileContextTracker

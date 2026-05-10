@@ -20,6 +20,8 @@ import {
 	xaiDefaultModelId,
 	syntheticDefaultModelId,
 	waferDefaultModelId,
+	veniceDefaultModelId,
+	inferenceNetDefaultModelId,
 } from "../api"
 import type { ModelRole } from "../roles"
 import type { Secrets, SettingsKey } from "../storage/state-keys"
@@ -255,6 +257,20 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		modelIdKeySuffix: "WaferModelId",
 		apiKeyFields: "waferApiKey",
 		defaultModelId: waferDefaultModelId,
+	},
+	{
+		providerId: "venice",
+		label: "Venice AI",
+		modelIdKeySuffix: "VeniceModelId",
+		apiKeyFields: "veniceApiKey",
+		defaultModelId: veniceDefaultModelId,
+	},
+	{
+		providerId: "inference_net",
+		label: "Inference.net",
+		modelIdKeySuffix: "InferenceNetModelId",
+		apiKeyFields: "inferenceNetApiKey",
+		defaultModelId: inferenceNetDefaultModelId,
 	},
 ]
 

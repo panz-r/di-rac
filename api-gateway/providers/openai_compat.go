@@ -30,6 +30,9 @@ type OpenAICompatConfig struct {
 	// ModifyRequest is called after the standard request is built.
 	// Use it to add provider-specific params (e.g. reasoning_format, drop_params).
 	ModifyRequest func(req *Request, result map[string]interface{})
+	// ModifyHeaders is called after standard headers are set.
+	// Use it to add per-request headers based on settings (e.g. Catalyst proxy).
+	ModifyHeaders func(httpReq *http.Request, req *Request)
 	// ModifyMessages is called on the converted messages before building the request.
 	// Use it for R1-format transforms, addReasoningContent, etc.
 	ModifyMessages func(messages []map[string]interface{}, req *Request) []map[string]interface{}
@@ -69,7 +72,7 @@ func (h *openaiCompatHandler) Send(ctx context.Context, req *Request) (*SendResu
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	h.setHeaders(httpReq, apiKey)
+	h.setHeaders(httpReq, apiKey, req)
 
 	resp, err := h.httpClient.Do(httpReq)
 	if err != nil {
@@ -109,7 +112,7 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	h.setHeaders(httpReq, apiKey)
+	h.setHeaders(httpReq, apiKey, req)
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Cache-Control", "no-cache")
 
@@ -147,13 +150,16 @@ func (h *openaiCompatHandler) resolveConfig(req *Request) (baseURL, apiKey strin
 	return
 }
 
-func (h *openaiCompatHandler) setHeaders(httpReq *http.Request, apiKey string) {
+func (h *openaiCompatHandler) setHeaders(httpReq *http.Request, apiKey string, req *Request) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	for k, v := range h.config.ExtraHeaders {
 		httpReq.Header.Set(k, v)
+	}
+	if h.config.ModifyHeaders != nil {
+		h.config.ModifyHeaders(httpReq, req)
 	}
 }
 

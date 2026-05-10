@@ -34,6 +34,8 @@ export type ApiProvider =
 	| "xiaomi_mimo"
 	| "synthetic"
 	| "wafer"
+	| "venice"
+	| "inference_net"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
 	"anthropic",
@@ -68,6 +70,8 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"xiaomi_mimo",
 	"synthetic",
 	"wafer",
+	"venice",
+	"inference_net",
 ]
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider
@@ -1643,6 +1647,8 @@ export const ALL_MODEL_MAPS: [ApiProvider, Record<string, ModelInfo>][] = [
 
 export const syntheticDefaultModelId = "hf:zai-org/GLM-4.7"
 export const waferDefaultModelId = "wafer.ai/DeepSeek-V4-Pro"
+export const veniceDefaultModelId = "venice-uncensored"
+export const inferenceNetDefaultModelId = "google/gemma-3-27b-instruct/bf-16"
 
 /**
  * Gets the provider for a given model ID based on hardcoded model maps.
