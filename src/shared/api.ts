@@ -37,6 +37,8 @@ export type ApiProvider =
 	| "venice"
 	| "inference_net"
 	| "ovhcloud"
+	| "ollama"
+	| "replicate"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
 	"anthropic",
@@ -74,6 +76,8 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"venice",
 	"inference_net",
 	"ovhcloud",
+	"ollama",
+	"replicate",
 ]
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider
@@ -1652,6 +1656,8 @@ export const waferDefaultModelId = "wafer.ai/DeepSeek-V4-Pro"
 export const veniceDefaultModelId = "venice-uncensored"
 export const inferenceNetDefaultModelId = "google/gemma-3-27b-instruct/bf-16"
 export const ovhcloudDefaultModelId = "gpt-oss-120b"
+export const ollamaDefaultModelId = "llama3.2"
+export const replicateDefaultModelId = "meta/llama-3-70b-instruct"
 
 /**
  * Gets the provider for a given model ID based on hardcoded model maps.

@@ -23,6 +23,8 @@ import {
 	veniceDefaultModelId,
 	inferenceNetDefaultModelId,
 	ovhcloudDefaultModelId,
+	ollamaDefaultModelId,
+	replicateDefaultModelId,
 } from "../api"
 import type { ModelRole } from "../roles"
 import type { Secrets, SettingsKey } from "../storage/state-keys"
@@ -279,6 +281,22 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		modelIdKeySuffix: "OvhcloudModelId",
 		apiKeyFields: "ovhcloudApiKey",
 		defaultModelId: ovhcloudDefaultModelId,
+	},
+	{
+		providerId: "ollama",
+		label: "Ollama",
+		modelIdKeySuffix: "OllamaModelId",
+		apiKeyFields: "ollamaApiKey",
+		defaultModelId: ollamaDefaultModelId,
+		isConfiguredOverride: (c) =>
+			!!(c.ollamaApiKey || c.planModeOllamaModelId || c.actModeOllamaModelId),
+	},
+	{
+		providerId: "replicate",
+		label: "Replicate",
+		modelIdKeySuffix: "ReplicateModelId",
+		apiKeyFields: "replicateApiKey",
+		defaultModelId: replicateDefaultModelId,
 	},
 ]
 
