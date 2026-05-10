@@ -491,6 +491,8 @@ func (r *Registry) registerProviders() {
 	r.Register("byteplus_coding_plan", NewBytePlusCodingPlanHandler(), ProviderMeta{ID: "byteplus_coding_plan", Label: "BytePlus Coding Plan"})
 	r.Register("openai_codex", NewOpenAICodexHandler(), ProviderMeta{ID: "openai_codex", Label: "OpenAI Codex"})
 	r.Register("xiaomi_mimo", NewXiaomiMimoHandler(), ProviderMeta{ID: "xiaomi_mimo", Label: "Xiaomi MiMo"})
+	r.Register("synthetic", NewSyntheticHandler(), ProviderMeta{ID: "synthetic", Label: "Synthetic"})
+	r.Register("wafer", NewWaferHandler(), ProviderMeta{ID: "wafer", Label: "Wafer"})
 }
 
 // ValidateRequest validates a request before processing

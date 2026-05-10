@@ -32,6 +32,8 @@ export type ApiProvider =
 	| "byteplus_coding_plan"
 	| "openai_codex"
 	| "xiaomi_mimo"
+	| "synthetic"
+	| "wafer"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
 	"anthropic",
@@ -64,6 +66,8 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"byteplus_coding_plan",
 	"openai_codex",
 	"xiaomi_mimo",
+	"synthetic",
+	"wafer",
 ]
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider
@@ -1636,6 +1640,9 @@ export const ALL_MODEL_MAPS: [ApiProvider, Record<string, ModelInfo>][] = [
 	["fireworks", fireworksModels],
 	["minimax", minimaxModels],
 ]
+
+export const syntheticDefaultModelId = "hf:zai-org/GLM-4.7"
+export const waferDefaultModelId = "wafer.ai/DeepSeek-V4-Pro"
 
 /**
  * Gets the provider for a given model ID based on hardcoded model maps.

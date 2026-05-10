@@ -18,6 +18,8 @@ import {
 	moonshotDefaultModelId,
 	openRouterDefaultModelId,
 	xaiDefaultModelId,
+	syntheticDefaultModelId,
+	waferDefaultModelId,
 } from "../api"
 import type { ModelRole } from "../roles"
 import type { Secrets, SettingsKey } from "../storage/state-keys"
@@ -239,6 +241,20 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		label: "Xiaomi MiMo",
 		apiKeyFields: "xiaomiMimoApiKey",
 		defaultModelId: "mimo-v2.5-pro",
+	},
+	{
+		providerId: "synthetic",
+		label: "Synthetic",
+		modelIdKeySuffix: "SyntheticModelId",
+		apiKeyFields: "syntheticApiKey",
+		defaultModelId: syntheticDefaultModelId,
+	},
+	{
+		providerId: "wafer",
+		label: "Wafer",
+		modelIdKeySuffix: "WaferModelId",
+		apiKeyFields: "waferApiKey",
+		defaultModelId: waferDefaultModelId,
 	},
 ]
 
