@@ -121,6 +121,7 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	planModeWaferModelId: { default: undefined as string | undefined },
 	planModeVeniceModelId: { default: undefined as string | undefined },
 	planModeInferenceNetModelId: { default: undefined as string | undefined },
+	planModeOvhcloudModelId: { default: undefined as string | undefined },
 
 	// Act mode configurations
 	actModeApiModelId: { default: undefined as string | undefined },
@@ -149,6 +150,7 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	actModeWaferModelId: { default: undefined as string | undefined },
 	actModeVeniceModelId: { default: undefined as string | undefined },
 	actModeInferenceNetModelId: { default: undefined as string | undefined },
+	actModeOvhcloudModelId: { default: undefined as string | undefined },
 
 	// Model-specific settings
 	planModeApiProvider: { default: DEFAULT_API_PROVIDER as ApiProvider },
@@ -275,6 +277,7 @@ const SECRETS_KEYS = [
 	"waferApiKey",
 	"veniceApiKey",
 	"inferenceNetApiKey",
+	"ovhcloudApiKey",
 ] as const
 
 // WARNING, these are not ALL of the local state keys in practice. For example, FileContextTracker

@@ -22,6 +22,7 @@ import {
 	waferDefaultModelId,
 	veniceDefaultModelId,
 	inferenceNetDefaultModelId,
+	ovhcloudDefaultModelId,
 } from "../api"
 import type { ModelRole } from "../roles"
 import type { Secrets, SettingsKey } from "../storage/state-keys"
@@ -271,6 +272,13 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		modelIdKeySuffix: "InferenceNetModelId",
 		apiKeyFields: "inferenceNetApiKey",
 		defaultModelId: inferenceNetDefaultModelId,
+	},
+	{
+		providerId: "ovhcloud",
+		label: "OVHcloud AI Endpoints",
+		modelIdKeySuffix: "OvhcloudModelId",
+		apiKeyFields: "ovhcloudApiKey",
+		defaultModelId: ovhcloudDefaultModelId,
 	},
 ]
 

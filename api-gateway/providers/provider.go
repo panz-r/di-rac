@@ -495,6 +495,7 @@ func (r *Registry) registerProviders() {
 	r.Register("wafer", NewWaferHandler(), ProviderMeta{ID: "wafer", Label: "Wafer"})
 	r.Register("venice", NewVeniceHandler(), ProviderMeta{ID: "venice", Label: "Venice AI"})
 	r.Register("inference_net", NewInferenceNetHandler(), ProviderMeta{ID: "inference_net", Label: "Inference.net"})
+	r.Register("ovhcloud", NewOVHcloudHandler(), ProviderMeta{ID: "ovhcloud", Label: "OVHcloud AI Endpoints"})
 }
 
 // ValidateRequest validates a request before processing

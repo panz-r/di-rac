@@ -36,6 +36,7 @@ export type ApiProvider =
 	| "wafer"
 	| "venice"
 	| "inference_net"
+	| "ovhcloud"
 
 export const ALL_PROVIDERS: ApiProvider[] = [
 	"anthropic",
@@ -72,6 +73,7 @@ export const ALL_PROVIDERS: ApiProvider[] = [
 	"wafer",
 	"venice",
 	"inference_net",
+	"ovhcloud",
 ]
 
 export const DEFAULT_API_PROVIDER = "openrouter" as ApiProvider
@@ -1209,7 +1211,7 @@ export const cerebrasModels = {
 // https://console.groq.com/docs/models
 // https://groq.com/pricing/
 export type GroqModelId = keyof typeof groqModels
-export const groqDefaultModelId: GroqModelId = "moonshotai/kimi-k2-instruct-0905"
+export const groqDefaultModelId: GroqModelId = "qwen/qwen3-32b"
 export const groqModels = {
 	"openai/gpt-oss-120b": {
 		maxTokens: 32766, // Model fails if you try to use more than 32K tokens
@@ -1294,7 +1296,7 @@ export const groqModels = {
 		description:
 			"Kimi K2 is Moonshot AI's state-of-the-art Mixture-of-Experts (MoE) language model with 1 trillion total parameters and 32 billion activated parameters.",
 	},
-	"moonshotai/kimi-k2-instruct-0905": {
+	"qwen/qwen3-32b": {
 		isR1FormatRequired: true,
 		supportsTools: true,
 		maxTokens: 16384,
@@ -1649,6 +1651,7 @@ export const syntheticDefaultModelId = "hf:zai-org/GLM-4.7"
 export const waferDefaultModelId = "wafer.ai/DeepSeek-V4-Pro"
 export const veniceDefaultModelId = "venice-uncensored"
 export const inferenceNetDefaultModelId = "google/gemma-3-27b-instruct/bf-16"
+export const ovhcloudDefaultModelId = "gpt-oss-120b"
 
 /**
  * Gets the provider for a given model ID based on hardcoded model maps.

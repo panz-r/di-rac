@@ -280,8 +280,10 @@ func NewVeniceHandler() *VeniceHandler {
 				if req.SettingBool("enable_x_search") {
 					vp["enable_x_search"] = true
 				}
-				if !req.SettingBool("include_venice_system_prompt") {
-					vp["include_venice_system_prompt"] = false
+				if val, ok := req.Settings["include_venice_system_prompt"]; ok {
+					if b, _ := val.(bool); !b {
+						vp["include_venice_system_prompt"] = false
+					}
 				}
 				if slug := req.SettingString("character_slug"); slug != "" {
 					vp["character_slug"] = slug
