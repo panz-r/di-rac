@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(di-vrr-central-deamon C)
+project(divrr-central-daemon C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O3 -D_GNU_SOURCE")
@@ -11,12 +11,12 @@ add_subdirectory(../draugr draugr_build)
 include_directories(../draugr/include)
 
 # Main Daemon executable
-add_executable(di-vrr-central-deamon 
-    src/main.c 
+add_executable(divrr-central-daemon
+    src/main.c
     src/trie.c
 )
 
-target_link_libraries(di-vrr-central-deamon pthread draugr)
+target_link_libraries(divrr-central-daemon pthread draugr)
 
 # Test executable
 add_executable(trie_test tests/trie_test.c src/trie.c)

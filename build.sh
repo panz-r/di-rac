@@ -36,8 +36,8 @@ cp command-daemon/build/di-rvv-cmd dist/di-rvv-cmd
 echo "    OK"
 
 echo "==> Building C central coordination daemon..."
-(cd central-deamon && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build)
-cp central-deamon/build/di-vrr-central-deamon dist/di-vrr-central-deamon
+(cd central-daemon && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build)
+cp central-daemon/build/divrr-central-daemon dist/divrr-central-daemon
 echo "    OK"
 
 echo "==> Building C analyzer daemon (tree-sitter)..."
