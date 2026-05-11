@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
+#include <unistd.h>
 
 /* --- Registry Structure --- */
 
@@ -385,7 +387,12 @@ static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf, size
 }
 
 int trie_save_persist(trie_t *trie, const char *filepath) {
-    FILE *f = fopen(filepath, "w");
+    /* Write to a temp file first, then rename atomically.
+     * This prevents a crash during save from corrupting the official persist file. */
+    char tmp_path[4096];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", filepath);
+
+    FILE *f = fopen(tmp_path, "w");
     if (!f) return -1;
 
     char path_buf[8192] = "/";
@@ -394,7 +401,14 @@ int trie_save_persist(trie_t *trie, const char *filepath) {
 
     fclose(f);
     if (truncated) {
-        fprintf(stderr, "[di-vrr] trie_save_persist: one or more paths overflowed buffer and were skipped\n");
+        unlink(tmp_path);
+        fprintf(stderr, "[di-vrr] trie_save_persist: path overflow, skipping save\n");
+        return -1;
+    }
+
+    if (rename(tmp_path, filepath) < 0) {
+        unlink(tmp_path);
+        fprintf(stderr, "[di-vrr] trie_save_persist: rename failed: %s\n", strerror(errno));
         return -1;
     }
     return 0;
