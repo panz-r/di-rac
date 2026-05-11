@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
+#include <unistd.h>
 #include "trie.h"
 
 void test_basic_locking() {
@@ -729,8 +730,46 @@ void test_config_management() {
     assert(val != NULL);
     assert(strcmp(val, "light") == 0);
     free(val);
-    
+
     trie_destroy(t);
+    printf("PASS\n");
+}
+
+void test_persistence_round_trip() {
+    printf("Testing persistence round-trip with special characters...\n");
+    trie_t *t = trie_create();
+
+    /* Set config values with special characters: quotes, backslash, pipe, equals, newline */
+    trie_set_config(t, "/path/with spaces", 10, "key\"with\"quotes", "value\nwith\nnewlines", false);
+    trie_set_config(t, "/another/path", 10, "key=equals", "val\\with\\backslashes", false);
+    trie_set_config(t, "/path/with pipes", 11, "normal", "a|b=c\\d", false);
+
+    /* Save to temp file */
+    trie_save_persist(t, "/tmp/trie_persist_test.txt");
+    trie_destroy(t);
+
+    /* Reload */
+    t = trie_create();
+    trie_load_persist(t, "/tmp/trie_persist_test.txt");
+
+    /* Verify round-trip */
+    char *val = trie_get_config(t, "/path/with spaces", 99, "key\"with\"quotes");
+    assert(val != NULL);
+    assert(strcmp(val, "value\nwith\nnewlines") == 0);
+    free(val);
+
+    val = trie_get_config(t, "/another/path", 99, "key=equals");
+    assert(val != NULL);
+    assert(strcmp(val, "val\\with\\backslashes") == 0);
+    free(val);
+
+    val = trie_get_config(t, "/path/with pipes", 99, "normal");
+    assert(val != NULL);
+    assert(strcmp(val, "a|b=c\\d") == 0);
+    free(val);
+
+    trie_destroy(t);
+    unlink("/tmp/trie_persist_test.txt");
     printf("PASS\n");
 }
 
@@ -767,6 +806,7 @@ int main() {
     test_cleanup_massive_multi_node_wakeups();
     test_massive_disconnect_wakeups();
     test_config_management();
-    printf("All 32 Trie test suites passed!\n");
+    test_persistence_round_trip();
+    printf("All 33 Trie test suites passed!\n");
     return 0;
 }
