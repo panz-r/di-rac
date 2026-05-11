@@ -494,6 +494,10 @@ static int node_grant_to_next_waiter(trie_t *trie, trie_node_t *node) {
     int next_fd = node->waiters[0];
     memmove(node->waiters, node->waiters + 1, sizeof(int) * (node->waiters_count - 1));
     node->waiters_count--;
+    if (node->waiters_count == 0) {
+        free(node->waiters);
+        node->waiters = NULL;
+    }
     unregister_node_from_fd(trie->waiting_registry, node, next_fd);
     node->owner_fd = next_fd;
     register_node_to_fd(trie->fd_registry, node, next_fd);
