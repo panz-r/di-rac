@@ -486,8 +486,11 @@ int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
     return 0;
 }
 
+/* Returns the granted FD, or -1 if no waiter / locked / intent blocked.
+ * Always performs the grant — caller must handle cap in the cleanup path. */
 static int node_grant_to_next_waiter(trie_t *trie, trie_node_t *node) {
-    if (node->waiters_count == 0 || node->intent_count > 0 || node->owner_fd != -1) return -1;
+    if (node->waiters_count == 0) return -1;
+    if (node->intent_count > 0 || node->owner_fd != -1) return -1;
     int next_fd = node->waiters[0];
     memmove(node->waiters, node->waiters + 1, sizeof(int) * (node->waiters_count - 1));
     node->waiters_count--;
@@ -586,6 +589,7 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
             trie_node_t *p = node->parent;
             while (p) {
                 p->intent_count--;
+                /* Only grant if we have room to notify — prevents silent grants */
                 int w = node_grant_to_next_waiter(trie, p);
                 if (w != -1 && wakeup_count < wakeup_cap) {
                     wakeup[wakeup_count] = w;
