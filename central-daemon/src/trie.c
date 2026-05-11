@@ -432,29 +432,37 @@ int trie_load_persist(trie_t *trie, const char *filepath) {
 
 /* --- Registry Helpers --- */
 
-static void register_node_to_fd(ht_table_t *registry, trie_node_t *node, int fd) {
+/* Returns 0 on success, -1 on allocation failure.
+ * Caller must handle failure to avoid orphaned lock state.
+ */
+static int register_node_to_fd(ht_table_t *registry, trie_node_t *node, int fd) {
     size_t vlen;
     const void *found = ht_find(registry, &fd, sizeof(int), &vlen);
     node_list_t *list;
-    
+
     if (found) {
         list = *(node_list_t**)found;
     } else {
         list = calloc(1, sizeof(node_list_t));
-        if (!list) return;
+        if (!list) return -1;
         list->cap = 4;
         list->nodes = malloc(sizeof(trie_node_t*) * list->cap);
-        if (!list->nodes) { free(list); return; }
-        ht_upsert(registry, &fd, sizeof(int), &list, sizeof(node_list_t*));
+        if (!list->nodes) { free(list); return -1; }
+        if (ht_upsert(registry, &fd, sizeof(int), &list, sizeof(node_list_t*)) < 0) {
+            free(list->nodes);
+            free(list);
+            return -1;
+        }
     }
 
     if (list->count == list->cap) {
         list->cap *= 2;
         void *tmp = realloc(list->nodes, sizeof(trie_node_t*) * list->cap);
-        if (!tmp) { list->cap /= 2; return; }
+        if (!tmp) { list->cap /= 2; return -1; }
         list->nodes = tmp;
     }
     list->nodes[list->count++] = node;
+    return 0;
 }
 
 static void unregister_node_from_fd(ht_table_t *registry, trie_node_t *node, int fd) {
@@ -495,11 +503,17 @@ int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
         if (!tmp) return -1;
         current->waiters = tmp;
         current->waiters[current->waiters_count++] = fd;
-        register_node_to_fd(trie->waiting_registry, current, fd);
+        if (register_node_to_fd(trie->waiting_registry, current, fd) < 0) {
+            current->waiters_count--;
+            return -1;
+        }
         return 1;
     }
     current->owner_fd = fd;
-    register_node_to_fd(trie->fd_registry, current, fd);
+    if (register_node_to_fd(trie->fd_registry, current, fd) < 0) {
+        current->owner_fd = -1;
+        return -1;
+    }
     trie_node_t *p = current->parent;
     while (p) { p->intent_count++; p = p->parent; }
     return 0;
@@ -519,7 +533,10 @@ static int node_grant_to_next_waiter(trie_t *trie, trie_node_t *node) {
     }
     unregister_node_from_fd(trie->waiting_registry, node, next_fd);
     node->owner_fd = next_fd;
-    register_node_to_fd(trie->fd_registry, node, next_fd);
+    if (register_node_to_fd(trie->fd_registry, node, next_fd) < 0) {
+        node->owner_fd = -1;
+        return -1;
+    }
     trie_node_t *p = node->parent;
     while (p) { p->intent_count++; p = p->parent; }
     return next_fd;
