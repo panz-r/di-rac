@@ -349,6 +349,9 @@ int main(int argc, char *argv[]) {
                     int wakeup[1024];
                     char *w_paths[1024];
                     size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, w_paths, 1024);
+                    if (w_count == 1024) {
+                        fprintf(stderr, "[di-vrr] warning: wakeup notification capped at 1024 for fd %d\n", ctx->fd);
+                    }
                     for (size_t j = 0; j < w_count; j++) {
                         char escaped_path[4096];
                         if (json_escape_string(w_paths[j], escaped_path, sizeof(escaped_path)) < 0) {

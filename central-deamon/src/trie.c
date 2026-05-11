@@ -509,6 +509,8 @@ size_t trie_get_owned_count(trie_t *trie, int fd) {
     return (*(node_list_t**)found)->count;
 }
 
+// Recursion depth is bounded by the 256-segment path limit in trie_traverse.
+// If that limit is ever removed, this recursion could overflow the stack.
 int node_get_path(trie_node_t *node, char *buf, size_t len) {
     if (!node || !node->parent) {
         if (len > 1) { buf[0] = '/'; buf[1] = '\0'; }
