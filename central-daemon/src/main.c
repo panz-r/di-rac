@@ -68,7 +68,7 @@ static int json_escape_string(const char *src, char *dst, size_t dst_len) {
 }
 
 static int broadcast_config_update(int sender_fd, const char *path, const char *key, const char *value) {
-    char escaped_path[4096], escaped_key[256], escaped_value[8192];
+    char escaped_path[16384], escaped_key[512], escaped_value[8192];
     if (json_escape_string(path, escaped_path, sizeof(escaped_path)) < 0) return -1;
     if (json_escape_string(key, escaped_key, sizeof(escaped_key)) < 0) return -1;
     if (value && json_escape_string(value, escaped_value, sizeof(escaped_value)) < 0) return -1;
@@ -93,6 +93,48 @@ static void handle_shutdown(int sig) {
     shutdown_requested = 1;
 }
 
+/* Unescape a JSON string in place (or into dst). Handles:
+ *   \\ → \   \" → "   \n → NL   \r → CR   \t → TAB
+ *   \b → BS   \f → FF   \/ → /   \uXXXX → pass through
+ * Returns bytes written to dst, or -1 if dst_len insufficient.
+ */
+static int json_unescape(const char *src, char *dst, size_t dst_len) {
+    size_t dst_pos = 0;
+    for (const char *p = src; *p; p++) {
+        if (*p != '\\') {
+            if (dst_pos + 1 >= dst_len) return -1;
+            dst[dst_pos++] = *p;
+        } else {
+            if (*(p + 1) == '\0') return -1;
+            p++;
+            switch (*p) {
+                case '\\': if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '\\'; break;
+                case '"':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '"';  break;
+                case 'n':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '\n'; break;
+                case 'r':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '\r'; break;
+                case 't':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '\t'; break;
+                case 'b':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '\b'; break;
+                case 'f':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '\f'; break;
+                case '/':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '/';  break;
+                case 'u':  /* \uXXXX — pass through as literal \uXXXX for now */ {
+                               if (dst_pos + 6 >= dst_len) return -1;
+                               dst[dst_pos++] = 'u';
+                               for (int i = 0; i < 4; i++) {
+                                   if (!*(p + 1 + i)) return -1;
+                                   dst[dst_pos++] = *(++p);
+                               }
+                           } break;
+                default:   if (dst_pos + 2 >= dst_len) return -1;
+                           dst[dst_pos++] = '\\';
+                           dst[dst_pos++] = *p;
+                           break;
+            }
+        }
+    }
+    dst[dst_pos] = '\0';
+    return (int)dst_pos;
+}
+
 static const char* find_string_val(const char *json, const char *key, char *out, size_t out_len) {
     char pattern[128];
     snprintf(pattern, sizeof(pattern), "\"%s\"", key);
@@ -109,10 +151,15 @@ static const char* find_string_val(const char *json, const char *key, char *out,
         end++;
     }
     if (*end != '"') return NULL;
-    size_t len = end - start;
-    if (len >= out_len) len = out_len - 1;
-    memcpy(out, start, len);
-    out[len] = '\0';
+
+    /* Extract raw string then unescape into caller's buffer */
+    char raw[8192];
+    size_t raw_len = (size_t)(end - start);
+    if (raw_len >= sizeof(raw)) raw_len = sizeof(raw) - 1;
+    memcpy(raw, start, raw_len);
+    raw[raw_len] = '\0';
+
+    if (json_unescape(raw, out, out_len) < 0) return NULL;
     return end;
 }
 

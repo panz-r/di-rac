@@ -340,7 +340,7 @@ static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf) {
     const void *key, *val;
     size_t klen, vlen;
     while (ht_iter_next(node->settings, &it, &key, &klen, &val, &vlen)) {
-        char escaped_path[8192], escaped_key[256], escaped_val[8192];
+        char escaped_path[8192], escaped_key[512], escaped_val[8192];
         persist_escape(path_buf, escaped_path, sizeof(escaped_path));
         persist_escape((const char*)key, escaped_key, sizeof(escaped_key));
         persist_escape(*(char**)val, escaped_val, sizeof(escaped_val));
