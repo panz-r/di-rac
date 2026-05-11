@@ -529,8 +529,9 @@ void test_cleanup_mixed_state() {
     
     int wakeup[16];
     char *w_paths[16];
+    memset(w_paths, 0, sizeof(w_paths));
     size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
-    
+
     /* 10's release of /owned should wake up 12 */
     assert(count == 1);
     assert(wakeup[0] == 12);

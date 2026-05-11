@@ -306,9 +306,9 @@ static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf) {
         trie_node_t *child = *(trie_node_t**)val;
         
         if (strcmp(path_buf, "/") == 0) {
-            snprintf(path_buf + 1, 4096 - 1, "%s", child->segment);
+            if ((size_t)snprintf(path_buf + 1, 4096 - 1, "%s", child->segment) >= 4096 - 1) continue;
         } else {
-            snprintf(path_buf + path_len, 4096 - path_len, "/%s", child->segment);
+            if ((size_t)snprintf(path_buf + path_len, 4096 - path_len, "/%s", child->segment) >= 4096 - path_len) continue;
         }
         
         node_save_recursive(child, f, path_buf);
@@ -363,14 +363,18 @@ static void register_node_to_fd(ht_table_t *registry, trie_node_t *node, int fd)
         list = *(node_list_t**)found;
     } else {
         list = calloc(1, sizeof(node_list_t));
+        if (!list) return;
         list->cap = 4;
         list->nodes = malloc(sizeof(trie_node_t*) * list->cap);
+        if (!list->nodes) { free(list); return; }
         ht_upsert(registry, &fd, sizeof(int), &list, sizeof(node_list_t*));
     }
-    
+
     if (list->count == list->cap) {
         list->cap *= 2;
-        list->nodes = realloc(list->nodes, sizeof(trie_node_t*) * list->cap);
+        void *tmp = realloc(list->nodes, sizeof(trie_node_t*) * list->cap);
+        if (!tmp) { list->cap /= 2; return; }
+        list->nodes = tmp;
     }
     list->nodes[list->count++] = node;
 }
@@ -450,20 +454,26 @@ size_t trie_get_owned_count(trie_t *trie, int fd) {
     return (*(node_list_t**)found)->count;
 }
 
-void node_get_path(trie_node_t *node, char *buf, size_t len) {
+int node_get_path(trie_node_t *node, char *buf, size_t len) {
     if (!node || !node->parent) {
         if (len > 1) { buf[0] = '/'; buf[1] = '\0'; }
-        return;
+        return len > 1 ? 1 : 0;
     }
-    
+
     char temp[4096];
-    node_get_path(node->parent, temp, sizeof(temp));
-    
-    if (strcmp(temp, "/") == 0) {
-        snprintf(buf, len, "/%s", node->segment);
+    int n = node_get_path(node->parent, temp, sizeof(temp));
+    if (n < 0) return -1;
+
+    size_t available = len;
+    int written;
+    if (n == 1 && temp[0] == '/') {
+        written = snprintf(buf, available, "/%s", node->segment);
     } else {
-        snprintf(buf, len, "%s/%s", temp, node->segment);
+        written = snprintf(buf, available, "%s/%s", temp, node->segment);
     }
+    if (written < 0) return -1;
+    if ((size_t)written >= len) return -1;
+    return written;
 }
 
 size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t wakeup_cap) {
@@ -484,7 +494,9 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
                 if (w != -1 && wakeup_count < wakeup_cap) {
                     wakeup[wakeup_count] = w;
                     paths[wakeup_count] = malloc(4096);
-                    node_get_path(p, paths[wakeup_count], 4096);
+                    if (node_get_path(p, paths[wakeup_count], 4096) < 0) {
+                        snprintf(paths[wakeup_count], 4096, "<truncated>");
+                    }
                     wakeup_count++;
                 }
                 p = p->parent;
@@ -493,7 +505,9 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
             if (w != -1 && wakeup_count < wakeup_cap) {
                 wakeup[wakeup_count] = w;
                 paths[wakeup_count] = malloc(4096);
-                node_get_path(node, paths[wakeup_count], 4096);
+                if (node_get_path(node, paths[wakeup_count], 4096) < 0) {
+                    snprintf(paths[wakeup_count], 4096, "<truncated>");
+                }
                 wakeup_count++;
             }
         }

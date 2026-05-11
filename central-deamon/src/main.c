@@ -33,16 +33,18 @@ static void send_json(int fd, const char *json) {
     }
 }
 
-static void broadcast_config_update(int sender_fd, const char *path, const char *key, const char *value) {
+static int broadcast_config_update(int sender_fd, const char *path, const char *key, const char *value) {
     char msg[8192];
-    snprintf(msg, sizeof(msg), "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
+    int len = snprintf(msg, sizeof(msg), "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
              path, key, value ? "\"" : "", value ? value : "null", value ? "\"" : "");
-    
+    if (len < 0 || (size_t)len >= sizeof(msg)) return -1;
+
     for (int i = 0; i < MAX_EVENTS; i++) {
         if (all_clients[i] && all_clients[i]->fd != sender_fd) {
             send_json(all_clients[i]->fd, msg);
         }
     }
+    return 0;
 }
 
 static void handle_shutdown(int sig) {
@@ -194,7 +196,7 @@ static int handle_client_data(client_ctx_t *ctx, trie_t *trie) {
     }
     if (n == 0) return -1;
 
-    if (ctx->len + n > BUF_SIZE) {
+    if (ctx->len + n >= BUF_SIZE) {
         send_json(ctx->fd, "{\"status\": \"error\", \"message\": \"buffer overflow\"}\n");
         ctx->len = 0;
         return 0;
@@ -256,6 +258,10 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+        if (nfds < 0) {
+            if (errno == EINTR) continue;
+            perror("epoll_wait"); break;
+        }
         for (int i = 0; i < nfds; i++) {
             if (events[i].data.fd == listen_fd) {
                 int client_fd = accept(listen_fd, NULL, NULL);
@@ -265,6 +271,7 @@ int main(int argc, char *argv[]) {
                 fcntl(client_fd, F_SETFL, cflags | O_NONBLOCK);
 
                 client_ctx_t *ctx = calloc(1, sizeof(client_ctx_t));
+                if (!ctx) { close(client_fd); continue; }
                 ctx->fd = client_fd;
                 
                 for (int j = 0; j < MAX_EVENTS; j++) {
