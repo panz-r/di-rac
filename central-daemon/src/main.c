@@ -245,14 +245,19 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
         int next_fd = trie_release_lock(trie, path, fd);
         send_json(fd, "{\"status\": \"ok\"}\n");
         if (next_fd != -1) {
-            char escaped_path[4096];
-            if (json_escape_string(path, escaped_path, sizeof(escaped_path)) < 0) {
-                // Fall back to original path if escaping fails (should be rare)
-                snprintf(escaped_path, sizeof(escaped_path), "%s", path);
+            size_t esc_size = strlen(path) * 6 + 1;
+            char *escaped_path = malloc(esc_size);
+            if (!escaped_path) {
+                send_json(next_fd, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
+            } else {
+                if (json_escape_string(path, escaped_path, esc_size) < 0) {
+                    snprintf(escaped_path, esc_size, "%s", path);
+                }
+                char resp[8192 + 128];
+                snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
+                send_json(next_fd, resp);
+                free(escaped_path);
             }
-            char resp[8192 + 128];
-            snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
-            send_json(next_fd, resp);
         }
     } else if (strcmp(method, "set_config") == 0) {
         char key[256] = {0}, value[4096] = {0}, *val_ptr = NULL;
@@ -267,7 +272,11 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
         send_json(fd, "{\"status\": \"ok\"}\n");
         
         if (!transient) {
-            broadcast_config_update(fd, path, key, val_ptr);
+            int br = broadcast_config_update(fd, path, key, val_ptr);
+            if (br < 0) {
+                fprintf(stderr, "[di-vrr] broadcast_config_update failed for fd %d path=%s key=%s\n",
+                        fd, path, key);
+            }
             if (persist_path[0]) trie_save_persist(trie, persist_path);
         }
     } else if (strcmp(method, "get_config") == 0) {
