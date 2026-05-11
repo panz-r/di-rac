@@ -33,10 +33,41 @@ static void send_json(int fd, const char *json) {
     }
 }
 
+/* Escape a string for embedding in a JSON string field.
+ * Returns number of bytes written to dst, or -1 if dst_len is insufficient.
+ * Caller must ensure dst has at least (strlen(src) * 2 + 1) bytes.
+ */
+static int json_escape_string(const char *src, char *dst, size_t dst_len) {
+    size_t dst_pos = 0;
+    for (const char *p = src; *p; p++) {
+        if (dst_pos + 2 >= dst_len) return -1;
+        if (*p == '\\' || *p == '"') {
+            dst[dst_pos++] = '\\';
+            dst[dst_pos++] = *p;
+        } else if ((unsigned char)*p < 0x20) {
+            // Control character — escape as \u00XX
+            if (dst_pos + 6 >= dst_len) return -1;
+            snprintf(dst + dst_pos, dst_len - dst_pos, "\\u00%02x", (unsigned char)*p);
+            dst_pos += 6;
+        } else {
+            dst[dst_pos++] = *p;
+        }
+    }
+    dst[dst_pos] = '\0';
+    return (int)dst_pos;
+}
+
 static int broadcast_config_update(int sender_fd, const char *path, const char *key, const char *value) {
+    char escaped_value[8192];
+    if (value) {
+        if (json_escape_string(value, escaped_value, sizeof(escaped_value)) < 0) return -1;
+    }
+
     char msg[8192];
-    int len = snprintf(msg, sizeof(msg), "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
-             path, key, value ? "\"" : "", value ? value : "null", value ? "\"" : "");
+    int len = snprintf(msg, sizeof(msg),
+             "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
+             path, key,
+             value ? "\"" : "", value ? escaped_value : "null", value ? "\"" : "");
     if (len < 0 || (size_t)len >= sizeof(msg)) return -1;
 
     for (int i = 0; i < MAX_EVENTS; i++) {
@@ -273,13 +304,17 @@ int main(int argc, char *argv[]) {
                 client_ctx_t *ctx = calloc(1, sizeof(client_ctx_t));
                 if (!ctx) { close(client_fd); continue; }
                 ctx->fd = client_fd;
-                
+
+                int slot = -1;
                 for (int j = 0; j < MAX_EVENTS; j++) {
-                    if (all_clients[j] == NULL) {
-                        all_clients[j] = ctx;
-                        break;
-                    }
+                    if (all_clients[j] == NULL) { slot = j; break; }
                 }
+                if (slot == -1) {
+                    close(client_fd);
+                    free(ctx);
+                    continue;
+                }
+                all_clients[slot] = ctx;
 
                 ev.events = EPOLLIN;
                 ev.data.ptr = ctx;

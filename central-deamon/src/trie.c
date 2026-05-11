@@ -401,9 +401,12 @@ int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
     bool ancestor_locked = false;
     trie_node_t *current = trie_traverse(trie, path, true, &ancestor_locked);
     if (ancestor_locked || !current) return -1;
+    if (current->owner_fd == fd) return 0;  // already owned by this FD — no-op, not a deadlock
     if (current->owner_fd != -1 || current->intent_count > 0) {
         if (!wait) return -1;
-        current->waiters = realloc(current->waiters, sizeof(int) * (current->waiters_count + 1));
+        void *tmp = realloc(current->waiters, sizeof(int) * (current->waiters_count + 1));
+        if (!tmp) return -1;
+        current->waiters = tmp;
         current->waiters[current->waiters_count++] = fd;
         register_node_to_fd(trie->waiting_registry, current, fd);
         return 1;

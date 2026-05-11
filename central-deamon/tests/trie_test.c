@@ -91,7 +91,8 @@ void test_edge_cases() {
     assert(trie_release_lock(t, "/ghost", 10) == -1);
     trie_acquire_lock(t, "/real", 10, true);
     assert(trie_release_lock(t, "/real", 11) == -1);
-    assert(trie_acquire_lock(t, "/real", 10, true) == 1);
+    /* Same FD re-acquiring its own lock: returns 0 (already owned), not deadlock */
+    assert(trie_acquire_lock(t, "/real", 10, true) == 0);
     trie_destroy(t);
     printf("PASS\n");
 }
