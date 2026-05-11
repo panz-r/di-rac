@@ -138,6 +138,45 @@ void test_waiter_abandonment() {
     printf("PASS\n");
 }
 
+void test_duplicate_waiter_noop() {
+    printf("Testing duplicate waiter is a no-op...\n");
+    trie_t *t = trie_create();
+
+    /* FD 10 owns /lock */
+    assert(trie_acquire_lock(t, "/lock", 10, true) == 0);
+
+    /* FD 11 waits on /lock (first time) */
+    assert(trie_acquire_lock(t, "/lock", 11, true) == 1);
+
+    /* FD 11 sends acquire again with wait=true — should be no-op, not a duplicate entry */
+    assert(trie_acquire_lock(t, "/lock", 11, true) == 1);
+
+    /* Verify only one entry in wait-list */
+    trie_node_t *node = trie_traverse(t, "/lock", false, NULL);
+    assert(node->waiters_count == 1);
+    assert(node->waiters[0] == 11);
+
+    /* Verify intent_count is correct (one waiter, no corruption) */
+    trie_node_t *parent = trie_traverse(t, "/", false, NULL);
+    /* Parent intent should be 0 since no lock is held above /lock */
+    assert(parent->intent_count == 0);
+
+    /* FD 10 releases — should wake up 11, not grant to itself or corrupt state */
+    int next = trie_release_lock(t, "/lock", 10);
+    assert(next == 11);
+    assert(trie_get_owned_count(t, 11) == 1);
+    assert(node->waiters_count == 0);
+
+    /* Release again — intent_count should cleanly return to 0 */
+    next = trie_release_lock(t, "/lock", 11);
+    assert(next == -1);
+    parent = trie_traverse(t, "/", false, NULL);
+    assert(parent->intent_count == 0);
+
+    trie_destroy(t);
+    printf("PASS\n");
+}
+
 void test_complex_tree() {
     printf("Testing complex tree intersections...\n");
     trie_t *t = trie_create();
@@ -784,6 +823,7 @@ int main() {
     test_path_normalization();
     test_multiple_blockers();
     test_waiter_abandonment();
+    test_duplicate_waiter_noop();
     test_complex_tree();
     test_path_normalization_extreme();
     test_intent_lock_starvation();
@@ -807,6 +847,6 @@ int main() {
     test_massive_disconnect_wakeups();
     test_config_management();
     test_persistence_round_trip();
-    printf("All 33 Trie test suites passed!\n");
+    printf("All 34 Trie test suites passed!\n");
     return 0;
 }

@@ -13,6 +13,11 @@
 #include "trie.h"
 
 #define MAX_EVENTS 64
+
+__attribute__((constructor))
+static void ignore_sigpipe(void) {
+    signal(SIGPIPE, SIG_IGN);
+}
 #define BUF_SIZE 65536
 #define SOCKET_PATH "/tmp/di-vrr-coord.sock"
 
