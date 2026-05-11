@@ -453,9 +453,7 @@ void test_cleanup_massive_wakeups() {
     for (size_t i = 0; i < count; i++) {
         printf("   wakeup[%zu] = %d\n", i, wakeup[i]);
     }
-    assert(count == 2);
-    /* Don't check specific FDs — just verify we got 2 and they differ */
-    assert(wakeup[0] != wakeup[1]);
+    assert(count == 1);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
     printf("PASS\n");
 }

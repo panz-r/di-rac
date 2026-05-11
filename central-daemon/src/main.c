@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/epoll.h>
+#include <sys/poll.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -34,16 +35,37 @@ static volatile sig_atomic_t shutdown_requested = 0;
 
 static int send_json(int fd, const char *json) {
     size_t len = strlen(json);
-    ssize_t written = write(fd, json, len);
-    if (written < 0) {
-        if (errno != EPIPE) {
-            fprintf(stderr, "[di-vrr] send_json failed on fd %d: %s\n", fd, strerror(errno));
+    size_t written = 0;
+    struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+
+    while (written < len) {
+        int ret = poll(&pfd, 1, 1000);  /* 1s timeout */
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            if (errno != EPIPE) {
+                fprintf(stderr, "[di-vrr] send_json poll failed on fd %d: %s\n", fd, strerror(errno));
+            }
+            return -1;
         }
-        return -1;
-    }
-    if ((size_t)written < len) {
-        fprintf(stderr, "[di-vrr] partial send on fd %d (%zd of %zu bytes)\n", fd, written, len);
-        return -1;
+        if (ret == 0) {
+            fprintf(stderr, "[di-vrr] send_json timeout on fd %d\n", fd);
+            return -1;
+        }
+        if (pfd.revents & (POLLHUP | POLLNVAL)) {
+            fprintf(stderr, "[di-vrr] send_json fd %d hung up\n", fd);
+            return -1;
+        }
+
+        ssize_t n = write(fd, json + written, len - written);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            if (errno != EPIPE) {
+                fprintf(stderr, "[di-vrr] send_json write failed on fd %d: %s\n", fd, strerror(errno));
+            }
+            return -1;
+        }
+        written += (size_t)n;
     }
     return 0;
 }
@@ -111,9 +133,16 @@ static int broadcast_config_update(int sender_fd, const char *path, const char *
         return -1;
     }
 
-    /* Compute exact size needed for JSON message */
-    size_t msg_size = 64 + strlen(escaped_path) + strlen(escaped_key)
-                      + (value ? strlen(escaped_value) : 4);
+    /* Compute exact size needed for JSON message using snprintf NULL trick */
+    int needed = snprintf(NULL, 0,
+             "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
+             escaped_path, escaped_key,
+             value ? "\"" : "", value ? escaped_value : "null", value ? "\"" : "");
+    if (needed < 0) {
+        free(escaped_path); free(escaped_key); free(escaped_value);
+        return -1;
+    }
+    size_t msg_size = (size_t)needed + 1;
     char *msg = malloc(msg_size);
     if (!msg) {
         free(escaped_path); free(escaped_key); free(escaped_value);
@@ -166,12 +195,32 @@ static int json_unescape(const char *src, char *dst, size_t dst_len) {
                 case 'b':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '\b'; break;
                 case 'f':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '\f'; break;
                 case '/':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '/';  break;
-                case 'u':  /* \uXXXX — pass through as literal \uXXXX for now */ {
-                               if (dst_pos + 6 >= dst_len) return -1;
-                               dst[dst_pos++] = 'u';
+                case 'u': {
+                               /* \uXXXX — decode hex and emit UTF-8 for BMP */
+                               if (dst_pos + 4 >= dst_len) return -1;
+                               unsigned int cp = 0;
                                for (int i = 0; i < 4; i++) {
-                                   if (!*(p + 1 + i)) return -1;
-                                   dst[dst_pos++] = *(++p);
+                                   char c = *(++p);
+                                   int digit = 0;
+                                   if (c >= '0' && c <= '9') digit = c - '0';
+                                   else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+                                   else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+                                   else return -1;
+                                   cp = (cp << 4) | digit;
+                               }
+                               /* Encode code point as UTF-8 */
+                               if (cp <= 0x7F) {
+                                   if (dst_pos + 1 >= dst_len) return -1;
+                                   dst[dst_pos++] = (char)cp;
+                               } else if (cp <= 0x7FF) {
+                                   if (dst_pos + 2 >= dst_len) return -1;
+                                   dst[dst_pos++] = (char)(0xC0 | (cp >> 6));
+                                   dst[dst_pos++] = (char)(0x80 | (cp & 0x3F));
+                               } else {
+                                   if (dst_pos + 3 >= dst_len) return -1;
+                                   dst[dst_pos++] = (char)(0xE0 | (cp >> 12));
+                                   dst[dst_pos++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                                   dst[dst_pos++] = (char)(0x80 | (cp & 0x3F));
                                }
                            } break;
                 default:   if (dst_pos + 2 >= dst_len) return -1;
@@ -287,14 +336,23 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
         }
         char *val = trie_get_config(trie, path, fd, key);
         if (val) {
-            char escaped_val[8192];
-            if (json_escape_string(val, escaped_val, sizeof(escaped_val)) < 0) {
-                send_json(fd, "{\"status\": \"error\", \"message\": \"value too large\"}\n");
-            } else {
-                char resp[8192 + 128];
-                snprintf(resp, sizeof(resp), "{\"status\": \"ok\", \"value\": \"%s\"}\n", escaped_val);
-                send_json(fd, resp);
+            size_t esc_size = strlen(val) * 6 + 1;
+            char *escaped_val = malloc(esc_size);
+            if (!escaped_val) {
+                send_json(fd, "{\"status\": \"error\", \"message\": \"out of memory\"}\n");
+                free(val);
+                return;
             }
+            if (json_escape_string(val, escaped_val, esc_size) < 0) {
+                send_json(fd, "{\"status\": \"error\", \"message\": \"value too large\"}\n");
+                free(escaped_val);
+                free(val);
+                return;
+            }
+            char resp[8192 + 128];
+            snprintf(resp, sizeof(resp), "{\"status\": \"ok\", \"value\": \"%s\"}\n", escaped_val);
+            send_json(fd, resp);
+            free(escaped_val);
             free(val);
         } else {
             send_json(fd, "{\"status\": \"ok\", \"value\": null}\n");
@@ -387,9 +445,14 @@ static void send_granted_cb(int fd, const char *path, void *ctx) {
     if (!path || fd < 0) return;
     size_t esc_size = strlen(path) * 6 + 1;
     char *escaped = malloc(esc_size);
-    if (!escaped) return;
+    if (!escaped) {
+        send_json(fd, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
+        return;
+    }
     if (json_escape_string(path, escaped, esc_size) < 0) {
-        snprintf(escaped, esc_size, "%s", path);
+        free(escaped);
+        send_json(fd, "{\"status\": \"granted\", \"path\": \"<overflow>\"}\n");
+        return;
     }
     char resp[8192 + 128];
     snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
