@@ -35,37 +35,20 @@ static volatile sig_atomic_t shutdown_requested = 0;
 
 static int send_json(int fd, const char *json) {
     size_t len = strlen(json);
-    size_t written = 0;
-    struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-
-    while (written < len) {
-        int ret = poll(&pfd, 1, 1000);  /* 1s timeout */
-        if (ret < 0) {
-            if (errno == EINTR) continue;
-            if (errno != EPIPE) {
-                fprintf(stderr, "[di-vrr] send_json poll failed on fd %d: %s\n", fd, strerror(errno));
-            }
+    ssize_t written = write(fd, json, len);
+    if (written < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            fprintf(stderr, "[di-vrr] send_json would block on fd %d, message dropped\n", fd);
             return -1;
         }
-        if (ret == 0) {
-            fprintf(stderr, "[di-vrr] send_json timeout on fd %d\n", fd);
-            return -1;
+        if (errno != EPIPE) {
+            fprintf(stderr, "[di-vrr] send_json failed on fd %d: %s\n", fd, strerror(errno));
         }
-        if (pfd.revents & (POLLHUP | POLLNVAL)) {
-            fprintf(stderr, "[di-vrr] send_json fd %d hung up\n", fd);
-            return -1;
-        }
-
-        ssize_t n = write(fd, json + written, len - written);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
-            if (errno != EPIPE) {
-                fprintf(stderr, "[di-vrr] send_json write failed on fd %d: %s\n", fd, strerror(errno));
-            }
-            return -1;
-        }
-        written += (size_t)n;
+        return -1;
+    }
+    if ((size_t)written < len) {
+        fprintf(stderr, "[di-vrr] partial send on fd %d (%zd of %zu bytes)\n", fd, written, len);
+        return -1;
     }
     return 0;
 }
@@ -535,8 +518,12 @@ int main(int argc, char *argv[]) {
                     if (all_clients[j] == NULL) { slot = j; break; }
                 }
                 if (slot == -1) {
+                    /* Can't accept — try a non-blocking write of an error message first */
+                    static const char rej[] = "{\"status\": \"error\", \"message\": \"server busy\"}\n";
+                    write(client_fd, rej, sizeof(rej) - 1);
                     close(client_fd);
                     free(ctx);
+                    fprintf(stderr, "[di-vrr] rejected connection: client limit reached (%d)\n", MAX_EVENTS);
                     continue;
                 }
                 all_clients[slot] = ctx;

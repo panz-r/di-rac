@@ -345,7 +345,7 @@ static void persist_unescape(const char *src, char *dst, size_t dst_len) {
     dst[dst_pos] = '\0';
 }
 
-static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf) {
+static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf, size_t buf_cap, int *truncated) {
     size_t path_len = strlen(path_buf);
 
     /* Save settings for this node */
@@ -366,12 +366,20 @@ static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf) {
         trie_node_t *child = *(trie_node_t**)val;
 
         if (strcmp(path_buf, "/") == 0) {
-            if ((size_t)snprintf(path_buf + 1, 4096 - 1, "%s", child->segment) >= 4096 - 1) continue;
+            if ((size_t)snprintf(path_buf + 1, buf_cap - 1, "%s", child->segment) >= buf_cap - 1) {
+                fprintf(stderr, "[di-vrr] trie_save_persist: path overflow at /%s, skipping subtree\n", child->segment);
+                *truncated = 1;
+                continue;
+            }
         } else {
-            if ((size_t)snprintf(path_buf + path_len, 4096 - path_len, "/%s", child->segment) >= 4096 - path_len) continue;
+            if ((size_t)snprintf(path_buf + path_len, buf_cap - path_len, "/%s", child->segment) >= buf_cap - path_len) {
+                fprintf(stderr, "[di-vrr] trie_save_persist: path overflow at %s/%s, skipping subtree\n", path_buf, child->segment);
+                *truncated = 1;
+                continue;
+            }
         }
 
-        node_save_recursive(child, f, path_buf);
+        node_save_recursive(child, f, path_buf, buf_cap, truncated);
         path_buf[path_len] = '\0'; /* Backtrack */
     }
 }
@@ -379,11 +387,16 @@ static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf) {
 int trie_save_persist(trie_t *trie, const char *filepath) {
     FILE *f = fopen(filepath, "w");
     if (!f) return -1;
-    
-    char path_buf[4096] = "/";
-    node_save_recursive(trie->root, f, path_buf);
-    
+
+    char path_buf[8192] = "/";
+    int truncated = 0;
+    node_save_recursive(trie->root, f, path_buf, sizeof(path_buf), &truncated);
+
     fclose(f);
+    if (truncated) {
+        fprintf(stderr, "[di-vrr] trie_save_persist: one or more paths overflowed buffer and were skipped\n");
+        return -1;
+    }
     return 0;
 }
 
