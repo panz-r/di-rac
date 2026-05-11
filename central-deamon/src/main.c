@@ -25,6 +25,7 @@ typedef struct {
 static client_ctx_t *all_clients[MAX_EVENTS];
 static char persist_path[4096] = {0};
 static trie_t *lock_trie = NULL;
+static volatile sig_atomic_t shutdown_requested = 0;
 
 static int send_json(int fd, const char *json) {
     size_t len = strlen(json);
@@ -89,11 +90,7 @@ static int broadcast_config_update(int sender_fd, const char *path, const char *
 
 static void handle_shutdown(int sig) {
     (void)sig;
-    if (persist_path[0] && lock_trie) {
-        trie_save_persist(lock_trie, persist_path);
-    }
-    unlink(SOCKET_PATH);
-    exit(0);
+    shutdown_requested = 1;
 }
 
 static const char* find_string_val(const char *json, const char *key, char *out, size_t out_len) {
@@ -321,6 +318,11 @@ int main(int argc, char *argv[]) {
     if (persist_path[0]) printf("[di-vrr] Persistence enabled: %s\n", persist_path);
 
     while (1) {
+        if (shutdown_requested) {
+            if (persist_path[0] && lock_trie) trie_save_persist(lock_trie, persist_path);
+            unlink(SOCKET_PATH);
+            break;
+        }
         int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
         if (nfds < 0) {
             if (errno == EINTR) continue;
