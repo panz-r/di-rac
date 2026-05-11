@@ -767,6 +767,6 @@ int main() {
     test_cleanup_massive_multi_node_wakeups();
     test_massive_disconnect_wakeups();
     test_config_management();
-    printf("All 31 Trie test suites passed!\n");
+    printf("All 32 Trie test suites passed!\n");
     return 0;
 }

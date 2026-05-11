@@ -52,11 +52,14 @@ static bool fd_eq(const void *key_a, size_t len_a,
 static trie_node_t* node_create(const char *segment, trie_node_t *parent) {
     trie_node_t *node = calloc(1, sizeof(trie_node_t));
     if (!node) return NULL;
-    
-    if (segment) node->segment = strdup(segment);
+
+    if (segment) {
+        node->segment = strdup(segment);
+        if (!node->segment) { free(node); return NULL; }
+    }
     node->parent = parent;
     node->owner_fd = -1;
-    
+
     ht_config_t cfg = {
         .initial_capacity = 8,
         .max_load_factor = 0.75,
@@ -65,8 +68,10 @@ static trie_node_t* node_create(const char *segment, trie_node_t *parent) {
         .zombie_window = 8
     };
     node->children = ht_create(&cfg, string_hash, string_eq, NULL);
+    if (!node->children) { free(node->segment); free(node); return NULL; }
     node->settings = ht_create(&cfg, string_hash, string_eq, NULL);
-    
+    if (!node->settings) { ht_destroy(node->children); free(node->segment); free(node); return NULL; }
+
     return node;
 }
 
@@ -289,28 +294,70 @@ char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
 
 /* --- Persistence --- */
 
+static void persist_escape(const char *src, char *dst, size_t dst_len) {
+    size_t dst_pos = 0;
+    for (const char *p = src; *p && dst_pos + 1 < dst_len; p++) {
+        if (*p == '\\' || *p == '|' || *p == '=' || *p == '\n') {
+            if (dst_pos + 2 >= dst_len) break;
+            dst[dst_pos++] = '\\';
+            switch (*p) {
+                case '\\': dst[dst_pos++] = '\\'; break;
+                case '|':  dst[dst_pos++] = 'c'; break;
+                case '=':  dst[dst_pos++] = 'e'; break;
+                case '\n': dst[dst_pos++] = 'n'; break;
+            }
+        } else {
+            dst[dst_pos++] = *p;
+        }
+    }
+    dst[dst_pos] = '\0';
+}
+
+static void persist_unescape(const char *src, char *dst, size_t dst_len) {
+    size_t dst_pos = 0;
+    for (const char *p = src; *p && dst_pos + 1 < dst_len; p++) {
+        if (*p == '\\' && *(p + 1)) {
+            p++;
+            switch (*p) {
+                case '\\': dst[dst_pos++] = '\\'; break;
+                case 'c':  dst[dst_pos++] = '|'; break;
+                case 'e':  dst[dst_pos++] = '='; break;
+                case 'n':  dst[dst_pos++] = '\n'; break;
+                default:   dst[dst_pos++] = *p; break;
+            }
+        } else {
+            dst[dst_pos++] = *p;
+        }
+    }
+    dst[dst_pos] = '\0';
+}
+
 static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf) {
     size_t path_len = strlen(path_buf);
-    
+
     /* Save settings for this node */
     ht_iter_t it = ht_iter_begin(node->settings);
     const void *key, *val;
     size_t klen, vlen;
     while (ht_iter_next(node->settings, &it, &key, &klen, &val, &vlen)) {
-        fprintf(f, "%s|%s=%s\n", path_buf, (const char*)key, *(char**)val);
+        char escaped_path[8192], escaped_key[256], escaped_val[8192];
+        persist_escape(path_buf, escaped_path, sizeof(escaped_path));
+        persist_escape((const char*)key, escaped_key, sizeof(escaped_key));
+        persist_escape(*(char**)val, escaped_val, sizeof(escaped_val));
+        fprintf(f, "%s|%s=%s\n", escaped_path, escaped_key, escaped_val);
     }
-    
+
     /* Recurse into children */
     ht_iter_t cit = ht_iter_begin(node->children);
     while (ht_iter_next(node->children, &cit, &key, &klen, &val, &vlen)) {
         trie_node_t *child = *(trie_node_t**)val;
-        
+
         if (strcmp(path_buf, "/") == 0) {
             if ((size_t)snprintf(path_buf + 1, 4096 - 1, "%s", child->segment) >= 4096 - 1) continue;
         } else {
             if ((size_t)snprintf(path_buf + path_len, 4096 - path_len, "/%s", child->segment) >= 4096 - path_len) continue;
         }
-        
+
         node_save_recursive(child, f, path_buf);
         path_buf[path_len] = '\0'; /* Backtrack */
     }
@@ -344,8 +391,13 @@ int trie_load_persist(trie_t *trie, const char *filepath) {
         *eq = '\0';
         char *key = kv;
         char *val = eq + 1;
-        
-        trie_set_config(trie, path, -1, key, val, false);
+
+        char unescaped_path[4096], unescaped_key[256], unescaped_val[8192];
+        persist_unescape(path, unescaped_path, sizeof(unescaped_path));
+        persist_unescape(key, unescaped_key, sizeof(unescaped_key));
+        persist_unescape(val, unescaped_val, sizeof(unescaped_val));
+
+        trie_set_config(trie, unescaped_path, -1, unescaped_key, unescaped_val, false);
     }
     
     fclose(f);

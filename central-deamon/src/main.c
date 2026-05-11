@@ -58,15 +58,15 @@ static int json_escape_string(const char *src, char *dst, size_t dst_len) {
 }
 
 static int broadcast_config_update(int sender_fd, const char *path, const char *key, const char *value) {
-    char escaped_value[8192];
-    if (value) {
-        if (json_escape_string(value, escaped_value, sizeof(escaped_value)) < 0) return -1;
-    }
+    char escaped_path[4096], escaped_key[256], escaped_value[8192];
+    if (json_escape_string(path, escaped_path, sizeof(escaped_path)) < 0) return -1;
+    if (json_escape_string(key, escaped_key, sizeof(escaped_key)) < 0) return -1;
+    if (value && json_escape_string(value, escaped_value, sizeof(escaped_value)) < 0) return -1;
 
     char msg[8192];
     int len = snprintf(msg, sizeof(msg),
              "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
-             path, key,
+             escaped_path, escaped_key,
              value ? "\"" : "", value ? escaped_value : "null", value ? "\"" : "");
     if (len < 0 || (size_t)len >= sizeof(msg)) return -1;
 
@@ -142,8 +142,13 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
         int next_fd = trie_release_lock(trie, path, fd);
         send_json(fd, "{\"status\": \"ok\"}\n");
         if (next_fd != -1) {
+            char escaped_path[4096];
+            if (json_escape_string(path, escaped_path, sizeof(escaped_path)) < 0) {
+                // Fall back to original path if escaping fails (should be rare)
+                snprintf(escaped_path, sizeof(escaped_path), "%s", path);
+            }
             char resp[8192 + 128];
-            snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", path);
+            snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
             send_json(next_fd, resp);
         }
     } else if (strcmp(method, "set_config") == 0) {
@@ -170,9 +175,14 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
         }
         char *val = trie_get_config(trie, path, fd, key);
         if (val) {
-            char resp[8192 + 128];
-            snprintf(resp, sizeof(resp), "{\"status\": \"ok\", \"value\": \"%s\"}\n", val);
-            send_json(fd, resp);
+            char escaped_val[8192];
+            if (json_escape_string(val, escaped_val, sizeof(escaped_val)) < 0) {
+                send_json(fd, "{\"status\": \"error\", \"message\": \"value too large\"}\n");
+            } else {
+                char resp[8192 + 128];
+                snprintf(resp, sizeof(resp), "{\"status\": \"ok\", \"value\": \"%s\"}\n", escaped_val);
+                send_json(fd, resp);
+            }
             free(val);
         } else {
             send_json(fd, "{\"status\": \"ok\", \"value\": null}\n");
@@ -340,8 +350,12 @@ int main(int argc, char *argv[]) {
                     char *w_paths[1024];
                     size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, w_paths, 1024);
                     for (size_t j = 0; j < w_count; j++) {
+                        char escaped_path[4096];
+                        if (json_escape_string(w_paths[j], escaped_path, sizeof(escaped_path)) < 0) {
+                            snprintf(escaped_path, sizeof(escaped_path), "%s", w_paths[j]);
+                        }
                         char resp[8192 + 128];
-                        snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", w_paths[j]);
+                        snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
                         send_json(wakeup[j], resp);
                         free(w_paths[j]);
                     }
