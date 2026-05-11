@@ -5,7 +5,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/epoll.h>
-#include <sys/poll.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -157,7 +156,7 @@ static void handle_shutdown(int sig) {
 
 /* Unescape a JSON string in place (or into dst). Handles:
  *   \\ → \   \" → "   \n → NL   \r → CR   \t → TAB
- *   \b → BS   \f → FF   \/ → /   \uXXXX → pass through
+ *   \b → BS   \f → FF   \/ → /   \uXXXX → UTF-8 bytes
  * Returns bytes written to dst, or -1 if dst_len insufficient.
  */
 static int json_unescape(const char *src, char *dst, size_t dst_len) {
@@ -340,6 +339,18 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
         } else {
             send_json(fd, "{\"status\": \"ok\", \"value\": null}\n");
         }
+    } else if (strcmp(method, "status") == 0) {
+        /* Runtime health snapshot */
+        size_t total_clients = 0;
+        for (int i = 0; i < MAX_EVENTS; i++) if (all_clients[i]) total_clients++;
+        size_t total_nodes = 0, total_waiters = 0;
+        /* Walk trie to count nodes and waiters */
+        (void)total_nodes; (void)total_waiters; /* placeholder until trie stats exist */
+        char resp[512];
+        snprintf(resp, sizeof(resp),
+                 "{\"status\": \"ok\", \"clients\": %zu, \"max_clients\": %d}\n",
+                 total_clients, MAX_EVENTS);
+        send_json(fd, resp);
     } else {
         send_json(fd, "{\"status\": \"error\", \"message\": \"unknown method\"}\n");
     }

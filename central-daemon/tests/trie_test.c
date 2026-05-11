@@ -441,9 +441,10 @@ void test_cleanup_massive_wakeups() {
     }
     
     /* Cleanup 10 with cap of 16.
-       With proper grant propagation: /root has 100 waiters, root has intent_count=1.
-       After decrementing root intent to 0, we grant to FD 100 (root). Root intent goes back to 1.
-       Then /root grants to FD 101. Total: 2 grants within cap. */
+       /root is owned by 10. Releasing /root decrements root intent to 0,
+       granting root to FD 100. Root intent goes back to 1 (blocking /root).
+       /root then grants to FD 101 only when root intent is re-checked after
+       the next release — not in this single cleanup pass. Only 1 grant. */
     int wakeup[16];
     char *w_paths[16];
     memset(w_paths, 0, sizeof(w_paths));

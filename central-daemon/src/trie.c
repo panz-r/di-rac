@@ -474,6 +474,8 @@ static void unregister_node_from_fd(ht_table_t *registry, trie_node_t *node, int
 
 /* --- Locking Operations --- */
 
+#define MAX_WAITERS_PER_NODE 4096
+
 int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
     if (!path || *path == '\0') return -1;
     bool ancestor_locked = false;
@@ -485,6 +487,10 @@ int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
         /* Guard against duplicate wait-list entries (e.g. client retries acquire) */
         for (size_t i = 0; i < current->waiters_count; i++)
             if (current->waiters[i] == fd) return 1;  // already waiting, no-op
+        if (current->waiters_count >= MAX_WAITERS_PER_NODE) {
+            fprintf(stderr, "[di-vrr] trie_acquire_lock: wait queue overflow on path, rejecting fd %d\n", fd);
+            return -1;
+        }
         void *tmp = realloc(current->waiters, sizeof(int) * (current->waiters_count + 1));
         if (!tmp) return -1;
         current->waiters = tmp;
