@@ -102,8 +102,10 @@ static void node_destroy(trie_node_t *node) {
 
 trie_t* trie_create(void) {
     trie_t *trie = malloc(sizeof(trie_t));
+    if (!trie) return NULL;
     trie->root = node_create(NULL, NULL);
-    
+    if (!trie->root) { free(trie); return NULL; }
+
     ht_config_t cfg = {
         .initial_capacity = 64,
         .max_load_factor = 0.75,
@@ -114,6 +116,13 @@ trie_t* trie_create(void) {
     trie->fd_registry = ht_create(&cfg, fd_hash, fd_eq, NULL);
     trie->waiting_registry = ht_create(&cfg, fd_hash, fd_eq, NULL);
     trie->transient_registry = ht_create(&cfg, fd_hash, fd_eq, NULL);
+    if (!trie->fd_registry || !trie->waiting_registry || !trie->transient_registry) {
+        if (trie->fd_registry) ht_destroy(trie->fd_registry);
+        if (trie->waiting_registry) ht_destroy(trie->waiting_registry);
+        node_destroy(trie->root);
+        free(trie);
+        return NULL;
+    }
     
     return trie;
 }
@@ -216,7 +225,11 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
         } else {
             ht_config_t cfg = {.initial_capacity = 8, .max_load_factor = 0.75, .min_load_factor = 0.20, .tomb_threshold = 0.20, .zombie_window = 8};
             kv = ht_create(&cfg, string_hash, string_eq, NULL);
-            ht_insert(trie->transient_registry, &fd, sizeof(int), &kv, sizeof(ht_table_t*));
+            if (!kv) return -1;
+            if (!ht_insert(trie->transient_registry, &fd, sizeof(int), &kv, sizeof(ht_table_t*))) {
+                ht_destroy(kv);
+                return -1;
+            }
         }
         
         const void *existing = ht_find(kv, key, klen, &vlen);
@@ -340,7 +353,7 @@ static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf) {
     const void *key, *val;
     size_t klen, vlen;
     while (ht_iter_next(node->settings, &it, &key, &klen, &val, &vlen)) {
-        char escaped_path[8192], escaped_key[512], escaped_val[8192];
+        char escaped_path[8192], escaped_key[1024], escaped_val[8192];
         persist_escape(path_buf, escaped_path, sizeof(escaped_path));
         persist_escape((const char*)key, escaped_key, sizeof(escaped_key));
         persist_escape(*(char**)val, escaped_val, sizeof(escaped_val));

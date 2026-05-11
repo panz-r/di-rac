@@ -68,23 +68,68 @@ static int json_escape_string(const char *src, char *dst, size_t dst_len) {
 }
 
 static int broadcast_config_update(int sender_fd, const char *path, const char *key, const char *value) {
-    char escaped_path[16384], escaped_key[512], escaped_value[8192];
-    if (json_escape_string(path, escaped_path, sizeof(escaped_path)) < 0) return -1;
-    if (json_escape_string(key, escaped_key, sizeof(escaped_key)) < 0) return -1;
-    if (value && json_escape_string(value, escaped_value, sizeof(escaped_value)) < 0) return -1;
+    /* Heap-allocate to handle worst-case expansion: control chars expand to
+     * \u00XX (6 bytes per input byte), so for an 8192-byte input we need 49152
+     * bytes. Add headroom for JSON overhead. */
+    size_t path_len = strlen(path);
+    size_t escaped_path_size = path_len * 6 + 1;
+    char *escaped_path = malloc(escaped_path_size);
+    size_t key_len = strlen(key);
+    size_t escaped_key_size = key_len * 6 + 1;
+    char *escaped_key = malloc(escaped_key_size);
+    char *escaped_value = NULL;
+    size_t escaped_value_size = 0;
 
-    char msg[16384];
-    int len = snprintf(msg, sizeof(msg),
+    if (!escaped_path || !escaped_key) {
+        free(escaped_path); free(escaped_key);
+        return -1;
+    }
+    if (value) {
+        escaped_value_size = strlen(value) * 6 + 1;
+        escaped_value = malloc(escaped_value_size);
+        if (!escaped_value) {
+            free(escaped_path); free(escaped_key);
+            return -1;
+        }
+    }
+
+    if (json_escape_string(path, escaped_path, escaped_path_size) < 0) {
+        free(escaped_path); free(escaped_key); free(escaped_value);
+        return -1;
+    }
+    if (json_escape_string(key, escaped_key, escaped_key_size) < 0) {
+        free(escaped_path); free(escaped_key); free(escaped_value);
+        return -1;
+    }
+    if (value && json_escape_string(value, escaped_value, escaped_value_size) < 0) {
+        free(escaped_path); free(escaped_key); free(escaped_value);
+        return -1;
+    }
+
+    /* Compute exact size needed for JSON message */
+    size_t msg_size = 64 + strlen(escaped_path) + strlen(escaped_key)
+                      + (value ? strlen(escaped_value) : 4);
+    char *msg = malloc(msg_size);
+    if (!msg) {
+        free(escaped_path); free(escaped_key); free(escaped_value);
+        return -1;
+    }
+
+    int len = snprintf(msg, msg_size,
              "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
              escaped_path, escaped_key,
              value ? "\"" : "", value ? escaped_value : "null", value ? "\"" : "");
-    if (len < 0 || (size_t)len >= sizeof(msg)) return -1;
+
+    free(escaped_path); free(escaped_key); free(escaped_value);
+
+    if (len < 0 || (size_t)len >= msg_size) { free(msg); return -1; }
 
     for (int i = 0; i < MAX_EVENTS; i++) {
         if (all_clients[i] && all_clients[i]->fd != sender_fd) {
             send_json(all_clients[i]->fd, msg);
         }
     }
+    free(msg);
     return 0;
 }
 
