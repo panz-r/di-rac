@@ -97,13 +97,21 @@ func NewXAIHandler() *XAIHandler {
 				model, _ := result["model"].(string)
 				// reasoning_effort for grok-3-mini models (only "low" or "high")
 				if strings.Contains(model, "3-mini") {
-					if req.Provider.Extra != nil {
-						if effort, ok := req.Provider.Extra["reasoning_effort"].(string); ok {
-							if effort == "low" || effort == "high" {
-								result["reasoning_effort"] = effort
-							}
-						}
+					if effort := req.SettingString("reasoning_effort"); effort == "low" || effort == "high" {
+						result["reasoning_effort"] = effort
 					}
+				}
+				if !req.SettingIsNull("temperature") {
+					result["temperature"] = req.SettingFloat("temperature")
+				}
+				if !req.SettingIsNull("top_p") {
+					result["top_p"] = req.SettingFloat("top_p")
+				}
+				if !req.SettingIsNull("presence_penalty") {
+					result["presence_penalty"] = req.SettingFloat("presence_penalty")
+				}
+				if !req.SettingIsNull("frequency_penalty") {
+					result["frequency_penalty"] = req.SettingFloat("frequency_penalty")
 				}
 			},
 		}),

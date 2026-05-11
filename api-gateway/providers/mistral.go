@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"math"
-	"strings"
 )
 
 // MistralHandler handles Mistral API requests via their OpenAI-compatible endpoint.
@@ -154,7 +153,7 @@ func NewMistralHandler() *MistralHandler {
 					result["response_format"] = map[string]string{"type": rf}
 				}
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = strings.Split(stop, ",")
+					result["stop"] = splitStopSequences(stop)
 				}
 				if tc := req.SettingString("tool_choice"); tc != "" {
 					result["tool_choice"] = tc

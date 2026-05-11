@@ -151,6 +151,11 @@ func (rl *RateLimiter) Wait(ctx context.Context) error {
 	select {
 	case rl.sem <- struct{}{}:
 	case <-ctx.Done():
+		// Return rate-limit token on inflight acquisition failure
+		select {
+		case rl.tokens <- struct{}{}:
+		default:
+		}
 		return ctx.Err()
 	}
 	return nil
@@ -563,7 +568,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 			req.Timeout = 240000
 		}
 
-		// Validate request before processing
+		// Merge stored provider config (set-provider) into request
+		s.mergeProviderConfig(&req)
+
+		// Validate request after merging stored config
 		if err := providers.ValidateRequest(s.buildProviderRequest(&req)); err != nil {
 			w.write(&Response{
 				ID:     req.ID,
@@ -572,9 +580,6 @@ func (s *Server) handleConnection(conn net.Conn) {
 			})
 			continue
 		}
-
-		// Merge stored provider config (set-provider) into request
-		s.mergeProviderConfig(&req)
 
 		ctx, cancel := context.WithTimeout(s.ctx, time.Duration(req.Timeout)*time.Millisecond)
 
@@ -589,19 +594,20 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
-		if req.Stream {
-			// For streaming: send ack, then stream, then continue loop
-			w.write(&Response{ID: req.ID, Status: 200})
-			s.handleStreaming(ctx, req.ID, &req, w)
-			s.rateLimiter.Release()
-			cancel()
-		} else {
-			// For non-streaming: process and send response
-			resp := s.processRequest(ctx, &req)
-			s.rateLimiter.Release()
-			w.write(resp)
-			cancel()
-		}
+		func() {
+			defer s.rateLimiter.Release()
+			defer cancel()
+
+			if req.Stream {
+				// For streaming: send ack, then stream, then continue loop
+				w.write(&Response{ID: req.ID, Status: 200})
+				s.handleStreaming(ctx, req.ID, &req, w)
+			} else {
+				// For non-streaming: process and send response
+				resp := s.processRequest(ctx, &req)
+				w.write(resp)
+			}
+		}()
 	}
 }
 
@@ -739,17 +745,22 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 
 	providerReq := s.buildProviderRequest(req)
 
+	// Child context: cancelled when handleStreaming returns, unblocking
+	// the streaming goroutine even if parent ctx is still alive.
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	defer streamCancel()
+
 	chunks := make(chan providers.StreamChunk, 100)
 	errChan := make(chan error, 1)
 	doneChan := make(chan struct{}, 1)
 
 	go func() {
-		if streamErr := handler.Stream(ctx, providerReq, func(chunk providers.StreamChunk) error {
+		if streamErr := handler.Stream(streamCtx, providerReq, func(chunk providers.StreamChunk) error {
 			select {
 			case chunks <- chunk:
 				return nil
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-streamCtx.Done():
+				return streamCtx.Err()
 			}
 		}); streamErr != nil {
 			errChan <- streamErr
@@ -889,7 +900,8 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 func mustMarshal(v interface{}) json.RawMessage {
 	data, err := json.Marshal(v)
 	if err != nil {
-		return json.RawMessage(`{}`)
+		log.Printf("mustMarshal error: %v", err)
+		return json.RawMessage(`{"type":"error","error":"internal marshal error"}`)
 	}
 	return data
 }

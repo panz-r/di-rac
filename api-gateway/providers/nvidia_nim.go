@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"math"
-	"strings"
 )
 
 // NvidiaNimHandler handles NVIDIA NIM API requests via their OpenAI-compatible endpoint.
@@ -108,7 +107,9 @@ func NewNvidiaNimHandler() *NvidiaNimHandler {
 					delete(result, "temperature")
 					delete(result, "top_p")
 				} else {
-					result["temperature"] = req.SettingFloat("temperature")
+					if !req.SettingIsNull("temperature") {
+						result["temperature"] = req.SettingFloat("temperature")
+					}
 					tp := req.SettingFloat("top_p")
 					if tp == 0 {
 						tp = 0.95
@@ -117,7 +118,7 @@ func NewNvidiaNimHandler() *NvidiaNimHandler {
 				}
 
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = strings.Split(stop, ",")
+					result["stop"] = splitStopSequences(stop)
 				}
 
 				logprobs := req.SettingBool("logprobs")
@@ -139,9 +140,7 @@ func NewNvidiaNimHandler() *NvidiaNimHandler {
 					result["response_format"] = map[string]string{"type": rf}
 				}
 
-				if req.SettingBool("parallel_tool_calls") {
-					result["parallel_tool_calls"] = true
-				}
+				result["parallel_tool_calls"] = req.SettingBool("parallel_tool_calls")
 			},
 		}),
 	}

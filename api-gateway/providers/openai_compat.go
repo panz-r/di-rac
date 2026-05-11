@@ -353,14 +353,14 @@ func openaiConvertUserContentBlocks(messages []map[string]interface{}, msg Messa
 func openaiConvertAssistantContentBlocks(messages []map[string]interface{}, msg Message) []map[string]interface{} {
 	var textParts []string
 	var toolCalls []map[string]interface{}
-	var reasoningContent string
+	var reasoningParts []string
 
 	for _, block := range msg.ContentBlocks {
 		switch block.Type {
 		case "text":
 			textParts = append(textParts, block.Text)
 		case "thinking":
-			reasoningContent += block.Thinking
+			reasoningParts = append(reasoningParts, block.Thinking)
 		case "tool_use":
 			if block.ToolUse != nil {
 				args := block.ToolUse.Function.Arguments
@@ -390,8 +390,8 @@ func openaiConvertAssistantContentBlocks(messages []map[string]interface{}, msg 
 	if len(toolCalls) > 0 {
 		m["tool_calls"] = toolCalls
 	}
-	if reasoningContent != "" {
-		m["reasoning_content"] = reasoningContent
+	if len(reasoningParts) > 0 {
+		m["reasoning_content"] = strings.Join(reasoningParts, "")
 	}
 	messages = append(messages, m)
 	return messages
@@ -456,14 +456,14 @@ func openaiAddReasoningContent(messages []map[string]interface{}, req *Request) 
 		if msg.Role != "assistant" || len(msg.ContentBlocks) == 0 {
 			continue
 		}
-		var reasoning string
+		var reasoningParts []string
 		for _, block := range msg.ContentBlocks {
 			if block.Type == "thinking" {
-				reasoning += block.Thinking
+				reasoningParts = append(reasoningParts, block.Thinking)
 			}
 		}
-		if reasoning != "" {
-			reasoningByIndex[currentIdx] = reasoning
+		if len(reasoningParts) > 0 {
+			reasoningByIndex[currentIdx] = strings.Join(reasoningParts, "")
 		}
 	}
 	for idx, reasoning := range reasoningByIndex {
@@ -497,7 +497,9 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			callback(StreamChunk{Type: "complete"})
+			if err := callback(StreamChunk{Type: "complete"}); err != nil {
+				return err
+			}
 			return nil
 		}
 
@@ -562,26 +564,36 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 		if len(delta.Content) > 0 {
 			if contentArraySupport {
 				if text := extractContentString(delta.Content); text != "" {
-					callback(StreamChunk{Type: "delta", TextDelta: text})
+					if err := callback(StreamChunk{Type: "delta", TextDelta: text}); err != nil {
+						return err
+					}
 				}
 			} else {
 				var s string
 				if json.Unmarshal(delta.Content, &s) == nil && s != "" {
-					callback(StreamChunk{Type: "delta", TextDelta: s})
+					if err := callback(StreamChunk{Type: "delta", TextDelta: s}); err != nil {
+						return err
+					}
 				}
 			}
 		}
 		if delta.ReasoningContent != "" {
-			callback(StreamChunk{Type: "delta", Thinking: delta.ReasoningContent})
+			if err := callback(StreamChunk{Type: "delta", Thinking: delta.ReasoningContent}); err != nil {
+				return err
+			}
 		}
 		// Groq reasoning field (DeepSeek models with reasoning_format: "parsed")
 		if delta.Reasoning != "" {
-			callback(StreamChunk{Type: "delta", Thinking: delta.Reasoning})
+			if err := callback(StreamChunk{Type: "delta", Thinking: delta.Reasoning}); err != nil {
+				return err
+			}
 		}
 		// MiniMax reasoning_details field (with reasoning_split=true)
 		for _, rd := range delta.ReasoningDetails {
 			if rd.Text != "" {
-				callback(StreamChunk{Type: "delta", Thinking: rd.Text})
+				if err := callback(StreamChunk{Type: "delta", Thinking: rd.Text}); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -598,18 +610,18 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 			if tc.Function.Name != "" {
 				state.name = tc.Function.Name
 			}
-			// Log every tool call chunk for debugging
-			log.Printf("[SSE] tool_call: idx=%d id=%q name=%q args_len=%d args=%q", idx, tc.ID, tc.Function.Name, len(tc.Function.Arguments), tc.Function.Arguments)
 			// Emit tool call delta whenever we have arguments and a name.
 			// OpenAI streams send id+name first, then argument fragments in separate chunks.
 			if tc.Function.Arguments != "" {
-				callback(StreamChunk{
+				if err := callback(StreamChunk{
 					Type:         "delta",
 					Index:        idx,
 					JSONDelta:    tc.Function.Arguments,
 					ToolCallID:   state.id,
 					ToolCallName: state.name,
-				})
+				}); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -618,7 +630,9 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 			if finishReasonMap != nil {
 				fr = finishReasonMap(fr)
 			}
-			callback(StreamChunk{Type: "stop", FinishReason: fr, Usage: usage})
+			if err := callback(StreamChunk{Type: "stop", FinishReason: fr, Usage: usage}); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -715,7 +729,7 @@ func openaiConvertResponse(resp map[string]interface{}, finishReasonMap func(str
 			}
 		}
 		if hit, ok := usageMap["prompt_cache_hit_tokens"].(float64); ok {
-			usage.CacheReadInputTokens = int(hit)
+			usage.CacheReadInputTokens += int(hit)
 		}
 		if miss, ok := usageMap["prompt_cache_miss_tokens"].(float64); ok {
 			usage.CacheCreationInputTokens = int(miss)

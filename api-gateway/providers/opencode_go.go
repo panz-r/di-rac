@@ -177,7 +177,7 @@ func NewOpenCodeGoHandler() *OpenCodeGoHandler {
 					result["max_tokens"] = req.MaxTokens
 				}
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = strings.Split(stop, ",")
+					result["stop"] = splitStopSequences(stop)
 				}
 
 				logprobs := req.SettingBool("logprobs")
@@ -268,7 +268,7 @@ func (h *OpenCodeGoHandler) ValidateSettings(settings map[string]interface{}, th
 
 		if s.Key == "stop" {
 			if stop, ok := val.(string); ok && stop != "" {
-				seqs := strings.Split(stop, ",")
+				seqs := splitStopSequences(stop)
 				if len(seqs) > 4 {
 					v.Error = "Max 4 stop sequences"
 					v.Value = strings.Join(seqs[:4], ",")
@@ -310,11 +310,11 @@ func (h *OpenCodeGoHandler) ListModels(ctx context.Context, cfg ProviderConfig) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 		return nil, fmt.Errorf("OpenCode Go /models returned status %d: %s", resp.StatusCode, string(errBody))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return nil, err
 	}

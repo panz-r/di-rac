@@ -14,6 +14,14 @@ func NewLmStudioHandler() *LmStudioHandler {
 		inner: newOpenAICompatHandler(OpenAICompatConfig{
 			BaseURL:             "http://localhost:1234/api/v0",
 			MaxCompletionTokens: true,
+			ModifyRequest: func(req *Request, result map[string]interface{}) {
+				if !req.SettingIsNull("temperature") {
+					result["temperature"] = req.SettingFloat("temperature")
+				}
+				if !req.SettingIsNull("top_p") {
+					result["top_p"] = req.SettingFloat("top_p")
+				}
+			},
 			Capabilities: &ProviderInfo{
 				ID:               "lmstudio",
 				MaxTokensDefault: 16384,

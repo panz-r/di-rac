@@ -158,7 +158,7 @@ func NewKiloCodeHandler() *KiloCodeHandler {
 					result["max_tokens"] = req.MaxTokens
 				}
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = strings.Split(stop, ",")
+					result["stop"] = splitStopSequences(stop)
 				}
 
 				if pp := req.SettingFloat("presence_penalty"); pp != 0 {
@@ -196,9 +196,7 @@ func NewKiloCodeHandler() *KiloCodeHandler {
 					result["response_format"] = map[string]string{"type": rf}
 				}
 
-				if req.SettingBool("parallel_tool_calls") {
-					result["parallel_tool_calls"] = true
-				}
+				result["parallel_tool_calls"] = req.SettingBool("parallel_tool_calls")
 			},
 		}),
 	}
@@ -252,7 +250,7 @@ func (h *KiloCodeHandler) ValidateSettings(settings map[string]interface{}, thin
 
 		if s.Key == "stop" {
 			if stop, ok := val.(string); ok && stop != "" {
-				seqs := strings.Split(stop, ",")
+				seqs := splitStopSequences(stop)
 				if len(seqs) > 4 {
 					v.Error = "Max 4 stop sequences"
 					v.Value = strings.Join(seqs[:4], ",")
@@ -294,11 +292,11 @@ func (h *KiloCodeHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 		return nil, fmt.Errorf("Kilo Code /models returned status %d: %s", resp.StatusCode, string(errBody))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return nil, err
 	}

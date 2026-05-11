@@ -167,8 +167,9 @@ func NewHuggingFaceHandler() *HuggingFaceHandler {
 				},
 			},
 			ModifyRequest: func(req *Request, result map[string]interface{}) {
-				// Temperature: override buildRequest default of 0
-				result["temperature"] = req.SettingFloat("temperature")
+				if !req.SettingIsNull("temperature") {
+					result["temperature"] = req.SettingFloat("temperature")
+				}
 
 				if topP := req.SettingFloat("top_p"); topP > 0 {
 					result["top_p"] = topP
