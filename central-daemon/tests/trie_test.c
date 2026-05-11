@@ -38,7 +38,7 @@ void test_cleanup() {
     assert(trie_acquire_lock(t, "/a", 11, true) == 1);
     int wakeup[16];
     char *w_paths[16];
-    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16, NULL, NULL);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
     assert(trie_get_owned_count(t, 10) == 0);
     assert(trie_get_owned_count(t, 11) == 1);
@@ -129,7 +129,7 @@ void test_waiter_abandonment() {
     assert(trie_acquire_lock(t, "/lock", 12, true) == 1);
     int wakeup[16];
     char *w_paths[16];
-    size_t count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16, NULL, NULL);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
     int next = trie_release_lock(t, "/lock", 10);
     assert(next == 12); 
@@ -186,9 +186,9 @@ void test_complex_tree() {
     assert(trie_acquire_lock(t, "/v/src/c.c", 13, true) == 0); 
     int wakeup[16];
     char *w_paths[16];
-    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16, NULL, NULL);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
-    count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16);
+    count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16, NULL, NULL);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
     assert(trie_release_lock(t, "/v/src/c.c", 13) == 12);
     trie_destroy(t);
@@ -277,9 +277,9 @@ void test_waiter_reordering() {
     /* W1 and W3 disconnect */
     int wakeup[16];
     char *w_paths[16];
-    size_t count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 11, wakeup, w_paths, 16, NULL, NULL);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
-    count = trie_cleanup_fd(t, 13, wakeup, w_paths, 16);
+    count = trie_cleanup_fd(t, 13, wakeup, w_paths, 16, NULL, NULL);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
     
     /* Release owner 10. Next should be W2 (12). */
@@ -346,7 +346,7 @@ void test_cleanup_recursive_intent() {
     /* 10 disconnects */
     int wakeup[16];
     char *w_paths[16];
-    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16, NULL, NULL);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
     
     /* intent_count must be 0 */
@@ -447,7 +447,7 @@ void test_cleanup_massive_wakeups() {
     int wakeup[16];
     char *w_paths[16];
     memset(w_paths, 0, sizeof(w_paths));
-    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16, NULL, NULL);
 
     printf(" - Woke up %zu waiters (cap 16)\n", count);
     for (size_t i = 0; i < count; i++) {
@@ -493,7 +493,7 @@ void test_cleanup_multi_branch_wakeup() {
     int wakeup[16];
     char *w_paths[16];
     memset(w_paths, 0, sizeof(w_paths));
-    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16, NULL, NULL);
 
     printf(" - Woke up %zu waiters (cap 16)\n", count);
     for (size_t i = 0; i < count; i++) {
@@ -582,7 +582,7 @@ void test_cleanup_waiter_then_owner_disconnect() {
     int wakeup[16];
     char *w_paths[16];
     memset(w_paths, 0, sizeof(w_paths));
-    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16, NULL, NULL);
 
     /* /a should have been granted to 11, not to the disconnected 10 */
     assert(count == 1);
@@ -620,7 +620,7 @@ void test_cleanup_mixed_state() {
     int wakeup[16];
     char *w_paths[16];
     memset(w_paths, 0, sizeof(w_paths));
-    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16, NULL, NULL);
 
     /* 10's release of /owned should wake up 12 */
     assert(count == 1);
@@ -685,7 +685,7 @@ void test_cleanup_massive_multi_node_wakeups() {
        We provide a small buffer to see if it overflows or just caps. */
     int wakeup[16];
     char *w_paths[16];
-    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16, NULL, NULL);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
     
     /* The current implementation caps at 16, but we want to make sure it doesn't crash. */
@@ -718,20 +718,20 @@ void test_massive_disconnect_wakeups() {
     /* Disconnect owner */
     int wakeup[128];
     char *w_paths[128];
-    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 128);
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 128, NULL, NULL);
     assert(count == 1);
     assert(wakeup[0] == 100);
     free(w_paths[0]);
     
     /* Now disconnect 100. It should wake up 101. */
-    count = trie_cleanup_fd(t, 100, wakeup, w_paths, 128);
+    count = trie_cleanup_fd(t, 100, wakeup, w_paths, 128, NULL, NULL);
     assert(count == 1);
     assert(wakeup[0] == 101);
     free(w_paths[0]);
     
     /* Cleanup all */
     for (int i = 101; i < 200; i++) {
-        count = trie_cleanup_fd(t, i, wakeup, w_paths, 128);
+        count = trie_cleanup_fd(t, i, wakeup, w_paths, 128, NULL, NULL);
         for (size_t j = 0; j < count; j++) free(w_paths[j]);
     }
     
@@ -773,7 +773,7 @@ void test_config_management() {
     /* 4. Cleanup Transient on Disconnect */
     int wakeup[16];
     char *w_paths[16];
-    trie_cleanup_fd(t, 12, wakeup, w_paths, 16);
+    trie_cleanup_fd(t, 12, wakeup, w_paths, 16, NULL, NULL);
     
     /* FD 12 now sees project setting */
     val = trie_get_config(t, "/v/project/src", 12, "theme");

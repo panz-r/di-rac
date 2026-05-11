@@ -77,12 +77,19 @@ trie_node_t* trie_traverse(trie_t *trie, const char *path, bool create, bool *an
 
 /**
  * trie_cleanup_fd - Release all locks held by a specific FD (on disconnect).
- * 
+ *
  * @param wakeup An array of ints to store FDs that were granted locks.
+ * @param paths An array of path strings for each granted FD.
  * @param wakeup_cap The size of the wakeup array.
+ * @param on_granted Called for every grant that occurs (including when the
+ *                   wakeup array is full and notification is dropped from the array).
+ *                   If NULL, no callback is invoked.
  * @return The number of FDs added to the wakeup array.
  */
-size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t wakeup_cap);
+size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths,
+                      size_t wakeup_cap,
+                      void (*on_granted)(int granted_fd, const char *path, void *ctx),
+                      void *ctx);
 
 /* Path reconstruction. Returns path length written, or -1 on truncation. */
 int node_get_path(trie_node_t *node, char *buf, size_t len);

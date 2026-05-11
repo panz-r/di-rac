@@ -380,12 +380,33 @@ static int handle_client_data(client_ctx_t *ctx, trie_t *trie) {
     return 0;
 }
 
+/* Callback for trie_cleanup_fd to immediately send granted notifications,
+ * including for grants that exceed the wakeup array capacity. */
+static void send_granted_cb(int fd, const char *path, void *ctx) {
+    (void)ctx;
+    if (!path || fd < 0) return;
+    size_t esc_size = strlen(path) * 6 + 1;
+    char *escaped = malloc(esc_size);
+    if (!escaped) return;
+    if (json_escape_string(path, escaped, esc_size) < 0) {
+        snprintf(escaped, esc_size, "%s", path);
+    }
+    char resp[8192 + 128];
+    snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
+    send_json(fd, resp);
+    free(escaped);
+}
+
 int main(int argc, char *argv[]) {
     int listen_fd, epoll_fd;
     struct sockaddr_un addr;
     struct epoll_event ev, events[MAX_EVENTS];
     
     lock_trie = trie_create();
+    if (!lock_trie) {
+        fprintf(stderr, "[di-vrr] Fatal: cannot create trie\n");
+        exit(1);
+    }
     signal(SIGINT, handle_shutdown);
     signal(SIGTERM, handle_shutdown);
 
@@ -465,18 +486,9 @@ int main(int argc, char *argv[]) {
                 if (handle_client_data(ctx, lock_trie) < 0) {
                     int wakeup[1024];
                     char *w_paths[1024];
-                    size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, w_paths, 1024);
-                    if (w_count == 1024) {
-                        fprintf(stderr, "[di-vrr] warning: wakeup notification capped at 1024 for fd %d\n", ctx->fd);
-                    }
+                    size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, w_paths, 1024,
+                                                    send_granted_cb, NULL);
                     for (size_t j = 0; j < w_count; j++) {
-                        char escaped_path[4096];
-                        if (json_escape_string(w_paths[j], escaped_path, sizeof(escaped_path)) < 0) {
-                            snprintf(escaped_path, sizeof(escaped_path), "%s", w_paths[j]);
-                        }
-                        char resp[8192 + 128];
-                        snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
-                        send_json(wakeup[j], resp);
                         free(w_paths[j]);
                     }
                     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);

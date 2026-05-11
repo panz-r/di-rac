@@ -552,7 +552,8 @@ int node_get_path(trie_node_t *node, char *buf, size_t len) {
     return written;
 }
 
-size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t wakeup_cap) {
+size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t wakeup_cap,
+                       void (*on_granted)(int, const char*, void*), void *ctx) {
     size_t wakeup_count = 0;
     size_t vlen;
 
@@ -586,29 +587,42 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
             node->owner_fd = -1;
             list->nodes[0] = list->nodes[list->count - 1];
             list->count--;
+            char path_buf[4096];
+            int path_len = node_get_path(node, path_buf, sizeof(path_buf));
             trie_node_t *p = node->parent;
             while (p) {
                 p->intent_count--;
-                /* Only grant if we have room to notify — prevents silent grants */
                 int w = node_grant_to_next_waiter(trie, p);
-                if (w != -1 && wakeup_count < wakeup_cap) {
-                    wakeup[wakeup_count] = w;
-                    paths[wakeup_count] = malloc(4096);
-                    if (node_get_path(p, paths[wakeup_count], 4096) < 0) {
-                        snprintf(paths[wakeup_count], 4096, "<truncated>");
+                if (w != -1) {
+                    if (wakeup_count < wakeup_cap) {
+                        wakeup[wakeup_count] = w;
+                        paths[wakeup_count] = malloc(4096);
+                        if (node_get_path(p, paths[wakeup_count], 4096) < 0) {
+                            snprintf(paths[wakeup_count], 4096, "<truncated>");
+                        }
+                        wakeup_count++;
                     }
-                    wakeup_count++;
+                    if (on_granted && path_len > 0) {
+                        on_granted(w, path_buf, ctx);
+                    }
                 }
                 p = p->parent;
             }
             int w = node_grant_to_next_waiter(trie, node);
-            if (w != -1 && wakeup_count < wakeup_cap) {
-                wakeup[wakeup_count] = w;
-                paths[wakeup_count] = malloc(4096);
-                if (node_get_path(node, paths[wakeup_count], 4096) < 0) {
-                    snprintf(paths[wakeup_count], 4096, "<truncated>");
+            if (w != -1) {
+                if (wakeup_count < wakeup_cap) {
+                    wakeup[wakeup_count] = w;
+                    paths[wakeup_count] = malloc(4096);
+                    if (path_len > 0) {
+                        memcpy(paths[wakeup_count], path_buf, path_len + 1);
+                    } else {
+                        snprintf(paths[wakeup_count], 4096, "<truncated>");
+                    }
+                    wakeup_count++;
                 }
-                wakeup_count++;
+                if (on_granted && path_len > 0) {
+                    on_granted(w, path_buf, ctx);
+                }
             }
         }
         free(list->nodes);
