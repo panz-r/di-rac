@@ -63,7 +63,7 @@ static int broadcast_config_update(int sender_fd, const char *path, const char *
     if (json_escape_string(key, escaped_key, sizeof(escaped_key)) < 0) return -1;
     if (value && json_escape_string(value, escaped_value, sizeof(escaped_value)) < 0) return -1;
 
-    char msg[8192];
+    char msg[16384];
     int len = snprintf(msg, sizeof(msg),
              "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
              escaped_path, escaped_key,
