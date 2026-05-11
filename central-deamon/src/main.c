@@ -97,8 +97,12 @@ static const char* find_string_val(const char *json, const char *key, char *out,
     while (*p == ' ' || *p == ':' || *p == '\t') p++;
     if (*p != '"') return NULL;
     const char *start = p + 1;
-    const char *end = strchr(start, '"');
-    if (!end) return NULL;
+    const char *end = start;
+    while (*end != '"' && *end != '\0') {
+        if (*end == '\\' && *(end + 1) != '\0') end++;
+        end++;
+    }
+    if (*end != '"') return NULL;
     size_t len = end - start;
     if (len >= out_len) len = out_len - 1;
     memcpy(out, start, len);
@@ -182,7 +186,17 @@ static const char* find_end_of_object(const char *start, const char *end) {
     int depth = 0;
     bool in_string = false;
     for (const char *p = start; p < end; p++) {
-        if (*p == '"' && (p == start || *(p-1) != '\\')) in_string = !in_string;
+        if (*p == '"') {
+            if (!in_string) {
+                in_string = true;
+            } else {
+                // Check if this quote is escaped (odd number of backslashes before it)
+                int backslash_count = 0;
+                for (const char *q = p - 1; q >= start && *q == '\\'; q--) backslash_count++;
+                if (backslash_count % 2 == 0) in_string = false;
+            }
+            continue;
+        }
         if (in_string) continue;
         if (*p == '{') depth++;
         else if (*p == '}') {
