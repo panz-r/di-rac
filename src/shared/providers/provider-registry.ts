@@ -25,6 +25,10 @@ import {
 	ovhcloudDefaultModelId,
 	ollamaDefaultModelId,
 	replicateDefaultModelId,
+	mistralDefaultModelId,
+	cerebrasDefaultModelId,
+	nebiusDefaultModelId,
+	sambanovaDefaultModelId,
 } from "../api"
 import type { ModelRole } from "../roles"
 import type { Secrets, SettingsKey } from "../storage/state-keys"
@@ -110,6 +114,7 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		providerId: "mistral",
 		label: "Mistral",
 		apiKeyFields: "mistralApiKey",
+		defaultModelId: mistralDefaultModelId,
 	},
 	{
 		providerId: "zai",
@@ -127,6 +132,7 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		providerId: "cerebras",
 		label: "Cerebras",
 		apiKeyFields: "cerebrasApiKey",
+		defaultModelId: cerebrasDefaultModelId,
 	},
 	{
 		providerId: "fireworks",
@@ -172,6 +178,7 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		providerId: "nebius",
 		label: "Nebius AI Studio",
 		apiKeyFields: "nebiusApiKey",
+		defaultModelId: nebiusDefaultModelId,
 	},
 	{
 		providerId: "xai",
@@ -183,6 +190,7 @@ export const PROVIDER_REGISTRY: ProviderDescriptor[] = [
 		providerId: "sambanova",
 		label: "SambaNova",
 		apiKeyFields: "sambanovaApiKey",
+		defaultModelId: sambanovaDefaultModelId,
 	},
 	{
 		providerId: "oca",

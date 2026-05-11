@@ -329,7 +329,7 @@ func (h *ReplicateHandler) Stream(ctx context.Context, req *Request, callback fu
 			data := strings.TrimPrefix(line, "data:")
 			switch eventType {
 			case "output":
-				if err := callback(StreamChunk{Content: data}); err != nil {
+				if err := callback(StreamChunk{Type: "delta", TextDelta: data}); err != nil {
 					return err
 				}
 			case "error":

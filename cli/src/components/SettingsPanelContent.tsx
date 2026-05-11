@@ -53,6 +53,7 @@ interface ListItem {
 	indent?: number
 	parentKey?: string
 	disabled?: boolean
+	isNull?: boolean
 }
 
 function normalizeReasoningEffort(value: unknown): OpenaiReasoningEffort {
@@ -135,43 +136,49 @@ function buildDynamicItems(
 			}
 			case "slider": {
 				const min = setting.min ?? 0
-				const val = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
-				const numVal = typeof val === "number" ? val : (typeof setting.default === "number" ? setting.default : min)
+				const rawVal = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
+				const isNull = rawVal === null || rawVal === undefined
+				const numVal = isNull ? null : (typeof rawVal === "number" ? rawVal : (typeof setting.default === "number" ? setting.default : min))
 				items.push({
 					key,
 					label,
 					type: "editable",
-					value: String(numVal),
-					description: desc || undefined,
+					value: numVal === null ? "auto" : String(numVal),
+					description: isNull ? (desc ? desc + " " : "") + "(not sent)" : desc || undefined,
 					indent: 4,
 					disabled: isInactive,
+					isNull,
 				})
 				break
 			}
 			case "text": {
-				const val = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
+				const rawVal = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
+				const isNull = rawVal === null
 				items.push({
 					key,
 					label,
 					type: "editable",
-					value: typeof val === "string" ? val : (typeof setting.default === "string" ? setting.default : ""),
-					description: desc || undefined,
+					value: isNull ? "auto" : (typeof rawVal === "string" ? rawVal : (typeof setting.default === "string" ? setting.default : "")),
+					description: isNull ? (desc ? desc + " " : "") + "(not sent)" : desc || undefined,
 					indent: 4,
 					disabled: isInactive,
+					isNull,
 				})
 				break
 			}
 			case "number": {
-				const val = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
-				const numVal = typeof val === "number" ? val : (typeof setting.default === "number" ? setting.default : 0)
+				const rawVal = getProviderSetting(stateManager, providerId, mode, setting.key, scope)
+				const isNull = rawVal === null || rawVal === undefined
+				const numVal = isNull ? null : (typeof rawVal === "number" ? rawVal : (typeof setting.default === "number" ? setting.default : 0))
 				items.push({
 					key,
 					label,
 					type: "editable",
-					value: String(numVal),
-					description: desc || undefined,
+					value: numVal === null ? "auto" : String(numVal),
+					description: isNull ? (desc ? desc + " " : "") + "(not sent)" : desc || undefined,
 					indent: 4,
 					disabled: isInactive,
+					isNull,
 				})
 				break
 			}
@@ -1138,12 +1145,19 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 			if (setting) {
 				const scope: SettingScope = setting.scope || "global"
 				let val: unknown = editValue
-				if (setting.type === "slider") {
-					const num = parseFloat(editValue)
-					if (isNaN(num)) { setIsEditing(false); return }
-					const min = setting.min ?? -Infinity
-					const max = setting.max ?? Infinity
-					val = Math.min(max, Math.max(min, num))
+				const trimmed = editValue.trim().toLowerCase()
+				if (setting.type === "slider" || setting.type === "number") {
+					if (trimmed === "" || trimmed === "auto") {
+						val = null
+					} else {
+						const num = parseFloat(editValue)
+						if (isNaN(num)) { setIsEditing(false); return }
+						const min = setting.min ?? -Infinity
+						const max = setting.max ?? Infinity
+						val = Math.min(max, Math.max(min, num))
+					}
+				} else if (setting.type === "text" && trimmed === "auto") {
+					val = null
 				}
 				setProviderSetting(stateManager, provider, mode, setting.key, scope, val)
 				refreshModelIds()
@@ -1280,12 +1294,31 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 				onClose()
 				return
 			}
-			if (key.leftArrow) {
-				navigateTabs("left")
-				return
-			}
-			if (key.rightArrow) {
-				navigateTabs("right")
+			if (key.leftArrow || key.rightArrow) {
+				const item = items[selectedIndex]
+				if (item?.key.startsWith("dyn:") && (item.type === "editable" || item.isNull)) {
+					const parts = item.key.split(":")
+					const mode = parts[1] as "act" | "plan"
+					const settingKey = parts.slice(2).join(":")
+					const setting = providerInfoCache[provider]?.settings?.find(s => s.key === settingKey)
+					if (setting) {
+						const scope: SettingScope = setting.scope || "global"
+						if (key.leftArrow && !item.isNull) {
+							setProviderSetting(stateManager, provider, mode, setting.key, scope, null)
+							refreshModelIds()
+							rebuildTaskApi()
+							return
+						}
+						if (key.rightArrow && item.isNull) {
+							const def = setting.default ?? (setting.type === "slider" || setting.type === "number" ? 0 : "")
+							setProviderSetting(stateManager, provider, mode, setting.key, scope, def)
+							refreshModelIds()
+							rebuildTaskApi()
+							return
+						}
+					}
+				}
+				navigateTabs(key.leftArrow ? "left" : "right")
 				return
 			}
 			if (key.upArrow) {
@@ -1566,10 +1599,10 @@ export const SettingsPanelContent: React.FC<SettingsPanelContentProps> = ({
 									{isSelected ? "❯" : " "}{" "}
 								</Text>
 								{item.label && <Text color={item.disabled ? "gray" : (isSelected ? COLORS.primaryBlue : "white")}>{`${item.label}${item.disabled ? " (inactive)" : ""}: `}</Text>}
-								<Text color={item.disabled ? "gray" : (item.type === "readonly" ? "gray" : COLORS.primaryBlue)}>
-									{typeof item.value === "string" ? item.value : String(item.value)}
+								<Text color={item.isNull ? "gray" : (item.disabled ? "gray" : (item.type === "readonly" ? "gray" : COLORS.primaryBlue))}>
+									{item.isNull ? "auto" : (typeof item.value === "string" ? item.value : String(item.value))}
 								</Text>
-								{item.type === "editable" && isSelected && !item.disabled && <Text color="gray"> (Tab to edit)</Text>}
+								{item.type === "editable" && isSelected && !item.disabled && <Text color="gray">{item.isNull ? " (\u2192 to restore)" : " (Tab to edit, \u2190 to disable)"}</Text>}
 							</Text>
 						</Box>
 					)

@@ -290,12 +290,20 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 					delete(result, "temperature")
 					delete(result, "top_p")
 				} else {
-					result["temperature"] = req.SettingFloat("temperature")
-					tp := req.SettingFloat("top_p")
-					if tp == 0 {
-						tp = 1.0
+					if req.SettingIsNull("temperature") {
+						delete(result, "temperature")
+					} else {
+						result["temperature"] = req.SettingFloat("temperature")
 					}
-					result["top_p"] = tp
+					if req.SettingIsNull("top_p") {
+						delete(result, "top_p")
+					} else {
+						tp := req.SettingFloat("top_p")
+						if tp == 0 {
+							tp = 1.0
+						}
+						result["top_p"] = tp
+					}
 				}
 
 				// Advanced sampling parameters
@@ -330,7 +338,7 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 
 
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = strings.Split(stop, ",")
+					result["stop"] = splitStopSequences(stop)
 				}
 
 				// Logprobs with typed field fallback
@@ -365,8 +373,12 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 				}
 
 				// Parallel tool calls
-				if ptc := req.SettingBool("parallel_tool_calls"); ptc {
-					result["parallel_tool_calls"] = true
+				if req.SettingIsNull("parallel_tool_calls") {
+					delete(result, "parallel_tool_calls")
+				} else if val, ok := req.Settings["parallel_tool_calls"]; ok {
+					if b, _ := val.(bool); ok {
+						result["parallel_tool_calls"] = b
+					}
 				}
 
 				// Provider routing
@@ -567,7 +579,7 @@ func (h *OpenRouterHandler) ListModels(ctx context.Context, cfg ProviderConfig) 
 		return nil, fmt.Errorf("OpenRouter /models returned status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return nil, err
 	}

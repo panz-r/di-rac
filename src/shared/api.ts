@@ -356,7 +356,7 @@ export const azureOpenAiDefaultApiVersion = "2024-08-01-preview"
 // DeepSeek
 // https://api-docs.deepseek.com/quick_start/pricing
 export type DeepSeekModelId = keyof typeof deepSeekModels
-export const deepSeekDefaultModelId: DeepSeekModelId = "deepseek-v4-flash"
+export const deepSeekDefaultModelId: DeepSeekModelId = "deepseek-v4-pro"
 export const deepSeekModels = {
 	"deepseek-v4-flash": {
 		maxTokens: 384_000,
@@ -801,7 +801,7 @@ export const mainlandQwenDefaultModelId: MainlandQwenModelId = Object.keys(mainl
 // Mistral
 // https://docs.mistral.ai/getting-started/models/models_overview/
 export type MistralModelId = keyof typeof mistralModels
-export const mistralDefaultModelId: MistralModelId = "devstral-2512"
+export const mistralDefaultModelId: MistralModelId = "mistral-medium-latest"
 export const mistralModels = {
 	"devstral-2512": {
 		maxTokens: 256_000,
@@ -1308,7 +1308,7 @@ export const groqModels = {
 		supportsImages: false,
 		supportsPromptCache: true,
 		description:
-			"Kimi K2 model gets a new version update: Agentic coding: more accurate, better generalization across scaffolds. Frontend coding: improved aesthetics and functionalities on web, 3d, and other tasks. Context length: extended from 128k to 256k, providing better long-horizon support.",
+			"Qwen3 32B dense model with strong general-purpose reasoning and tool use. 262K context window.",
 	},
 } as const satisfies Record<string, OpenAiCompatibleModelInfo>
 

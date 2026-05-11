@@ -140,12 +140,20 @@ func NewDeepSeekHandler() *DeepSeekHandler {
 					delete(result, "top_p")
 				} else {
 					// Non-thinking mode: apply temperature and top_p from settings
-					result["temperature"] = req.SettingFloat("temperature")
-					topP := req.SettingFloat("top_p")
-					if topP == 0 {
-						topP = 1.0
+					if req.SettingIsNull("temperature") {
+						delete(result, "temperature")
+					} else {
+						result["temperature"] = req.SettingFloat("temperature")
 					}
-					result["top_p"] = topP
+					if req.SettingIsNull("top_p") {
+						delete(result, "top_p")
+					} else {
+						topP := req.SettingFloat("top_p")
+						if topP == 0 {
+							topP = 1.0
+						}
+						result["top_p"] = topP
+					}
 				}
 				// Read sampling settings from generic map, fallback to typed fields
 				logprobs := req.SettingBool("logprobs")

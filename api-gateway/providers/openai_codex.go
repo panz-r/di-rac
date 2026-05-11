@@ -104,6 +104,20 @@ func NewOpenAICodexHandler() *OpenAICodexHandler {
 				},
 			},
 			ModifyRequest: func(req *Request, result map[string]interface{}) {
+				// Temperature
+				if req.SettingIsNull("temperature") {
+					delete(result, "temperature")
+				} else if temp := req.SettingFloat("temperature"); temp > 0 {
+					result["temperature"] = temp
+				}
+
+				// Top P
+				if req.SettingIsNull("top_p") {
+					delete(result, "top_p")
+				} else if topP := req.SettingFloat("top_p"); topP > 0 {
+					result["top_p"] = topP
+				}
+
 				// Response format
 				if rf := req.SettingString("response_format"); rf != "" {
 					result["text"] = map[string]interface{}{

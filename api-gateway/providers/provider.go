@@ -18,7 +18,6 @@ var SharedHTTPClient *http.Client
 
 func init() {
 	SharedHTTPClient = &http.Client{
-		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
@@ -48,12 +47,25 @@ type Request struct {
 	Settings         map[string]interface{} `json:"settings,omitempty"`
 }
 
-// SettingString returns a setting value as string, or "" if not set.
+// SettingIsNull returns true if the key exists with a nil value,
+// meaning the user explicitly excluded this parameter.
+func (r *Request) SettingIsNull(key string) bool {
+	if r.Settings == nil {
+		return false
+	}
+	v, ok := r.Settings[key]
+	return ok && v == nil
+}
+
+// SettingString returns a setting value as string, or "" if not set or null.
 func (r *Request) SettingString(key string) string {
 	if r.Settings == nil {
 		return ""
 	}
 	if v, ok := r.Settings[key]; ok {
+		if v == nil {
+			return ""
+		}
 		return fmt.Sprint(v)
 	}
 	return ""

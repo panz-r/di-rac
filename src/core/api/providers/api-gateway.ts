@@ -171,7 +171,17 @@ export class ApiGatewayHandler implements ApiHandler {
 				if ((err as any).retriable && attempt < maxRetries - 1) {
 					lastError = err
 					const delay = Math.min(60000, 1000 * Math.pow(2, attempt))
-					await new Promise((resolve) => setTimeout(resolve, delay))
+					await new Promise<void>((resolve) => {
+						const timer = setTimeout(resolve, delay)
+						this.abortController?.signal.addEventListener(
+							"abort",
+							() => {
+								clearTimeout(timer)
+								resolve()
+							},
+							{ once: true },
+						)
+					})
 					continue
 				}
 				throw err

@@ -131,6 +131,49 @@ func NewOpenAIHandler() *OpenAIHandler {
 					},
 				},
 			},
+				ModifyRequest: func(req *Request, result map[string]interface{}) {
+					if req.SettingIsNull("temperature") {
+						delete(result, "temperature")
+					} else {
+						result["temperature"] = req.SettingFloat("temperature")
+					}
+
+					if topP := req.SettingFloat("top_p"); topP > 0 {
+						result["top_p"] = topP
+					}
+
+					if effort := req.SettingString("reasoning_effort"); effort != "" {
+						result["reasoning_effort"] = effort
+					} else if req.Thinking != nil && req.Thinking.ReasoningEffort != "" {
+						result["reasoning_effort"] = req.Thinking.ReasoningEffort
+					}
+
+					if pp := req.SettingFloat("presence_penalty"); pp != 0 {
+						result["presence_penalty"] = pp
+					}
+					if fp := req.SettingFloat("frequency_penalty"); fp != 0 {
+						result["frequency_penalty"] = fp
+					}
+
+					if logprobs := req.SettingBool("logprobs"); logprobs {
+						result["logprobs"] = true
+						if topLogprobs := int(req.SettingFloat("top_logprobs")); topLogprobs > 0 {
+							result["top_logprobs"] = topLogprobs
+						}
+					}
+
+					if seed := req.SettingInt("seed"); seed > 0 {
+						result["seed"] = seed
+					}
+
+					if rf := req.SettingString("response_format"); rf != "" {
+						result["response_format"] = map[string]string{"type": rf}
+					}
+
+					if stop := req.SettingString("stop"); stop != "" {
+						result["stop"] = splitStopSequences(stop)
+					}
+				},
 		}),
 	}
 }

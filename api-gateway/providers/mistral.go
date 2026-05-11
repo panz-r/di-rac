@@ -20,13 +20,13 @@ func NewMistralHandler() *MistralHandler {
 	return &MistralHandler{
 		inner: newOpenAICompatHandler(OpenAICompatConfig{
 			BaseURL:             "https://api.mistral.ai/v1",
-			DefaultModel:        "mistral-large",
+			DefaultModel:        "mistral-medium-latest",
 			ToolChoice:          "auto",
 			ContentArraySupport: true,
 			Capabilities: &ProviderInfo{
 				ID:           "mistral",
 				MaxTokensDefault: 16384,
-				DefaultModel: "mistral-large",
+				DefaultModel: "mistral-medium-latest",
 				Features: ProviderFeatures{
 					SupportsThinking:  false,
 					SupportsTools:     true,
@@ -129,7 +129,11 @@ func NewMistralHandler() *MistralHandler {
 				},
 			},
 			ModifyRequest: func(req *Request, result map[string]interface{}) {
-				result["temperature"] = req.SettingFloat("temperature")
+				if req.SettingIsNull("temperature") {
+						delete(result, "temperature")
+					} else {
+						result["temperature"] = req.SettingFloat("temperature")
+					}
 
 				if topP := req.SettingFloat("top_p"); topP > 0 {
 					result["top_p"] = topP

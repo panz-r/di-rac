@@ -563,11 +563,13 @@ func mapJSONTypeToGemini(t string) genai.Type {
 
 // ListModels fetches available Gemini models via the Google Genai SDK.
 func (h *GeminiHandler) ListModels(ctx context.Context, cfg ProviderConfig) ([]ModelEntry, error) {
-	client, _, err := h.getClient(&Request{Provider: cfg})
+	client, owned, err := h.getClient(&Request{Provider: cfg})
 	if err != nil {
 		return nil, err
 	}
-	defer client.Close()
+	if owned {
+		defer client.Close()
+	}
 
 	iter := client.ListModels(ctx)
 	entries := make([]ModelEntry, 0)

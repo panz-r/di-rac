@@ -549,7 +549,9 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 
 		if len(chunk.Choices) == 0 {
 			if usage != nil {
-				callback(StreamChunk{Type: "stop", Usage: usage})
+				if err := callback(StreamChunk{Type: "stop", Usage: usage}); err != nil {
+					return err
+				}
 			}
 			continue
 		}
@@ -620,7 +622,7 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 		}
 	}
 
-	return nil
+	return scanner.Err()
 }
 
 // openaiExtractUsage builds a Usage from the unified SSE usage struct.

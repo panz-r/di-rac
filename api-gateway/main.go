@@ -79,9 +79,12 @@ type ErrorDetail struct {
 type responseWriter struct {
 	conn    net.Conn
 	encoder *json.Encoder
+	mu      sync.Mutex
 }
 
 func (w *responseWriter) write(v interface{}) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	return w.encoder.Encode(v)
 }
@@ -738,7 +741,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 
 	chunks := make(chan providers.StreamChunk, 100)
 	errChan := make(chan error, 1)
-	doneChan := make(chan struct{})
+	doneChan := make(chan struct{}, 1)
 
 	go func() {
 		if streamErr := handler.Stream(ctx, providerReq, func(chunk providers.StreamChunk) error {

@@ -175,7 +175,9 @@ func extractMiniMaxMetadata(result *SendResult) *SendResult {
 func (h *MiniMaxHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
 	pipe := newMinimaxToolCallPipe(callback, &h.callCounter)
 	err := h.inner.Stream(ctx, req, pipe.handle)
-	pipe.flush()
+	if flushErr := pipe.flush(); flushErr != nil && err == nil {
+		err = flushErr
+	}
 	log.Printf("[MiniMax] stream complete: buffered=%d xmlParsed=%d", pipe.totalBuffered, pipe.totalXmlParsed)
 	return err
 }
@@ -247,7 +249,9 @@ func (p *minimaxToolCallPipe) handle(chunk StreamChunk) error {
 		if p.textBuffer.Len() > 0 {
 			log.Printf("[MiniMax] flushing %d bytes on %s: %q", p.textBuffer.Len(), chunk.Type, truncate(p.textBuffer.String(), 300))
 		}
-		p.flush()
+		if err := p.flush(); err != nil {
+			return err
+		}
 	}
 
 	return p.callback(chunk)
@@ -360,12 +364,13 @@ func (p *minimaxToolCallPipe) tryParse() error {
 	return nil
 }
 
-func (p *minimaxToolCallPipe) flush() {
+func (p *minimaxToolCallPipe) flush() error {
 	if p.textBuffer.Len() > 0 {
 		text := p.textBuffer.String()
 		p.textBuffer.Reset()
-		p.callback(StreamChunk{Type: "delta", TextDelta: text})
+		return p.callback(StreamChunk{Type: "delta", TextDelta: text})
 	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

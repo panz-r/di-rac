@@ -282,6 +282,50 @@ function createHandlerForProvider(
 				model: mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId,
 				settings: providerSettings,
 			})
+		case "synthetic":
+			return gatewayHandler("synthetic", {
+				apiKey: options.syntheticApiKey,
+				model: mode === "plan" ? options.planModeSyntheticModelId : options.actModeSyntheticModelId,
+				settings: providerSettings,
+			})
+		case "wafer":
+			return gatewayHandler("wafer", {
+				apiKey: options.waferApiKey,
+				model: mode === "plan" ? options.planModeWaferModelId : options.actModeWaferModelId,
+				thinkingBudgetTokens,
+				settings: providerSettings,
+			})
+		case "venice":
+			return gatewayHandler("venice", {
+				apiKey: options.veniceApiKey,
+				model: mode === "plan" ? options.planModeVeniceModelId : options.actModeVeniceModelId,
+				settings: providerSettings,
+			})
+		case "inference_net":
+			return gatewayHandler("inference_net", {
+				apiKey: options.inferenceNetApiKey,
+				model: mode === "plan" ? options.planModeInferenceNetModelId : options.actModeInferenceNetModelId,
+				settings: providerSettings,
+			})
+		case "ovhcloud":
+			return gatewayHandler("ovhcloud", {
+				apiKey: options.ovhcloudApiKey,
+				model: mode === "plan" ? options.planModeOvhcloudModelId : options.actModeOvhcloudModelId,
+				settings: providerSettings,
+			})
+		case "ollama":
+			return gatewayHandler("ollama", {
+				apiKey: options.ollamaApiKey,
+				model: mode === "plan" ? options.planModeOllamaModelId : options.actModeOllamaModelId,
+				thinkingBudgetTokens,
+				settings: providerSettings,
+			})
+		case "replicate":
+			return gatewayHandler("replicate", {
+				apiKey: options.replicateApiKey,
+				model: mode === "plan" ? options.planModeReplicateModelId : options.actModeReplicateModelId,
+				settings: providerSettings,
+			})
 		case "api-gateway": {
 			const gwModel = mode === "plan" ? options.planModeApiModelId : options.actModeApiModelId
 			const gwModelInfo = resolveModelInfo(gwModel)

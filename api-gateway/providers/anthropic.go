@@ -509,11 +509,11 @@ func (h *AnthropicHandler) ListModels(ctx context.Context, cfg ProviderConfig) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 		return nil, fmt.Errorf("Anthropic /models returned status %d: %s", resp.StatusCode, string(errBody))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return nil, err
 	}
