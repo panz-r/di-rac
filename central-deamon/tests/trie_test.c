@@ -512,6 +512,44 @@ void test_denied_on_ancestor_lock() {
     printf("PASS\n");
 }
 
+void test_cleanup_waiter_then_owner_disconnect() {
+    printf("Testing cleanup: owner + waiter on ancestor, disconnect owner...\n");
+    trie_t *t = trie_create();
+
+    /* 10 owns /a/b */
+    assert(trie_acquire_lock(t, "/a/b", 10, true) == 0);
+
+    /* 10 waits for /a (becomes first waiter) */
+    assert(trie_acquire_lock(t, "/a", 10, true) == 1);
+
+    /* 11 waits for /a (second waiter) */
+    assert(trie_acquire_lock(t, "/a", 11, true) == 1);
+
+    /* 10 disconnects. Key invariant: /a must NOT be granted to FD 10
+       (which no longer exists). Instead it should go to 11, the next waiter.
+       Since we remove 10 from waiting FIRST, the grant goes to 11. */
+    int wakeup[16];
+    char *w_paths[16];
+    memset(w_paths, 0, sizeof(w_paths));
+    size_t count = trie_cleanup_fd(t, 10, wakeup, w_paths, 16);
+
+    /* /a should have been granted to 11, not to the disconnected 10 */
+    assert(count == 1);
+    assert(wakeup[0] == 11);
+    assert(strcmp(w_paths[0], "/a") == 0);
+    free(w_paths[0]);
+
+    /* /a is now owned by 11 */
+    assert(trie_get_owned_count(t, 11) == 1);
+    assert(trie_traverse(t, "/a", false, NULL)->owner_fd == 11);
+
+    /* /a/b should have no owner (was released) and no waiters (10 was removed) */
+    assert(trie_traverse(t, "/a/b", false, NULL)->owner_fd == -1);
+
+    trie_destroy(t);
+    printf("PASS\n");
+}
+
 void test_cleanup_mixed_state() {
     printf("Testing cleanup with mixed owned/waiting state...\n");
     trie_t *t = trie_create();
@@ -723,6 +761,7 @@ int main() {
     test_cleanup_multi_branch_wakeup();
     test_breadth_stress();
     test_denied_on_ancestor_lock();
+    test_cleanup_waiter_then_owner_disconnect();
     test_cleanup_mixed_state();
     test_cascading_intent_decrement();
     test_cleanup_massive_multi_node_wakeups();

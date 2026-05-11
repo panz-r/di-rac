@@ -482,6 +482,29 @@ int node_get_path(trie_node_t *node, char *buf, size_t len) {
 size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t wakeup_cap) {
     size_t wakeup_count = 0;
     size_t vlen;
+
+    // 1. FIRST: Remove FD from all waiting registries before releasing any locks.
+    //    This prevents the FD from being granted parent locks during its own cleanup
+    //    (which would cause a permanent lock leak after the FD is closed).
+    const void *found_waiting = ht_find(trie->waiting_registry, &fd, sizeof(int), &vlen);
+    if (found_waiting) {
+        node_list_t *list = *(node_list_t**)found_waiting;
+        for (size_t i = 0; i < list->count; i++) {
+            trie_node_t *node = list->nodes[i];
+            for (size_t j = 0; j < node->waiters_count; j++) {
+                if (node->waiters[j] == fd) {
+                    memmove(node->waiters + j, node->waiters + j + 1, sizeof(int) * (node->waiters_count - j - 1));
+                    node->waiters_count--;
+                    break;
+                }
+            }
+        }
+        free(list->nodes);
+        free(list);
+        ht_remove(trie->waiting_registry, &fd, sizeof(int));
+    }
+
+    // 2. SECOND: Release all owned locks and grant to waiters.
     const void *found_owned = ht_find(trie->fd_registry, &fd, sizeof(int), &vlen);
     if (found_owned) {
         node_list_t *list = *(node_list_t**)found_owned;
@@ -518,24 +541,7 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
         free(list);
         ht_remove(trie->fd_registry, &fd, sizeof(int));
     }
-    const void *found_waiting = ht_find(trie->waiting_registry, &fd, sizeof(int), &vlen);
-    if (found_waiting) {
-        node_list_t *list = *(node_list_t**)found_waiting;
-        for (size_t i = 0; i < list->count; i++) {
-            trie_node_t *node = list->nodes[i];
-            for (size_t j = 0; j < node->waiters_count; j++) {
-                if (node->waiters[j] == fd) {
-                    memmove(node->waiters + j, node->waiters + j + 1, sizeof(int) * (node->waiters_count - j - 1));
-                    node->waiters_count--;
-                    break;
-                }
-            }
-        }
-        free(list->nodes);
-        free(list);
-        ht_remove(trie->waiting_registry, &fd, sizeof(int));
-    }
-    
+
     /* Cleanup transient settings */
     const void *found_transient = ht_find(trie->transient_registry, &fd, sizeof(int), &vlen);
     if (found_transient) {
