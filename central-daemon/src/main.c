@@ -12,7 +12,7 @@
 
 #include "trie.h"
 
-#define MAX_EVENTS 64
+#define MAX_EVENTS 128
 
 __attribute__((constructor))
 static void ignore_sigpipe(void) {
@@ -149,6 +149,27 @@ static int broadcast_config_update(int sender_fd, const char *path, const char *
     return 0;
 }
 
+static void handle_stats(int sig) {
+    (void)sig;
+    size_t total_clients = 0;
+    for (int i = 0; i < MAX_EVENTS; i++) if (all_clients[i]) total_clients++;
+
+    size_t trie_nodes = 0, trie_waiters = 0, trie_locks = 0;
+    if (lock_trie) trie_get_stats(lock_trie, &trie_nodes, &trie_waiters, &trie_locks);
+
+    fprintf(stderr,
+            "[di-vrr] --- Health Snapshot ---\n"
+            "[di-vrr] Clients: %zu/%d\n"
+            "[di-vrr] Trie nodes: %zu\n"
+            "[di-vrr] Locked paths: %zu\n"
+            "[di-vrr] Total waiters: %zu\n"
+            "[di-vrr] --------------------------\n",
+            total_clients, MAX_EVENTS,
+            trie_nodes,
+            trie_locks,
+            trie_waiters);
+}
+
 static void handle_shutdown(int sig) {
     (void)sig;
     shutdown_requested = 1;
@@ -282,12 +303,28 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
                 send_json(next_fd, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
             } else {
                 if (json_escape_string(path, escaped_path, esc_size) < 0) {
-                    snprintf(escaped_path, esc_size, "%s", path);
+                    free(escaped_path);
+                    send_json(next_fd, "{\"status\": \"granted\", \"path\": \"<overflow>\"}\n");
+                } else {
+                    int needed = snprintf(NULL, 0,
+                            "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
+                    if (needed < 0) {
+                        free(escaped_path);
+                        send_json(next_fd, "{\"status\": \"granted\", \"path\": \"<error>\"}\n");
+                    } else {
+                        char *resp = malloc((size_t)needed + 1);
+                        if (!resp) {
+                            free(escaped_path);
+                            send_json(next_fd, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
+                        } else {
+                            snprintf(resp, (size_t)needed + 1,
+                                    "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
+                            send_json(next_fd, resp);
+                            free(resp);
+                        }
+                    }
+                    free(escaped_path);
                 }
-                char resp[8192 + 128];
-                snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
-                send_json(next_fd, resp);
-                free(escaped_path);
             }
         }
     } else if (strcmp(method, "set_config") == 0) {
@@ -331,9 +368,25 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
                 free(val);
                 return;
             }
-            char resp[8192 + 128];
-            snprintf(resp, sizeof(resp), "{\"status\": \"ok\", \"value\": \"%s\"}\n", escaped_val);
+            int needed = snprintf(NULL, 0,
+                    "{\"status\": \"ok\", \"value\": \"%s\"}\n", escaped_val);
+            if (needed < 0) {
+                send_json(fd, "{\"status\": \"error\", \"message\": \"format error\"}\n");
+                free(escaped_val);
+                free(val);
+                return;
+            }
+            char *resp = malloc((size_t)needed + 1);
+            if (!resp) {
+                send_json(fd, "{\"status\": \"error\", \"message\": \"out of memory\"}\n");
+                free(escaped_val);
+                free(val);
+                return;
+            }
+            snprintf(resp, (size_t)needed + 1,
+                    "{\"status\": \"ok\", \"value\": \"%s\"}\n", escaped_val);
             send_json(fd, resp);
+            free(resp);
             free(escaped_val);
             free(val);
         } else {
@@ -343,14 +396,31 @@ static void process_single_object(int fd, const char *json, trie_t *trie) {
         /* Runtime health snapshot */
         size_t total_clients = 0;
         for (int i = 0; i < MAX_EVENTS; i++) if (all_clients[i]) total_clients++;
-        size_t total_nodes = 0, total_waiters = 0;
-        /* Walk trie to count nodes and waiters */
-        (void)total_nodes; (void)total_waiters; /* placeholder until trie stats exist */
-        char resp[512];
-        snprintf(resp, sizeof(resp),
-                 "{\"status\": \"ok\", \"clients\": %zu, \"max_clients\": %d}\n",
-                 total_clients, MAX_EVENTS);
+
+        size_t trie_nodes = 0, trie_waiters = 0, trie_locks = 0;
+        if (lock_trie) trie_get_stats(lock_trie, &trie_nodes, &trie_waiters, &trie_locks);
+
+        int needed = snprintf(NULL, 0,
+                "{\"status\": \"ok\", \"clients\": %zu, \"max_clients\": %zu, "
+                "\"trie_nodes\": %zu, \"locked_paths\": %zu, \"total_waiters\": %zu}\n",
+                total_clients, (size_t)MAX_EVENTS,
+                trie_nodes, trie_locks, trie_waiters);
+        if (needed < 0) {
+            send_json(fd, "{\"status\": \"error\", \"message\": \"format error\"}\n");
+            return;
+        }
+        char *resp = malloc((size_t)needed + 1);
+        if (!resp) {
+            send_json(fd, "{\"status\": \"error\", \"message\": \"out of memory\"}\n");
+            return;
+        }
+        snprintf(resp, (size_t)needed + 1,
+                "{\"status\": \"ok\", \"clients\": %zu, \"max_clients\": %zu, "
+                "\"trie_nodes\": %zu, \"locked_paths\": %zu, \"total_waiters\": %zu}\n",
+                total_clients, (size_t)MAX_EVENTS,
+                trie_nodes, trie_locks, trie_waiters);
         send_json(fd, resp);
+        free(resp);
     } else {
         send_json(fd, "{\"status\": \"error\", \"message\": \"unknown method\"}\n");
     }
@@ -448,9 +518,19 @@ static void send_granted_cb(int fd, const char *path, void *ctx) {
         send_json(fd, "{\"status\": \"granted\", \"path\": \"<overflow>\"}\n");
         return;
     }
-    char resp[8192 + 128];
-    snprintf(resp, sizeof(resp), "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
+    int needed = snprintf(NULL, 0,
+            "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
+    char *resp = NULL;
+    if (needed >= 0) resp = malloc((size_t)needed + 1);
+    if (!resp) {
+        free(escaped);
+        send_json(fd, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
+        return;
+    }
+    snprintf(resp, (size_t)needed + 1,
+            "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
     send_json(fd, resp);
+    free(resp);
     free(escaped);
 }
 
@@ -466,6 +546,7 @@ int main(int argc, char *argv[]) {
     }
     signal(SIGINT, handle_shutdown);
     signal(SIGTERM, handle_shutdown);
+    signal(SIGUSR1, handle_stats);
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--persist") == 0 && i + 1 < argc) {
@@ -545,13 +626,8 @@ int main(int argc, char *argv[]) {
             } else {
                 client_ctx_t *ctx = events[i].data.ptr;
                 if (handle_client_data(ctx, lock_trie) < 0) {
-                    int wakeup[1024];
-                    char *w_paths[1024];
-                    size_t w_count = trie_cleanup_fd(lock_trie, ctx->fd, wakeup, w_paths, 1024,
-                                                    send_granted_cb, NULL);
-                    for (size_t j = 0; j < w_count; j++) {
-                        free(w_paths[j]);
-                    }
+                    trie_cleanup_fd(lock_trie, ctx->fd, NULL, NULL, 0,
+                                    send_granted_cb, NULL);
                     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
                     for (int j = 0; j < MAX_EVENTS; j++) {
                         if (all_clients[j] == ctx) { all_clients[j] = NULL; break; }

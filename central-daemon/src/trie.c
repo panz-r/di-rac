@@ -551,6 +551,29 @@ size_t trie_get_owned_count(trie_t *trie, int fd) {
     return (*(node_list_t**)found)->count;
 }
 
+static void count_nodes_recursive(trie_node_t *node, size_t *out_nodes, size_t *out_waiters, size_t *out_locks) {
+    if (!node) return;
+    (*out_nodes)++;
+    if (node->owner_fd != -1) (*out_locks)++;
+    *out_waiters += node->waiters_count;
+
+    ht_iter_t it = ht_iter_begin(node->children);
+    const void *key, *val;
+    size_t klen, vlen;
+    while (ht_iter_next(node->children, &it, &key, &klen, &val, &vlen)) {
+        count_nodes_recursive(*(trie_node_t**)val, out_nodes, out_waiters, out_locks);
+    }
+}
+
+void trie_get_stats(trie_t *trie, size_t *out_nodes, size_t *out_waiters, size_t *out_locks) {
+    *out_nodes = 0;
+    *out_waiters = 0;
+    *out_locks = 0;
+    if (trie && trie->root) {
+        count_nodes_recursive(trie->root, out_nodes, out_waiters, out_locks);
+    }
+}
+
 // Recursion depth is bounded by the 256-segment path limit in trie_traverse.
 // If that limit is ever removed, this recursion could overflow the stack.
 int node_get_path(trie_node_t *node, char *buf, size_t len) {
@@ -628,7 +651,10 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
                     /* Always invoke callback so no grant notification is ever silently dropped,
                      * even when the wakeup array is full. */
                     if (on_granted && path_len > 0) {
-                        on_granted(w, path_buf, ctx);
+                        char parent_path[4096];
+                        if (node_get_path(p, parent_path, sizeof(parent_path)) >= 0) {
+                            on_granted(w, parent_path, ctx);
+                        }
                     }
                 }
                 p = p->parent;

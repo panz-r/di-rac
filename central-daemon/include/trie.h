@@ -99,4 +99,12 @@ int node_get_path(trie_node_t *node, char *buf, size_t len);
  */
 size_t trie_get_owned_count(trie_t *trie, int fd);
 
+/**
+ * trie_get_stats - Fill output counters by walking the entire trie.
+ *   *out_nodes   = total trie nodes
+ *   *out_waiters = sum of waiters_count across all nodes
+ *   *out_locks   = nodes with owner_fd != -1
+ */
+void trie_get_stats(trie_t *trie, size_t *out_nodes, size_t *out_waiters, size_t *out_locks);
+
 #endif /* DI_VRR_TRIE_H */
