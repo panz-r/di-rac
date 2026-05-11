@@ -26,11 +26,20 @@ static client_ctx_t *all_clients[MAX_EVENTS];
 static char persist_path[4096] = {0};
 static trie_t *lock_trie = NULL;
 
-static void send_json(int fd, const char *json) {
+static int send_json(int fd, const char *json) {
     size_t len = strlen(json);
-    if (write(fd, json, len) < (ssize_t)len && errno != EPIPE) {
-        /* Ignore */
+    ssize_t written = write(fd, json, len);
+    if (written < 0) {
+        if (errno != EPIPE) {
+            fprintf(stderr, "[di-vrr] send_json failed on fd %d: %s\n", fd, strerror(errno));
+        }
+        return -1;
     }
+    if ((size_t)written < len) {
+        fprintf(stderr, "[di-vrr] partial send on fd %d (%zd of %zu bytes)\n", fd, written, len);
+        return -1;
+    }
+    return 0;
 }
 
 /* Escape a string for embedding in a JSON string field.
