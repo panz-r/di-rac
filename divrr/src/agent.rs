@@ -204,7 +204,7 @@ pub fn block_line_count(block: &Block, _width: usize, is_expanded: bool) -> usiz
 // PendingInput, Metrics, AgentState
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PendingInput {
     Approval {
         tool: String,

@@ -817,14 +817,14 @@ impl App {
 
         // If the active agent has a pending input, respond to it
         if let Some(agent) = self.active_agent() {
-            if let Some(pending) = &agent.pending_input {
+            if let Some(pending) = agent.pending_input.clone() {
                 let agent_id = agent.id;
-                return match pending {
+                return match &pending {
                     PendingInput::Approval { .. } => {
                         let approved = matches!(text.to_lowercase().as_str(), "y" | "yes" | "");
-                        // Remove the matching item from the queue before clearing
+                        // Remove the exact matching item from the queue
                         if let Some(i) = self.input_queue.iter().position(|(id, p)| {
-                            id == &agent_id && matches!(p, PendingInput::Approval { .. })
+                            id == &agent_id && *p == pending
                         }) {
                             self.input_queue.remove(i);
                         }
@@ -833,7 +833,7 @@ impl App {
                     }
                     PendingInput::Followup { .. } => {
                         if let Some(i) = self.input_queue.iter().position(|(id, p)| {
-                            id == &agent_id && matches!(p, PendingInput::Followup { .. })
+                            id == &agent_id && *p == pending
                         }) {
                             self.input_queue.remove(i);
                         }
@@ -859,13 +859,13 @@ impl App {
 
     fn respond_to_pending(&mut self) -> Option<FrontendMessage> {
         if let Some(agent) = self.active_agent() {
-            if let Some(pending) = &agent.pending_input {
+            if let Some(pending) = agent.pending_input.clone() {
                 let agent_id = agent.id;
-                return match pending {
+                return match &pending {
                     PendingInput::Approval { .. } => {
-                        // Remove the matching item from the queue before clearing
+                        // Remove the exact matching item from the queue
                         if let Some(i) = self.input_queue.iter().position(|(id, p)| {
-                            id == &agent_id && matches!(p, PendingInput::Approval { .. })
+                            id == &agent_id && *p == pending
                         }) {
                             self.input_queue.remove(i);
                         }
