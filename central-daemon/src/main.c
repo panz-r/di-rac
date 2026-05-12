@@ -200,10 +200,11 @@ static int json_unescape(const char *src, char *dst, size_t dst_len) {
                 case '/':  if (dst_pos + 1 >= dst_len) return -1; dst[dst_pos++] = '/';  break;
                 case 'u': {
                                /* \uXXXX — decode hex and emit UTF-8 for BMP */
+                               if (*p == '\0' || *(p+1) == '\0' || *(p+2) == '\0' || *(p+3) == '\0') return -1;
                                if (dst_pos + 4 >= dst_len) return -1;
                                unsigned int cp = 0;
                                for (int i = 0; i < 4; i++) {
-                                   char c = *(++p);
+                                   char c = *++p;
                                    int digit = 0;
                                    if (c >= '0' && c <= '9') digit = c - '0';
                                    else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
@@ -584,7 +585,11 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         if (shutdown_requested) {
-            if (persist_path[0] && lock_trie) trie_save_persist(lock_trie, persist_path);
+            if (persist_path[0] && lock_trie) {
+                if (trie_save_persist(lock_trie, persist_path) < 0) {
+                    fprintf(stderr, "[di-vrr] CRITICAL: failed to save persistence on shutdown\n");
+                }
+            }
             unlink(SOCKET_PATH);
             break;
         }

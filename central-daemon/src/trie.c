@@ -242,22 +242,28 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
         
         if (value) {
             char *v_copy = strdup(value);
-            ht_insert(kv, key, klen, &v_copy, sizeof(char*));
+            if (!ht_insert(kv, key, klen, &v_copy, sizeof(char*))) {
+                free(v_copy);
+                return -1;
+            }
         }
         return 0;
     } else {
         trie_node_t *node = trie_traverse(trie, path, true, NULL);
         if (!node) return -1;
-        
+
         const void *existing = ht_find(node->settings, key, klen, &vlen);
         if (existing) {
             free(*(char**)existing);
             ht_remove(node->settings, key, klen);
         }
-        
+
         if (value) {
             char *v_copy = strdup(value);
-            ht_insert(node->settings, key, klen, &v_copy, sizeof(char*));
+            if (!ht_insert(node->settings, key, klen, &v_copy, sizeof(char*))) {
+                free(v_copy);
+                return -1;
+            }
         }
         return 0;
     }
@@ -644,8 +650,13 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
             trie_node_t *node = list->nodes[i];
             for (size_t j = 0; j < node->waiters_count; j++) {
                 if (node->waiters[j] == fd) {
-                    memmove(node->waiters + j, node->waiters + j + 1, sizeof(int) * (node->waiters_count - j - 1));
+                    memmove(node->waiters + j, node->waiters + j + 1,
+                            sizeof(int) * (node->waiters_count - j - 1));
                     node->waiters_count--;
+                    if (node->waiters_count == 0) {
+                        free(node->waiters);
+                        node->waiters = NULL;
+                    }
                     break;
                 }
             }
