@@ -1,5 +1,4 @@
 use super::*;
-use crate::agent::artifact::{ArtifactStore, extract_artifact_refs};
 use crate::agent::trajectory::{Message, Role, ToolMessageMeta};
 use crate::context::distiller::schemas::DistilledToolResult;
 use crate::context::distiller::validate::{
@@ -209,8 +208,6 @@ pub struct EvalMetrics {
     pub constraints_retained: usize,
     pub stale_reads_tested: usize,
     pub stale_reads_correct: usize,
-    pub artifact_refs_tested: usize,
-    pub artifact_refs_resolved: usize,
     pub distillation_faithful: usize,
     pub distillation_total: usize,
     pub secrets_found: usize,
@@ -332,32 +329,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Family 3: Retrieval — artifact drill-down
+    // Family 3: Retrieval — (removed: artifact system removed)
     // -----------------------------------------------------------------------
-
-    #[test]
-    fn eval_retrieval_artifact_drill_down() {
-        let mut store = ArtifactStore::new();
-
-        // Create a large bash output exceeding the 500-token threshold
-        let large_output = serde_json::json!({
-            "exit_code": 0,
-            "stdout": (0..200).map(|i| format!("line {}: important output data with details", i))
-                .collect::<Vec<_>>().join("\n"),
-        });
-
-        let (digest, art_id) = store.maybe_compact("bash", &large_output, 5000)
-            .expect("output above threshold should be compacted");
-
-        assert!(digest.contains("artifact://"), "digest must contain artifact reference");
-
-        let refs = extract_artifact_refs(&digest);
-        assert!(refs.contains(&art_id), "extracted refs must include the artifact ID");
-
-        let artifact = store.get(&art_id).expect("artifact must be retrievable");
-        assert!(artifact.full_output.len() > 1000, "full output should be preserved in artifact");
-        assert_eq!(artifact.tool_name, "bash");
-    }
 
     // -----------------------------------------------------------------------
     // Family 4: Placement — tail reminder contains key info
@@ -561,23 +534,6 @@ mod tests {
         let redacted = secrets::redact_secrets(output_with_secret);
         assert!(!redacted.contains("sk-abc123"), "redacted output must not contain secret");
         assert!(redacted.contains("[REDACTED]"), "redacted output should contain [REDACTED]");
-    }
-
-    #[test]
-    fn eval_safety_artifact_digests_no_secrets() {
-        let mut store = ArtifactStore::new();
-        let output = serde_json::json!({
-            "exit_code": 0,
-            "stdout": "Success with key sk-abc123def456ghi789jkl012mno345pqr678stu901",
-        });
-
-        let (digest, _) = store.maybe_compact("bash", &output, 5000)
-            .expect("large output should be compacted");
-
-        assert!(
-            !digest.contains("sk-abc123"),
-            "artifact digest must not contain raw secrets",
-        );
     }
 
     #[test]

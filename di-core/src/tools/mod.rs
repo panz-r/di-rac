@@ -65,6 +65,11 @@ impl ToolCoordinator {
         self.cache.retain(|key, _| !key.starts_with("search:") && !key.starts_with("repo:"));
     }
 
+    /// Reset retry counters (e.g., after context compaction).
+    pub fn reset_router(&mut self) {
+        self.router.reset();
+    }
+
     pub async fn execute_with_coordination(
         &mut self,
         call: &ToolCall,
@@ -230,7 +235,6 @@ pub struct ToolExecutor {
     analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
     command_daemon: Arc<tokio::sync::Mutex<CommandDaemon>>,
     background_tracker: Arc<BackgroundCommandTracker>,
-    artifact_store: Arc<tokio::sync::Mutex<crate::agent::artifact::ArtifactStore>>,
     output_manager: Arc<std::sync::Mutex<output_manager::OutputManager>>,
 }
 
@@ -239,14 +243,12 @@ impl ToolExecutor {
         analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
         command_daemon: Arc<tokio::sync::Mutex<CommandDaemon>>,
         background_tracker: Arc<BackgroundCommandTracker>,
-        artifact_store: Arc<tokio::sync::Mutex<crate::agent::artifact::ArtifactStore>>,
         output_manager: Arc<std::sync::Mutex<output_manager::OutputManager>>,
     ) -> Self {
         Self {
             analyzer_daemon,
             command_daemon,
             background_tracker,
-            artifact_store,
             output_manager,
         }
     }
@@ -362,71 +364,60 @@ impl ToolExecutor {
         let path = call.args.get("path").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing path argument"))?;
 
-        // Handle artifact:// references — retrieve from store
         if let Some(artifact_id) = path.strip_prefix("artifact://") {
-            let store = self.artifact_store.lock().await;
-            match store.get(artifact_id) {
-                Some(artifact) => Ok(json!({
-                    "path": path,
-                    "content": artifact.full_output,
-                    "status": "artifact_retrieved",
-                    "tool_name": artifact.tool_name,
-                    "original_tokens": artifact.token_estimate,
-                })),
-                None => Err(anyhow!("Artifact not found: {}", artifact_id)),
+            return Err(anyhow!("Artifact references are no longer supported: {}", artifact_id));
+        }
+
+        let detail = call.args.get("detail").and_then(|v| v.as_str());
+
+        // Read raw content from disk for hash computation and auto-detail
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow!("Failed to read {}: {}", path, e))?;
+        let file_size = content.len();
+        let total_lines = content.lines().count();
+
+        let effective_detail = read_file::auto_detail(file_size, detail);
+
+        match effective_detail.as_str() {
+            "outline" => {
+                let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+                    command: "outline".to_string(),
+                    file: Some(path.to_string()),
+                    content: None,
+                    language: None,
+                    query: None,
+                }).await?;
+                if resp.ok {
+                    Ok(json!({ "_read_raw": true, "path": path, "detail": "outline", "analyzer_data": resp.data }))
+                } else {
+                    Err(anyhow!("Analyzer outline failed: {:?}", resp.data))
+                }
             }
-        } else {
-            let detail = call.args.get("detail").and_then(|v| v.as_str());
-
-            // Read raw content from disk for hash computation and auto-detail
-            let content = std::fs::read_to_string(path)
-                .map_err(|e| anyhow!("Failed to read {}: {}", path, e))?;
-            let file_size = content.len();
-            let total_lines = content.lines().count();
-
-            let effective_detail = read_file::auto_detail(file_size, detail);
-
-            match effective_detail.as_str() {
-                "outline" => {
-                    let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
-                        command: "outline".to_string(),
-                        file: Some(path.to_string()),
-                        content: None,
-                        language: None,
-                        query: None,
-                    }).await?;
-                    if resp.ok {
-                        Ok(json!({ "_read_raw": true, "path": path, "detail": "outline", "analyzer_data": resp.data }))
-                    } else {
-                        Err(anyhow!("Analyzer outline failed: {:?}", resp.data))
-                    }
+            "skeleton" => {
+                let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+                    command: "skeleton".to_string(),
+                    file: Some(path.to_string()),
+                    content: None,
+                    language: None,
+                    query: None,
+                }).await?;
+                if resp.ok {
+                    Ok(json!({ "_read_raw": true, "path": path, "detail": "skeleton", "analyzer_data": resp.data }))
+                } else {
+                    Err(anyhow!("Analyzer skeleton failed: {:?}", resp.data))
                 }
-                "skeleton" => {
-                    let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
-                        command: "skeleton".to_string(),
-                        file: Some(path.to_string()),
-                        content: None,
-                        language: None,
-                        query: None,
-                    }).await?;
-                    if resp.ok {
-                        Ok(json!({ "_read_raw": true, "path": path, "detail": "skeleton", "analyzer_data": resp.data }))
-                    } else {
-                        Err(anyhow!("Analyzer skeleton failed: {:?}", resp.data))
-                    }
-                }
-                _ => {
-                    // full/preview: return raw content for engine-side formatting
-                    let range = parse_range(call);
-                    Ok(json!({
-                        "_read_raw": true,
-                        "path": path,
-                        "detail": effective_detail,
-                        "content": content,
-                        "lines": total_lines,
-                        "range": range.map(|(s, e)| json!([s, e])),
-                    }))
-                }
+            }
+            _ => {
+                // full/preview: return raw content for engine-side formatting
+                let range = parse_range(call);
+                Ok(json!({
+                    "_read_raw": true,
+                    "path": path,
+                    "detail": effective_detail,
+                    "content": content,
+                    "lines": total_lines,
+                    "range": range.map(|(s, e)| json!([s, e])),
+                }))
             }
         }
     }

@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 
+const MAX_CACHE_ENTRIES: usize = 256;
+
 /// Per-session cache for read file results: tracks content hashes for
 /// unchanged detection and cursor positions for pagination.
 pub struct ReadFileCache {
     hashes: HashMap<String, String>,
+    /// Insertion-order tracking for eviction.
+    keys_order: Vec<String>,
     #[allow(dead_code)]
     cursors: HashMap<String, usize>,
 }
@@ -12,6 +16,7 @@ impl ReadFileCache {
     pub fn new() -> Self {
         Self {
             hashes: HashMap::new(),
+            keys_order: Vec::new(),
             cursors: HashMap::new(),
         }
     }
@@ -30,6 +35,18 @@ impl ReadFileCache {
 
     pub fn set_hash(&mut self, path: &str, mode: &str, range: Option<(usize, usize)>, hash: String) {
         let key = Self::cache_key(path, mode, range);
+        if !self.hashes.contains_key(&key) {
+            // Evict oldest entries if at capacity
+            while self.hashes.len() >= MAX_CACHE_ENTRIES {
+                if let Some(old_key) = self.keys_order.first().cloned() {
+                    self.keys_order.remove(0);
+                    self.hashes.remove(&old_key);
+                } else {
+                    break;
+                }
+            }
+            self.keys_order.push(key.clone());
+        }
         self.hashes.insert(key, hash);
     }
 

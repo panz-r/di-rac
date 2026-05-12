@@ -1,7 +1,6 @@
 use crate::agent::trajectory::{Trajectory, Role, ToolMessageMeta, ToolCallEntry, Message};
 use crate::agent::parser::StreamingToolAccumulator;
 use crate::agent::file_context::FileContextTracker;
-use crate::agent::artifact::ArtifactStore;
 use crate::agent::environment::EnvironmentManager;
 use crate::observer::Observer;
 use crate::context::{ContextManager, ConservativeEstimator, TokenEstimator, TurnMetrics, ToolCallRecord};
@@ -88,7 +87,6 @@ pub struct AgentEngine {
     pub frontend_tx: mpsc::Sender<FrontendMessage>,
     pub mode: AgentMode,
     pub file_context: FileContextTracker,
-    pub artifact_store: Arc<tokio::sync::Mutex<ArtifactStore>>,
     pub environment: EnvironmentManager,
     /// Shared metrics for the context compilation system.
     pub metrics: Arc<ContextMetrics>,
@@ -113,8 +111,6 @@ pub struct AgentEngine {
     context_compiler: Option<ContextCompiler>,
     /// Pending model-initiated compaction summary. Advisory only — runtime decides when to compact.
     pending_compact_summary: Option<String>,
-    /// Latest critical files from distiller enrichment. Used during GC to protect artifacts.
-    critical_artifact_files: std::collections::HashSet<String>,
     /// Whether to use the reranking pipeline for context selection. Opt-in; default false.
     use_reranking: bool,
     pub output_manager: Arc<std::sync::Mutex<crate::tools::output_manager::OutputManager>>,
@@ -132,7 +128,6 @@ impl AgentEngine {
         gateway_client: Arc<GatewayStreamClient>,
     ) -> Self {
         let background_tracker = Arc::new(BackgroundCommandTracker::new());
-        let artifact_store = Arc::new(tokio::sync::Mutex::new(ArtifactStore::new()));
         let output_manager = Arc::new(std::sync::Mutex::new(crate::tools::output_manager::OutputManager::new()));
         let (frontend_tx, frontend_rx) = mpsc::channel(32);
         Self {
@@ -144,7 +139,6 @@ impl AgentEngine {
             tool_executor: ToolExecutor::new(
                 analyzer_daemon, command_daemon,
                 background_tracker.clone(),
-                artifact_store.clone(),
                 output_manager.clone(),
             ),
             coordinator: ToolCoordinator::new(),
@@ -158,7 +152,6 @@ impl AgentEngine {
             frontend_tx,
             mode: AgentMode::Act,
             file_context: FileContextTracker::new(),
-            artifact_store: artifact_store.clone(),
             environment: EnvironmentManager::new(),
             metrics: ContextMetrics::new(),
             task_reducer: TaskStateReducer::new(),
@@ -171,7 +164,6 @@ impl AgentEngine {
             last_activity: std::time::Instant::now(),
             context_compiler: None,
             pending_compact_summary: None,
-            critical_artifact_files: std::collections::HashSet::new(),
             use_reranking: false,
             output_manager,
             read_file_cache: std::sync::Mutex::new(crate::tools::read_file::ReadFileCache::new()),
@@ -373,10 +365,8 @@ impl AgentEngine {
                 self.context_compiler.as_ref().expect("context compiler initialized above").session_prefix_len());
         }
 
-        // 1. API extraction
-        eprintln!("[di-core] run_turn: extracting APIs...");
-        let current_apis = self.extract_current_apis().await?;
-        eprintln!("[di-core] run_turn: APIs extracted ({} apis)", current_apis.len());
+        // 1. API extraction (stub — always empty until analyzer integration)
+        let current_apis: HashSet<String> = HashSet::new();
 
         // 2. Lifecycle-aware compaction: evaluate state, compact if due
         let current_tokens = self.trajectory.get_total_tokens();
@@ -391,6 +381,8 @@ impl AgentEngine {
                 self.perform_runtime_compaction().await?;
             }
             self.lifecycle.notify_compaction_complete();
+            // Reset retry counters after compaction — pre-compaction errors may no longer be relevant
+            self.coordinator.reset_router();
         }
 
         // 3. Build context frame (system = stable + session + dynamic, messages = history)
@@ -648,6 +640,8 @@ impl AgentEngine {
         // Record assistant thought (redact secrets before storage)
         let redacted_text = crate::util::secrets::redact_secrets(&full_text);
         if redacted_text != full_text { self.metrics.inc_redaction(); }
+        let thinking_text = crate::util::secrets::redact_secrets(&thinking_text);
+        // Note: thinking_text comparison not tracked since it's a move, not a reference
 
         // Finalize tool calls (native + XML fallback)
         let tools = tool_accumulator.finalize(&full_text);
@@ -750,6 +744,10 @@ impl AgentEngine {
                             })?;
                             break false;
                         }
+                        Some(FrontendMessage::Interrupt { .. }) => {
+                            self.request_abort();
+                            break false;
+                        }
                         _ => {
                             self.emit_event(CoreEvent::FrontendTimeout {
                                 agent_id: self.id,
@@ -847,6 +845,14 @@ impl AgentEngine {
                                     // User acknowledged the result — continue waiting for real input
                                     continue;
                                 }
+                                Some(FrontendMessage::Timeout { duration_ms }) => {
+                                    self.frontend_timeout_ms = Some(duration_ms);
+                                    break None;
+                                }
+                                Some(FrontendMessage::Interrupt { .. }) => {
+                                    self.request_abort();
+                                    break None;
+                                }
                                 _ => continue,
                             }
                         };
@@ -888,6 +894,10 @@ impl AgentEngine {
                                         tool: None,
                                         question: Some(question.clone()),
                                     })?;
+                                    break String::new();
+                                }
+                                Some(FrontendMessage::Interrupt { .. }) => {
+                                    self.request_abort();
                                     break String::new();
                                 }
                                 _ => {
@@ -1085,17 +1095,11 @@ impl AgentEngine {
         }
     }
 
-    /// Collect artifact refs from all trajectory messages, build checkpoint,
-    /// truncate trajectory, GC artifacts, emit event.
+    /// Build checkpoint from trajectory messages, truncate, emit event.
     async fn finalize_compaction(&mut self, progress_summary: String, continuation: String) -> Result<()> {
         let msg_count = self.trajectory.messages.len();
-        let mut artifact_refs: Vec<String> = Vec::new();
         let mut latest_failures: Vec<String> = Vec::new();
         for msg in &self.trajectory.messages {
-            if let Some(ref id) = msg.tool_meta.artifact_ref {
-                artifact_refs.push(id.clone());
-            }
-            artifact_refs.extend(crate::agent::artifact::extract_artifact_refs(&msg.content.to_string()));
             // Collect last 5 tool error messages
             if matches!(msg.role, Role::Tool) {
                 let content = msg.content.to_string();
@@ -1112,8 +1116,6 @@ impl AgentEngine {
                 }
             }
         }
-        artifact_refs.sort();
-        artifact_refs.dedup();
 
         // Extract thematic tags from active constraints
         let thematic_tags = extract_thematic_tags(&self.task_reducer.to_critical_summary());
@@ -1136,7 +1138,7 @@ impl AgentEngine {
             remaining: Vec::new(),
             risks,
             modified_files,
-            artifact_refs,
+            artifact_refs: Vec::new(),
             latest_failures,
             decisions: Vec::new(),
             abandoned_approaches: Vec::new(),
@@ -1145,14 +1147,6 @@ impl AgentEngine {
         });
 
         self.trajectory.truncate_with_continuation(continuation, checkpoint);
-
-        let live_refs = crate::agent::artifact::collect_live_refs(
-            self.trajectory.last_checkpoint.as_ref(),
-            &self.trajectory.messages,
-            10,
-            &self.critical_artifact_files,
-        );
-        self.artifact_store.lock().await.gc_unreferenced(&live_refs);
 
         self.emit_event(CoreEvent::ContextCompacted {
             agent_id: self.id,
@@ -1191,8 +1185,7 @@ impl AgentEngine {
         let deterministic_summary = summary_parts.join("\n\n");
         let bg_summary = self.background_tracker.get_summary().await;
 
-        let (enriched, critical_files) = self.enrich_with_distiller(&deterministic_summary, recent_assistant, &file_summary).await;
-        self.critical_artifact_files = critical_files.into_iter().collect();
+        let (enriched, _critical_files) = self.enrich_with_distiller(&deterministic_summary, recent_assistant, &file_summary).await;
 
         let mut continuation = ContextManager::continuation_prompt(&enriched);
         if let Some(bg) = bg_summary {
@@ -1217,8 +1210,7 @@ impl AgentEngine {
             .collect();
 
         let file_summary = self.file_context.get_summary();
-        let (enriched, critical_files) = self.enrich_with_distiller(&continuation_base, recent_summaries, &file_summary).await;
-        self.critical_artifact_files = critical_files.into_iter().collect();
+        let (enriched, _critical_files) = self.enrich_with_distiller(&continuation_base, recent_summaries, &file_summary).await;
 
         let mut continuation = enriched;
         if let Some(bg) = bg_summary {
@@ -1226,10 +1218,6 @@ impl AgentEngine {
         }
 
         self.finalize_compaction(summary.to_string(), continuation).await
-    }
-
-    async fn extract_current_apis(&self) -> Result<HashSet<String>> {
-        Ok(HashSet::new())
     }
 
     fn emit_event(&self, event: CoreEvent) -> Result<()> {

@@ -49,6 +49,12 @@ impl ErrorRouter {
         }
     }
 
+    /// Clear all retry counters. Call after context compaction to avoid
+    /// stale same-input guard triggers from pre-compaction errors.
+    pub fn reset(&mut self) {
+        self.retry_counters.clear();
+    }
+
     /// Route a tool error to a decision.
     pub fn route(&mut self, error: &ToolError, ctx: &RoutingContext) -> ToolErrorRoute {
         let input_hash = error.metadata.input_hash.as_deref().unwrap_or("");

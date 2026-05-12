@@ -165,6 +165,8 @@ async fn main() -> Result<()> {
                             FrontendMessage::Interrupt { agent_id } => {
                                 log.log(&format!("Interrupt: agent={}", agent_id));
                                 orchestrator.abort_agent(agent_id);
+                                // Also send via channel so blocking recv_frontend loops in the agent wake up
+                                orchestrator.send_to_agent(agent_id, FrontendMessage::Interrupt { agent_id }).await;
                             }
                             FrontendMessage::ApprovalResponse { agent_id, approved } => {
                                 log.log(&format!("ApprovalResponse: agent={} approved={}", agent_id, approved));

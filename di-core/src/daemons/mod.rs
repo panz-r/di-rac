@@ -548,44 +548,57 @@ impl ResilientDaemon {
         })
     }
 
-    async fn restart(&mut self) {
+    async fn restart(&mut self) -> std::result::Result<(), String> {
         eprintln!("[di-core] ResilientDaemon: restarting analyzer daemon at {}", self.binary_path);
         self.inner = None;
         match CommandDaemon::spawn(&self.binary_path, &self.workspace_root).await {
             Ok(daemon) => {
                 self.inner = Some(daemon);
                 eprintln!("[di-core] ResilientDaemon: restart successful");
+                Ok(())
             }
             Err(e) => {
-                panic!(
-                    "[di-core] FATAL: analyzer daemon restart failed after crash: {}. Binary: {}",
+                let msg = format!(
+                    "analyzer daemon restart failed: {}. Binary: {}",
                     e, self.binary_path
                 );
+                eprintln!("[di-core] ResilientDaemon: {}", msg);
+                Err(msg)
             }
         }
     }
 
     /// Send a request to the analyzer daemon with automatic restart on death.
-    /// Takes request by value (matching CommandDaemon interface) and retries
-    /// internally by passing a reference to the inner untimed method.
-    /// Returns `Ok(R)` on success, `Err` for application errors.
-    /// Panics if the daemon cannot be revived after max_restart_attempts.
+    /// Wraps the untimed call in a 10-minute timeout to prevent indefinite hangs.
+    /// Returns `Ok(R)` on success, `Err` for application or daemon errors.
     pub async fn send_request<T: Serialize, R: for<'de> Deserialize<'de>>(&mut self, request: T) -> Result<R> {
         let mut attempts = 0;
         loop {
             if self.inner.is_none() {
-                self.restart().await;
-            }
-
-            match self.inner.as_mut().unwrap().send_request_untimed(&request).await {
-                Ok(r) => return Ok(r),
-                Err(UntimedError::Dead(msg)) => {
+                if let Err(msg) = self.restart().await {
                     attempts += 1;
                     if attempts > self.max_restart_attempts {
-                        panic!(
-                            "[di-core] FATAL: analyzer daemon failed after {} restart attempts: {}",
+                        return Err(anyhow::anyhow!("Analyzer daemon unavailable after {} attempts: {}", self.max_restart_attempts, msg));
+                    }
+                    continue;
+                }
+            }
+
+            let timeout = tokio::time::Duration::from_secs(600);
+            let result = tokio::time::timeout(
+                timeout,
+                self.inner.as_mut().unwrap().send_request_untimed(&request),
+            ).await;
+
+            match result {
+                Ok(Ok(r)) => return Ok(r),
+                Ok(Err(UntimedError::Dead(msg))) => {
+                    attempts += 1;
+                    if attempts > self.max_restart_attempts {
+                        return Err(anyhow::anyhow!(
+                            "Analyzer daemon failed after {} restart attempts: {}",
                             self.max_restart_attempts, msg
-                        );
+                        ));
                     }
                     eprintln!(
                         "[di-core] ResilientDaemon: daemon dead ({}), restarting {}/{}",
@@ -594,7 +607,24 @@ impl ResilientDaemon {
                     self.inner = None;
                     continue;
                 }
-                Err(UntimedError::App(e)) => return Err(e),
+                Ok(Err(UntimedError::App(e))) => return Err(e),
+                Err(_) => {
+                    // Timeout — treat as dead daemon
+                    let msg = format!("Daemon timed out after 600s");
+                    attempts += 1;
+                    if attempts > self.max_restart_attempts {
+                        return Err(anyhow::anyhow!(
+                            "Analyzer daemon timed out after {} restart attempts: {}",
+                            self.max_restart_attempts, msg
+                        ));
+                    }
+                    eprintln!(
+                        "[di-core] ResilientDaemon: {}, restarting {}/{}",
+                        msg, attempts, self.max_restart_attempts
+                    );
+                    self.inner = None;
+                    continue;
+                }
             }
         }
     }
