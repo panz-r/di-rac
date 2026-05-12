@@ -1,4 +1,5 @@
 pub mod background;
+pub mod cli_parse;
 pub mod list_files;
 pub mod search_files;
 pub mod edit_file;
@@ -211,6 +212,8 @@ impl ToolCoordinator {
         }
 
         args_map.remove("retry");
+        // Remove CLI command string so execute_raw uses structured fields instead of re-parsing
+        args_map.remove("command");
         let degraded = ToolCall { name: call.name.clone(), args };
         match executor.execute_raw(&degraded).await {
             ToolResponse::Success { data, .. } => Some(data),
@@ -256,34 +259,39 @@ impl ToolExecutor {
     /// Wire names match v9.5.1 spec.
     pub async fn execute_raw(&self, call: &ToolCall) -> ToolResponse {
         let name = call.name.as_str();
+
+        // Parse CLI-style command string into structured args
+        let parsed_args = cli_parse::parse_command_args(name, &call.args);
+        let parsed_call = ToolCall { name: call.name.clone(), args: parsed_args };
+
         match name {
-            "read" => ToolResponse::from_result(self.read_file(call).await, name),
-            "write" => ToolResponse::from_result(self.write_file(call).await, name),
-            "edit" => edit_file::edit_file(&self.command_daemon, call).await,
-            "search" => search_files::search_files(&self.command_daemon, call).await,
-            "repo" => list_files::list_files(&self.analyzer_daemon, call).await,
-            "bash" => ToolResponse::from_result(self.bash(call).await, name),
-            "compact" => ToolResponse::from_result(self.compact(call).await, name),
+            "read" => ToolResponse::from_result(self.read_file(&parsed_call).await, name),
+            "write" => ToolResponse::from_result(self.write_file(&parsed_call).await, name),
+            "edit" => edit_file::edit_file(&self.command_daemon, &parsed_call).await,
+            "search" => search_files::search_files(&self.command_daemon, &parsed_call).await,
+            "repo" => list_files::list_files(&self.analyzer_daemon, &parsed_call).await,
+            "bash" => ToolResponse::from_result(self.bash(&parsed_call).await, name),
+            "compact" => ToolResponse::from_result(self.compact(&parsed_call).await, name),
             "ask" => {
-                let result = ask_followup::parse_followup_question(call)
+                let result = ask_followup::parse_followup_question(&parsed_call)
                     .map(|(question, options)| json!({ "_frontend_action": "followup_question", "question": question, "options": options }));
                 ToolResponse::from_result(result, name)
             }
             "done" => {
-                let result = attempt_completion::parse_completion(call)
+                let result = attempt_completion::parse_completion(&parsed_call)
                     .map(|(result, command)| json!({ "_frontend_action": "attempt_completion", "result": result, "command": command }));
                 ToolResponse::from_result(result, name)
             }
-            "symbols" => ToolResponse::from_result(symbols::symbols(&self.analyzer_daemon, call).await, name),
+            "symbols" => ToolResponse::from_result(symbols::symbols(&self.analyzer_daemon, &parsed_call).await, name),
             "plan" => {
-                let plan = call.args.get("plan").and_then(|v| v.as_str())
-                    .or_else(|| call.args.get("text").and_then(|v| v.as_str()))
+                let plan = parsed_call.args.get("plan").and_then(|v| v.as_str())
+                    .or_else(|| parsed_call.args.get("text").and_then(|v| v.as_str()))
                     .unwrap_or("");
                 ToolResponse::ok(json!({ "_frontend_action": "plan_response", "plan": plan }))
             }
             "task" => {
-                let task = call.args.get("task").and_then(|v| v.as_str())
-                    .or_else(|| call.args.get("text").and_then(|v| v.as_str()))
+                let task = parsed_call.args.get("task").and_then(|v| v.as_str())
+                    .or_else(|| parsed_call.args.get("text").and_then(|v| v.as_str()))
                     .unwrap_or("");
                 ToolResponse::ok(json!({ "_frontend_action": "new_task", "task": task }))
             }
@@ -293,7 +301,7 @@ impl ToolExecutor {
                     "compact", "ask", "done", "symbols", "plan", "task", "tools",
                     "get_outputs",
                 ];
-                let list: Vec<&str> = if let Some(filter) = call.args.get("filter").and_then(|v| v.as_str()) {
+                let list: Vec<&str> = if let Some(filter) = parsed_call.args.get("filter").and_then(|v| v.as_str()) {
                     tool_names.iter().filter(|t| t.contains(&filter.to_lowercase())).copied().collect()
                 } else {
                     tool_names.to_vec()
@@ -302,14 +310,14 @@ impl ToolExecutor {
             }
             "get_outputs" => {
                 let om = self.output_manager.lock().unwrap();
-                let action = call.args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+                let action = parsed_call.args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
                 match action {
                     "list" => {
                         let outputs = om.list_outputs();
                         ToolResponse::ok(json!({ "outputs": outputs, "count": outputs.len() }))
                     }
                     "read" => {
-                        let filename = match call.args.get("file").and_then(|v| v.as_str()) {
+                        let filename = match parsed_call.args.get("file").and_then(|v| v.as_str()) {
                             Some(f) => f.to_string(),
                             None => return ToolResponse::fail(ToolErrorCode::MissingArgument, "Missing file argument for get_outputs read".to_string(), "get_outputs"),
                         };

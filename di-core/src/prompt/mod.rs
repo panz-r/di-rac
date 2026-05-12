@@ -8,6 +8,60 @@ use crate::tools::tool_defs::TOOL_DEFINITIONS;
 use session::SessionContext;
 use std::collections::HashSet;
 
+// ---------------------------------------------------------------------------
+// Composable prompt builder
+// Mirrors TS src/prompts/builder.ts — assembles system prompt sections
+// with post-processing for clean whitespace.
+// ---------------------------------------------------------------------------
+
+/// Optional sections that can be appended to the base system prompt.
+#[allow(dead_code)]
+pub struct PromptSections {
+    pub task: Option<String>,
+    pub error_context: Option<String>,
+    pub constraints: Vec<String>,
+}
+
+/// Assemble a system prompt from a base string and optional sections.
+/// Joins with double newlines and collapses excessive whitespace.
+#[allow(dead_code)]
+pub fn build_prompt(base: &str, sections: &PromptSections) -> String {
+    let mut parts = vec![base.to_string()];
+
+    if let Some(task) = &sections.task {
+        if !task.is_empty() {
+            parts.push(format!("## Task\n{}", task));
+        }
+    }
+
+    if let Some(errors) = &sections.error_context {
+        if !errors.is_empty() {
+            parts.push(format!("## Errors to Fix\n{}", errors));
+        }
+    }
+
+    if !sections.constraints.is_empty() {
+        let rules: String = sections.constraints.iter()
+            .map(|c| format!("- {}", c))
+            .collect::<Vec<_>>()
+            .join("\n");
+        parts.push(format!("---\n## Rules\n{}", rules));
+    }
+
+    let raw = parts.join("\n\n");
+    post_process(&raw)
+}
+
+/// Collapse triple+ newlines, remove empty headers, clean trailing separators.
+fn post_process(prompt: &str) -> String {
+    let mut result = prompt.to_string();
+    // Collapse 3+ consecutive newlines (with optional whitespace) into 2
+    while result.contains("\n\n\n") {
+        result = result.replace("\n\n\n", "\n\n");
+    }
+    result.trim().to_string()
+}
+
 /// Compiled output ready for the gateway.
 pub struct ContextFrame {
     pub system: String,
