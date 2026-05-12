@@ -661,7 +661,7 @@ impl AgentEngine {
         }
 
         let assistant_content = if redacted_text.is_empty() {
-            serde_json::Value::Null
+            json!("")
         } else {
             json!(redacted_text)
         };
@@ -1253,6 +1253,8 @@ impl AgentEngine {
 pub struct MultiAgentOrchestrator {
     pub agents: HashMap<Uuid, AgentEngine>,
     pub frontend_channels: HashMap<Uuid, mpsc::Sender<FrontendMessage>>,
+    /// Shared abort handles — survive agent removal so abort_agent works for running tasks.
+    abort_handles: HashMap<Uuid, Arc<std::sync::atomic::AtomicBool>>,
     pub analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
     pub command_daemon: Arc<tokio::sync::Mutex<CommandDaemon>>,
     pub central_client: Arc<UnixDaemonClient>,
@@ -1274,6 +1276,7 @@ impl MultiAgentOrchestrator {
         Self {
             agents: HashMap::new(),
             frontend_channels: HashMap::new(),
+            abort_handles: HashMap::new(),
             analyzer_daemon: Arc::new(tokio::sync::Mutex::new(analyzer_daemon)),
             command_daemon: Arc::new(tokio::sync::Mutex::new(command_daemon)),
             central_client: Arc::new(UnixDaemonClient::new(central_socket)),
@@ -1299,6 +1302,8 @@ impl MultiAgentOrchestrator {
         agent.distiller = self.distiller.clone();
         // Store the sender for routing frontend messages to this agent
         self.frontend_channels.insert(id, agent.frontend_tx.clone());
+        // Store abort handle so abort_agent works after the agent is moved out
+        self.abort_handles.insert(id, agent.abort.clone());
         self.agents.insert(id, agent);
         id
     }
@@ -1314,9 +1319,10 @@ impl MultiAgentOrchestrator {
         }
     }
 
-    /// Clean up the frontend channel for a finished agent.
+    /// Clean up the frontend channel and abort handle for a finished agent.
     pub fn cleanup_agent(&mut self, agent_id: &Uuid) {
         self.frontend_channels.remove(agent_id);
+        self.abort_handles.remove(agent_id);
     }
 
     /// Update the frontend response timeout for all agents.
@@ -1354,8 +1360,12 @@ impl MultiAgentOrchestrator {
     }
 
     pub fn abort_agent(&mut self, agent_id: Uuid) -> bool {
+        // Check agents map first (agent not yet spawned), then abort_handles (agent running)
         if let Some(agent) = self.agents.get(&agent_id) {
             agent.request_abort();
+            true
+        } else if let Some(abort_flag) = self.abort_handles.get(&agent_id) {
+            abort_flag.store(true, std::sync::atomic::Ordering::Relaxed);
             true
         } else {
             false

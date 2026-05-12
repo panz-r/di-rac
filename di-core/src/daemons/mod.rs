@@ -230,10 +230,9 @@ impl GatewayStreamClient {
         let (tx, rx) = mpsc::channel(16384);
         let socket_path = self.socket_path.clone();
 
-        // Connect, write request, then hand off to async reader — single connection.
+        // Connect, write request, then read responses — fully async.
         tokio::spawn(async move {
-            // Synchronous connect + write, then convert to async for reading.
-            let stream = match std::os::unix::net::UnixStream::connect(&socket_path) {
+            let mut stream = match AsyncUnixStream::connect(&socket_path).await {
                 Ok(s) => s,
                 Err(e) => {
                     let _ = tx.send(Err(anyhow!("Failed to connect to gateway: {}", e))).await;
@@ -250,31 +249,21 @@ impl GatewayStreamClient {
                 }
             };
 
-            use std::io::Write;
-            let mut stream_ref = &stream;
-            if let Err(e) = stream_ref.write_all(json.as_bytes()) {
+            use tokio::io::AsyncWriteExt;
+            if let Err(e) = stream.write_all(json.as_bytes()).await {
                 let _ = tx.send(Err(anyhow!("Failed to write to gateway: {}", e))).await;
                 return;
             }
-            if let Err(e) = stream_ref.write_all(b"\n") {
+            if let Err(e) = stream.write_all(b"\n").await {
                 let _ = tx.send(Err(anyhow!("Failed to write to gateway: {}", e))).await;
                 return;
             }
-            if let Err(e) = (&stream).flush() {
+            if let Err(e) = stream.flush().await {
                 let _ = tx.send(Err(anyhow!("Failed to flush gateway: {}", e))).await;
                 return;
             }
 
-            // Convert to async for line-by-line reading
-            let async_stream = match AsyncUnixStream::from_std(stream) {
-                Ok(s) => s,
-                Err(e) => {
-                    let _ = tx.send(Err(anyhow!("Failed to convert to async: {}", e))).await;
-                    return;
-                }
-            };
-
-            let buf_reader = BufReader::new(async_stream);
+            let buf_reader = BufReader::new(stream);
             let mut lines = buf_reader.lines();
 
             loop {

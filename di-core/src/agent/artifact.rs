@@ -2,20 +2,18 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-/// Per-tool compaction thresholds (tokens).
-#[allow(dead_code)]
-const COMPACTION_THRESHOLDS: &[(&str, usize)] = &[
-    ("bash", 500),
-    ("read", 1500),
-    ("search", 800),
-    ("repo", 1000),
-    ("symbols", 1000),
-];
-
-#[allow(dead_code)]
-const DEFAULT_THRESHOLD: usize = 500;
-#[allow(dead_code)]
-const MAX_IMPORTANT_LINES: usize = 8;
+#[cfg(test)]
+mod compaction_consts {
+    pub const COMPACTION_THRESHOLDS: &[(&str, usize)] = &[
+        ("bash", 500),
+        ("read", 1500),
+        ("search", 800),
+        ("repo", 1000),
+        ("symbols", 1000),
+    ];
+    pub const DEFAULT_THRESHOLD: usize = 500;
+    pub const MAX_IMPORTANT_LINES: usize = 8;
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifact {
@@ -31,7 +29,7 @@ pub struct Artifact {
 
 pub struct ArtifactStore {
     artifacts: HashMap<String, Artifact>,
-    #[allow(dead_code)]
+    #[cfg(test)]
     counter: u64,
 }
 
@@ -39,18 +37,37 @@ impl ArtifactStore {
     pub fn new() -> Self {
         Self {
             artifacts: HashMap::new(),
+            #[cfg(test)]
             counter: 0,
         }
     }
 
-    /// Returns Some((digest_string, artifact_id)) if compaction occurred, None otherwise.
-    #[allow(dead_code)]
+    pub fn get(&self, artifact_ref: &str) -> Option<&Artifact> {
+        self.artifacts.get(artifact_ref)
+    }
+
+    pub fn gc_unreferenced(&mut self, live_refs: &HashSet<String>) {
+        self.artifacts.retain(|id, _| {
+            live_refs.contains(id)
+        });
+    }
+}
+
+#[cfg(test)]
+impl ArtifactStore {
+    fn next_id(&mut self, tool_name: &str) -> String {
+        use compaction_consts::*; // ensure cfg(test) context
+        self.counter += 1;
+        format!("tool/{}/{}", tool_name, self.counter)
+    }
+
     pub fn maybe_compact(
         &mut self,
         tool_name: &str,
         result: &serde_json::Value,
         estimated_tokens: usize,
     ) -> Option<(String, String)> {
+        use compaction_consts::*;
         let threshold = COMPACTION_THRESHOLDS.iter()
             .find(|(t, _)| *t == tool_name)
             .map(|(_, t)| *t)
@@ -80,21 +97,6 @@ impl ArtifactStore {
         self.artifacts.insert(id.clone(), artifact);
         Some((digest, id))
     }
-
-    pub fn get(&self, artifact_ref: &str) -> Option<&Artifact> {
-        self.artifacts.get(artifact_ref)
-    }
-
-    pub fn gc_unreferenced(&mut self, live_refs: &HashSet<String>) {
-        self.artifacts.retain(|id, _| {
-            live_refs.contains(id)
-        });
-    }
-
-    fn next_id(&mut self, tool_name: &str) -> String {
-        self.counter += 1;
-        format!("tool/{}/{}", tool_name, self.counter)
-    }
 }
 
 /// Extract artifact:// references from a text string.
@@ -106,7 +108,7 @@ pub fn extract_artifact_refs(text: &str) -> HashSet<String> {
 }
 
 /// Dispatch to per-tool digest builders.
-#[allow(dead_code)]
+#[cfg(test)]
 fn build_digest(tool_name: &str, output: &str, artifact_id: &str) -> (String, Vec<String>) {
     match tool_name {
         "bash" => build_bash_digest(output, artifact_id),
@@ -118,8 +120,9 @@ fn build_digest(tool_name: &str, output: &str, artifact_id: &str) -> (String, Ve
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn build_bash_digest(output: &str, artifact_id: &str) -> (String, Vec<String>) {
+    use compaction_consts::MAX_IMPORTANT_LINES;
     let parsed: Option<serde_json::Value> = serde_json::from_str(output).ok();
     let exit_code = parsed.as_ref()
         .and_then(|v| v.get("exit_code"))
@@ -174,8 +177,9 @@ fn build_bash_digest(output: &str, artifact_id: &str) -> (String, Vec<String>) {
     (digest, important)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn build_read_digest(output: &str, artifact_id: &str) -> (String, Vec<String>) {
+    use compaction_consts::MAX_IMPORTANT_LINES;
     let parsed: Option<serde_json::Value> = serde_json::from_str(output).ok();
     let fpath = parsed.as_ref()
         .and_then(|v| v.get("path"))
@@ -218,8 +222,9 @@ fn build_read_digest(output: &str, artifact_id: &str) -> (String, Vec<String>) {
     (digest, important)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn build_search_digest(output: &str, artifact_id: &str) -> (String, Vec<String>) {
+    use compaction_consts::MAX_IMPORTANT_LINES;
     let parsed: Option<serde_json::Value> = serde_json::from_str(output).ok();
     let pattern = parsed.as_ref()
         .and_then(|v| v.get("pattern"))
@@ -268,8 +273,9 @@ fn build_search_digest(output: &str, artifact_id: &str) -> (String, Vec<String>)
     (digest, important)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn build_symbols_digest(output: &str, artifact_id: &str) -> (String, Vec<String>) {
+    use compaction_consts::MAX_IMPORTANT_LINES;
     let parsed: Option<serde_json::Value> = serde_json::from_str(output).ok();
     let subcmd = parsed.as_ref()
         .and_then(|v| v.get("subcommand"))
@@ -307,8 +313,9 @@ fn build_symbols_digest(output: &str, artifact_id: &str) -> (String, Vec<String>
     (digest, important)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn build_repo_digest(output: &str, artifact_id: &str) -> (String, Vec<String>) {
+    use compaction_consts::MAX_IMPORTANT_LINES;
     let parsed: Option<serde_json::Value> = serde_json::from_str(output).ok();
     let dir_path = parsed.as_ref()
         .and_then(|v| v.get("path"))
@@ -366,8 +373,9 @@ fn build_repo_digest(output: &str, artifact_id: &str) -> (String, Vec<String>) {
     (digest, important)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn build_generic_digest(output: &str, artifact_id: &str) -> (String, Vec<String>) {
+    use compaction_consts::MAX_IMPORTANT_LINES;
     let lines: Vec<&str> = output.lines().collect();
     let status = lines.iter()
         .find(|l| !l.trim().is_empty())
@@ -394,7 +402,7 @@ fn build_generic_digest(output: &str, artifact_id: &str) -> (String, Vec<String>
     (parts.join("\n"), important)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn truncate_line(line: &str, max_len: usize) -> String {
     if line.len() <= max_len { line.to_string() } else { format!("{}...", &line[..max_len - 3]) }
 }
