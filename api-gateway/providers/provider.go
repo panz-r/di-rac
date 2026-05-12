@@ -25,6 +25,7 @@ func init() {
 	transport.ResponseHeaderTimeout = 60 * time.Second
 	SharedHTTPClient = &http.Client{
 		Transport: transport,
+		Timeout:   5 * time.Minute, // overall request timeout including body read
 	}
 }
 

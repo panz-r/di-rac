@@ -714,10 +714,19 @@ func openaiExtractUsage(u struct {
 	if u.PromptTokens == 0 && u.CompletionTokens == 0 {
 		return nil
 	}
+	// Take max to avoid double-counting when a provider sends the same
+	// cached token value under multiple field names.
+	cachedTokens := u.PromptTokensDetails.CachedTokens
+	if u.PromptCacheHitTokens > cachedTokens {
+		cachedTokens = u.PromptCacheHitTokens
+	}
+	if u.CachedTokens > cachedTokens {
+		cachedTokens = u.CachedTokens
+	}
 	return &Usage{
 		InputTokens:              u.PromptTokens,
 		OutputTokens:             u.CompletionTokens,
-		CacheReadInputTokens:     u.PromptTokensDetails.CachedTokens + u.PromptCacheHitTokens + u.CachedTokens,
+		CacheReadInputTokens:     cachedTokens,
 		CacheCreationInputTokens: u.PromptCacheMissTokens,
 		ReasoningTokens:          u.CompletionTokensDetails.ReasoningTokens,
 	}
@@ -781,13 +790,16 @@ func openaiConvertResponse(resp map[string]interface{}, finishReasonMap func(str
 		if tokens, ok := usageMap["completion_tokens"].(float64); ok {
 			usage.OutputTokens = int(tokens)
 		}
+		// Take max to avoid double-counting same value under different field names.
 		if details, ok := usageMap["prompt_tokens_details"].(map[string]interface{}); ok {
 			if cached, ok := details["cached_tokens"].(float64); ok {
 				usage.CacheReadInputTokens = int(cached)
 			}
 		}
 		if hit, ok := usageMap["prompt_cache_hit_tokens"].(float64); ok {
-			usage.CacheReadInputTokens += int(hit)
+			if int(hit) > usage.CacheReadInputTokens {
+				usage.CacheReadInputTokens = int(hit)
+			}
 		}
 		if miss, ok := usageMap["prompt_cache_miss_tokens"].(float64); ok {
 			usage.CacheCreationInputTokens = int(miss)

@@ -334,14 +334,14 @@ func codexExchangeForAPIToken(idToken string) (accessToken, accountID string, er
 
 // codexRefreshToken refreshes an expired access token.
 func codexRefreshToken(refreshToken string) (*CodexAuthTokens, error) {
-	payload, _ := json.Marshal(map[string]interface{}{
-		"client_id":     codexClientID(),
-		"grant_type":    "refresh_token",
-		"refresh_token": refreshToken,
-		"scope":         "openid profile email offline_access",
-	})
+	form := url.Values{
+		"client_id":     {codexClientID()},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"scope":         {"openid profile email offline_access"},
+	}
 
-	resp, err := oauthHTTPClient.Post(codexTokenURL, "application/json", strings.NewReader(string(payload)))
+	resp, err := oauthHTTPClient.PostForm(codexTokenURL, form)
 	if err != nil {
 		return nil, fmt.Errorf("refresh request: %w", err)
 	}

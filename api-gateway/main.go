@@ -938,9 +938,11 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 			}
 			log.Printf("Retry attempt %d/%d after %v", attempt, maxRetries, backoff)
 
+			timer := time.NewTimer(backoff)
 			select {
-			case <-time.After(backoff):
+			case <-timer.C:
 			case <-ctx.Done():
+				timer.Stop()
 				return &Response{
 					ID:     id,
 					Status: 499,

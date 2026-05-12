@@ -110,7 +110,7 @@ func (h *responsesAPIHandler) Stream(ctx context.Context, req *Request, callback
 		return &ProviderAPIError{StatusCode: resp.StatusCode, Message: msg, Retriable: retriable}
 	}
 
-	return parseResponsesSSE(resp.Body, callback)
+	return parseResponsesSSE(ctx, resp.Body, callback)
 }
 
 // --- Config helpers ---
@@ -524,13 +524,16 @@ func (h *responsesAPIHandler) parseResponse(body []byte) (*SendResult, error) {
 
 // --- SSE streaming ---
 
-func parseResponsesSSE(body io.Reader, callback func(StreamChunk) error) error {
+func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(StreamChunk) error) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var eventType string
 
 	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		line := scanner.Text()
 
 		// Empty line = event boundary
