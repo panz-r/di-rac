@@ -4,98 +4,216 @@ mod protocol;
 mod context;
 mod daemons;
 mod tools;
+mod prompt;
+mod util;
 
 use agent::engine::MultiAgentOrchestrator;
 use protocol::{CoreEvent, FrontendMessage};
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 use anyhow::Result;
+use uuid::Uuid;
+
+/// Simple file logger that appends to ~/.dirac/di-core.log
+struct FileLogger {
+    file: std::fs::File,
+}
+
+impl FileLogger {
+    fn new() -> Self {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        let dir = std::path::Path::new(&home).join(".dirac");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("di-core.log");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap_or_else(|e| {
+                eprintln!("di-core: cannot open {}: {}", path.display(), e);
+                std::process::exit(1);
+            });
+        Self { file }
+    }
+
+    fn log(&mut self, msg: &str) {
+        let ts = chrono::Local::now().format("%H:%M:%S%.3f");
+        let _ = writeln!(self.file, "[{}] {}", ts, msg);
+        let _ = self.file.flush();
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let analyzer_socket = std::env::var("DIRAC_ANALYZER_SOCKET")
-        .unwrap_or_else(|_| "/tmp/di-analyzer.sock".to_string());
-    let command_socket = std::env::var("DIRAC_COMMAND_SOCKET")
-        .unwrap_or_else(|_| "/tmp/di-cmd.sock".to_string());
+    let mut log = FileLogger::new();
+    log.log("di-core starting");
+
+    let analyzer_binary = std::env::var("DIRAC_ANALYZER_BINARY")
+        .unwrap_or_else(|_| "di-rvv-analyzer".to_string());
+    let command_daemon_binary = std::env::var("DIRAC_COMMAND_BINARY")
+        .unwrap_or_else(|_| "di-rvv-cmd".to_string());
     let central_socket = std::env::var("DIRAC_CENTRAL_SOCKET")
-        .unwrap_or_else(|_| "/tmp/di-central.sock".to_string());
+        .unwrap_or_else(|_| "/tmp/di-vrr-coord.sock".to_string());
     let gateway_socket = std::env::var("DIRAC_API_GATEWAY_SOCKET")
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
             format!("{}/.dirac/api-gateway.sock", home)
         });
 
+    log.log(&format!("config: analyzer_binary={} cmd_binary={} central={} gateway={}",
+        analyzer_binary, command_daemon_binary, central_socket, gateway_socket));
+
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "/".to_string());
+
+    // Spawn command daemon as child process
+    let command_daemon = crate::daemons::CommandDaemon::spawn(&command_daemon_binary, &cwd).await?;
+    log.log("command daemon spawned");
+
+    // Spawn analyzer daemon as child process (resilient wrapper with auto-restart)
+    let analyzer_daemon = crate::daemons::ResilientDaemon::spawn(&analyzer_binary, &cwd).await?;
+    log.log("analyzer daemon spawned");
+
     let mut orchestrator = MultiAgentOrchestrator::new(
-        &analyzer_socket,
-        &command_socket,
+        analyzer_daemon,
+        command_daemon,
         &central_socket,
         &gateway_socket,
     );
 
-    eprintln!("di-core: engine started");
+    log.log("engine started, reading stdin");
 
-    let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() { continue; }
-
-        match serde_json::from_str::<FrontendMessage>(&line) {
-            Ok(msg) => {
-                match msg {
-                    FrontendMessage::SpawnAgent { task } => {
-                        let id = orchestrator.spawn_agent(task.clone());
-                        orchestrator.emit_event(CoreEvent::TaskInitialized {
-                            agent_id: id,
-                            history_count: 0,
-                        })?;
-
-                        // Run the agent task in a background tokio task
-                        // For now, we run inline since the orchestrator holds mutable state.
-                        // TODO: use per-agent channels for concurrent execution.
-                        if let Some(agent) = orchestrator.agents.get_mut(&id) {
-                            if let Err(e) = agent.run_task(task).await {
-                                eprintln!("Agent {} failed: {}", id, e);
-                            }
-                        }
-                        // Clean up agent to release Arc reference counts
-                        orchestrator.remove_agent(id);
-                    }
-                    FrontendMessage::UserResponse { agent_id, text } => {
-                        if let Err(e) = orchestrator.handle_user_response(agent_id, text).await {
-                            eprintln!("User response handling failed for {}: {}", agent_id, e);
-                        }
-                    }
-                    FrontendMessage::Interrupt { agent_id } => {
-                        if orchestrator.abort_agent(agent_id) {
-                            eprintln!("Interrupted agent: {}", agent_id);
-                        } else {
-                            eprintln!("Agent {} not found for interrupt", agent_id);
-                        }
-                    }
-                    FrontendMessage::ApprovalResponse { agent_id, approved } => {
-                        if orchestrator.send_to_agent(agent_id, FrontendMessage::ApprovalResponse { agent_id, approved }).await {
-                            eprintln!("Routed approval response to agent {}", agent_id);
-                        } else {
-                            eprintln!("Agent {} not found for approval response", agent_id);
-                        }
-                    }
-                    FrontendMessage::FollowupAnswer { agent_id, text } => {
-                        if orchestrator.send_to_agent(agent_id, FrontendMessage::FollowupAnswer { agent_id, text }).await {
-                            eprintln!("Routed followup answer to agent {}", agent_id);
-                        } else {
-                            eprintln!("Agent {} not found for followup answer", agent_id);
-                        }
-                    }
-                    FrontendMessage::Timeout { duration_ms } => {
-                        orchestrator.set_all_frontend_timeouts(duration_ms);
-                        eprintln!("Frontend timeout set to {}ms for all agents", duration_ms);
+    // Read stdin in a separate thread and forward lines to an async channel.
+    // This allows the main async loop to process incoming messages concurrently
+    // while agent tasks are running (critical for approval/followup responses).
+    let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<String>(256);
+    std::thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            match line {
+                Ok(l) if !l.trim().is_empty() => {
+                    if stdin_tx.blocking_send(l).is_err() {
+                        break;
                     }
                 }
+                Ok(_) => {}
+                Err(_) => break,
             }
-            Err(e) => {
-                eprintln!("Failed to parse frontend message: {}", e);
+        }
+    });
+
+    // Channel for spawned tasks to report completion so we can clean up frontend_channels.
+    let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<Uuid>(32);
+
+    loop {
+        tokio::select! {
+            // Agent task finished — clean up its channel
+            Some(agent_id) = done_rx.recv() => {
+                log.log(&format!("agent {} task finished, cleaning up channel", agent_id));
+                orchestrator.cleanup_agent(&agent_id);
+            }
+            // Stdin message from frontend
+            line = stdin_rx.recv() => {
+                let line: String = match line {
+                    Some(l) => l,
+                    None => break,
+                };
+                log.log(&format!("stdin: {}", &line[..line.len().min(200)]));
+
+                match serde_json::from_str::<FrontendMessage>(&line) {
+                    Ok(msg) => {
+                        match msg {
+                            FrontendMessage::SpawnAgent { task } => {
+                                log.log(&format!("SpawnAgent: {}", &task[..task.len().min(80)]));
+                                let id = orchestrator.spawn_agent(task.clone());
+                                orchestrator.emit_event(CoreEvent::TaskInitialized {
+                                    agent_id: id,
+                                    history_count: 0,
+                                })?;
+
+                                if let Some(mut agent) = orchestrator.remove_agent(id) {
+                                    log.log(&format!("agent {} spawning task, provider={:?}", id, agent.provider_config.as_ref().map(|c| &c.id)));
+                                    let done_tx = done_tx.clone();
+                                    let task_clone = task.clone();
+                                    tokio::spawn(async move {
+                                        let id = agent.id;
+                                        if let Err(e) = agent.run_task(task_clone).await {
+                                            eprintln!("[di-core] agent {} FAILED: {}", id, e);
+                                            let event = serde_json::to_string(&CoreEvent::TaskFinished {
+                                                agent_id: id,
+                                                success: false,
+                                                message: format!("Agent error: {}", e),
+                                            }).unwrap_or_default();
+                                            println!("{}", event);
+                                            let _ = std::io::stdout().flush();
+                                        }
+                                        let _ = done_tx.send(id).await;
+                                    });
+                                }
+                            }
+                            FrontendMessage::UserResponse { agent_id, text } => {
+                                log.log(&format!("UserResponse: agent={} text={}", agent_id, &text[..text.len().min(60)]));
+                                if let Err(e) = orchestrator.handle_user_response(agent_id, text).await {
+                                    log.log(&format!("UserResponse FAILED for {}: {}", agent_id, e));
+                                    orchestrator.emit_event(CoreEvent::TaskFinished {
+                                        agent_id,
+                                        success: false,
+                                        message: format!("Error: {}", e),
+                                    })?;
+                                }
+                            }
+                            FrontendMessage::Interrupt { agent_id } => {
+                                log.log(&format!("Interrupt: agent={}", agent_id));
+                                orchestrator.abort_agent(agent_id);
+                            }
+                            FrontendMessage::ApprovalResponse { agent_id, approved } => {
+                                log.log(&format!("ApprovalResponse: agent={} approved={}", agent_id, approved));
+                                if !orchestrator.send_to_agent(agent_id, FrontendMessage::ApprovalResponse { agent_id, approved }).await {
+                                    log.log(&format!("ApprovalResponse: no channel for agent {}", agent_id));
+                                }
+                            }
+                            FrontendMessage::FollowupAnswer { agent_id, text } => {
+                                log.log(&format!("FollowupAnswer: agent={}", agent_id));
+                                if !orchestrator.send_to_agent(agent_id, FrontendMessage::FollowupAnswer { agent_id, text }).await {
+                                    log.log(&format!("FollowupAnswer: no channel for agent {}", agent_id));
+                                }
+                            }
+                            FrontendMessage::Timeout { duration_ms } => {
+                                log.log(&format!("Timeout: {}ms", duration_ms));
+                                orchestrator.set_all_frontend_timeouts(duration_ms);
+                            }
+                            FrontendMessage::SetProviderConfig { role, provider, model, api_key, base_url, params } => {
+                                use crate::daemons::ProviderConfig;
+                                let config = ProviderConfig {
+                                    id: provider,
+                                    model,
+                                    api_key,
+                                    base_url,
+                                    region: None,
+                                    project_id: None,
+                                    params,
+                                };
+                                log.log(&format!("SetProviderConfig: role={} provider={} model={} params={}", role, config.id, config.model, config.params.len()));
+                                match role.as_str() {
+                                    "distiller" => {
+                                        log.log("Setting distiller config");
+                                        orchestrator.set_distiller_config(config);
+                                    }
+                                    _ => {
+                                        orchestrator.set_provider_config(config);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log.log(&format!("PARSE ERROR: {} — line: {}", e, &line[..line.len().min(200)]));
+                    }
+                }
             }
         }
     }
 
+    log.log("di-core stdin EOF, exiting");
     Ok(())
 }

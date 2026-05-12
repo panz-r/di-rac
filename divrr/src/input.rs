@@ -4,8 +4,6 @@ pub struct InputBuffer {
     pub multi_line: bool,
     pub history: Vec<String>,
     pub history_index: Option<usize>,
-    search_mode: bool,
-    search_pattern: String,
 }
 
 impl InputBuffer {
@@ -16,8 +14,6 @@ impl InputBuffer {
             multi_line: false,
             history: Vec::new(),
             history_index: None,
-            search_mode: false,
-            search_pattern: String::new(),
         }
     }
 
@@ -117,9 +113,5 @@ impl InputBuffer {
                 self.cursor = 0;
             }
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.content.is_empty()
     }
 }

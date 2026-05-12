@@ -7,10 +7,18 @@ pub mod ask_followup;
 pub mod attempt_completion;
 pub mod approval;
 pub mod symbols;
+pub mod tool_defs;
+pub mod response;
+pub mod routing;
+pub mod format;
+pub mod output_manager;
+pub mod read_file;
 
-use crate::daemons::{UnixDaemonClient, AnalyzerRequest, AnalyzerResponse, CommandRequest, CommandResponse};
-use crate::agent::recovery::{RecoveryEngine, RecoveryAction};
-use background::{BackgroundCommand, BackgroundCommandTracker, CommandStatus};
+use crate::daemons::{AnalyzerRequest, AnalyzerResponse, CommandDaemon, ResilientDaemon};
+use background::{BackgroundCommandTracker, CommandStatus};
+use response::{ToolResponse, ToolErrorCode};
+use routing::{ErrorRouter, RoutingContext, ToolErrorRoute};
+use format::{format_error_for_llm, format_error_for_log};
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
@@ -35,7 +43,7 @@ const CACHE_STRIP_KEYS: &[&str] = &["clarify", "retry", "command", "call_id", "a
 
 pub struct ToolCoordinator {
     cache: HashMap<String, String>,
-    recovery: RecoveryEngine,
+    router: ErrorRouter,
 }
 
 /// Maximum number of cache entries to prevent unbounded memory growth.
@@ -43,7 +51,17 @@ const MAX_CACHE_ENTRIES: usize = 256;
 
 impl ToolCoordinator {
     pub fn new() -> Self {
-        Self { cache: HashMap::new(), recovery: RecoveryEngine::new() }
+        Self { cache: HashMap::new(), router: ErrorRouter::new() }
+    }
+
+    /// Invalidate all cached results that reference a specific file path.
+    pub fn invalidate_for_path(&mut self, path: &str) {
+        self.cache.retain(|key, _| !key.contains(path));
+    }
+
+    /// Invalidate all cached search and repo results (structural changes).
+    pub fn invalidate_search_and_repo(&mut self) {
+        self.cache.retain(|key, _| !key.starts_with("search:") && !key.starts_with("repo:"));
     }
 
     pub async fn execute_with_coordination(
@@ -61,74 +79,67 @@ impl ToolCoordinator {
             }
         }
 
-        // 2. Execute with retry
-        let max_retries = call.args.get("retry")
+        // 2. Execute and route errors
+        let user_max_retries = call.args.get("retry")
             .and_then(|v| v.as_u64())
             .map(|n| std::cmp::min(n as usize, 5))
             .unwrap_or(0);
 
-        let mut result = executor.execute_raw(call).await;
-        let mut attempts = 0;
-        let mut errors: Vec<String> = Vec::new();
+        // Compute input hash from normalized args for same-input guard
+        let input_hash = crate::util::fast_hash(cache_key.as_bytes());
 
-        while attempts < max_retries {
-            match &result {
-                Ok(val) => {
-                    let s = val.to_string();
-                    if s.starts_with("<tool_error") {
-                        errors.push(s.clone());
-                        attempts += 1;
-                        let delay = std::cmp::min(500 * 2i64.pow(attempts as u32 - 1), 4000);
-                        tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
-                        result = executor.execute_raw(call).await;
-                        continue;
-                    }
+        let mut response = executor.execute_raw(call).await;
+        let mut retry_count = 0;
+        let total_budget = std::cmp::max(user_max_retries, 2);
+
+        while let ToolResponse::Failure { ref mut error, .. } = response {
+            // Stamp input hash onto error for same-input guard in router
+            error.metadata.input_hash = Some(input_hash.clone());
+
+            if retry_count >= total_budget {
+                break;
+            }
+
+            let ctx = RoutingContext {
+                retry_count_for_error: retry_count,
+            };
+
+            let route = self.router.route(error, &ctx);
+            eprintln!("[di-core] tool error routed: {} → {:?}", error.code.as_str(), route);
+
+            match route {
+                ToolErrorRoute::Retry { backoff_ms, reason, .. } => {
+                    eprintln!("[di-core] retrying tool {} (attempt {}): {}", call.name, retry_count + 1, reason);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    response = executor.execute_raw(call).await;
+                    retry_count += 1;
+                }
+                ToolErrorRoute::Continue { reason } => {
+                    eprintln!("[di-core] continuing after error: {}", reason);
                     break;
                 }
-                Err(e) => {
-                    errors.push(e.to_string());
-                    attempts += 1;
-                    let delay = std::cmp::min(500 * 2i64.pow(attempts as u32 - 1), 4000);
-                    tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
-                    result = executor.execute_raw(call).await;
-                    continue;
+                ToolErrorRoute::Abort { reason } => {
+                    eprintln!("[di-core] aborting tool {}: {}", call.name, reason);
+                    break;
+                }
+                ToolErrorRoute::Escalate { reason } => {
+                    eprintln!("[di-core] escalating tool error: {}", reason);
+                    break;
                 }
             }
         }
 
-        let value = match result {
-            Ok(v) => v,
-            Err(ref e) => {
-                let retry_history = if errors.len() > 1 {
-                    Some(format!("{} prior attempts failed: {}", errors.len(), errors.join("; ")))
-                } else {
-                    None
-                };
-                let error_context = retry_history.as_deref().unwrap_or("");
-                match self.recovery.handle_error(&call.name, &format!("{}{}", e, error_context)) {
-                    RecoveryAction::Retry { max_attempts, delay } => {
-                        let mut recovery_result = executor.execute_raw(call).await;
-                        for _ in 0..max_attempts {
-                            if recovery_result.is_ok() { break; }
-                            tokio::time::sleep(delay).await;
-                            recovery_result = executor.execute_raw(call).await;
-                        }
-                        match recovery_result {
-                            Ok(v) => v,
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    RecoveryAction::Escalate(msg) => {
-                        return Ok(json!({ "error": msg, "status": "escalated" }));
-                    }
-                    RecoveryAction::Fail(msg) => {
-                        return Err(anyhow!("{}", msg));
-                    }
-                }
+        // 3. Convert ToolResponse back to Result<Value> for backward compat
+        let value = match response {
+            ToolResponse::Success { data, .. } => data,
+            ToolResponse::Failure { error, .. } => {
+                let llm_msg = format_error_for_llm(&error);
+                eprintln!("[di-core] tool error for LLM: {}", format_error_for_log(&error));
+                return Ok(json!({ "error": llm_msg, "status": "error", "code": error.code.as_str() }));
             }
         };
 
-        // 3. Auto-correction for truncated output
+        // 4. Auto-correction for truncated output
         let value = if let Some(corrected) = self.auto_correct_truncated(call, &value, executor).await {
             corrected
         } else {
@@ -147,9 +158,9 @@ impl ToolCoordinator {
             self.cache.insert(cache_key, serialized);
         }
 
-        if attempts > 0 {
+        if retry_count > 0 {
             if let serde_json::Value::String(s) = &value {
-                return Ok(serde_json::Value::String(format!("[Retry] {} attempts\n{}", attempts, s)));
+                return Ok(serde_json::Value::String(format!("[Retry] {} attempts\n{}", retry_count, s)));
             }
         }
 
@@ -201,7 +212,10 @@ impl ToolCoordinator {
 
         args_map.remove("retry");
         let degraded = ToolCall { name: call.name.clone(), args };
-        executor.execute_raw(&degraded).await.ok()
+        match executor.execute_raw(&degraded).await {
+            ToolResponse::Success { data, .. } => Some(data),
+            _ => None,
+        }
     }
 }
 
@@ -210,21 +224,27 @@ impl ToolCoordinator {
 // ---------------------------------------------------------------------------
 
 pub struct ToolExecutor {
-    analyzer_client: Arc<UnixDaemonClient>,
-    command_client: Arc<UnixDaemonClient>,
+    analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
+    command_daemon: Arc<tokio::sync::Mutex<CommandDaemon>>,
     background_tracker: Arc<BackgroundCommandTracker>,
+    artifact_store: Arc<tokio::sync::Mutex<crate::agent::artifact::ArtifactStore>>,
+    output_manager: Arc<std::sync::Mutex<output_manager::OutputManager>>,
 }
 
 impl ToolExecutor {
     pub fn new(
-        analyzer_client: Arc<UnixDaemonClient>,
-        command_client: Arc<UnixDaemonClient>,
+        analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
+        command_daemon: Arc<tokio::sync::Mutex<CommandDaemon>>,
         background_tracker: Arc<BackgroundCommandTracker>,
+        artifact_store: Arc<tokio::sync::Mutex<crate::agent::artifact::ArtifactStore>>,
+        output_manager: Arc<std::sync::Mutex<output_manager::OutputManager>>,
     ) -> Self {
         Self {
-            analyzer_client,
-            command_client,
+            analyzer_daemon,
+            command_daemon,
             background_tracker,
+            artifact_store,
+            output_manager,
         }
     }
 
@@ -232,50 +252,101 @@ impl ToolExecutor {
         coordinator.execute_with_coordination(call, self).await
     }
 
-    /// Raw tool dispatch. Wire names match v9.5.1 spec.
-    pub async fn execute_raw(&self, call: &ToolCall) -> Result<serde_json::Value> {
-        match call.name.as_str() {
-            "read" => self.read_file(call).await,
-            "write" => self.write_file(call).await,
-            "edit" => edit_file::edit_file(&self.command_client, call).await,
-            "search" => search_files::search_files(&self.analyzer_client, call).await,
-            "repo" => list_files::list_files(&self.analyzer_client, call).await,
-            "bash" => self.bash(call).await,
-            "compact" => self.compact(call).await,
+    /// Raw tool dispatch. Returns structured ToolResponse.
+    /// Wire names match v9.5.1 spec.
+    pub async fn execute_raw(&self, call: &ToolCall) -> ToolResponse {
+        let name = call.name.as_str();
+        match name {
+            "read" => ToolResponse::from_result(self.read_file(call).await, name),
+            "write" => ToolResponse::from_result(self.write_file(call).await, name),
+            "edit" => edit_file::edit_file(&self.command_daemon, call).await,
+            "search" => search_files::search_files(&self.command_daemon, call).await,
+            "repo" => list_files::list_files(&self.analyzer_daemon, call).await,
+            "bash" => ToolResponse::from_result(self.bash(call).await, name),
+            "compact" => ToolResponse::from_result(self.compact(call).await, name),
             "ask" => {
-                let (question, options) = ask_followup::parse_followup_question(call)?;
-                Ok(json!({ "_frontend_action": "followup_question", "question": question, "options": options }))
+                let result = ask_followup::parse_followup_question(call)
+                    .map(|(question, options)| json!({ "_frontend_action": "followup_question", "question": question, "options": options }));
+                ToolResponse::from_result(result, name)
             }
             "done" => {
-                let (result, command) = attempt_completion::parse_completion(call)?;
-                Ok(json!({ "_frontend_action": "attempt_completion", "result": result, "command": command }))
+                let result = attempt_completion::parse_completion(call)
+                    .map(|(result, command)| json!({ "_frontend_action": "attempt_completion", "result": result, "command": command }));
+                ToolResponse::from_result(result, name)
             }
-            "symbols" => symbols::symbols(&self.analyzer_client, call).await,
+            "symbols" => ToolResponse::from_result(symbols::symbols(&self.analyzer_daemon, call).await, name),
             "plan" => {
                 let plan = call.args.get("plan").and_then(|v| v.as_str())
                     .or_else(|| call.args.get("text").and_then(|v| v.as_str()))
                     .unwrap_or("");
-                Ok(json!({ "_frontend_action": "plan_response", "plan": plan }))
+                ToolResponse::ok(json!({ "_frontend_action": "plan_response", "plan": plan }))
             }
             "task" => {
                 let task = call.args.get("task").and_then(|v| v.as_str())
                     .or_else(|| call.args.get("text").and_then(|v| v.as_str()))
                     .unwrap_or("");
-                Ok(json!({ "_frontend_action": "new_task", "task": task }))
+                ToolResponse::ok(json!({ "_frontend_action": "new_task", "task": task }))
             }
             "tools" => {
                 let tool_names = [
                     "read", "write", "edit", "search", "repo", "bash",
                     "compact", "ask", "done", "symbols", "plan", "task", "tools",
+                    "get_outputs",
                 ];
                 let list: Vec<&str> = if let Some(filter) = call.args.get("filter").and_then(|v| v.as_str()) {
                     tool_names.iter().filter(|t| t.contains(&filter.to_lowercase())).copied().collect()
                 } else {
                     tool_names.to_vec()
                 };
-                Ok(json!({ "tools": list, "count": list.len() }))
+                ToolResponse::ok(json!({ "tools": list, "count": list.len() }))
             }
-            _ => Err(anyhow!("Unknown tool: {}", call.name)),
+            "get_outputs" => {
+                let om = self.output_manager.lock().unwrap();
+                let action = call.args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+                match action {
+                    "list" => {
+                        let outputs = om.list_outputs();
+                        ToolResponse::ok(json!({ "outputs": outputs, "count": outputs.len() }))
+                    }
+                    "read" => {
+                        let filename = match call.args.get("file").and_then(|v| v.as_str()) {
+                            Some(f) => f.to_string(),
+                            None => return ToolResponse::fail(ToolErrorCode::MissingArgument, "Missing file argument for get_outputs read".to_string(), "get_outputs"),
+                        };
+                        let path = om.output_dir().join(&filename);
+                        match std::fs::read_to_string(&path) {
+                            Ok(content) => ToolResponse::ok(json!({
+                                "file": filename,
+                                "content": content,
+                                "lines": content.lines().count(),
+                            })),
+                            Err(e) => ToolResponse::fail(
+                                ToolErrorCode::IoFileNotFound,
+                                format!("Failed to read {}: {}", filename, e),
+                                "get_outputs",
+                            ),
+                        }
+                    }
+                    "clear" => {
+                        let outputs = om.list_outputs();
+                        let mut removed = 0;
+                        for name in &outputs {
+                            let path = om.output_dir().join(name);
+                            if path.exists() {
+                                let _ = std::fs::remove_file(&path);
+                                removed += 1;
+                            }
+                        }
+                        ToolResponse::ok(json!({ "cleared": removed }))
+                    }
+                    _ => ToolResponse::fail(
+                        ToolErrorCode::InvalidInput,
+                        format!("Unknown get_outputs action: {}. Use list, read, or clear.", action),
+                        "get_outputs",
+                    ),
+                }
+            }
+            _ => ToolResponse::fail(ToolErrorCode::InvalidInput, format!("Unknown tool: {}", call.name), name),
         }
     }
 
@@ -283,18 +354,72 @@ impl ToolExecutor {
         let path = call.args.get("path").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing path argument"))?;
 
-        let resp: AnalyzerResponse = self.analyzer_client.send_request(AnalyzerRequest {
-            command: "read-file".to_string(),
-            file: Some(path.to_string()),
-            content: None,
-            language: None,
-            query: None,
-        }).await?;
-
-        if resp.ok {
-            Ok(resp.data)
+        // Handle artifact:// references — retrieve from store
+        if let Some(artifact_id) = path.strip_prefix("artifact://") {
+            let store = self.artifact_store.lock().await;
+            match store.get(artifact_id) {
+                Some(artifact) => Ok(json!({
+                    "path": path,
+                    "content": artifact.full_output,
+                    "status": "artifact_retrieved",
+                    "tool_name": artifact.tool_name,
+                    "original_tokens": artifact.token_estimate,
+                })),
+                None => Err(anyhow!("Artifact not found: {}", artifact_id)),
+            }
         } else {
-            Err(anyhow!("Failed to read file: {:?}", resp.data))
+            let detail = call.args.get("detail").and_then(|v| v.as_str());
+
+            // Read raw content from disk for hash computation and auto-detail
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| anyhow!("Failed to read {}: {}", path, e))?;
+            let file_size = content.len();
+            let total_lines = content.lines().count();
+
+            let effective_detail = read_file::auto_detail(file_size, detail);
+
+            match effective_detail.as_str() {
+                "outline" => {
+                    let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+                        command: "outline".to_string(),
+                        file: Some(path.to_string()),
+                        content: None,
+                        language: None,
+                        query: None,
+                    }).await?;
+                    if resp.ok {
+                        Ok(json!({ "_read_raw": true, "path": path, "detail": "outline", "analyzer_data": resp.data }))
+                    } else {
+                        Err(anyhow!("Analyzer outline failed: {:?}", resp.data))
+                    }
+                }
+                "skeleton" => {
+                    let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+                        command: "skeleton".to_string(),
+                        file: Some(path.to_string()),
+                        content: None,
+                        language: None,
+                        query: None,
+                    }).await?;
+                    if resp.ok {
+                        Ok(json!({ "_read_raw": true, "path": path, "detail": "skeleton", "analyzer_data": resp.data }))
+                    } else {
+                        Err(anyhow!("Analyzer skeleton failed: {:?}", resp.data))
+                    }
+                }
+                _ => {
+                    // full/preview: return raw content for engine-side formatting
+                    let range = parse_range(call);
+                    Ok(json!({
+                        "_read_raw": true,
+                        "path": path,
+                        "detail": effective_detail,
+                        "content": content,
+                        "lines": total_lines,
+                        "range": range.map(|(s, e)| json!([s, e])),
+                    }))
+                }
+            }
         }
     }
 
@@ -309,42 +434,23 @@ impl ToolExecutor {
             .unwrap_or(true);
 
         if create_dirs {
-            let parent = std::path::Path::new(path).parent()
-                .and_then(|p| p.to_str())
-                .map(String::from);
-            if let Some(dir) = parent {
-                if !dir.is_empty() {
-                    let mkdir_resp: CommandResponse = self.command_client.send_request(CommandRequest {
-                        command: "shell".to_string(),
-                        args: vec![format!("mkdir -p {}", dir)],
-                        cwd: None,
-                    }).await?;
-                    if !mkdir_resp.ok {
-                        return Err(anyhow!("Failed to create directory {}: {}", dir, mkdir_resp.stderr));
-                    }
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
                 }
             }
         }
 
-        let resp: CommandResponse = self.command_client.send_request(CommandRequest {
-            command: "write-file".to_string(),
-            args: vec![path.to_string(), content.to_string()],
-            cwd: None,
-        }).await?;
+        std::fs::write(path, content)?;
 
-        if resp.ok {
-            Ok(json!({
-                "path": path,
-                "status": "success",
-                "lines": content.lines().count()
-            }))
-        } else {
-            Err(anyhow!("Failed to write file: {}", resp.stderr))
-        }
+        Ok(json!({
+            "path": path,
+            "status": "success",
+            "lines": content.lines().count()
+        }))
     }
 
-    /// Execute bash command. If --await <id> is specified, return background command result.
-    /// Otherwise, if the command runs long, spawn it in the background.
+    /// Execute bash command via the command daemon's execute endpoint.
     async fn bash(&self, call: &ToolCall) -> Result<serde_json::Value> {
         // Check for --await to retrieve background command result
         if let Some(await_id) = call.args.get("await").and_then(|v| v.as_str()) {
@@ -358,43 +464,7 @@ impl ToolExecutor {
             .and_then(|v| v.as_i64())
             .unwrap_or(300_000);
 
-        // Check if we're at background command capacity
-        let running = self.background_tracker.count_running().await;
-        if running >= 8 {
-            return Ok(json!({
-                "status": "error",
-                "exit_code": -1,
-                "stderr": format!("Background command limit (8) reached. Await a running command first."),
-            }));
-        }
-
-        let resp: CommandResponse = self.command_client.send_request(CommandRequest {
-            command: "shell".to_string(),
-            args: vec![command.to_string()],
-            cwd: call.args.get("cwd").and_then(|v| v.as_str()).map(String::from),
-        }).await?;
-
-        // Check if still running (daemon returns special exit code for background)
-        if resp.exit_code == -1 {
-            let id = resp.stdout.trim().to_string();
-            let log_path = format!("/tmp/di-core-{}.log", id);
-
-            self.background_tracker.track(BackgroundCommand {
-                id: id.clone(),
-                command: command.to_string(),
-                start_time: chrono::Utc::now(),
-                status: CommandStatus::Running,
-                log_path: log_path.clone(),
-                exit_code: None,
-            }).await;
-
-            return Ok(json!({
-                "id": id,
-                "status": "running",
-                "log_path": log_path,
-                "hint": format!("Use bash --await {} to get the result", id)
-            }));
-        }
+        let resp = self.command_daemon.lock().await.execute(command).await?;
 
         Ok(json!({
             "exit_code": resp.exit_code,
@@ -456,4 +526,18 @@ impl ToolExecutor {
             "summary": context
         }))
     }
+}
+
+/// Parse range argument like "10-50" into (start, end).
+fn parse_range(call: &ToolCall) -> Option<(usize, usize)> {
+    call.args.get("range").and_then(|v| v.as_str()).and_then(|r| {
+        let parts: Vec<&str> = r.split('-').collect();
+        if parts.len() == 2 {
+            let start: usize = parts[0].parse().ok()?;
+            let end: usize = parts[1].parse().ok()?;
+            Some((start, end))
+        } else {
+            None
+        }
+    })
 }

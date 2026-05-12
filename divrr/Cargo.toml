@@ -15,6 +15,7 @@ uuid = { version = "1", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 chrono = { version = "0.4", features = ["serde"] }
+unicode-width = "0.2"
 
 [profile.release]
 opt-level = 3

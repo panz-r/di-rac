@@ -13,6 +13,8 @@ pub enum CoreEvent {
     ThoughtDelta {
         agent_id: Uuid,
         text: String,
+        #[serde(default)]
+        thinking: bool,
     },
     ThoughtFinished {
         agent_id: Uuid,
@@ -69,6 +71,15 @@ pub enum CoreEvent {
         success: bool,
         message: String,
     },
+    TaskPresented {
+        agent_id: Uuid,
+        message: String,
+    },
+    FrontendTimeout {
+        agent_id: Uuid,
+        tool: Option<String>,
+        question: Option<String>,
+    },
 }
 
 /// Messages sent by the frontend to di-core on stdin (NDJSON).
@@ -92,5 +103,15 @@ pub enum FrontendMessage {
     FollowupAnswer {
         agent_id: Uuid,
         text: String,
+    },
+    /// Pass provider config from frontend to di-core so it can use it in gateway requests.
+    SetProviderConfig {
+        role: String,
+        provider: String,
+        model: String,
+        api_key: Option<String>,
+        base_url: Option<String>,
+        /// Provider-specific parameters (temperature, top_p, max_tokens, etc.)
+        params: std::collections::HashMap<String, serde_json::Value>,
     },
 }

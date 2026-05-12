@@ -1,13 +1,13 @@
-use crate::daemons::{AnalyzerRequest, AnalyzerResponse, UnixDaemonClient};
+use crate::daemons::{AnalyzerRequest, AnalyzerResponse, ResilientDaemon};
 use crate::tools::ToolCall;
-use anyhow::Result;
+use crate::tools::response::{ToolResponse, ToolErrorCode, ToolError};
 use serde_json::json;
 use std::sync::Arc;
 
 pub async fn list_files(
-    analyzer_client: &Arc<UnixDaemonClient>,
+    analyzer_daemon: &Arc<tokio::sync::Mutex<ResilientDaemon>>,
     call: &ToolCall,
-) -> Result<serde_json::Value> {
+) -> ToolResponse {
     let paths: Vec<String> = call.args.get("paths")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
@@ -24,27 +24,36 @@ pub async fn list_files(
 
     let mut results = Vec::new();
     for path in &paths {
-        let resp: AnalyzerResponse = analyzer_client.send_request(AnalyzerRequest {
-            command: "list-files".to_string(),
+        match analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
+            command: "repo-map".to_string(),
             file: Some(path.clone()),
             content: None,
             language: None,
             query: None,
-        }).await?;
-
-        if resp.ok {
-            results.push(json!({
-                "path": path,
-                "recursive": recursive,
-                "entries": resp.data
-            }));
-        } else {
-            results.push(json!({
-                "path": path,
-                "error": format!("Failed to list: {:?}", resp.data)
-            }));
+        }).await {
+            Ok(resp) if resp.ok => {
+                results.push(json!({
+                    "path": path,
+                    "recursive": recursive,
+                    "entries": resp.data
+                }));
+            }
+            Ok(resp) => {
+                return ToolResponse::Failure {
+                    error: ToolError::new(ToolErrorCode::ToolInternalError, format!("Failed to list: {:?}", resp.data), "repo")
+                        .with_details(json!({ "path": path })),
+                    metadata: None,
+                };
+            }
+            Err(e) => {
+                return ToolResponse::Failure {
+                    error: ToolError::new(ToolErrorCode::DaemonUnavailable, e.to_string(), "repo")
+                        .with_details(json!({ "path": path })),
+                    metadata: None,
+                };
+            }
         }
     }
 
-    Ok(json!({ "results": results }))
+    ToolResponse::ok(json!({ "results": results }))
 }

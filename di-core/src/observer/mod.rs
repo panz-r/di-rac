@@ -12,24 +12,12 @@ pub struct SQSResult {
 
 pub struct Observer {
     pub resolved_subgoals: HashSet<String>,
-    pub turns_since_reflection: usize,
-    pub config: ObserverConfig,
-}
-
-pub struct ObserverConfig {
-    pub reflection_cooldown: usize,
-    pub confidence_threshold: f32,
 }
 
 impl Observer {
     pub fn new() -> Self {
         Self {
             resolved_subgoals: HashSet::new(),
-            turns_since_reflection: 0,
-            config: ObserverConfig {
-                reflection_cooldown: 4,
-                confidence_threshold: 0.5,
-            },
         }
     }
 
@@ -73,7 +61,7 @@ impl Observer {
         let mut unique_files = HashSet::new();
         let mut loop_counts = std::collections::HashMap::new();
 
-        for msg in msgs {
+        for _msg in msgs {
             let file = "global"; 
             unique_files.insert(file);
             let h = format!("{}:think", file);

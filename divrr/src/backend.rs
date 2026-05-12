@@ -15,7 +15,44 @@ pub struct DiCoreBackend {
 impl DiCoreBackend {
     /// Spawn di-core as a child process with piped stdio.
     pub fn spawn(core_path: &str) -> Result<Self> {
+        // Find command daemon binary: check env var, then next to di-core, then known locations
+        let cmd_binary = std::env::var("DIRAC_COMMAND_BINARY").ok()
+            .filter(|p| std::path::Path::new(p).exists())
+            .unwrap_or_else(|| {
+                let candidates = [
+                    // Next to di-core binary
+                    std::path::Path::new(core_path).parent().map(|p| p.join("di-rvv-cmd")),
+                    // Project build directory
+                    Some(std::path::PathBuf::from("/w/di-rac/command-daemon/build/di-rvv-cmd")),
+                    // dist directory
+                    Some(std::path::PathBuf::from("/w/di-rac/dist/di-rvv-cmd")),
+                ];
+                candidates.iter()
+                    .filter_map(|c| c.as_ref())
+                    .find(|p| p.exists())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "di-rvv-cmd".to_string())
+            });
+
+        // Find analyzer daemon binary
+        let analyzer_binary = std::env::var("DIRAC_ANALYZER_BINARY").ok()
+            .filter(|p| std::path::Path::new(p).exists())
+            .unwrap_or_else(|| {
+                let candidates = [
+                    std::path::Path::new(core_path).parent().map(|p| p.join("di-rvv-analyzer")),
+                    Some(std::path::PathBuf::from("/w/di-rac/treesitter-daemon/build/di-rvv-analyzer")),
+                    Some(std::path::PathBuf::from("/w/di-rac/dist/di-rvv-analyzer")),
+                ];
+                candidates.iter()
+                    .filter_map(|c| c.as_ref())
+                    .find(|p| p.exists())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "di-rvv-analyzer".to_string())
+            });
+
         let mut child = Command::new(core_path)
+            .env("DIRAC_COMMAND_BINARY", &cmd_binary)
+            .env("DIRAC_ANALYZER_BINARY", &analyzer_binary)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -68,13 +105,19 @@ impl DiCoreBackend {
             }
         });
 
-        // Background task: log di-core stderr
+        // Background task: write di-core stderr to log file
         if let Some(stderr) = child.stderr.take() {
             tokio::spawn(async move {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+                let log_path = std::path::Path::new(&home).join(".dirac").join("di-core.log");
                 let framed = FramedRead::new(stderr, LinesCodec::new());
                 let mut stream = framed;
                 while let Some(Ok(line)) = stream.next().await {
-                    eprintln!("[di-core] {}", line);
+                    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&log_path) {
+                        use std::io::Write;
+                        let ts = chrono::Local::now().format("%H:%M:%S%.3f");
+                        let _ = writeln!(f, "[{}] {}", ts, line);
+                    }
                 }
             });
         }
@@ -84,11 +127,6 @@ impl DiCoreBackend {
             stdin,
             event_rx,
         })
-    }
-
-    /// Receive the next CoreEvent from di-core (non-blocking with select!).
-    pub async fn recv_event(&mut self) -> Option<Result<CoreEvent>> {
-        self.event_rx.recv().await
     }
 
     /// Take ownership of the event receiver (for forwarding into the main loop).
@@ -106,16 +144,21 @@ impl DiCoreBackend {
         self.stdin.flush().await?;
         Ok(())
     }
-
-    /// Check if the di-core process is still running.
-    pub fn is_alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
-    }
 }
 
 impl Drop for DiCoreBackend {
     fn drop(&mut self) {
-        // Best-effort kill on drop
+        // Kill and reap the child process
         let _ = self.child.start_kill();
+        // Block briefly to reap the zombie
+        match self.child.try_wait() {
+            Ok(Some(_)) => {} // already exited
+            Ok(None) => {
+                // Still running — give it a moment then reap
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let _ = self.child.try_wait();
+            }
+            Err(_) => {}
+        }
     }
 }

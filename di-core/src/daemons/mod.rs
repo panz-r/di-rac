@@ -1,15 +1,23 @@
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
 use anyhow::{Result, anyhow};
-use reqwest::Client;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream as AsyncUnixStream;
 use tokio::sync::mpsc;
+
+/// Error from `send_request_untimed`, distinguishing dead-daemon from application errors.
+#[derive(Debug)]
+pub enum UntimedError {
+    /// Daemon process is dead (EOF on stdout, pipe broken). Restart required.
+    Dead(String),
+    /// Application-level error from daemon. Return to caller, no restart.
+    App(anyhow::Error),
+}
 
 // ---------------------------------------------------------------------------
 // Unix Daemon Client (synchronous UDS for C daemons)
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub struct UnixDaemonClient {
     socket_path: String,
 }
@@ -19,74 +27,6 @@ impl UnixDaemonClient {
         Self {
             socket_path: socket_path.to_string(),
         }
-    }
-
-    pub async fn send_request<T: Serialize, R: for<'de> Deserialize<'de>>(&self, request: T) -> Result<R> {
-        let json = serde_json::to_string(&request)?;
-        let socket_path = self.socket_path.clone();
-
-        let response = tokio::task::spawn_blocking(move || {
-            let mut stream = std::os::unix::net::UnixStream::connect(&socket_path)
-                .map_err(|e| anyhow!("Failed to connect to socket {}: {}", socket_path, e))?;
-            stream.write_all(json.as_bytes())?;
-            stream.write_all(b"\n")?;
-            let mut response = String::new();
-            stream.read_to_string(&mut response)?;
-            Ok::<String, anyhow::Error>(response)
-        })
-        .await
-        .map_err(|e| anyhow!("Blocking I/O task failed: {}", e))??;
-
-        if response.is_empty() {
-            return Err(anyhow!("Empty response from daemon {}", self.socket_path));
-        }
-
-        serde_json::from_str(&response)
-            .map_err(|e| anyhow!("Failed to parse response from {}: {}. Response: {}", self.socket_path, e, response))
-    }
-
-    pub async fn extract_apis(&self, content: &str, language: &str) -> Result<ApiResponse> {
-        self.send_request(AnalyzerRequest {
-            command: "extract-apis".to_string(),
-            file: None,
-            content: Some(content.to_string()),
-            language: Some(language.to_string()),
-            query: None,
-        })
-        .await
-    }
-}
-
-// ---------------------------------------------------------------------------
-// HTTP Daemon Client (for non-streaming API calls)
-// ---------------------------------------------------------------------------
-
-pub struct HttpDaemonClient {
-    url: String,
-    client: Client,
-}
-
-impl HttpDaemonClient {
-    pub fn new(url: &str) -> Self {
-        Self {
-            url: url.to_string(),
-            client: Client::new(),
-        }
-    }
-
-    pub async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(&self, endpoint: &str, body: T) -> Result<R> {
-        let full_url = format!("{}/{}", self.url, endpoint.trim_start_matches('/'));
-        let resp = self.client.post(&full_url)
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            return Err(anyhow!("HTTP error {}: {}", resp.status(), resp.text().await?));
-        }
-
-        let result = resp.json().await?;
-        Ok(result)
     }
 }
 
@@ -111,48 +51,12 @@ pub struct AnalyzerResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Command daemon types
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CommandRequest {
-    pub command: String,
-    pub args: Vec<String>,
-    pub cwd: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CommandResponse {
-    pub ok: bool,
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-}
-
-// ---------------------------------------------------------------------------
-// Central daemon types
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CentralRequest {
-    pub command: String,
-    pub key: Option<String>,
-    pub value: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CentralResponse {
-    pub ok: bool,
-    pub value: Option<serde_json::Value>,
-    pub error: Option<String>,
-}
-
-// ---------------------------------------------------------------------------
 // API Gateway types (NDJSON over UDS)
 // Matches api-gateway/providers/provider.go and api-gateway/main.go
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ApiResponse {
     pub calls: Vec<String>,
     pub definitions: Vec<String>,
@@ -170,6 +74,9 @@ pub struct ProviderConfig {
     pub region: Option<String>,
     #[serde(default)]
     pub project_id: Option<String>,
+    /// Provider-specific parameters (temperature, top_p, max_tokens, etc.)
+    #[serde(default)]
+    pub params: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,7 +92,32 @@ pub struct ThinkingConfig {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GatewayMessage {
     pub role: String,
-    pub content: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_blocks: Option<Vec<ContentBlock>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl GatewayMessage {
+    pub fn simple(role: &str, content: serde_json::Value) -> Self {
+        Self {
+            role: role.to_string(),
+            content: Some(content),
+            content_blocks: None,
+            tool_calls: None,
+            tool_use_id: None,
+            thinking: None,
+            name: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -235,6 +167,9 @@ pub struct ContentBlock {
     pub name: Option<String>,
     #[serde(default)]
     pub input: Option<serde_json::Value>,
+    /// Catch-all for gateway fields di-core doesn't use (tool_use, tool_result, etc.)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,9 +193,9 @@ pub struct StreamChunk {
     #[serde(default)]
     pub finish_reason: Option<String>,
     #[serde(default)]
-    pub content_blocks: Option<Vec<ContentBlock>>,
+    pub content: Option<serde_json::Value>,
     #[serde(default)]
-    pub content: Option<String>,
+    pub content_blocks: Option<Vec<ContentBlock>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -270,7 +205,7 @@ pub struct GatewayResponse {
     #[serde(default)]
     pub body: Option<StreamChunk>,
     #[serde(default)]
-    pub error: Option<String>,
+    pub error: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -282,13 +217,6 @@ pub struct GatewayStreamClient {
 }
 
 impl GatewayStreamClient {
-    pub fn new() -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-        let socket_path = std::env::var("DIRAC_API_GATEWAY_SOCKET")
-            .unwrap_or_else(|_| format!("{}/.dirac/api-gateway.sock", home));
-        Self { socket_path }
-    }
-
     pub fn with_socket(socket_path: &str) -> Self {
         Self { socket_path: socket_path.to_string() }
     }
@@ -389,5 +317,296 @@ impl GatewayStreamClient {
         });
 
         Ok(rx)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Command Daemon Client (piped child process — stdin/stdout)
+// Spawns di-rvv-cmd as a child process, communicates via JSON lines.
+// Mirrors the TS CommandClient in src/services/command/CommandClient.ts.
+// ---------------------------------------------------------------------------
+
+/// Result from the command daemon's execute endpoint.
+/// Wire format: {"type":"result","id":"1","stdout":"...","stderr":"","exit_code":0,"meta":{...}}
+#[derive(Debug, Deserialize)]
+pub struct ExecuteResult {
+    #[allow(dead_code)]
+    pub id: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    #[allow(dead_code)]
+    pub meta: ExecuteMeta,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct ExecuteMeta {
+    pub mode_used: String,
+    pub cwd: String,
+    pub truncated: bool,
+    pub truncation_offset: i64,
+    pub hint: Option<String>,
+    pub blocked: Option<String>,
+    pub timed_out: bool,
+    #[serde(default)]
+    pub detected_patterns: Vec<String>,
+}
+
+pub struct CommandDaemon {
+    stdin: tokio::process::ChildStdin,
+    stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
+    _child: tokio::process::Child,
+    request_id: u32,
+}
+
+impl CommandDaemon {
+    /// Spawn the command daemon as a child process.
+    /// Waits for "ready" on stderr before returning.
+    pub async fn spawn(binary_path: &str, workspace_root: &str) -> Result<Self> {
+        if !std::path::Path::new(binary_path).exists() {
+            return Err(anyhow!("Command daemon binary not found: {}", binary_path));
+        }
+
+        let mut child = tokio::process::Command::new(binary_path)
+            .arg("--workspace-root")
+            .arg(workspace_root)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+
+        let stdin = child.stdin.take().ok_or_else(|| anyhow!("Failed to get command daemon stdin"))?;
+        let stdout = child.stdout.take().ok_or_else(|| anyhow!("Failed to get command daemon stdout"))?;
+        let stderr = child.stderr.take().ok_or_else(|| anyhow!("Failed to get command daemon stderr"))?;
+
+        // Wait for "ready" on stderr
+        let mut stderr_reader = tokio::io::BufReader::new(stderr);
+        let mut ready_line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stderr_reader.read_line(&mut ready_line),
+        ).await??;
+
+        let stdout_reader = tokio::io::BufReader::new(stdout);
+
+        Ok(Self {
+            stdin,
+            stdout: stdout_reader,
+            _child: child,
+            request_id: 0,
+        })
+    }
+
+    /// Execute a shell command via the command daemon.
+    /// Sends {"id":"N","type":"execute","command":"..."} and waits for result.
+    /// Timeout: 300s for long-running commands.
+    pub async fn execute(&mut self, command: &str) -> Result<ExecuteResult> {
+        self.request_id += 1;
+        let id = self.request_id.to_string();
+
+        let request = serde_json::json!({
+            "id": id,
+            "type": "execute",
+            "command": command,
+        });
+
+        let json_str = serde_json::to_string(&request)?;
+        use tokio::io::AsyncWriteExt;
+        self.stdin.write_all(json_str.as_bytes()).await?;
+        self.stdin.write_all(b"\n").await?;
+        self.stdin.flush().await?;
+
+        let timeout = std::time::Duration::from_secs(300);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let read_future = self.stdout.read_line(&mut line);
+            let n = tokio::time::timeout(timeout, read_future).await
+                .map_err(|_| anyhow!("Command daemon execute timed out after 300s (id={}, cmd={})", id, &command[..command.len().min(80)]))??;
+            if n == 0 {
+                return Err(anyhow!("Command daemon closed stdout"));
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                let msg_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                match msg_type {
+                    "error" => {
+                        let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                        return Err(anyhow!("Command daemon error: {}", msg));
+                    }
+                    "ack" | "progress" => continue,
+                    "result" => {
+                        return serde_json::from_str::<ExecuteResult>(trimmed)
+                            .map_err(|e| anyhow!("Failed to parse execute result: {} — input: {}", e, &trimmed[..trimmed.len().min(200)]));
+                    }
+                    _ => continue,
+                }
+            }
+        }
+    }
+
+    /// No-timeout variant of send_request for the analyzer daemon.
+    /// Returns `UntimedError::Dead` when the process has exited (EOF/broken pipe)
+    /// or `UntimedError::App` for application-level errors. No timeout wrapper —
+    /// reads block indefinitely until the daemon responds or dies.
+    pub async fn send_request_untimed<T: Serialize, R: for<'de> Deserialize<'de>>(
+        &mut self,
+        request: &T,
+    ) -> Result<R, UntimedError> {
+        self.request_id += 1;
+        let id = self.request_id;
+
+        let mut payload: serde_json::Map<String, serde_json::Value> = serde_json::to_value(request)
+            .map_err(|e| UntimedError::App(anyhow!("Failed to serialize request: {}", e)))?
+            .as_object()
+            .ok_or_else(|| UntimedError::App(anyhow!("Request must be a JSON object")))?
+            .clone();
+
+        payload.insert("id".to_string(), serde_json::Value::Number(id.into()));
+
+        let json = serde_json::to_string(&serde_json::Value::Object(payload))
+            .map_err(|e| UntimedError::App(anyhow!("Failed to serialize payload: {}", e)))?;
+
+        use tokio::io::AsyncWriteExt;
+        if let Err(e) = self.stdin.write_all(json.as_bytes()).await {
+            return Err(UntimedError::Dead(format!("Write failed (daemon dead?): {}", e)));
+        }
+        if let Err(e) = self.stdin.write_all(b"\n").await {
+            return Err(UntimedError::Dead(format!("Write failed (daemon dead?): {}", e)));
+        }
+        if let Err(e) = self.stdin.flush().await {
+            return Err(UntimedError::Dead(format!("Flush failed (daemon dead?): {}", e)));
+        }
+
+        let id_str = id.to_string();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = self.stdout.read_line(&mut line).await
+                .map_err(|e| UntimedError::Dead(format!("Read error: {}", e)))?;
+            if n == 0 {
+                return Err(UntimedError::Dead("Daemon stdout EOF — process exited".to_string()));
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                let resp_id = match val.get("id") {
+                    Some(v) => v.as_str().map(String::from)
+                        .or_else(|| v.as_u64().map(|n| n.to_string())),
+                    None => None,
+                };
+                let resp_id_str = resp_id.as_deref().unwrap_or("");
+
+                let msg_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                let ok = val.get("ok").and_then(|v| v.as_bool());
+
+                // Application error — not a dead daemon, return to caller
+                if msg_type == "error" || ok == Some(false) {
+                    let msg = val.get("message").and_then(|v| v.as_str())
+                        .or_else(|| val.get("error").and_then(|e| e.get("message")).and_then(|v| v.as_str()))
+                        .unwrap_or("unknown daemon error");
+                    return Err(UntimedError::App(anyhow!("Daemon error: {}", msg)));
+                }
+
+                if msg_type == "ack" || msg_type == "progress" {
+                    continue;
+                }
+
+                if !resp_id_str.is_empty() && resp_id_str != id_str {
+                    eprintln!("[di-core] send_request_untimed: skipping response for id={} (expecting {})", resp_id_str, id);
+                    continue;
+                }
+
+                return serde_json::from_str::<R>(trimmed)
+                    .map_err(|e| UntimedError::App(anyhow!(
+                        "Failed to parse daemon response: {} — input: {}", e, &trimmed[..trimmed.len().min(200)]
+                    )));
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resilient Daemon Wrapper (auto-restart on death, no timeout, panic on failure)
+// Wraps CommandDaemon for analyzer daemon use. If the daemon dies (crash, hang),
+// it is automatically restarted. If restart also fails, panics with a clear message.
+// ---------------------------------------------------------------------------
+
+pub struct ResilientDaemon {
+    inner: Option<CommandDaemon>,
+    binary_path: String,
+    workspace_root: String,
+    max_restart_attempts: usize,
+}
+
+impl ResilientDaemon {
+    pub async fn spawn(binary_path: &str, workspace_root: &str) -> Result<Self> {
+        let inner = CommandDaemon::spawn(binary_path, workspace_root).await?;
+        Ok(Self {
+            inner: Some(inner),
+            binary_path: binary_path.to_string(),
+            workspace_root: workspace_root.to_string(),
+            max_restart_attempts: 2,
+        })
+    }
+
+    async fn restart(&mut self) {
+        eprintln!("[di-core] ResilientDaemon: restarting analyzer daemon at {}", self.binary_path);
+        self.inner = None;
+        match CommandDaemon::spawn(&self.binary_path, &self.workspace_root).await {
+            Ok(daemon) => {
+                self.inner = Some(daemon);
+                eprintln!("[di-core] ResilientDaemon: restart successful");
+            }
+            Err(e) => {
+                panic!(
+                    "[di-core] FATAL: analyzer daemon restart failed after crash: {}. Binary: {}",
+                    e, self.binary_path
+                );
+            }
+        }
+    }
+
+    /// Send a request to the analyzer daemon with automatic restart on death.
+    /// Takes request by value (matching CommandDaemon interface) and retries
+    /// internally by passing a reference to the inner untimed method.
+    /// Returns `Ok(R)` on success, `Err` for application errors.
+    /// Panics if the daemon cannot be revived after max_restart_attempts.
+    pub async fn send_request<T: Serialize, R: for<'de> Deserialize<'de>>(&mut self, request: T) -> Result<R> {
+        let mut attempts = 0;
+        loop {
+            if self.inner.is_none() {
+                self.restart().await;
+            }
+
+            match self.inner.as_mut().unwrap().send_request_untimed(&request).await {
+                Ok(r) => return Ok(r),
+                Err(UntimedError::Dead(msg)) => {
+                    attempts += 1;
+                    if attempts > self.max_restart_attempts {
+                        panic!(
+                            "[di-core] FATAL: analyzer daemon failed after {} restart attempts: {}",
+                            self.max_restart_attempts, msg
+                        );
+                    }
+                    eprintln!(
+                        "[di-core] ResilientDaemon: daemon dead ({}), restarting {}/{}",
+                        msg, attempts, self.max_restart_attempts
+                    );
+                    self.inner = None;
+                    continue;
+                }
+                Err(UntimedError::App(e)) => return Err(e),
+            }
+        }
     }
 }

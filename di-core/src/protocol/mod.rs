@@ -11,6 +11,8 @@ pub enum CoreEvent {
     ThoughtDelta {
         agent_id: Uuid,
         text: String,
+        #[serde(default)]
+        thinking: bool,
     },
     ThoughtFinished {
         agent_id: Uuid,
@@ -69,6 +71,11 @@ pub enum CoreEvent {
         success: bool,
         message: String,
     },
+    /// Agent presented a result (done tool) but awaits possible follow-up.
+    TaskPresented {
+        agent_id: Uuid,
+        message: String,
+    },
     /// Agent timed out waiting for frontend response (approval or followup).
     FrontendTimeout {
         agent_id: Uuid,
@@ -103,5 +110,15 @@ pub enum FrontendMessage {
     /// Frontend tells agent how long to wait for responses (ms).
     Timeout {
         duration_ms: u64,
+    },
+    /// Frontend passes provider config so di-core can use it in gateway requests.
+    SetProviderConfig {
+        role: String,
+        provider: String,
+        model: String,
+        api_key: Option<String>,
+        base_url: Option<String>,
+        /// Provider-specific parameters (temperature, top_p, max_tokens, etc.)
+        params: std::collections::HashMap<String, serde_json::Value>,
     },
 }

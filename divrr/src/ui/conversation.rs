@@ -1,10 +1,10 @@
-use crate::agent::{AgentState, MessageRole};
+use crate::agent::{Block};
 use crate::app::App;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block as WidgetBlock, Paragraph, Wrap};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let agent = match app.agents.get(app.active_tab) {
@@ -17,70 +17,29 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
     };
 
+    let max_width = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
 
-    // Render messages
-    for msg in &agent.messages {
-        let styled_line = match msg.role {
-            MessageRole::User => {
-                vec![
-                    Span::styled("> ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                    Span::styled("User: ", Style::default().fg(Color::Green)),
-                    Span::raw(truncate(&msg.content, area.width as usize - 10)),
-                ]
-            }
-            MessageRole::Assistant => {
-                vec![
-                    Span::styled("< ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
-                    Span::styled("Agent: ", Style::default().fg(Color::Blue)),
-                    Span::raw(truncate(&msg.content, area.width as usize - 10)),
-                ]
-            }
-            MessageRole::Tool => {
-                if let Some(tool) = &msg.tool_name {
-                    vec![
-                        Span::styled(
-                            format!("  {} ", tool),
-                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(truncate(&msg.content, area.width as usize - 12)),
-                    ]
-                } else {
-                    vec![
-                        Span::styled("  -> ", Style::default().fg(Color::Cyan)),
-                        Span::raw(truncate(&msg.content, area.width as usize - 6)),
-                    ]
-                }
-            }
-            MessageRole::System => {
-                let is_thinking = msg.content.starts_with("[thinking]");
-                let style = if is_thinking {
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                };
-                vec![Span::styled(
-                    truncate(&msg.content, area.width as usize - 2),
-                    style,
-                )]
-            }
-        };
-        lines.push(Line::from(styled_line));
+    // Render each block
+    for (i, block) in agent.log.blocks().iter().enumerate() {
+        let is_expanded = agent.expanded.contains(&i);
+        render_block(&mut lines, block, max_width, is_expanded);
     }
 
-    // Streaming text (active thinking)
-    if let Some(streaming) = &agent.streaming_text {
-        let is_thinking = streaming.starts_with("[thinking]");
+    // Streaming text (active thinking/response)
+    if let Some(streaming) = agent.log.streaming() {
+        let is_thinking = streaming.is_thinking;
         let style = if is_thinking {
             Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
         } else {
             Style::default().fg(Color::Blue)
         };
+        let content = truncate_single(&streaming.content, max_width.saturating_sub(10));
         lines.push(Line::from(vec![
             Span::styled("< ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
             Span::styled("Agent: ", Style::default().fg(Color::Blue)),
-            Span::styled(truncate(streaming, area.width as usize - 10), style),
-            Span::styled("\u{2588}", Style::default().fg(Color::Blue)), // block cursor
+            Span::styled(content, style),
+            Span::styled("\u{2588}", Style::default().fg(Color::Blue)),
         ]));
     }
 
@@ -104,35 +63,150 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         )]));
     }
 
-    // Finished message
-    if let Some(finish) = &agent.finish_message {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::styled(
-            format!("--- {} ---", finish),
-            Style::default()
-                .fg(if agent.status == crate::agent::AgentStatus::Finished {
-                    Color::Green
-                } else {
-                    Color::Red
-                })
-                .add_modifier(Modifier::BOLD),
-        )]));
-    }
-
-    let block = Block::default();
+    let widget = WidgetBlock::default();
     let paragraph = Paragraph::new(lines)
-        .block(block)
+        .block(widget)
         .wrap(Wrap { trim: false })
         .scroll((app.scroll_offset as u16, 0));
 
     frame.render_widget(paragraph, area);
 }
 
-fn truncate(s: &str, max_len: usize) -> String {
+fn render_block(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expanded: bool) {
+    match block {
+        Block::User { content } => {
+            if is_expanded {
+                for (i, line) in content.lines().enumerate() {
+                    if i == 0 {
+                        lines.push(Line::from(vec![
+                            Span::styled("> ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                            Span::styled("User: ", Style::default().fg(Color::Green)),
+                            Span::raw(truncate_single(line, max_width.saturating_sub(10))),
+                        ]));
+                    } else {
+                        lines.push(Line::from(vec![
+                            Span::styled("       ", Style::default().fg(Color::Green)),
+                            Span::raw(truncate_single(line, max_width.saturating_sub(10))),
+                        ]));
+                    }
+                }
+            } else {
+                let first_line = content.lines().next().unwrap_or("");
+                lines.push(Line::from(vec![
+                    Span::styled("> ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    Span::styled("User: ", Style::default().fg(Color::Green)),
+                    Span::raw(truncate_single(first_line, max_width.saturating_sub(10))),
+                ]));
+            }
+        }
+        Block::Assistant { content } => {
+            if content.is_empty() { return; }
+            if is_expanded {
+                for (i, line) in content.lines().enumerate() {
+                    if i == 0 {
+                        lines.push(Line::from(vec![
+                            Span::styled("< ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
+                            Span::styled("Agent: ", Style::default().fg(Color::Blue)),
+                            Span::raw(truncate_single(line, max_width.saturating_sub(10))),
+                        ]));
+                    } else {
+                        lines.push(Line::from(vec![
+                            Span::raw(truncate_single(line, max_width.saturating_sub(2))),
+                        ]));
+                    }
+                }
+            } else {
+                let first_line = content.lines().next().unwrap_or("");
+                lines.push(Line::from(vec![
+                    Span::styled("< ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
+                    Span::styled("Agent: ", Style::default().fg(Color::Blue)),
+                    Span::raw(truncate_single(first_line, max_width.saturating_sub(10))),
+                ]));
+            }
+        }
+        Block::Tool { call, result } => {
+            if is_expanded {
+                // Tool call line
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {} ", call.tool),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(truncate_single(&call.args_summary, max_width.saturating_sub(12))),
+                ]));
+                // Full result
+                if let Some(res) = result {
+                    for line in res.content.lines() {
+                        lines.push(Line::from(vec![
+                            Span::styled("  -> ", Style::default().fg(Color::Cyan)),
+                            Span::raw(truncate_single(line, max_width.saturating_sub(6))),
+                        ]));
+                    }
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled("  -> ", Style::default().fg(Color::Cyan)),
+                        Span::styled("running...", Style::default().fg(Color::DarkGray)),
+                    ]));
+                }
+            } else {
+                // Collapsed: tool name + command/args summary
+                let status_hint = result.as_ref().map(|r| {
+                    let lines = r.content.lines().count();
+                    if lines > 1 { format!(" ({} lines)", lines) } else { String::new() }
+                }).unwrap_or_default();
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {} ", call.tool),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(truncate_single(&call.args_summary, max_width.saturating_sub(14))),
+                    if status_hint.is_empty() {
+                        Span::raw("")
+                    } else {
+                        Span::styled(status_hint, Style::default().fg(Color::DarkGray))
+                    },
+                ]));
+            }
+        }
+        Block::System { content } => {
+            let is_thinking = content.starts_with("[thinking]");
+            let style = if is_thinking {
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            if is_expanded {
+                for line in content.lines() {
+                    lines.push(Line::from(vec![Span::styled(
+                        truncate_single(line, max_width.saturating_sub(2)),
+                        style,
+                    )]));
+                }
+            } else {
+                let first_line = content.lines().next().unwrap_or("");
+                lines.push(Line::from(vec![Span::styled(
+                    truncate_single(first_line, max_width.saturating_sub(2)),
+                    style,
+                )]));
+            }
+        }
+        Block::Finish { message, success } => {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![Span::styled(
+                format!("--- {} ---", message),
+                Style::default()
+                    .fg(if *success { Color::Green } else { Color::Red })
+                    .add_modifier(Modifier::BOLD),
+            )]));
+        }
+    }
+}
+
+fn truncate_single(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
-        s.replace('\n', " ")
+        s.to_string()
     } else {
         let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated.replace('\n', " "))
+        format!("{}...", truncated)
     }
 }

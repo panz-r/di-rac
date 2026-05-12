@@ -44,6 +44,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     metrics.token_usage
                 )));
             }
+            if app.auto_approve {
+                spans.push(Span::raw(" | "));
+                spans.push(Span::styled("AUTO", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+            }
             spans.push(Span::raw(format!(" | {}", agent.format_timestamp())));
         }
     } else {
@@ -86,6 +90,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             spans.push(Span::styled(
                 " | COMMAND",
                 Style::default().fg(Color::Magenta),
+            ));
+        }
+        crate::app::Mode::Settings => {
+            spans.push(Span::styled(
+                " | SETTINGS",
+                Style::default().fg(Color::Yellow),
             ));
         }
     }

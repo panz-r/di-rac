@@ -39,16 +39,9 @@ impl BackgroundCommandTracker {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn track(&self, cmd: BackgroundCommand) {
         self.commands.lock().await.insert(cmd.id.clone(), cmd);
-    }
-
-    pub async fn update_status(&self, id: &str, status: CommandStatus, exit_code: Option<i32>) {
-        let mut guard = self.commands.lock().await;
-        if let Some(cmd) = guard.get_mut(id) {
-            cmd.status = status;
-            cmd.exit_code = exit_code;
-        }
     }
 
     pub async fn get(&self, id: &str) -> Option<BackgroundCommand> {
@@ -65,6 +58,7 @@ impl BackgroundCommandTracker {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub async fn count_running(&self) -> usize {
         self.commands
             .lock()
@@ -94,14 +88,4 @@ impl BackgroundCommandTracker {
         Some(lines.join("\n"))
     }
 
-    pub async fn cancel(&self, id: &str) -> bool {
-        let mut guard = self.commands.lock().await;
-        if let Some(cmd) = guard.get_mut(id) {
-            if cmd.status == CommandStatus::Running {
-                cmd.status = CommandStatus::Cancelled;
-                return true;
-            }
-        }
-        false
-    }
 }

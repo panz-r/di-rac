@@ -502,6 +502,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+ "unicode-width",
  "uuid",
 ]
 

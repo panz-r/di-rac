@@ -4,37 +4,6 @@ use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 
-pub struct ResponseParser {
-    tool_regex: Regex,
-}
-
-impl ResponseParser {
-    pub fn new() -> Self {
-        Self {
-            // Match <tool_code name="...">JSON_ARGS</tool_code>
-            tool_regex: Regex::new(r#"(?s)<tool_code\s+name="([^"]+)">\s*(.*?)\s*</tool_code>"#).unwrap(),
-        }
-    }
-
-    /// Parse a complete (non-streaming) response for tool calls.
-    pub fn parse(&self, text: &str) -> (String, Vec<ToolCall>) {
-        let mut thought = text.to_string();
-        let mut tools = Vec::new();
-
-        for cap in self.tool_regex.captures_iter(text) {
-            let name = cap[1].to_string();
-            let args_json = &cap[2];
-
-            if let Ok(args) = serde_json::from_str(args_json) {
-                tools.push(ToolCall { name, args });
-                thought = thought.replace(&cap[0], "");
-            }
-        }
-
-        (thought.trim().to_string(), tools)
-    }
-}
-
 /// Accumulates partial tool calls from streaming chunks.
 /// Mirrors the TS `PendingToolUse` at StreamResponseHandler.ts:13.
 struct PendingTool {
@@ -44,12 +13,18 @@ struct PendingTool {
 
 pub struct StreamingToolAccumulator {
     pending: HashMap<String, PendingTool>,
+    /// Maps content block index → tool_call_id.
+    /// The api-gateway sends tool_call_id only on the "content" chunk that starts
+    /// a tool_use block, NOT on subsequent "delta" chunks. Deltas are correlated
+    /// by Index. This mirrors the TS code's index-based accumulator lookup.
+    index_to_id: HashMap<i64, String>,
 }
 
 impl StreamingToolAccumulator {
     pub fn new() -> Self {
         Self {
             pending: HashMap::new(),
+            index_to_id: HashMap::new(),
         }
     }
 
@@ -58,6 +33,10 @@ impl StreamingToolAccumulator {
     pub fn feed_chunk(&mut self, chunk: &StreamChunk) -> bool {
         // Handle content block that starts a tool_use
         if chunk.chunk_type == "content" {
+            let is_tool_use = chunk.content.as_ref()
+                .and_then(|v| v.as_str())
+                .map(|s| s == "tool_use")
+                .unwrap_or(false);
             if let Some(ref blocks) = chunk.content_blocks {
                 for block in blocks {
                     if block.block_type == "tool_use" {
@@ -66,34 +45,58 @@ impl StreamingToolAccumulator {
                                 name: name.clone(),
                                 arguments_str: String::new(),
                             });
+                            if let Some(idx) = chunk.index {
+                                self.index_to_id.insert(idx, id.clone());
+                            }
                         }
                     }
                 }
             }
-            // Also handle the flat fields (some providers send tool info this way)
+            // Also handle the flat fields (api-gateway sends tool info this way)
             if let (Some(id), Some(name)) = (&chunk.tool_call_id, &chunk.tool_call_name) {
                 self.pending.entry(id.clone()).or_insert_with(|| PendingTool {
                     name: name.clone(),
                     arguments_str: String::new(),
                 });
+                if let Some(idx) = chunk.index {
+                    self.index_to_id.insert(idx, id.clone());
+                }
+                eprintln!("[parser] content chunk: idx={:?} tool_call_id={} name={} is_tool_use={}",
+                    chunk.index, id, name, is_tool_use);
             }
             return true;
         }
 
-        // Handle delta — accumulate arguments
+        // Handle delta — accumulate arguments.
+        // Order matters: OpenAI-compatible providers send tool_call_id + tool_call_name +
+        // json_delta on the SAME chunk, so we must create the pending entry BEFORE
+        // trying to accumulate json_delta.
         if chunk.chunk_type == "delta" {
-            if let (Some(id), Some(json)) = (&chunk.tool_call_id, &chunk.json_delta) {
-                if let Some(pending) = self.pending.get_mut(id) {
-                    pending.arguments_str.push_str(json);
-                    return true;
-                }
-            }
-            // Also handle tool_call_name on a delta (some providers)
+            // 1. Ensure pending entry exists if tool info is present
             if let (Some(id), Some(name)) = (&chunk.tool_call_id, &chunk.tool_call_name) {
                 self.pending.entry(id.clone()).or_insert_with(|| PendingTool {
                     name: name.clone(),
                     arguments_str: String::new(),
                 });
+                if let Some(idx) = chunk.index {
+                    self.index_to_id.insert(idx, id.clone());
+                }
+            }
+
+            // 2. Accumulate json_delta if present
+            if let Some(json) = &chunk.json_delta {
+                let id = chunk.tool_call_id.as_ref().cloned()
+                    .or_else(|| chunk.index.and_then(|idx| self.index_to_id.get(&idx).cloned()));
+                if let Some(id) = id {
+                    if let Some(pending) = self.pending.get_mut(&id) {
+                        pending.arguments_str.push_str(json);
+                        return true;
+                    }
+                }
+            }
+
+            // 3. If we created a pending entry but had no json_delta, still absorbed
+            if chunk.tool_call_id.is_some() || chunk.tool_call_name.is_some() {
                 return true;
             }
             return false; // text delta, not tool
@@ -106,15 +109,28 @@ impl StreamingToolAccumulator {
     /// Also falls back to XML parsing for non-native tool calls.
     pub fn finalize(self, fallback_text: &str) -> Vec<ToolCall> {
         let mut tools = Vec::new();
+        let mut seen = std::collections::HashSet::new();
 
         // Native tool calls from streaming
+        for (_, pending) in &self.pending {
+            eprintln!("[parser] finalize: name={} args_len={} args={:?}",
+                pending.name, pending.arguments_str.len(),
+                if pending.arguments_str.len() > 200 { &pending.arguments_str[..200] } else { &pending.arguments_str });
+        }
+
         for (_, pending) in self.pending {
             let args: Value = serde_json::from_str(&pending.arguments_str)
-                .unwrap_or_else(|_| serde_json::json!({}));
-            tools.push(ToolCall {
-                name: pending.name,
-                args,
-            });
+                .unwrap_or_else(|_| {
+                    eprintln!("[parser] finalize: FAILED to parse args for {}: {:?}", pending.name, pending.arguments_str);
+                    serde_json::json!({})
+                });
+            let key = format!("{}:{}", pending.name, args);
+            if seen.insert(key) {
+                tools.push(ToolCall {
+                    name: pending.name,
+                    args,
+                });
+            }
         }
 
         // Fallback: XML tool_code parsing from accumulated text
@@ -123,7 +139,10 @@ impl StreamingToolAccumulator {
             let name = cap[1].to_string();
             let args_json = &cap[2];
             if let Ok(args) = serde_json::from_str(args_json) {
-                tools.push(ToolCall { name, args });
+                let key = format!("{}:{}", name, args);
+                if seen.insert(key) {
+                    tools.push(ToolCall { name, args });
+                }
             }
         }
 

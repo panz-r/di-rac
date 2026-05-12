@@ -15,11 +15,6 @@ impl ApprovalManager {
         }
     }
 
-    pub fn with_yolo(mut self) -> Self {
-        self.yolo_mode = true;
-        self
-    }
-
     /// Read-only tools that auto-approve by default (v9.5.1 wire names).
     const READ_TOOLS: &[&str] = &[
         "read",
@@ -29,13 +24,6 @@ impl ApprovalManager {
         "ask",
         "compact",
         "tools",
-    ];
-
-    /// Tools that modify state and require approval by default.
-    const WRITE_TOOLS: &[&str] = &[
-        "write",
-        "edit",
-        "bash",
     ];
 
     /// Returns true if the tool should auto-approve.
