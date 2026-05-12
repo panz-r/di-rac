@@ -3,7 +3,7 @@ import { Controller } from "@core/controller/index"
 import axios from "axios"
 import { readFile } from "fs/promises"
 import { HostProvider } from "@/hosts/host-provider"
-import { ShowMessageType } from "@/shared/proto/host/window"
+import { ShowMessageType } from "@/shared/types/host/window"
 import { Logger } from "@/shared/services/Logger"
 import { getNonce } from "./getNonce"
 

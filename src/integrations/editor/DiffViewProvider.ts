@@ -8,7 +8,7 @@ import * as iconv from "iconv-lite"
 import { HostProvider } from "@/hosts/host-provider"
 import { getDiagnosticsProviders } from "@/integrations/diagnostics/getDiagnosticsProviders"
 
-import { FileDiagnostics } from "@/shared/proto/index.dirac"
+import { FileDiagnostics } from "@/shared/types/index.dirac"
 import { Logger } from "@/shared/services/Logger"
 import { detectEncoding } from "../misc/extract-text"
 import { sanitizeNotebookForLLM } from "../misc/notebook-utils"

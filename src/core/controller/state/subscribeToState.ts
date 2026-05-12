@@ -1,5 +1,5 @@
-import { EmptyRequest } from "@shared/proto/dirac/common"
-import { State } from "@shared/proto/dirac/state"
+import { EmptyRequest } from "@shared/types/dirac/common"
+import { State } from "@shared/types/dirac/state"
 import { ExtensionState } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { getRequestRegistry, StreamingResponseHandler } from "../grpc-handler"

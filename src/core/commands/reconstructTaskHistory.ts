@@ -2,7 +2,7 @@ import { getSavedDiracMessages, getTaskMetadata, readTaskHistoryFromState, write
 import { HostProvider } from "@hosts/host-provider"
 import { DiracMessage } from "@shared/ExtensionMessage"
 import { HistoryItem } from "@shared/HistoryItem"
-import { ShowMessageType } from "@shared/proto/host/window"
+import { ShowMessageType } from "@shared/types/host/window"
 import { fileExistsAtPath } from "@utils/fs"
 import * as path from "path"
 import { ulid } from "ulid"

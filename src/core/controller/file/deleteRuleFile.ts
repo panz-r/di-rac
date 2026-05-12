@@ -1,8 +1,8 @@
 import { deleteRuleFile as deleteRuleFileImpl } from "@core/context/instructions/user-instructions/rule-helpers"
 import { getWorkspaceBasename } from "@core/workspace"
-import { RuleFile, RuleFileRequest } from "@shared/proto/dirac/file"
+import { RuleFile, RuleFileRequest } from "@shared/types/dirac/file"
 import { HostProvider } from "@/hosts/host-provider"
-import { ShowMessageType } from "@/shared/proto/host/window"
+import { ShowMessageType } from "@/shared/types/host/window"
 import { Logger } from "@/shared/services/Logger"
 import { Controller } from ".."
 

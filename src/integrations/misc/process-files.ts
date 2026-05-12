@@ -2,7 +2,7 @@ import fs from "fs/promises"
 import sizeOf from "image-size"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
-import { ShowMessageType } from "@/shared/proto/host/window"
+import { ShowMessageType } from "@/shared/types/host/window"
 import { Logger } from "@/shared/services/Logger"
 
 /**

@@ -1,4 +1,4 @@
-import * as proto from "@shared/proto/index"
+import * as proto from "@shared/types/index"
 import { StreamingCallbacks } from "@hosts/host-provider-types"
 
 /**

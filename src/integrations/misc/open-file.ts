@@ -2,7 +2,7 @@ import { writeFile } from "@utils/fs"
 import * as os from "os"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
-import { ShowMessageType } from "@/shared/proto/host/window"
+import { ShowMessageType } from "@/shared/types/host/window"
 
 export async function openImage(dataUri: string) {
 	const matches = dataUri.match(/^data:image\/([a-zA-Z]+);base64,(.+)$/)

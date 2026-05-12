@@ -1,7 +1,7 @@
 import type { WorkspaceRoot } from "@shared/multi-root/types"
 import { HostProvider } from "@/hosts/host-provider"
 import type { HistoryItem } from "@/shared/HistoryItem"
-import { ShowMessageType } from "@/shared/proto/host/window"
+import { ShowMessageType } from "@/shared/types/host/window"
 import { Logger } from "@/shared/services/Logger"
 import { getCwd, getDesktopDir } from "@/utils/path"
 import { StateManager } from "../storage/StateManager"

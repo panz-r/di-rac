@@ -1,6 +1,6 @@
 import type { HookOutputStreamMeta } from "@shared/ExtensionMessage"
 import { DiracMessage } from "@shared/ExtensionMessage"
-import type { HookOutput } from "@shared/proto/dirac/hooks"
+import type { HookOutput } from "@shared/types/dirac/hooks"
 import { Logger } from "@/shared/services/Logger"
 import { MessageStateHandler } from "../task/message-state"
 import { HookExecutionError } from "./HookError"

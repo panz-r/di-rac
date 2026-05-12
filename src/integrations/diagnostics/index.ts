@@ -1,6 +1,6 @@
 import deepEqual from "fast-deep-equal"
 import * as path from "path"
-import { Diagnostic, DiagnosticSeverity, FileDiagnostics } from "@/shared/proto/index.dirac"
+import { Diagnostic, DiagnosticSeverity, FileDiagnostics } from "@/shared/types/index.dirac"
 import { Logger } from "@/shared/services/Logger"
 import { formatLineWithHash } from "@/utils/line-hashing"
 import { arePathsEqual, getCwd } from "@/utils/path"

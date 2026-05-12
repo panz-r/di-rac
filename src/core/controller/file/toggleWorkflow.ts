@@ -1,4 +1,4 @@
-import { DiracRulesToggles, RuleScope, ToggleWorkflowRequest } from "@shared/proto/dirac/file"
+import { DiracRulesToggles, RuleScope, ToggleWorkflowRequest } from "@shared/types/dirac/file"
 import { Logger } from "@/shared/services/Logger"
 import { Controller } from ".."
 

@@ -64,7 +64,7 @@ import {
 	DiracUserContent,
 } from "@shared/messages/content"
 import { DiracMessageModelInfo } from "@shared/messages/metrics"
-import { ShowMessageType } from "@shared/proto/index.host"
+import { ShowMessageType } from "@shared/types/index.host"
 import { Logger } from "@shared/services/Logger"
 import { Session } from "@shared/services/Session"
 import { DiracDefaultTool } from "@shared/tools"

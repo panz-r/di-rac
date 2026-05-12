@@ -57,7 +57,7 @@ function getShellFromEnv(): string | null {
 // 2) Terminal Profile Interface and Utilities
 // -----------------------------------------------------
 
-import { TerminalProfile } from "@shared/proto/dirac/state"
+import { TerminalProfile } from "@shared/types/dirac/state"
 
 export function getAvailableTerminalProfiles(): TerminalProfile[] {
 	const profiles: TerminalProfile[] = [

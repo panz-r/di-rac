@@ -1,6 +1,6 @@
 import { Controller } from "@core/controller"
 import * as openFileIntegration from "@integrations/misc/open-file"
-import { Empty, StringRequest } from "@shared/proto/dirac/common"
+import { Empty, StringRequest } from "@shared/types/dirac/common"
 import * as pathUtils from "@utils/path"
 import { expect } from "chai"
 import { afterEach, beforeEach, describe, it } from "mocha"

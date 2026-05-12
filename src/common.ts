@@ -15,7 +15,7 @@ import { ErrorService } from "./services/error";
 import { getDistinctId } from "./services/logging/distinctId";
 import { SymbolIndexService } from "./services/symbol-index/SymbolIndexService";
 import { DiracTempManager } from "./services/temp";
-import { ShowMessageType } from "./shared/proto/host/window";
+import { ShowMessageType } from "./shared/types/host/window";
 import { syncWorker } from "./shared/services/worker/sync";
 
 import { getBlobStoreSettingsFromEnv } from "./shared/services/worker/worker";

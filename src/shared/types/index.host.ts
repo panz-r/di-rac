@@ -1,5 +1,3 @@
-// Barrel re-export for host proto types.
-
 export * from "./host/diff"
 export * from "./host/window"
 export { EmptyRequest, Empty, Setting } from "./host/env"

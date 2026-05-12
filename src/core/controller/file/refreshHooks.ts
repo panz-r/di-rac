@@ -1,4 +1,4 @@
-import { HookInfo, HooksToggles, WorkspaceHooks } from "@shared/proto/dirac/file"
+import { HookInfo, HooksToggles, WorkspaceHooks } from "@shared/types/dirac/file"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"

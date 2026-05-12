@@ -1,5 +1,5 @@
-import { EmptyRequest } from "@shared/proto/dirac/common"
-import { SlashCommandInfo, SlashCommandsResponse } from "@shared/proto/dirac/slash"
+import { EmptyRequest } from "@shared/types/dirac/common"
+import { SlashCommandInfo, SlashCommandsResponse } from "@shared/types/dirac/slash"
 import { BASE_SLASH_COMMANDS } from "@/shared/slashCommands"
 import { getOrDiscoverSkills } from "@/core/context/instructions/user-instructions/skills"
 import { Controller } from ".."

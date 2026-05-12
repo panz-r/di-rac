@@ -1,5 +1,5 @@
-import { EmptyRequest, StringRequest } from "@shared/proto/dirac/common"
-import { ShowMessageType } from "@shared/proto/host/window"
+import { EmptyRequest, StringRequest } from "@shared/types/dirac/common"
+import { ShowMessageType } from "@shared/types/host/window"
 import { HostProvider } from "@/hosts/host-provider"
 import { Logger } from "@/shared/services/Logger"
 

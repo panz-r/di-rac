@@ -16,7 +16,7 @@ import {
     TaskResumeData,
     TaskStartData,
     UserPromptSubmitData,
-} from "../../shared/proto/dirac/hooks"
+} from "../../shared/types/dirac/hooks"
 import { getAllHooksDirs } from "../storage/disk"
 import { StateManager } from "../storage/StateManager"
 import { HookExecutionError } from "./HookError"

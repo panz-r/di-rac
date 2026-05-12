@@ -1,4 +1,4 @@
-import { FileDiagnostics } from "@/shared/proto/index.dirac"
+import { FileDiagnostics } from "@/shared/types/index.dirac"
 
 export interface DiagnosticsFeedbackResult {
 	newProblemsMessage: string

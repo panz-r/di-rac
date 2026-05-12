@@ -1,4 +1,4 @@
-import { GetTaskHistoryRequest, TaskHistoryArray } from "@shared/proto/dirac/task"
+import { GetTaskHistoryRequest, TaskHistoryArray } from "@shared/types/dirac/task"
 import { Logger } from "@/shared/services/Logger"
 import { arePathsEqual, getWorkspacePath } from "../../../utils/path"
 import { Controller } from ".."

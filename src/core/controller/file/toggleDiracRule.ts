@@ -1,6 +1,6 @@
 import { getWorkspaceBasename } from "@core/workspace"
-import type { ToggleDiracRuleRequest } from "@shared/proto/dirac/file"
-import { RuleScope, ToggleDiracRules } from "@shared/proto/dirac/file"
+import type { ToggleDiracRuleRequest } from "@shared/types/dirac/file"
+import { RuleScope, ToggleDiracRules } from "@shared/types/dirac/file"
 import { Logger } from "@/shared/services/Logger"
 import type { Controller } from "../index"
 
