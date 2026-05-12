@@ -358,12 +358,24 @@ func responsesBuildTools(tools []json.RawMessage) []interface{} {
 			continue
 		}
 
-		// Already in Responses API format (has "name" at top level)
-		if _, hasName := t["name"]; hasName {
-			if _, hasType := t["type"]; !hasType {
-				t["type"] = "function"
+		// Anthropic-style tool with top-level name: convert input_schema to parameters
+		if name, ok := t["name"].(string); ok {
+			tool := map[string]interface{}{
+				"type": "function",
+				"name": name,
 			}
-			result = append(result, t)
+			if desc, ok := t["description"].(string); ok {
+				tool["description"] = desc
+			}
+			if schema, ok := t["input_schema"]; ok {
+				tool["parameters"] = schema
+			} else if params, ok := t["parameters"]; ok {
+				tool["parameters"] = params
+			}
+			if strict, ok := t["strict"].(bool); ok {
+				tool["strict"] = strict
+			}
+			result = append(result, tool)
 			continue
 		}
 

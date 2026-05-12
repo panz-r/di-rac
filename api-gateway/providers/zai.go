@@ -203,8 +203,8 @@ func NewZAIHandler() *ZAIHandler {
 					}
 				}
 
-				if !req.SettingBool("do_sample") {
-					result["do_sample"] = false
+				if v, ok := req.SettingBoolOK("do_sample"); ok {
+					result["do_sample"] = v
 				}
 
 				if len(req.Tools) > 0 {

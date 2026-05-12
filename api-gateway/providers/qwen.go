@@ -146,7 +146,24 @@ var _ CapableHandler = (*QwenHandler)(nil)
 var _ SettingsValidator = (*QwenHandler)(nil)
 var _ ModelLister = (*QwenHandler)(nil)
 
-// qwenMergeConsecutiveRoles merges consecutive messages with the same role by joining their content.
+// qwenCanMerge reports whether a message is a plain user/assistant message safe to merge.
+// Tool messages (tool_calls, tool_call_id) must never be merged.
+func qwenCanMerge(m map[string]interface{}) bool {
+	role, _ := m["role"].(string)
+	if role != "user" && role != "assistant" {
+		return false
+	}
+	if _, ok := m["tool_calls"]; ok {
+		return false
+	}
+	if _, ok := m["tool_call_id"]; ok {
+		return false
+	}
+	return true
+}
+
+// qwenMergeConsecutiveRoles merges consecutive plain user/assistant messages with the same role.
+// Tool messages and messages with tool_calls/tool_call_id are never merged.
 func qwenMergeConsecutiveRoles(messages []map[string]interface{}) []map[string]interface{} {
 	var merged []map[string]interface{}
 
@@ -160,7 +177,7 @@ func qwenMergeConsecutiveRoles(messages []map[string]interface{}) []map[string]i
 		lastRole, _ := last["role"].(string)
 		curRole, _ := msg["role"].(string)
 
-		if lastRole == curRole {
+		if lastRole == curRole && qwenCanMerge(last) && qwenCanMerge(msg) {
 			lastContent := qwenContentToString(last["content"])
 			curContent := qwenContentToString(msg["content"])
 			if lastContent != "" && curContent != "" {

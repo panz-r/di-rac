@@ -92,15 +92,23 @@ func (r *Request) SettingFloat(key string) float64 {
 
 // SettingBool returns a setting value as bool, or false if not set.
 func (r *Request) SettingBool(key string) bool {
+	b, _ := r.SettingBoolOK(key)
+	return b
+}
+
+// SettingBoolOK returns a setting value as bool and whether it was explicitly set.
+func (r *Request) SettingBoolOK(key string) (bool, bool) {
 	if r.Settings == nil {
-		return false
+		return false, false
 	}
-	if v, ok := r.Settings[key]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
+	v, ok := r.Settings[key]
+	if !ok || v == nil {
+		return false, ok
 	}
-	return false
+	if b, ok := v.(bool); ok {
+		return b, true
+	}
+	return false, false
 }
 
 // SettingInt returns a setting value as int64, or 0 if not set.

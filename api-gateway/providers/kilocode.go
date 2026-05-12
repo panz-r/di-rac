@@ -196,7 +196,9 @@ func NewKiloCodeHandler() *KiloCodeHandler {
 					result["response_format"] = map[string]string{"type": rf}
 				}
 
-				result["parallel_tool_calls"] = req.SettingBool("parallel_tool_calls")
+				if v, ok := req.SettingBoolOK("parallel_tool_calls"); ok {
+					result["parallel_tool_calls"] = v
+				}
 			},
 		}),
 	}

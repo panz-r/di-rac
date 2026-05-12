@@ -224,7 +224,9 @@ func NewSyntheticHandler() *SyntheticHandler {
 					result["reasoning_effort"] = req.Thinking.ReasoningEffort
 				}
 
-				result["parallel_tool_calls"] = req.SettingBool("parallel_tool_calls")
+				if v, ok := req.SettingBoolOK("parallel_tool_calls"); ok {
+					result["parallel_tool_calls"] = v
+				}
 
 				// Model: ensure hf: prefix
 				if model, ok := result["model"].(string); ok && model != "" {

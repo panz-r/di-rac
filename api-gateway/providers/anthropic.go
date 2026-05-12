@@ -12,6 +12,19 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
+// parseToolInput parses a JSON string into a value suitable for Anthropic tool input.
+// Returns an empty map on failure so the API call does not break.
+func parseToolInput(args string) interface{} {
+	var input interface{}
+	if args != "" {
+		_ = json.Unmarshal([]byte(args), &input)
+	}
+	if input == nil {
+		input = map[string]interface{}{}
+	}
+	return input
+}
+
 // AnthropicHandler handles Anthropic API requests
 type AnthropicHandler struct {
 	client       anthropic.Client
@@ -106,7 +119,7 @@ func (h *AnthropicHandler) buildRequest(req *Request) (anthropic.MessageNewParam
 					if block.ToolUse != nil {
 						contentBlocks = append(contentBlocks, anthropic.NewToolUseBlock(
 							block.ToolUse.ID,
-							block.ToolUse.Function.Arguments,
+							parseToolInput(block.ToolUse.Function.Arguments),
 							block.ToolUse.Function.Name,
 						))
 					}
@@ -145,7 +158,7 @@ func (h *AnthropicHandler) buildRequest(req *Request) (anthropic.MessageNewParam
 		for _, tc := range msg.ToolCalls {
 			contentBlocks = append(contentBlocks, anthropic.NewToolUseBlock(
 				tc.ID,
-				tc.Function.Arguments,
+				parseToolInput(tc.Function.Arguments),
 				tc.Function.Name,
 			))
 		}
@@ -261,7 +274,7 @@ func (h *AnthropicHandler) buildRequest(req *Request) (anthropic.MessageNewParam
 		if len(tools) > 0 {
 			anthropicReq.Tools = tools
 			if !reasoningOn {
-				anthropicReq.ToolChoice = anthropic.ToolChoiceUnionParam{OfAny: &anthropic.ToolChoiceAnyParam{}}
+				anthropicReq.ToolChoice = anthropic.ToolChoiceUnionParam{OfAuto: &anthropic.ToolChoiceAutoParam{}}
 			}
 		}
 	}

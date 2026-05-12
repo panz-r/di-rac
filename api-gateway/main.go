@@ -105,6 +105,8 @@ type Server struct {
 	providerConfigs  map[string]providers.ProviderConfig
 	configMu         sync.RWMutex
 	rateLimiter      *RateLimiter
+	conns            map[net.Conn]struct{}
+	connMu           sync.Mutex
 }
 
 // RateLimiter controls outbound request rate and concurrency.
@@ -116,6 +118,12 @@ type RateLimiter struct {
 }
 
 func NewRateLimiter(ratePerSec, maxConcurrent int) *RateLimiter {
+	if ratePerSec <= 0 {
+		ratePerSec = 5
+	}
+	if maxConcurrent <= 0 {
+		maxConcurrent = 3
+	}
 	rl := &RateLimiter{
 		tokens: make(chan struct{}, ratePerSec),
 		sem:    make(chan struct{}, maxConcurrent),
@@ -188,6 +196,7 @@ func NewServer() *Server {
 		cancel:           cancel,
 		providerConfigs:  make(map[string]providers.ProviderConfig),
 		rateLimiter:      NewRateLimiter(maxRequestsPerSec, maxInflightReqs),
+		conns:            make(map[net.Conn]struct{}),
 	}
 }
 
@@ -222,6 +231,12 @@ func (s *Server) Start() error {
 	s.cancel()
 	s.rateLimiter.Stop()
 	ln.Close()
+	// Force-close idle connections so wg.Wait does not block for 5 min
+	s.connMu.Lock()
+	for conn := range s.conns {
+		conn.SetDeadline(time.Now())
+	}
+	s.connMu.Unlock()
 	s.wg.Wait()
 	return nil
 }
@@ -245,7 +260,15 @@ func (s *Server) acceptLoop() {
 
 func (s *Server) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
-	defer conn.Close()
+	defer func() {
+		s.connMu.Lock()
+		delete(s.conns, conn)
+		s.connMu.Unlock()
+		conn.Close()
+	}()
+	s.connMu.Lock()
+	s.conns[conn] = struct{}{}
+	s.connMu.Unlock()
 
 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)
@@ -408,7 +431,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				continue
 			}
 			// Enrich with default capabilities from provider's ProviderInfo
-			enrichModelCapabilities(models, s.providerRegistry.GetCapabilities(modelsReq.Provider))
+			enrichModelCapabilities(models, s.providerRegistry.GetCapabilities(modelsReq.Provider), modelsReq.Provider)
 
 			body, _ := json.Marshal(map[string]interface{}{"models": models})
 			w.write(&Response{ID: 0, Status: 200, Body: body})
@@ -470,8 +493,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 				continue
 			}
 
-			enrichModelCapabilities([]providers.ModelEntry{*found}, s.providerRegistry.GetCapabilities(modelInfoReq.Provider))
-			body, _ := json.Marshal(map[string]interface{}{"model": found})
+			enriched := []providers.ModelEntry{*found}
+			enrichModelCapabilities(enriched, s.providerRegistry.GetCapabilities(modelInfoReq.Provider), modelInfoReq.Provider)
+			body, _ := json.Marshal(map[string]interface{}{"model": enriched[0]})
 			w.write(&Response{ID: 0, Status: 200, Body: body})
 			continue
 		}
@@ -683,8 +707,15 @@ func (s *Server) mergeProviderConfig(req *Request) {
 // using the provider's declared features as defaults. Per-model overrides
 // (e.g., from a static table or API metadata) take precedence since we only
 // set fields that are still at zero values.
-func enrichModelCapabilities(models []providers.ModelEntry, info *providers.ProviderInfo) {
+func enrichModelCapabilities(models []providers.ModelEntry, info *providers.ProviderInfo, providerID string) {
 	if info == nil {
+		return
+	}
+	// Skip enrichment for providers that return per-model capability data.
+	// Applying provider-wide defaults would overwrite accurate per-model info
+	// (e.g. flipping text-only OpenRouter models to supports_images: true).
+	switch providerID {
+	case "openrouter":
 		return
 	}
 	for i := range models {
@@ -803,11 +834,18 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 			})
 			return
 		case chunk := <-chunks:
-			w.write(&Response{
+			// Provider emitted complete -- forward it and stop (no duplicate)
+			if chunk.Type == "complete" {
+				w.write(&Response{ID: id, Status: 200, Body: mustMarshal(chunk)})
+				return
+			}
+			if err := w.write(&Response{
 				ID:     id,
 				Status: 200,
 				Body:   mustMarshal(chunk),
-			})
+			}); err != nil {
+				return // client disconnected, cancel via deferred streamCancel
+			}
 		case <-doneChan:
 			// Check for error that arrived simultaneously with done signal
 			select {
@@ -824,6 +862,10 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 			for {
 				select {
 				case chunk := <-chunks:
+					if chunk.Type == "complete" {
+						w.write(&Response{ID: id, Status: 200, Body: mustMarshal(chunk)})
+						return
+					}
 					w.write(&Response{
 						ID:     id,
 						Status: 200,
@@ -841,7 +883,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 						return
 					default:
 					}
-					// Always send complete signal so the client never hangs
+					// Send complete only if provider did not emit one
 					w.write(&Response{
 						ID:     id,
 						Status: 200,
@@ -910,7 +952,7 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 		Error: &ErrorDetail{
 			Code:      "PROVIDER_ERROR",
 			Message:   lastErr.Error(),
-			Retriable: true,
+			Retriable: lastRetriable,
 		},
 	}
 }
