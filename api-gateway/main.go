@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -285,7 +286,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.conns[conn] = struct{}{}
 	s.connMu.Unlock()
 
-	decoder := json.NewDecoder(conn)
+	// Cap request body at 10MB to prevent memory exhaustion from malicious clients.
+	const maxRequestSize = 10 << 20
+	decoder := json.NewDecoder(io.LimitReader(conn, maxRequestSize))
 	encoder := json.NewEncoder(conn)
 	w := &responseWriter{conn: conn, encoder: encoder}
 
@@ -714,7 +717,10 @@ func (s *Server) mergeProviderConfig(req *Request) {
 	}
 	if stored.Extra != nil {
 		if req.Provider.Extra == nil {
-			req.Provider.Extra = stored.Extra
+			req.Provider.Extra = make(map[string]interface{}, len(stored.Extra))
+			for k, v := range stored.Extra {
+				req.Provider.Extra[k] = v
+			}
 		} else {
 			for k, v := range stored.Extra {
 				if _, exists := req.Provider.Extra[k]; !exists {
@@ -973,10 +979,23 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 		Status: 500,
 		Error: &ErrorDetail{
 			Code:      "PROVIDER_ERROR",
-			Message:   lastErr.Error(),
+			Message:   sanitizeProviderError(lastErr),
 			Retriable: lastRetriable,
 		},
 	}
+}
+
+// sanitizeProviderError strips raw response bodies from provider errors
+// before forwarding to the client, preventing internal detail leaks.
+func sanitizeProviderError(err error) string {
+	if pae, ok := err.(*providers.ProviderAPIError); ok {
+		return fmt.Sprintf("provider returned status %d", pae.StatusCode)
+	}
+	msg := err.Error()
+	if len(msg) > 500 {
+		msg = msg[:500] + "...(truncated)"
+	}
+	return msg
 }
 
 func mustMarshal(v interface{}) json.RawMessage {

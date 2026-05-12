@@ -515,12 +515,16 @@ func openaiAddReasoningContent(messages []map[string]interface{}, req *Request) 
 // Handles all known OpenAI-compatible fields across providers:
 // content, reasoning_content, tool_calls, finish_reason, usage with all cache variants.
 func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReasonMap func(string) string, contentArraySupport bool) error {
+	type toolCallKey struct {
+		choice int
+		tool   int
+	}
 	type toolCallState struct {
 		id      string
 		name    string
 		started bool
 	}
-	toolCalls := make(map[int]*toolCallState)
+	toolCalls := make(map[toolCallKey]*toolCallState)
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -540,6 +544,7 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 
 		var chunk struct {
 			Choices []struct {
+				Index int `json:"index"`
 				Delta struct {
 					Content          json.RawMessage `json:"content"`
 					ReasoningContent string `json:"reasoning_content"`
@@ -594,6 +599,7 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 		}
 
 		choice := chunk.Choices[0]
+		choiceIdx := choice.Index
 		delta := choice.Delta
 
 		if len(delta.Content) > 0 {
@@ -633,11 +639,11 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 		}
 
 		for _, tc := range delta.ToolCalls {
-			idx := tc.Index
-			state, ok := toolCalls[idx]
+			key := toolCallKey{choice: choiceIdx, tool: tc.Index}
+			state, ok := toolCalls[key]
 			if !ok {
 				state = &toolCallState{}
-				toolCalls[idx] = state
+				toolCalls[key] = state
 			}
 			if tc.ID != "" {
 				state.id = tc.ID
@@ -651,7 +657,7 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 				state.started = true
 				if err := callback(StreamChunk{
 					Type:         "delta",
-					Index:        idx,
+					Index:        tc.Index,
 					ToolCallID:   state.id,
 					ToolCallName: state.name,
 				}); err != nil {
@@ -663,7 +669,7 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 			if tc.Function.Arguments != "" {
 				if err := callback(StreamChunk{
 					Type:         "delta",
-					Index:        idx,
+					Index:        tc.Index,
 					JSONDelta:    tc.Function.Arguments,
 					ToolCallID:   state.id,
 					ToolCallName: state.name,

@@ -139,10 +139,13 @@ func TestValidateRequest(t *testing.T) {
 		t.Errorf("tool calls should be valid: %v", err)
 	}
 
-	// message with tool result is valid
+	// message with tool result is valid (must follow a tool_use)
 	req7 := &Request{
 		Provider: ProviderConfig{ID: "anthropic"},
 		Messages: []Message{
+			{Role: "assistant", ToolCalls: []ToolCall{
+				{ID: "1", Type: "function", Function: FunctionCall{Name: "test", Arguments: "{}"}},
+			}},
 			{Role: "user", ToolResult: &ToolResult{ToolUseID: "1", Content: "result"}},
 		},
 	}
@@ -236,6 +239,25 @@ func TestValidateRequestWithContentBlocks(t *testing.T) {
 	req5 := &Request{
 		Provider: ProviderConfig{ID: "anthropic"},
 		Messages: []Message{
+			{
+				Role: "assistant",
+				ContentBlocks: []ContentBlock{
+					{
+						Type: "tool_use",
+						ToolUse: &ToolUseBlock{
+							ID:   "tool_1",
+							Type: "tool_use",
+							Function: struct {
+								Name      string `json:"name"`
+								Arguments string `json:"arguments"`
+							}{
+								Name:      "get_weather",
+								Arguments: "{\"city\":\"NYC\"}",
+							},
+						},
+					},
+				},
+			},
 			{
 				Role: "user",
 				ContentBlocks: []ContentBlock{

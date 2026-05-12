@@ -413,7 +413,10 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg Provid
 	r.modelsMu.RLock()
 	if entry, hit := r.modelsCache[cacheKey]; hit && time.Now().Before(entry.expiry) {
 		r.modelsMu.RUnlock()
-		return entry.models, nil
+		// Return a copy so callers can't mutate the cached slice.
+		cp := make([]ModelEntry, len(entry.models))
+		copy(cp, entry.models)
+		return cp, nil
 	}
 	r.modelsMu.RUnlock()
 
@@ -539,8 +542,8 @@ func (r *Registry) registerProviders() {
 	r.Register("replicate", NewReplicateHandler(), ProviderMeta{ID: "replicate", Label: "Replicate"})
 }
 
-// ValidateRequest validates a request before processing
-// Updated to consider ContentBlocks (and Thinking) when checking for content presence
+// ValidateRequest validates a request before processing.
+// Checks basic message structure and conversation-level tool invariants.
 func ValidateRequest(req *Request) error {
 	if req.Provider.ID == "" {
 		return errors.New("provider ID is required")
@@ -548,7 +551,9 @@ func ValidateRequest(req *Request) error {
 	if len(req.Messages) == 0 {
 		return errors.New("at least one message is required")
 	}
-	// Validate messages
+
+	pendingToolCalls := make(map[string]string) // id -> name
+
 	for i, msg := range req.Messages {
 		if msg.Role == "" {
 			return fmt.Errorf("message at index %d has no role", i)
@@ -562,6 +567,50 @@ func ValidateRequest(req *Request) error {
 
 		if !hasContent && !hasContentBlocks && !hasThinking && !hasToolCalls && !hasToolResult {
 			return fmt.Errorf("message at index %d has no content", i)
+		}
+
+		// Validate tool calls from legacy ToolCalls field
+		for _, tc := range msg.ToolCalls {
+			if tc.ID == "" {
+				return fmt.Errorf("message at index %d has tool call with no id", i)
+			}
+			if _, exists := pendingToolCalls[tc.ID]; exists {
+				return fmt.Errorf("duplicate tool_use id %q", tc.ID)
+			}
+			pendingToolCalls[tc.ID] = tc.Function.Name
+		}
+
+		// Validate tool results from legacy ToolResult field
+		if msg.ToolResult != nil {
+			if msg.ToolResult.ToolUseID == "" {
+				return fmt.Errorf("message at index %d has tool_result with no tool_use_id", i)
+			}
+			if _, exists := pendingToolCalls[msg.ToolResult.ToolUseID]; !exists {
+				return fmt.Errorf("tool_result at message %d references unknown tool_use_id %q", i, msg.ToolResult.ToolUseID)
+			}
+			delete(pendingToolCalls, msg.ToolResult.ToolUseID)
+		}
+
+		// Validate content blocks (tool_use / tool_result pairing)
+		for j, block := range msg.ContentBlocks {
+			switch block.Type {
+			case "tool_use":
+				if block.ToolUse == nil || block.ToolUse.ID == "" {
+					return fmt.Errorf("message %d block %d: tool_use missing id", i, j)
+				}
+				if _, exists := pendingToolCalls[block.ToolUse.ID]; exists {
+					return fmt.Errorf("duplicate tool_use id %q", block.ToolUse.ID)
+				}
+				pendingToolCalls[block.ToolUse.ID] = block.ToolUse.Function.Name
+			case "tool_result":
+				if block.ToolResult == nil || block.ToolResult.ToolUseID == "" {
+					return fmt.Errorf("message %d block %d: tool_result missing tool_use_id", i, j)
+				}
+				if _, exists := pendingToolCalls[block.ToolResult.ToolUseID]; !exists {
+					return fmt.Errorf("tool_result at message %d block %d references unknown tool_use_id %q", i, j, block.ToolResult.ToolUseID)
+				}
+				delete(pendingToolCalls, block.ToolResult.ToolUseID)
+			}
 		}
 	}
 	return nil
