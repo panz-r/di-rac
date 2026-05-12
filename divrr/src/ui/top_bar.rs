@@ -98,6 +98,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::Yellow),
             ));
         }
+        crate::app::Mode::Action => {
+            spans.push(Span::styled(
+                " | ACTION",
+                Style::default().fg(Color::Cyan),
+            ));
+        }
     }
 
     let paragraph = Paragraph::new(Line::from(spans));

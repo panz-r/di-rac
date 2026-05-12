@@ -71,6 +71,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Mode::Settings => {
             // Handled by early return above
         }
+        Mode::Action => {
+            spans.push(Span::styled(
+                "[Space: select action]",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
     }
 
     let paragraph = Paragraph::new(Line::from(spans));

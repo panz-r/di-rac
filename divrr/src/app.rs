@@ -29,6 +29,7 @@ pub enum Mode {
     Insert,
     Command,
     Settings,
+    Action,
 }
 
 pub struct App {
@@ -44,6 +45,9 @@ pub struct App {
     pub content_lines: usize,
     pub visible_lines: usize,
     pub auto_scroll: bool,
+    /// Block-level cursor — index into the active agent's block list.
+    pub selected_block: usize,
+    pub action_cursor: usize,
     pub status_message: Option<String>,
     pub settings: Option<SettingsState>,
     pub command_palette: Vec<CommandEntry>,
@@ -71,6 +75,8 @@ impl App {
             content_lines: 0,
             visible_lines: 24,
             auto_scroll: true,
+            selected_block: 0,
+            action_cursor: 0,
             status_message: None,
             settings: None,
             command_palette: Vec::new(),
@@ -103,11 +109,68 @@ impl App {
             let max_scroll = self.content_lines.saturating_sub(self.visible_lines);
             if self.auto_scroll {
                 self.scroll_offset = max_scroll;
+                // Keep selected_block on the last block when auto-scrolling
+                if let Some(agent) = self.active_agent() {
+                    let count = agent.log.blocks().len();
+                    if count > 0 {
+                        self.selected_block = count - 1;
+                    }
+                }
             } else {
                 self.scroll_offset = self.scroll_offset.min(max_scroll);
             }
         } else {
             self.scroll_offset = 0;
+        }
+    }
+
+    /// Move the block selection cursor by `delta` (positive = down, negative = up).
+    /// Adjusts scroll_offset to keep the selected block visible.
+    fn move_block_cursor(&mut self, delta: i32) {
+        let block_count = self.active_agent()
+            .map(|a| a.log.blocks().len())
+            .unwrap_or(0);
+        if block_count == 0 {
+            return;
+        }
+
+        // Compute new selected_block
+        let new = if delta > 0 {
+            self.selected_block.saturating_add(delta as usize).min(block_count - 1)
+        } else {
+            self.selected_block.saturating_sub((-delta) as usize)
+        };
+        self.selected_block = new;
+
+        // Compute the line offset where the selected block starts
+        let block_start = self.active_agent()
+            .map(|a| {
+                let width = 80;
+                let mut acc = 0usize;
+                for (i, block) in a.log.blocks().iter().enumerate() {
+                    if i == new { break; }
+                    let is_expanded = a.expanded.contains(&i);
+                    acc += crate::agent::block_line_count(block, width, is_expanded);
+                }
+                acc
+            })
+            .unwrap_or(0);
+
+        // Compute the height of the selected block
+        let block_height = self.active_agent()
+            .map(|a| {
+                let width = 80;
+                let block = &a.log.blocks()[new];
+                crate::agent::block_line_count(block, width, a.expanded.contains(&new))
+            })
+            .unwrap_or(1);
+
+        // Scroll to keep the selected block visible
+        let visible = self.visible_lines;
+        if block_start < self.scroll_offset {
+            self.scroll_offset = block_start;
+        } else if block_start + block_height > self.scroll_offset + visible {
+            self.scroll_offset = block_start + block_height.saturating_sub(visible);
         }
     }
 
@@ -326,6 +389,7 @@ impl App {
             Mode::Insert => self.handle_insert_mode(key),
             Mode::Command => self.handle_command_mode(key),
             Mode::Settings => self.handle_settings_mode(key),
+            Mode::Action => self.handle_action_mode(key),
         }
     }
 
@@ -495,15 +559,25 @@ impl App {
                 };
                 None
             }
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Char('j') => {
                 self.auto_scroll = false;
                 self.scroll_offset += 1;
                 self.clamp_scroll();
                 None
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Char('k') => {
                 self.auto_scroll = false;
                 self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                None
+            }
+            KeyCode::Down => {
+                self.auto_scroll = false;
+                self.move_block_cursor(1);
+                None
+            }
+            KeyCode::Up => {
+                self.auto_scroll = false;
+                self.move_block_cursor(-1);
                 None
             }
             KeyCode::PageDown | KeyCode::Char('J') => {
@@ -530,10 +604,10 @@ impl App {
                 None
             }
             KeyCode::Char('e') => {
-                // Toggle expand/collapse on the block at the current scroll position
-                let idx = self.active_agent().map(|a| block_at_scroll(a, self.scroll_offset));
-                if let Some(Some(idx)) = idx {
-                    if let Some(agent) = self.active_agent_mut() {
+                // Toggle expand/collapse on the selected block
+                let idx = self.selected_block;
+                if let Some(agent) = self.active_agent_mut() {
+                    if idx < agent.log.blocks().len() {
                         if agent.expanded.contains(&idx) {
                             agent.expanded.remove(&idx);
                         } else {
@@ -551,6 +625,7 @@ impl App {
                 let max = self.agents.len().max(1);
                 self.active_tab = (self.active_tab + 1) % max;
                 self.scroll_offset = 0;
+                self.selected_block = 0;
                 None
             }
             KeyCode::BackTab => {
@@ -573,6 +648,16 @@ impl App {
                     self.status_message = Some("Auto-approve: ON (queued approved)".to_string());
                 } else {
                     self.status_message = Some("Auto-approve: OFF".to_string());
+                }
+                None
+            }
+            KeyCode::Char(' ') => {
+                let has_blocks = self.active_agent()
+                    .map(|a| !a.log.blocks().is_empty())
+                    .unwrap_or(false);
+                if has_blocks {
+                    self.mode = Mode::Action;
+                    self.action_cursor = 0;
                 }
                 None
             }
@@ -647,6 +732,80 @@ impl App {
             }
             _ => None,
         }
+    }
+
+    fn handle_action_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
+        const ACTIONS: &[&str] = &["Expand/Collapse", "Save to file", "Copy to clipboard"];
+        const ACTION_COUNT: usize = ACTIONS.len();
+
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                None
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.action_cursor = self.action_cursor.saturating_sub(1);
+                None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.action_cursor = (self.action_cursor + 1).min(ACTION_COUNT - 1);
+                None
+            }
+            KeyCode::Char('1') => { self.action_cursor = 0; self.execute_block_action() }
+            KeyCode::Char('2') => { self.action_cursor = 1; self.execute_block_action() }
+            KeyCode::Char('3') => { self.action_cursor = 2; self.execute_block_action() }
+            KeyCode::Enter => self.execute_block_action(),
+            _ => None,
+        }
+    }
+
+    fn execute_block_action(&mut self) -> Option<FrontendMessage> {
+        self.mode = Mode::Normal;
+
+        let block_text = self.active_agent()
+            .and_then(|a| a.log.blocks().get(self.selected_block))
+            .map(|b| block_full_text(b))
+            .unwrap_or_default();
+
+        if block_text.is_empty() {
+            self.status_message = Some("No content in selected block".to_string());
+            return None;
+        }
+
+        match self.action_cursor {
+            0 => {
+                // Expand/Collapse
+                let idx = self.selected_block;
+                if let Some(agent) = self.active_agent_mut() {
+                    if agent.expanded.contains(&idx) {
+                        agent.expanded.remove(&idx);
+                    } else {
+                        agent.expanded.insert(idx);
+                    }
+                }
+                self.status_message = None;
+            }
+            1 => {
+                // Save to file
+                let dir = std::path::Path::new(".di/out");
+                let _ = std::fs::create_dir_all(dir);
+                let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+                let filename = format!(".di/out/block-{}.md", timestamp);
+                match std::fs::write(&filename, &block_text) {
+                    Ok(_) => self.status_message = Some(format!("Saved to {}", filename)),
+                    Err(e) => self.status_message = Some(format!("Save failed: {}", e)),
+                }
+            }
+            2 => {
+                // Copy to clipboard
+                match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(&block_text)) {
+                    Ok(_) => self.status_message = Some("Copied to clipboard".to_string()),
+                    Err(e) => self.status_message = Some(format!("Clipboard failed: {}", e)),
+                }
+            }
+            _ => {}
+        }
+        None
     }
 
     fn handle_command_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
@@ -1008,17 +1167,18 @@ fn format_result_summary(result: &serde_json::Value) -> String {
     }
 }
 
-/// Find the block index at a given scroll offset within an agent's log.
-fn block_at_scroll(agent: &AgentState, scroll_offset: usize) -> Option<usize> {
-    let width = 80;
-    let mut acc = 0usize;
-    for (i, block) in agent.log.blocks().iter().enumerate() {
-        let is_expanded = agent.expanded.contains(&i);
-        let height = crate::agent::block_line_count(block, width, is_expanded);
-        if acc + height > scroll_offset {
-            return Some(i);
+fn block_full_text(block: &crate::agent::Block) -> String {
+    match block {
+        crate::agent::Block::User { content }
+        | crate::agent::Block::Assistant { content }
+        | crate::agent::Block::System { content } => content.clone(),
+        crate::agent::Block::Tool { call, result } => {
+            let mut s = format!("Tool: {} ({})\n", call.tool, call.args_summary);
+            if let Some(r) = result {
+                s.push_str(&r.content);
+            }
+            s
         }
-        acc += height;
+        crate::agent::Block::Finish { message, .. } => message.clone(),
     }
-    None
 }

@@ -16,6 +16,7 @@ clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 chrono = { version = "0.4", features = ["serde"] }
 unicode-width = "0.2"
+arboard = "3.4"
 
 [profile.release]
 opt-level = 3

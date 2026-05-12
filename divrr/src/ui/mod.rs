@@ -7,7 +7,10 @@ pub mod palette;
 
 use crate::app::App;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, Paragraph};
 
 pub fn render(frame: &mut Frame, app: &App) {
     let size = frame.area();
@@ -48,8 +51,49 @@ pub fn render(frame: &mut Frame, app: &App) {
         palette::render(frame, input_area, app);
     }
 
+    // Action palette popup (spacebar on selected block)
+    if app.mode == crate::app::Mode::Action {
+        render_action_palette(frame, input_area, app);
+    }
+
     // Settings overlay on top of everything
     if app.settings.is_some() {
         settings::render(frame, app);
     }
+}
+
+const BLOCK_ACTIONS: &[(&str, &str)] = &[
+    ("1 Expand", "Toggle expand/collapse"),
+    ("2 Save",   "Write block to .di/out/"),
+    ("3 Copy",   "Copy to clipboard"),
+];
+
+fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
+    let count = BLOCK_ACTIONS.len() as u16;
+    let w = 36u16;
+    let h = count + 2;
+    let y = input_area.y.saturating_sub(h);
+    let x = input_area.x + 4;
+
+    let area = Rect::new(x, y, w, h);
+    frame.render_widget(Clear, area);
+
+    let mut lines = Vec::new();
+    for (i, (label, desc)) in BLOCK_ACTIONS.iter().enumerate() {
+        let is_selected = i == app.action_cursor;
+        let marker = if is_selected { "\u{25B6} " } else { "  " };
+        let style = if is_selected {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker.to_string(), style),
+            Span::styled(format!("{:<10}", label), style),
+            Span::styled(format!(" {}", desc), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    let para = Paragraph::new(lines);
+    frame.render_widget(para, area);
 }

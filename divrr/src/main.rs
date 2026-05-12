@@ -10,7 +10,7 @@ mod ui;
 use app::App;
 use backend::DiCoreBackend;
 use clap::Parser;
-use crossterm::event::{Event as CrosstermEvent, EventStream, KeyCode};
+use crossterm::event::{Event as CrosstermEvent, EventStream, KeyEventKind, KeyCode};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -193,6 +193,11 @@ async fn main() -> color_eyre::Result<()> {
         let event = event_rx.recv().await;
         match event {
             Some(AppEvent::Key(key)) => {
+                // Ignore key release/repeat events (crossterm 0.28+ sends both press and release)
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+
                 // Ctrl+C always exits
                 if key.code == KeyCode::Char('c')
                     && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
