@@ -477,36 +477,40 @@ func openaiBuildTools(toolsRaw []json.RawMessage, strict bool) []map[string]inte
 }
 
 // openaiAddReasoningContent extracts thinking blocks from original messages
-// and injects them as reasoning_content on assistant messages.
+// and injects them as reasoning_content on the corresponding assistant messages
+// in the converted output. It walks both slices in order — the output messages
+// may have different indices due to system messages and split tool_result blocks,
+// so we match by counting assistant-role messages.
 func openaiAddReasoningContent(messages []map[string]interface{}, req *Request) []map[string]interface{} {
-	reasoningByIndex := map[int]string{}
-	msgIdx := 0
-	if req.System != "" {
-		msgIdx++
-	}
+	// Collect reasoning content from input assistant messages in order.
+	var reasoningParts []string
 	for _, msg := range req.Messages {
-		currentIdx := msgIdx
-		msgIdx++
 		if msg.Role != "assistant" || len(msg.ContentBlocks) == 0 {
 			continue
 		}
-		var reasoningParts []string
+		var parts []string
 		for _, block := range msg.ContentBlocks {
 			if block.Type == "thinking" {
-				reasoningParts = append(reasoningParts, block.Thinking)
+				parts = append(parts, block.Thinking)
 			}
 		}
-		if len(reasoningParts) > 0 {
-			reasoningByIndex[currentIdx] = strings.Join(reasoningParts, "")
-		}
+		reasoningParts = append(reasoningParts, strings.Join(parts, ""))
 	}
-	for idx, reasoning := range reasoningByIndex {
-		if idx < len(messages) {
-			role, _ := messages[idx]["role"].(string)
-			if role == "assistant" {
-				messages[idx]["reasoning_content"] = reasoning
-			}
+	if len(reasoningParts) == 0 {
+		return messages
+	}
+
+	// Walk output messages and assign reasoning to the Nth assistant message.
+	assistantIdx := 0
+	for i := range messages {
+		role, _ := messages[i]["role"].(string)
+		if role != "assistant" {
+			continue
 		}
+		if assistantIdx < len(reasoningParts) && reasoningParts[assistantIdx] != "" {
+			messages[i]["reasoning_content"] = reasoningParts[assistantIdx]
+		}
+		assistantIdx++
 	}
 	return messages
 }
@@ -526,6 +530,10 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 	}
 	toolCalls := make(map[toolCallKey]*toolCallState)
 
+	// Accumulate usage from usage-only chunks (choices empty) to attach
+	// to the real stop/complete event instead of emitting a duplicate stop.
+	var pendingUsage *Usage
+
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -540,7 +548,7 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			if err := callback(StreamChunk{Type: "complete"}); err != nil {
+			if err := callback(StreamChunk{Type: "complete", Usage: pendingUsage}); err != nil {
 				return err
 			}
 			return nil
@@ -594,10 +602,10 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 		usage := openaiExtractUsage(chunk.Usage)
 
 		if len(chunk.Choices) == 0 {
+			// Usage-only chunk: accumulate usage but don't emit a stop event.
+			// The stop will come from finish_reason or [DONE].
 			if usage != nil {
-				if err := callback(StreamChunk{Type: "stop", Usage: usage}); err != nil {
-					return err
-				}
+				pendingUsage = usage
 			}
 			continue
 		}
@@ -688,7 +696,12 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			if finishReasonMap != nil {
 				fr = finishReasonMap(fr)
 			}
-			if err := callback(StreamChunk{Type: "stop", FinishReason: fr, Usage: usage}); err != nil {
+			// Prefer usage from finish_reason chunk; fall back to accumulated usage.
+			stopUsage := usage
+			if stopUsage == nil {
+				stopUsage = pendingUsage
+			}
+			if err := callback(StreamChunk{Type: "stop", FinishReason: fr, Usage: stopUsage}); err != nil {
 				return err
 			}
 		}
