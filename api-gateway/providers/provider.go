@@ -8,7 +8,6 @@ import (
 	"math"
 	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -281,8 +280,7 @@ func (e *ProviderAPIError) Error() string {
 }
 
 // IsRetriable checks whether an error should be retried.
-// Recognizes ProviderAPIError by type; falls back to substring matching
-// for untyped fmt.Errorf errors from providers that haven't migrated yet.
+// Relies solely on ProviderAPIError.Retriable; untyped errors are not retried.
 func IsRetriable(err error) bool {
 	if err == nil {
 		return false
@@ -290,13 +288,6 @@ func IsRetriable(err error) bool {
 	var pae *ProviderAPIError
 	if errors.As(err, &pae) {
 		return pae.Retriable
-	}
-	msg := err.Error()
-	if strings.Contains(msg, "429") || strings.Contains(msg, "rate_limit") || strings.Contains(msg, "rate limit") {
-		return true
-	}
-	if strings.Contains(msg, "500") || strings.Contains(msg, "502") || strings.Contains(msg, "503") || strings.Contains(msg, "504") {
-		return true
 	}
 	return false
 }

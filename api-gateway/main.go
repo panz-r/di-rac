@@ -745,6 +745,14 @@ func (s *Server) mergeProviderConfig(req *Request) {
 			}
 		}
 	}
+
+	// Validate the final base_url against SSRF, whether from request or stored config.
+	if req.Provider.BaseURL != "" {
+		if err := isSafeBaseURL(req.Provider.BaseURL); err != nil {
+			log.Printf("[SSRF] rejected base_url %q: %v", req.Provider.BaseURL, err)
+			req.Provider.BaseURL = "" // clear to prevent use
+		}
+	}
 }
 
 // enrichModelCapabilities fills in missing capability fields on ModelEntry
@@ -872,6 +880,11 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 			})
 			return
 		case <-ctx.Done():
+			streamCancel()
+			select {
+			case <-doneChan:
+			case <-time.After(2 * time.Second):
+			}
 			w.write(&Response{
 				ID:     id,
 				Status: 499,

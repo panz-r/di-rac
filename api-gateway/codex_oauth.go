@@ -68,20 +68,15 @@ func init() {
 	codexTokens.path = filepath.Join(dir, "codex-auth.json")
 }
 
-// Load reads tokens from disk.
-func (s *codexTokenStore) Load() (*CodexAuthTokens, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+// loadFromFile reads tokens from disk. Caller must hold appropriate lock.
+func (s *codexTokenStore) loadFromFile() (*CodexAuthTokens, error) {
 	if s.path == "" {
 		return nil, fmt.Errorf("token path not set")
 	}
-
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		return nil, err
 	}
-
 	var tokens CodexAuthTokens
 	if err := json.Unmarshal(data, &tokens); err != nil {
 		return nil, err
@@ -89,21 +84,30 @@ func (s *codexTokenStore) Load() (*CodexAuthTokens, error) {
 	return &tokens, nil
 }
 
-// Save writes tokens to disk with restricted permissions.
-func (s *codexTokenStore) Save(tokens *CodexAuthTokens) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+// saveToFile writes tokens to disk with restricted permissions. Caller must hold Lock.
+func (s *codexTokenStore) saveToFile(tokens *CodexAuthTokens) error {
 	if s.path == "" {
 		return fmt.Errorf("token path not set")
 	}
-
 	data, err := json.MarshalIndent(tokens, "", "  ")
 	if err != nil {
 		return err
 	}
-
 	return os.WriteFile(s.path, data, 0600)
+}
+
+// Load reads tokens from disk (thread-safe).
+func (s *codexTokenStore) Load() (*CodexAuthTokens, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadFromFile()
+}
+
+// Save writes tokens to disk with restricted permissions (thread-safe).
+func (s *codexTokenStore) Save(tokens *CodexAuthTokens) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveToFile(tokens)
 }
 
 // GetValidToken returns a valid access token, refreshing if needed.
@@ -123,7 +127,7 @@ func (s *codexTokenStore) GetValidToken() (string, error) {
 	defer s.mu.Unlock()
 
 	// Double-check: another goroutine may have refreshed while we waited.
-	tokens, err = s.Load()
+	tokens, err = s.loadFromFile()
 	if err != nil {
 		return "", fmt.Errorf("no stored codex tokens: %w", err)
 	}
@@ -136,7 +140,7 @@ func (s *codexTokenStore) GetValidToken() (string, error) {
 		return "", fmt.Errorf("token refresh failed: %w", err)
 	}
 
-	if err := s.Save(newTokens); err != nil {
+	if err := s.saveToFile(newTokens); err != nil {
 		log.Printf("Warning: failed to save refreshed codex token: %v", err)
 	}
 
@@ -203,8 +207,9 @@ func codexStartOAuth(ctx context.Context) (*CodexAuthTokens, error) {
 	codeChan := make(chan string, 1)
 	errChan := make(chan error, 1)
 
-	// Start HTTP server for callback
+	// Start HTTP server for callback (shutdown via defer ensures cleanup on all paths).
 	srv := &http.Server{}
+	defer srv.Shutdown(context.Background())
 	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[codex-oauth] Callback request: %s %s", r.Method, r.URL.String())
 
