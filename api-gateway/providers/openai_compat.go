@@ -55,10 +55,6 @@ func newOpenAICompatHandler(config OpenAICompatConfig) *openaiCompatHandler {
 	}
 }
 
-func (h *openaiCompatHandler) getConfig(req *Request) (baseURL, apiKey string) {
-	return h.config.BaseURL, ""
-}
-
 func (h *openaiCompatHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
 	baseURL, apiKey := h.resolveConfig(req)
 	payload := h.buildRequest(req, false)
@@ -123,7 +119,7 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize)) // best-effort; error path anyway
 		return &ProviderAPIError{
 			StatusCode: resp.StatusCode,
 			Message:    fmt.Sprintf("API error (status %d): %s", resp.StatusCode, string(body)),
@@ -339,7 +335,9 @@ func openaiConvertUserContentBlocks(messages []map[string]interface{}, msg Messa
 		})
 	}
 
-	content := append(textParts, imageParts...)
+	content := make([]map[string]interface{}, 0, len(textParts)+len(imageParts))
+	content = append(content, textParts...)
+	content = append(content, imageParts...)
 	if len(content) > 0 {
 		messages = append(messages, map[string]interface{}{
 			"role":    "user",
@@ -412,7 +410,9 @@ func openaiBuildTools(toolsRaw []json.RawMessage, strict bool) []map[string]inte
 		}
 		var inputSchema interface{}
 		if len(tool.InputSchema) > 0 {
-			json.Unmarshal(tool.InputSchema, &inputSchema)
+			if err := json.Unmarshal(tool.InputSchema, &inputSchema); err != nil {
+				log.Printf("[openaiBuildTools] tool[%d] input_schema unmarshal failed: %v", i, err)
+			}
 		}
 		if inputSchema == nil {
 			inputSchema = map[string]interface{}{"type": "object"}

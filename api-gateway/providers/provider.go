@@ -72,13 +72,19 @@ func (r *Request) SettingString(key string) string {
 }
 
 // SettingFloat returns a setting value as float64, or 0 if not set.
+// Handles float64 (JSON numbers), int, and int64 types.
 func (r *Request) SettingFloat(key string) float64 {
 	if r.Settings == nil {
 		return 0
 	}
 	if v, ok := r.Settings[key]; ok {
-		if f, ok := v.(float64); ok {
-			return f
+		switch n := v.(type) {
+		case float64:
+			return n
+		case int:
+			return float64(n)
+		case int64:
+			return float64(n)
 		}
 	}
 	return 0
@@ -295,7 +301,9 @@ type modelsCacheEntry struct {
 	expiry time.Time
 }
 
-// Registry manages provider handlers
+// Registry manages provider handlers.
+// Thread safety: handlers and meta are populated once during NewRegistry and
+// only read afterward. modelsCache is guarded by modelsMu.
 type Registry struct {
 	handlers    map[string]Handler
 	meta        map[string]ProviderMeta
@@ -430,12 +438,18 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg Provid
 }
 
 // toFloat converts an interface{} to float64.
+// Handles float64 (JSON numbers), int, and int64 types.
 func toFloat(v interface{}) float64 {
 	if v == nil {
 		return 0
 	}
-	if f, ok := v.(float64); ok {
-		return f
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
 	}
 	return 0
 }

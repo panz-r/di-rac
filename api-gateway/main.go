@@ -24,8 +24,11 @@ var maxInflightReqs int = 3
 var SocketPath = os.Getenv("DIRAC_API_GATEWAY_SOCKET")
 
 func init() {
-	home, _ := os.UserHomeDir()
 	if SocketPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "/tmp"
+		}
 		SocketPath = home + "/.dirac/api-gateway.sock"
 	}
 }
@@ -85,7 +88,9 @@ type responseWriter struct {
 func (w *responseWriter) write(v interface{}) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	if err := w.conn.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return fmt.Errorf("set write deadline: %w", err)
+	}
 	return w.encoder.Encode(v)
 }
 
@@ -195,7 +200,10 @@ func (s *Server) Start() error {
 	}
 	s.listener = ln
 
-	os.Chmod(SocketPath, 0600)
+	if err := os.Chmod(SocketPath, 0600); err != nil {
+		ln.Close()
+		return fmt.Errorf("failed to set socket permissions: %w", err)
+	}
 
 	log.Printf("API Gateway v%s listening on %s", Version, SocketPath)
 
@@ -240,7 +248,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	for {
 		// Refresh read deadline for each message
-		conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
+		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Minute)); err != nil {
+			log.Printf("SetReadDeadline error: %v", err)
+			return
+		}
 
 		var rawMsg json.RawMessage
 		if err := decoder.Decode(&rawMsg); err != nil {
@@ -566,6 +577,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		if req.Timeout == 0 {
 			req.Timeout = 240000
+		} else if req.Timeout > 3600000 {
+			req.Timeout = 3600000 // cap at 1 hour to prevent Duration overflow
 		}
 
 		// Merge stored provider config (set-provider) into request
