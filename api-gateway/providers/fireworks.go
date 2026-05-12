@@ -312,7 +312,9 @@ func NewFireworksHandler() *FireworksHandler {
 						result["reasoning_effort"] = effort
 					}
 				} else {
-					if !req.SettingIsNull("temperature") {
+					if req.SettingIsNull("temperature") {
+						delete(result, "temperature")
+					} else {
 						result["temperature"] = req.SettingFloat("temperature")
 					}
 

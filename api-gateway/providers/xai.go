@@ -101,16 +101,24 @@ func NewXAIHandler() *XAIHandler {
 						result["reasoning_effort"] = effort
 					}
 				}
-				if !req.SettingIsNull("temperature") {
+				if req.SettingIsNull("temperature") {
+					delete(result, "temperature")
+				} else {
 					result["temperature"] = req.SettingFloat("temperature")
 				}
-				if !req.SettingIsNull("top_p") {
+				if req.SettingIsNull("top_p") {
+					delete(result, "top_p")
+				} else {
 					result["top_p"] = req.SettingFloat("top_p")
 				}
-				if !req.SettingIsNull("presence_penalty") {
+				if req.SettingIsNull("presence_penalty") {
+					delete(result, "presence_penalty")
+				} else {
 					result["presence_penalty"] = req.SettingFloat("presence_penalty")
 				}
-				if !req.SettingIsNull("frequency_penalty") {
+				if req.SettingIsNull("frequency_penalty") {
+					delete(result, "frequency_penalty")
+				} else {
 					result["frequency_penalty"] = req.SettingFloat("frequency_penalty")
 				}
 			},

@@ -187,14 +187,20 @@ func NewZAIHandler() *ZAIHandler {
 					delete(result, "temperature")
 					delete(result, "top_p")
 				} else {
-					if !req.SettingIsNull("temperature") {
+					if req.SettingIsNull("temperature") {
+						delete(result, "temperature")
+					} else {
 						result["temperature"] = req.SettingFloat("temperature")
 					}
-					tp := req.SettingFloat("top_p")
-					if tp == 0 {
-						tp = 0.95
+					if req.SettingIsNull("top_p") {
+						delete(result, "top_p")
+					} else {
+						tp := req.SettingFloat("top_p")
+						if tp == 0 {
+							tp = 0.95
+						}
+						result["top_p"] = tp
 					}
-					result["top_p"] = tp
 				}
 
 				if !req.SettingBool("do_sample") {
