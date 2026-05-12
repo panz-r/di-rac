@@ -105,13 +105,17 @@ impl Trajectory {
         self.messages.iter().map(|m| m.tokens).sum()
     }
 
-    /// Truncate the entire trajectory. The continuation text is stored in the
-    /// checkpoint and surfaced via the system prompt's dynamic suffix. No
-    /// System-role message is pushed because Stage 5 of run_turn filters
-    /// System messages from the gateway request anyway.
-    pub fn truncate_with_continuation(&mut self, _continuation: String, checkpoint: Option<Checkpoint>) {
+    /// Truncate the entire trajectory, injecting the continuation summary as
+    /// a User message so the model retains context about prior work.
+    pub fn truncate_with_continuation(&mut self, continuation: String, checkpoint: Option<Checkpoint>) {
         self.last_checkpoint = checkpoint;
         self.messages.clear();
+
+        // Inject the continuation as a User message so the model sees what happened before
+        if !continuation.is_empty() {
+            let tokens = continuation.len() / 3; // rough estimate
+            self.add_message(Role::User, serde_json::json!(continuation), tokens);
+        }
     }
 }
 
@@ -142,7 +146,9 @@ mod tests {
 
         traj.truncate_with_continuation("continuation".to_string(), Some(checkpoint));
 
-        assert!(traj.messages.is_empty());
+        // After truncation, one User message (the continuation) remains
+        assert_eq!(traj.messages.len(), 1);
+        assert!(matches!(traj.messages[0].role, Role::User));
         assert!(traj.last_checkpoint.is_some());
         assert_eq!(traj.last_checkpoint.unwrap().artifact_refs.len(), 1);
     }
@@ -152,7 +158,17 @@ mod tests {
         let mut traj = Trajectory::new();
         traj.add_message(Role::User, serde_json::json!("hello"), 5);
         traj.truncate_with_continuation("continuation".to_string(), None);
-        assert!(traj.messages.is_empty());
+        // One User message (the continuation) remains, no System messages
+        assert_eq!(traj.messages.len(), 1);
+        assert!(matches!(traj.messages[0].role, Role::User));
         assert!(!traj.messages.iter().any(|m| matches!(m.role, Role::System)));
+    }
+
+    #[test]
+    fn empty_continuation_produces_no_messages() {
+        let mut traj = Trajectory::new();
+        traj.add_message(Role::User, serde_json::json!("hello"), 5);
+        traj.truncate_with_continuation(String::new(), None);
+        assert!(traj.messages.is_empty());
     }
 }

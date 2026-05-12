@@ -408,6 +408,7 @@ impl CommandDaemon {
 
         let timeout = std::time::Duration::from_secs(300);
         let mut line = String::new();
+        let mut bad_lines = 0u32;
         loop {
             line.clear();
             let read_future = self.stdout.read_line(&mut line);
@@ -422,6 +423,7 @@ impl CommandDaemon {
             }
 
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                bad_lines = 0;
                 let msg_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
                 match msg_type {
@@ -436,6 +438,15 @@ impl CommandDaemon {
                     }
                     _ => continue,
                 }
+            } else {
+                bad_lines += 1;
+                if bad_lines >= 10 {
+                    return Err(anyhow!(
+                        "Command daemon: 10 consecutive unparseable lines (id={}, cmd={})",
+                        id, &command[..command.len().min(80)]
+                    ));
+                }
+                continue;
             }
         }
     }
@@ -475,6 +486,7 @@ impl CommandDaemon {
 
         let id_str = id.to_string();
         let mut line = String::new();
+        let mut bad_lines = 0u32;
         loop {
             line.clear();
             let n = self.stdout.read_line(&mut line).await
@@ -488,6 +500,7 @@ impl CommandDaemon {
             }
 
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                bad_lines = 0;
                 let resp_id = match val.get("id") {
                     Some(v) => v.as_str().map(String::from)
                         .or_else(|| v.as_u64().map(|n| n.to_string())),
@@ -519,6 +532,14 @@ impl CommandDaemon {
                     .map_err(|e| UntimedError::App(anyhow!(
                         "Failed to parse daemon response: {} — input: {}", e, &trimmed[..trimmed.len().min(200)]
                     )));
+            } else {
+                bad_lines += 1;
+                if bad_lines >= 10 {
+                    return Err(UntimedError::App(anyhow!(
+                        "Daemon: 10 consecutive unparseable lines (request_id={})", id
+                    )));
+                }
+                continue;
             }
         }
     }
@@ -584,7 +605,7 @@ impl ResilientDaemon {
                 }
             }
 
-            let timeout = tokio::time::Duration::from_secs(600);
+            let timeout = tokio::time::Duration::from_secs(3600);
             let result = tokio::time::timeout(
                 timeout,
                 self.inner.as_mut().unwrap().send_request_untimed(&request),

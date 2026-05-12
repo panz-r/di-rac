@@ -78,6 +78,8 @@ pub struct DynamicContext<'a> {
     pub distilled_context: &'a Option<String>,
     pub task_state_summary: &'a Option<String>,
     pub tail_reminder: &'a Option<String>,
+    /// Progress summary from the last compaction checkpoint, if any.
+    pub compaction_summary: &'a Option<String>,
 }
 
 impl<'a> DynamicContext<'a> {
@@ -114,6 +116,12 @@ impl<'a> DynamicContext<'a> {
         if let Some(distilled) = self.distilled_context {
             if !distilled.is_empty() {
                 parts.push(format!("# Distilled Context\n\n{}", distilled));
+            }
+        }
+
+        if let Some(summary) = self.compaction_summary {
+            if !summary.is_empty() {
+                parts.push(format!("# Compaction Summary\n\n{}", summary));
             }
         }
 

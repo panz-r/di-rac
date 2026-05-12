@@ -55,6 +55,13 @@ impl ReadFileCache {
         *self.cursors.get(path).unwrap_or(&0)
     }
 
+    /// Invalidate all cached entries for a given path (call after edits).
+    pub fn invalidate_for_path(&mut self, path: &str) {
+        let prefix = format!("{}:", path);
+        self.hashes.retain(|key, _| !key.starts_with(&prefix));
+        self.keys_order.retain(|key| !key.starts_with(&prefix));
+    }
+
     #[allow(dead_code)]
     pub fn set_cursor(&mut self, path: &str, line: usize) {
         self.cursors.insert(path.to_string(), line);
@@ -272,7 +279,7 @@ mod tests {
     fn full_file_formatting() {
         let content = "fn main() {\n    println!(\"hello\");\n}\n";
         let mut cache = ReadFileCache::new();
-        let (output, hash, unchanged) = format_full("test.rs", content, None, &mut cache);
+        let (output, _hash, unchanged) = format_full("test.rs", content, None, &mut cache);
         assert!(!unchanged);
         assert!(output.contains("[File Hash:"));
         assert!(output.contains("1 │"));

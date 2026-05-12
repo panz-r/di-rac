@@ -8,7 +8,6 @@ use crate::context::distiller::validate::{
 };
 use crate::context::task_state::TaskStateReducer;
 use crate::util::secrets;
-use chrono::Utc;
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -51,6 +50,7 @@ impl ScenarioBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_correction(&mut self, text: &str, tokens: usize) -> &mut Self {
         self.user_texts.push(text.to_string());
         self.trajectory.add_message(Role::User, serde_json::json!(text), tokens);
@@ -180,6 +180,7 @@ pub fn assert_content_contains(messages: &[Message], needle: &str) -> InvariantR
     }
 }
 
+#[allow(dead_code)]
 pub fn assert_content_excludes(messages: &[Message], needle: &str) -> InvariantResult {
     let found = messages.iter().any(|m| m.content.to_string().contains(needle));
     InvariantResult {
@@ -203,6 +204,7 @@ pub fn assert_total_tokens_within_budget(messages: &[Message], budget: usize) ->
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct EvalMetrics {
     pub constraints_tested: usize,
     pub constraints_retained: usize,

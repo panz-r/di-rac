@@ -3,7 +3,6 @@ pub mod cli_parse;
 pub mod list_files;
 pub mod search_files;
 pub mod edit_file;
-pub mod write_to_file;
 pub mod ask_followup;
 pub mod attempt_completion;
 pub mod approval;
@@ -311,10 +310,10 @@ impl ToolExecutor {
                 ToolResponse::ok(json!({ "tools": list, "count": list.len() }))
             }
             "get_outputs" => {
-                let om = self.output_manager.lock().unwrap();
                 let action = parsed_call.args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
                 match action {
                     "list" => {
+                        let om = self.output_manager.lock().unwrap();
                         let outputs = om.list_outputs();
                         ToolResponse::ok(json!({ "outputs": outputs, "count": outputs.len() }))
                     }
@@ -323,8 +322,11 @@ impl ToolExecutor {
                             Some(f) => f.to_string(),
                             None => return ToolResponse::fail(ToolErrorCode::MissingArgument, "Missing file argument for get_outputs read".to_string(), "get_outputs"),
                         };
-                        let path = om.output_dir().join(&filename);
-                        match std::fs::read_to_string(&path) {
+                        let path = {
+                            let om = self.output_manager.lock().unwrap();
+                            om.output_dir().join(&filename)
+                        };
+                        match tokio::fs::read_to_string(&path).await {
                             Ok(content) => ToolResponse::ok(json!({
                                 "file": filename,
                                 "content": content,
@@ -338,12 +340,15 @@ impl ToolExecutor {
                         }
                     }
                     "clear" => {
-                        let outputs = om.list_outputs();
+                        let paths: Vec<_> = {
+                            let om = self.output_manager.lock().unwrap();
+                            let outputs = om.list_outputs();
+                            outputs.iter().map(|n| om.output_dir().join(n)).collect()
+                        };
                         let mut removed = 0;
-                        for name in &outputs {
-                            let path = om.output_dir().join(name);
+                        for path in &paths {
                             if path.exists() {
-                                let _ = std::fs::remove_file(&path);
+                                let _ = tokio::fs::remove_file(path).await;
                                 removed += 1;
                             }
                         }
@@ -371,7 +376,8 @@ impl ToolExecutor {
         let detail = call.args.get("detail").and_then(|v| v.as_str());
 
         // Read raw content from disk for hash computation and auto-detail
-        let content = std::fs::read_to_string(path)
+        let content = tokio::fs::read_to_string(path)
+            .await
             .map_err(|e| anyhow!("Failed to read {}: {}", path, e))?;
         let file_size = content.len();
         let total_lines = content.lines().count();
@@ -435,12 +441,12 @@ impl ToolExecutor {
         if create_dirs {
             if let Some(parent) = std::path::Path::new(path).parent() {
                 if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)?;
+                    tokio::fs::create_dir_all(parent).await?;
                 }
             }
         }
 
-        std::fs::write(path, content)?;
+        tokio::fs::write(path, content).await?;
 
         Ok(json!({
             "path": path,
@@ -477,7 +483,7 @@ impl ToolExecutor {
             Some(cmd) => {
                 match cmd.status {
                     CommandStatus::Running => {
-                        let log = std::fs::read_to_string(&cmd.log_path)
+                        let log = tokio::fs::read_to_string(&cmd.log_path).await
                             .map_err(|e| anyhow!("Failed to read log {}: {}", cmd.log_path, e))
                             .unwrap_or_default();
                         Ok(json!({
@@ -488,7 +494,7 @@ impl ToolExecutor {
                         }))
                     }
                     CommandStatus::Completed => {
-                        let log = std::fs::read_to_string(&cmd.log_path)
+                        let log = tokio::fs::read_to_string(&cmd.log_path).await
                             .map_err(|e| anyhow!("Failed to read log {}: {}", cmd.log_path, e))
                             .unwrap_or_default();
                         Ok(json!({
@@ -499,7 +505,7 @@ impl ToolExecutor {
                         }))
                     }
                     CommandStatus::Failed => {
-                        let log = std::fs::read_to_string(&cmd.log_path)
+                        let log = tokio::fs::read_to_string(&cmd.log_path).await
                             .map_err(|e| anyhow!("Failed to read log {}: {}", cmd.log_path, e))
                             .unwrap_or_default();
                         Ok(json!({

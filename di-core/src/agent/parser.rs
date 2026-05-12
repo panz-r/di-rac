@@ -111,7 +111,6 @@ impl StreamingToolAccumulator {
     /// Also falls back to XML parsing for non-native tool calls.
     pub fn finalize(self, fallback_text: &str) -> Vec<ToolCall> {
         let mut tools = Vec::new();
-        let mut seen = std::collections::HashSet::new();
 
         // Native tool calls from streaming
         for (_, pending) in &self.pending {
@@ -130,13 +129,10 @@ impl StreamingToolAccumulator {
                     }
                     serde_json::json!({})
                 });
-            let key = format!("{}:{}", pending.name, args);
-            if seen.insert(key) {
-                tools.push(ToolCall {
-                    name: pending.name,
-                    args,
-                });
-            }
+            tools.push(ToolCall {
+                name: pending.name,
+                args,
+            });
         }
 
         // Fallback: XML tool_code parsing from accumulated text
@@ -145,10 +141,7 @@ impl StreamingToolAccumulator {
             let name = cap[1].to_string();
             let args_json = &cap[2];
             if let Ok(args) = serde_json::from_str(args_json) {
-                let key = format!("{}:{}", name, args);
-                if seen.insert(key) {
-                    tools.push(ToolCall { name, args });
-                }
+                tools.push(ToolCall { name, args });
             }
         }
 

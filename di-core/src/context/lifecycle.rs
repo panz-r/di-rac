@@ -188,8 +188,9 @@ fn check_summary_quality(summary: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::lifecycle_metrics::{TurnMetrics, ToolCallRecord};
+    use crate::context::lifecycle_metrics::TurnMetrics;
 
+    #[allow(dead_code)]
     fn make_turn(total_tokens: usize, tool_result_tokens: usize, stale_read_count: usize) -> TurnMetrics {
         TurnMetrics {
             total_tokens,

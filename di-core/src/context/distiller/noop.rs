@@ -135,7 +135,6 @@ fn extract_symbols(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::distiller::*;
 
     #[test]
     fn noop_summary_is_bounded() {

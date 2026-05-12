@@ -117,6 +117,12 @@ pub struct AgentEngine {
     pub read_file_cache: std::sync::Mutex<crate::tools::read_file::ReadFileCache>,
     /// Cumulative token usage across all turns in this task.
     cumulative_tokens: usize,
+    /// Shared provider config — orchestrator updates this, agent reads at turn start.
+    shared_provider_config: Arc<tokio::sync::RwLock<Option<crate::daemons::ProviderConfig>>>,
+    /// Shared distiller — orchestrator updates this, agent reads at turn start.
+    shared_distiller: Arc<tokio::sync::RwLock<Option<std::sync::Arc<tokio::sync::RwLock<Box<dyn ContextDistiller>>>>>>,
+    /// Shared timeout — orchestrator updates this, agent reads at turn start.
+    shared_timeout_ms: Arc<std::sync::Mutex<Option<u64>>>,
 }
 
 impl AgentEngine {
@@ -168,6 +174,9 @@ impl AgentEngine {
             output_manager,
             read_file_cache: std::sync::Mutex::new(crate::tools::read_file::ReadFileCache::new()),
             cumulative_tokens: 0,
+            shared_provider_config: Arc::new(tokio::sync::RwLock::new(None)),
+            shared_distiller: Arc::new(tokio::sync::RwLock::new(None)),
+            shared_timeout_ms: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -254,17 +263,51 @@ impl AgentEngine {
     /// Drain any pending UserResponse messages from the frontend channel.
     /// Called between turns so user text sent while the agent was busy gets processed.
     fn drain_user_responses(&mut self) {
+        let mut should_abort = false;
         if let Some(ref mut rx) = self.frontend_rx {
             while let Ok(msg) = rx.try_recv() {
-                if let FrontendMessage::UserResponse { text, .. } = msg {
-                    self.task_reducer.process(&text, false);
-                    self.trajectory.add_message(
-                        Role::User,
-                        json!(text),
-                        self.estimator.count_text(&text),
-                    );
+                match msg {
+                    FrontendMessage::UserResponse { text, .. } => {
+                        self.task_reducer.process(&text, false);
+                        self.trajectory.add_message(
+                            Role::User,
+                            json!(text),
+                            self.estimator.count_text(&text),
+                        );
+                    }
+                    FrontendMessage::Interrupt { .. } => {
+                        should_abort = true;
+                    }
+                    other => {
+                        if std::env::var("DIRAC_DEBUG").is_ok() {
+                            eprintln!("[di-core] drain_user_responses: discarding {:?}", other);
+                        }
+                    }
                 }
-                // Non-UserResponse messages are unexpected here; discard them.
+            }
+        }
+        if should_abort {
+            self.request_abort();
+        }
+        // Sync runtime config updates from shared state
+        self.sync_shared_config();
+    }
+
+    /// Pull latest config from shared state (written by orchestrator).
+    fn sync_shared_config(&mut self) {
+        if let Ok(timeout) = self.shared_timeout_ms.lock() {
+            if let Some(dur) = *timeout {
+                self.frontend_timeout_ms = Some(dur);
+            }
+        }
+        if let Ok(guard) = self.shared_provider_config.try_read() {
+            if let Some(ref config) = *guard {
+                self.provider_config = Some(config.clone());
+            }
+        }
+        if let Ok(guard) = self.shared_distiller.try_read() {
+            if let Some(ref dist) = *guard {
+                self.distiller = Some(dist.clone());
             }
         }
     }
@@ -407,6 +450,9 @@ impl AgentEngine {
             });
         let tail_reminder = Some(self.task_reducer.to_tail_reminder(&stale_files, latest_failure.as_deref()));
 
+        let compaction_summary = self.trajectory.last_checkpoint.as_ref()
+            .map(|cp| cp.progress_summary.clone());
+
         let dynamic = DynamicContext {
             file_context: &self.file_context,
             observations: &self.context_manager.vault,
@@ -415,6 +461,7 @@ impl AgentEngine {
             distilled_context: &None,
             task_state_summary: &task_summary,
             tail_reminder: &tail_reminder,
+            compaction_summary: &compaction_summary,
         };
 
         // Current-frame budget: measure system string first, then compute history budget
@@ -782,17 +829,11 @@ impl AgentEngine {
             eprintln!("[di-core] run_turn: tool {} done ({})", ti, if exec_result.is_ok() { "ok" } else { "err" });
 
             // Track file context after execution
-            // - read: full content read with hash (enables stale detection)
             // - search/repo/symbols: metadata observation only (no stale detection)
+            // - read: handled by format_read_result with correct content hash
+            // - write/edit: invalidate caches
             if let Some(ref path) = path_arg {
                 match tool_name.as_str() {
-                    "read" => {
-                        if let Ok(ref result) = exec_result {
-                            let content_str = result.to_string();
-                            let hash = crate::util::stable_hash(content_str.as_bytes());
-                            self.file_context.mark_read(path, &hash);
-                        }
-                    }
                     "search" | "repo" | "symbols" => {
                         self.file_context.mark_metadata_observed(path);
                     }
@@ -800,6 +841,8 @@ impl AgentEngine {
                         self.file_context.mark_edited(path);
                         self.coordinator.invalidate_for_path(path);
                         self.coordinator.invalidate_search_and_repo();
+                        // Invalidate read cache so subsequent reads don't report "unchanged"
+                        self.read_file_cache.lock().unwrap().invalidate_for_path(path);
                     }
                     _ => {}
                 }
@@ -1255,8 +1298,15 @@ pub struct MultiAgentOrchestrator {
     pub distiller: Option<std::sync::Arc<tokio::sync::RwLock<Box<dyn ContextDistiller>>>>,
     /// Global distiller metrics — not borrowed from any agent.
     distiller_metrics: Arc<ContextMetrics>,
-    /// Distiller config version, incremented on each set_distiller_config.
-    distiller_config_version: std::sync::atomic::AtomicU64,
+    /// Shared runtime config — one per agent, updated by orchestrator, read by agent each turn.
+    runtime_configs: HashMap<Uuid, RuntimeConfig>,
+}
+
+/// Shared runtime config for a single agent. Orchestrator writes, agent reads.
+struct RuntimeConfig {
+    provider_config: Arc<tokio::sync::RwLock<Option<crate::daemons::ProviderConfig>>>,
+    distiller: Arc<tokio::sync::RwLock<Option<std::sync::Arc<tokio::sync::RwLock<Box<dyn ContextDistiller>>>>>>,
+    timeout_ms: Arc<std::sync::Mutex<Option<u64>>>,
 }
 
 impl MultiAgentOrchestrator {
@@ -1273,7 +1323,7 @@ impl MultiAgentOrchestrator {
             distiller_config: None,
             distiller: None,
             distiller_metrics: ContextMetrics::new(),
-            distiller_config_version: std::sync::atomic::AtomicU64::new(0),
+            runtime_configs: HashMap::new(),
         }
     }
 
@@ -1288,6 +1338,15 @@ impl MultiAgentOrchestrator {
         );
         agent.provider_config = self.default_provider_config.clone();
         agent.distiller = self.distiller.clone();
+
+        // Wire shared runtime config so orchestrator can push updates to running agents
+        let rc = RuntimeConfig {
+            provider_config: agent.shared_provider_config.clone(),
+            distiller: agent.shared_distiller.clone(),
+            timeout_ms: agent.shared_timeout_ms.clone(),
+        };
+        self.runtime_configs.insert(id, rc);
+
         // Store the sender for routing frontend messages to this agent
         self.frontend_channels.insert(id, agent.frontend_tx.clone());
         // Store abort handle so abort_agent works after the agent is moved out
@@ -1311,12 +1370,19 @@ impl MultiAgentOrchestrator {
     pub fn cleanup_agent(&mut self, agent_id: &Uuid) {
         self.frontend_channels.remove(agent_id);
         self.abort_handles.remove(agent_id);
+        self.runtime_configs.remove(agent_id);
     }
 
     /// Update the frontend response timeout for all agents.
     pub fn set_all_frontend_timeouts(&mut self, duration_ms: u64) {
         for agent in self.agents.values_mut() {
             agent.frontend_timeout_ms = Some(duration_ms);
+        }
+        // Also update running agents via shared config
+        for rc in self.runtime_configs.values() {
+            if let Ok(mut guard) = rc.timeout_ms.lock() {
+                *guard = Some(duration_ms);
+            }
         }
     }
 
@@ -1327,13 +1393,18 @@ impl MultiAgentOrchestrator {
         for agent in self.agents.values_mut() {
             agent.provider_config = Some(config.clone());
         }
+        // Also update running agents via shared config
+        for rc in self.runtime_configs.values() {
+            if let Ok(mut guard) = rc.provider_config.try_write() {
+                *guard = Some(config.clone());
+            }
+        }
     }
 
     /// Set the distiller config and create the distiller instance.
     /// Shares the distiller with all running and future agents.
     pub fn set_distiller_config(&mut self, config: crate::daemons::ProviderConfig) {
         self.distiller_config = Some(config.clone());
-        self.distiller_config_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let distiller = crate::context::distiller::new_distiller(
             Some(config),
             self.gateway_client.clone(),
@@ -1344,6 +1415,12 @@ impl MultiAgentOrchestrator {
         self.distiller = Some(distiller_arc.clone());
         for agent in self.agents.values_mut() {
             agent.distiller = Some(distiller_arc.clone());
+        }
+        // Also update running agents via shared config
+        for rc in self.runtime_configs.values() {
+            if let Ok(mut guard) = rc.distiller.try_write() {
+                *guard = Some(distiller_arc.clone());
+            }
         }
     }
 

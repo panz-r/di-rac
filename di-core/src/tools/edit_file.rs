@@ -15,7 +15,7 @@ pub async fn edit_file(
 
     let mut results = Vec::new();
     for (path, old, new) in edits {
-        let content = match std::fs::read_to_string(&path) {
+        let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
             Err(e) => {
                 return ToolResponse::fail(
@@ -50,7 +50,7 @@ pub async fn edit_file(
         }
 
         let new_content = content.replacen(&old, &new, 1);
-        match std::fs::write(&path, &new_content) {
+        match tokio::fs::write(&path, &new_content).await {
             Ok(_) => results.push(json!({ "path": path, "status": "success" })),
             Err(e) => {
                 return ToolResponse::fail(

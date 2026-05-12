@@ -88,4 +88,22 @@ impl BackgroundCommandTracker {
         Some(lines.join("\n"))
     }
 
+    /// Remove completed/failed commands and delete their log files.
+    pub async fn cleanup_finished(&self) {
+        let mut cmds = self.commands.lock().await;
+        let ids: Vec<String> = cmds.iter()
+            .filter(|(_, c)| matches!(c.status,
+                CommandStatus::Completed | CommandStatus::Failed |
+                CommandStatus::TimedOut | CommandStatus::Cancelled))
+            .map(|(id, _)| id.clone())
+            .collect();
+        let finished: Vec<BackgroundCommand> = ids.iter()
+            .filter_map(|id| cmds.remove(id))
+            .collect();
+        drop(cmds);
+        for c in &finished {
+            let _ = tokio::fs::remove_file(&c.log_path).await;
+        }
+    }
+
 }

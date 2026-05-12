@@ -147,6 +147,7 @@ async fn main() -> Result<()> {
                                             println!("{}", event);
                                             let _ = std::io::stdout().flush();
                                         }
+                                        agent.background_tracker.cleanup_finished().await;
                                         let _ = done_tx.send(id).await;
                                     });
                                 }

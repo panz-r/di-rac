@@ -219,6 +219,7 @@ mod tests {
     use crate::agent::trajectory::ToolMessageMeta;
     use chrono::Utc;
 
+    #[allow(dead_code)]
     fn make_msg(role: Role, content: &str, tokens: usize, tool_name: &str, paths_read: Vec<&str>) -> Message {
         Message {
             id: uuid::Uuid::new_v4(),
