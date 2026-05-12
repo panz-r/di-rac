@@ -434,7 +434,9 @@ func openaiBuildTools(toolsRaw []json.RawMessage, strict bool) []map[string]inte
 		var names []string
 		for _, t := range tools {
 			if fn, ok := t["function"].(map[string]interface{}); ok {
-				names = append(names, fn["name"].(string))
+				if name, ok := fn["name"].(string); ok {
+					names = append(names, name)
+				}
 			}
 		}
 		return names

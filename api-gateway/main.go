@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -193,6 +194,10 @@ func NewServer() *Server {
 // Start begins listening on the socket
 func (s *Server) Start() error {
 	os.Remove(SocketPath)
+
+	if err := os.MkdirAll(filepath.Dir(SocketPath), 0700); err != nil {
+		return fmt.Errorf("failed to create socket directory: %w", err)
+	}
 
 	ln, err := net.Listen("unix", SocketPath)
 	if err != nil {
