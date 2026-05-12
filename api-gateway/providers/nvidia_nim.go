@@ -21,7 +21,7 @@ func NewNvidiaNimHandler() *NvidiaNimHandler {
 			BaseURL:      "https://integrate.api.nvidia.com/v1",
 			DefaultModel: "nvidia/llama-3.1-nemotron-ultra-253b-v1",
 			Capabilities: &ProviderInfo{
-				ID:           "nvidia_nim",
+				ID:           "nvidia-nim",
 				MaxTokensDefault: 16384,
 				DefaultModel: "nvidia/llama-3.1-nemotron-ultra-253b-v1",
 				Features: ProviderFeatures{

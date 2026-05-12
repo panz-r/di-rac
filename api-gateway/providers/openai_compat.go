@@ -92,7 +92,12 @@ func (h *openaiCompatHandler) Send(ctx context.Context, req *Request) (*SendResu
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	return openaiConvertResponse(raw, h.config.FinishReasonMap), nil
+	result := openaiConvertResponse(raw, h.config.FinishReasonMap)
+	result.Raw = body
+	if model, _ := raw["model"].(string); model != "" {
+		result.Model = model
+	}
+	return result, nil
 }
 
 func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
@@ -396,9 +401,36 @@ func openaiConvertAssistantContentBlocks(messages []map[string]interface{}, msg 
 }
 
 // openaiBuildTools parses raw tool JSON into OpenAI-format tool definitions.
+// It handles two input formats:
+//   - OpenAI format: {"type":"function","function":{"name":"...","parameters":{}}}
+//   - Anthropic format: {"name":"...","input_schema":{...},"description":"..."}
 func openaiBuildTools(toolsRaw []json.RawMessage, strict bool) []map[string]interface{} {
 	var tools []map[string]interface{}
 	for i, toolJSON := range toolsRaw {
+		// Detect OpenAI format: has a "function" key with a map value.
+		var probe map[string]json.RawMessage
+		if err := json.Unmarshal(toolJSON, &probe); err != nil {
+			log.Printf("[openaiBuildTools] tool[%d] unmarshal failed: %v (raw: %s)", i, err, string(toolJSON[:min(len(toolJSON), 100)]))
+			continue
+		}
+		if fnRaw, ok := probe["function"]; ok {
+			// OpenAI format — pass through (with optional strict flag).
+			var fn map[string]interface{}
+			if err := json.Unmarshal(fnRaw, &fn); err != nil {
+				log.Printf("[openaiBuildTools] tool[%d] function unmarshal failed: %v", i, err)
+				continue
+			}
+			if strict {
+				fn["strict"] = true
+			}
+			tools = append(tools, map[string]interface{}{
+				"type":     "function",
+				"function": fn,
+			})
+			continue
+		}
+
+		// Anthropic format: top-level name, input_schema, description.
 		var tool struct {
 			Name        string          `json:"name"`
 			Description string          `json:"description"`
@@ -484,8 +516,9 @@ func openaiAddReasoningContent(messages []map[string]interface{}, req *Request) 
 // content, reasoning_content, tool_calls, finish_reason, usage with all cache variants.
 func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReasonMap func(string) string, contentArraySupport bool) error {
 	type toolCallState struct {
-		id   string
-		name string
+		id      string
+		name    string
+		started bool
 	}
 	toolCalls := make(map[int]*toolCallState)
 
@@ -612,7 +645,20 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 			if tc.Function.Name != "" {
 				state.name = tc.Function.Name
 			}
-			// Emit tool call delta whenever we have arguments and a name.
+			// Emit a tool-call-start chunk the first time we see an ID or name,
+			// even if there are no arguments yet (handles no-argument tool calls).
+			if !state.started && (state.id != "" || state.name != "") {
+				state.started = true
+				if err := callback(StreamChunk{
+					Type:         "delta",
+					Index:        idx,
+					ToolCallID:   state.id,
+					ToolCallName: state.name,
+				}); err != nil {
+					return err
+				}
+			}
+			// Emit tool call delta whenever we have arguments.
 			// OpenAI streams send id+name first, then argument fragments in separate chunks.
 			if tc.Function.Arguments != "" {
 				if err := callback(StreamChunk{

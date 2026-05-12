@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -18,9 +19,18 @@ import (
 
 const Version = "0.1.0"
 
-// Build-time configurable rate limits (override via -ldflags "-X main.maxRequestsPerSec=10 -X main.maxInflightReqs=5")
-var maxRequestsPerSec int = 5
-var maxInflightReqs int = 3
+// Build-time configurable rate limits (override via -ldflags "-X main.maxRequestsPerSecStr=10 -X main.maxInflightReqsStr=5")
+// Go's -X linker flag only works with string variables, so these are parsed at startup via parseLimit.
+var maxRequestsPerSecStr string = "5"
+var maxInflightReqsStr string = "3"
+
+// parseLimit parses a build-time string as an int, returning defVal on failure.
+func parseLimit(s string, defVal int) int {
+	if n, err := strconv.Atoi(s); err == nil && n > 0 {
+		return n
+	}
+	return defVal
+}
 
 var SocketPath = os.Getenv("DIRAC_API_GATEWAY_SOCKET")
 
@@ -195,14 +205,19 @@ func NewServer() *Server {
 		ctx:              ctx,
 		cancel:           cancel,
 		providerConfigs:  make(map[string]providers.ProviderConfig),
-		rateLimiter:      NewRateLimiter(maxRequestsPerSec, maxInflightReqs),
+		rateLimiter:      NewRateLimiter(parseLimit(maxRequestsPerSecStr, 5), parseLimit(maxInflightReqsStr, 3)),
 		conns:            make(map[net.Conn]struct{}),
 	}
 }
 
 // Start begins listening on the socket
 func (s *Server) Start() error {
-	os.Remove(SocketPath)
+	if st, err := os.Lstat(SocketPath); err == nil {
+		if st.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("refusing to remove non-socket path: %s", SocketPath)
+		}
+		os.Remove(SocketPath)
+	}
 
 	if err := os.MkdirAll(filepath.Dir(SocketPath), 0700); err != nil {
 		return fmt.Errorf("failed to create socket directory: %w", err)
@@ -404,7 +419,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			cfg.ID = modelsReq.Provider
 			s.configMu.RLock()
 			if stored, ok := s.providerConfigs[modelsReq.Provider]; ok {
-				if cfg.APIKey == "" {
+				if cfg.APIKey == "" && (cfg.BaseURL == "" || cfg.BaseURL == stored.BaseURL) {
 					cfg.APIKey = stored.APIKey
 				}
 				if cfg.BaseURL == "" {
@@ -413,7 +428,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 			s.configMu.RUnlock()
 
-			models, err := s.providerRegistry.ListModels(s.ctx, modelsReq.Provider, cfg)
+			modelsCtx, modelsCancel := context.WithTimeout(s.ctx, 30*time.Second)
+				models, err := s.providerRegistry.ListModels(modelsCtx, modelsReq.Provider, cfg)
+				modelsCancel()
 			if err != nil {
 				w.write(&Response{
 					ID:     0,
@@ -458,7 +475,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			cfg.ID = modelInfoReq.Provider
 			s.configMu.RLock()
 			if stored, ok := s.providerConfigs[modelInfoReq.Provider]; ok {
-				if cfg.APIKey == "" {
+				if cfg.APIKey == "" && (cfg.BaseURL == "" || cfg.BaseURL == stored.BaseURL) {
 					cfg.APIKey = stored.APIKey
 				}
 				if cfg.BaseURL == "" {
@@ -467,7 +484,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 			s.configMu.RUnlock()
 
-			models, err := s.providerRegistry.ListModels(s.ctx, modelInfoReq.Provider, cfg)
+			modelsCtx, modelsCancel := context.WithTimeout(s.ctx, 30*time.Second)
+				models, err := s.providerRegistry.ListModels(modelsCtx, modelInfoReq.Provider, cfg)
+				modelsCancel()
 			if err != nil {
 				w.write(&Response{
 					ID:     0,
@@ -675,7 +694,10 @@ func (s *Server) mergeProviderConfig(req *Request) {
 	if !ok {
 		return
 	}
-	if req.Provider.APIKey == "" {
+	// Do not merge stored API key when the request overrides base_url to
+	// a different host. This prevents key exfiltration via base_url redirect.
+	overridesBaseURL := req.Provider.BaseURL != "" && req.Provider.BaseURL != stored.BaseURL
+	if req.Provider.APIKey == "" && !overridesBaseURL {
 		req.Provider.APIKey = stored.APIKey
 	}
 	if req.Provider.BaseURL == "" {

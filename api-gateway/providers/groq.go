@@ -244,6 +244,9 @@ func groqSubtractCachedTokens(usage *Usage) *Usage {
 		return nil
 	}
 	usage.InputTokens -= usage.CacheReadInputTokens
+	if usage.InputTokens < 0 {
+		usage.InputTokens = 0
+	}
 	return usage
 }
 

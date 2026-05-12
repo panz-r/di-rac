@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,12 +18,13 @@ import (
 var SharedHTTPClient *http.Client
 
 func init() {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 100
+	transport.MaxIdleConnsPerHost = 10
+	transport.IdleConnTimeout = 90 * time.Second
+	transport.ResponseHeaderTimeout = 60 * time.Second
 	SharedHTTPClient = &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
-		},
+		Transport: transport,
 	}
 }
 
@@ -493,6 +495,9 @@ func (r *Registry) SupportedProviders() []ProviderMeta {
 	for _, m := range r.meta {
 		providers = append(providers, m)
 	}
+	sort.Slice(providers, func(i, j int) bool {
+		return providers[i].ID < providers[j].ID
+	})
 	return providers
 }
 

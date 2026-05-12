@@ -148,9 +148,6 @@ func extractMiniMaxMetadata(result *SendResult) *SendResult {
 	}
 
 	if reasoning, ok := rawResp["reasoning_details"].(map[string]interface{}); ok {
-		if text, ok := reasoning["reasoning_text"].(string); ok {
-			log.Printf("[MiniMax] reasoning_text: %s", truncate(text, 200))
-		}
 		if tokens, ok := reasoning["reasoning_tokens"].(float64); ok {
 			log.Printf("[MiniMax] reasoning_tokens: %d", int(tokens))
 		}
@@ -231,10 +228,9 @@ func (p *minimaxToolCallPipe) handle(chunk StreamChunk) error {
 		p.totalBuffered++
 		// Log text content to see if MiniMax sends XML tool calls or plain text
 		if strings.Contains(chunk.TextDelta, "<minimax") || strings.Contains(chunk.TextDelta, "<invoke") {
-			log.Printf("[MiniMax] XML fragment in text delta: %q", chunk.TextDelta)
 		} else if p.totalBuffered <= 3 || p.textBuffer.Len() > 64 {
 			// Log first few chunks and when buffer grows, to see what model outputs
-			log.Printf("[MiniMax] text delta #%d (buf=%d): %q", p.totalBuffered, p.textBuffer.Len(), truncate(chunk.TextDelta, 200))
+			log.Printf("[MiniMax] text delta: bytes=%d", len(chunk.TextDelta))
 		}
 		return p.tryParse()
 	}

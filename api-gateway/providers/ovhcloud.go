@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -146,8 +147,14 @@ func NewOVHcloudHandler() *OVHcloudHandler {
 }
 
 // ovhcloudBaseURL constructs the model-specific base URL.
-func ovhcloudBaseURL(model string) string {
-	return "https://" + model + ".endpoints.kepler.ai.cloud.ovh.net/api/openai_compat/v1"
+// Only known model IDs are allowed to prevent hostname injection.
+func ovhcloudBaseURL(model string) (string, error) {
+	for _, c := range model {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_') {
+			return "", fmt.Errorf("invalid OVHcloud model ID: %s", model)
+		}
+	}
+	return "https://" + model + ".endpoints.kepler.ai.cloud.ovh.net/api/openai_compat/v1", nil
 }
 
 func (h *OVHcloudHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
@@ -158,7 +165,11 @@ func (h *OVHcloudHandler) Send(ctx context.Context, req *Request) (*SendResult, 
 	if model == "" {
 		model = h.inner.config.DefaultModel
 	}
-	req.Provider.BaseURL = ovhcloudBaseURL(model)
+	baseURL, err := ovhcloudBaseURL(model)
+	if err != nil {
+		return nil, err
+	}
+	req.Provider.BaseURL = baseURL
 	return h.inner.Send(ctx, req)
 }
 
@@ -170,7 +181,11 @@ func (h *OVHcloudHandler) Stream(ctx context.Context, req *Request, callback fun
 	if model == "" {
 		model = h.inner.config.DefaultModel
 	}
-	req.Provider.BaseURL = ovhcloudBaseURL(model)
+	baseURL, err := ovhcloudBaseURL(model)
+	if err != nil {
+		return err
+	}
+	req.Provider.BaseURL = baseURL
 	return h.inner.Stream(ctx, req, callback)
 }
 
