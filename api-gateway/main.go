@@ -831,6 +831,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 	chunks := make(chan providers.StreamChunk, 100)
 	errChan := make(chan error, 1)
 	doneChan := make(chan struct{}, 1)
+	completeSent := false
 
 	go func() {
 		if streamErr := handler.Stream(streamCtx, providerReq, func(chunk providers.StreamChunk) error {
@@ -865,6 +866,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 		case chunk := <-chunks:
 			// Provider emitted complete -- forward it and stop (no duplicate)
 			if chunk.Type == "complete" {
+				completeSent = true
 				w.write(&Response{ID: id, Status: 200, Body: mustMarshal(chunk)})
 				return
 			}
@@ -892,6 +894,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 				select {
 				case chunk := <-chunks:
 					if chunk.Type == "complete" {
+						completeSent = true
 						w.write(&Response{ID: id, Status: 200, Body: mustMarshal(chunk)})
 						return
 					}
@@ -913,11 +916,13 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 					default:
 					}
 					// Send complete only if provider did not emit one
-					w.write(&Response{
-						ID:     id,
-						Status: 200,
-						Body:   json.RawMessage(`{"type":"complete"}`),
-					})
+					if !completeSent {
+						w.write(&Response{
+							ID:     id,
+							Status: 200,
+							Body:   json.RawMessage(`{"type":"complete"}`),
+						})
+					}
 					return
 				}
 			}
@@ -926,17 +931,17 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 }
 
 func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler providers.Handler, req *providers.Request) *Response {
-	const maxRetries = 8
+	const maxAttempts = 9 // 1 initial + 8 retries
 	var lastErr error
 	var lastRetriable bool
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
 			if backoff > 60*time.Second {
 				backoff = 60 * time.Second
 			}
-			log.Printf("Retry attempt %d/%d after %v", attempt, maxRetries, backoff)
+			log.Printf("Retry attempt %d/%d after %v", attempt, maxAttempts-1, backoff)
 
 			timer := time.NewTimer(backoff)
 			select {
