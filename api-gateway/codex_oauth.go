@@ -21,12 +21,20 @@ import (
 )
 
 const (
-	codexClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
-	codexAuthURL     = "https://auth.openai.com/oauth/authorize"
-	codexTokenURL    = "https://auth.openai.com/oauth/token"
-	codexCallbackPort = 1455
-	codexScope       = "openid profile email offline_access"
+	codexClientIDDefault = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexAuthURL         = "https://auth.openai.com/oauth/authorize"
+	codexTokenURL        = "https://auth.openai.com/oauth/token"
+	codexCallbackPort    = 1455
+	codexScope           = "openid profile email offline_access"
 )
+
+// codexClientID returns the OAuth client ID, overridable via CODEX_CLIENT_ID env var.
+func codexClientID() string {
+	if v := os.Getenv("CODEX_CLIENT_ID"); v != "" {
+		return v
+	}
+	return codexClientIDDefault
+}
 
 // CodexAuthTokens holds the OAuth tokens for Codex authentication.
 type CodexAuthTokens struct {
@@ -45,6 +53,10 @@ type codexTokenStore struct {
 }
 
 var codexTokens = &codexTokenStore{}
+
+// oauthHTTPClient is a shared client for all OAuth token exchange/refresh calls.
+// These are short-lived request/response calls (not SSE streams), so a timeout is safe.
+var oauthHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func init() {
 	home, err := os.UserHomeDir()
@@ -166,7 +178,7 @@ func codexStartOAuth(ctx context.Context) (*CodexAuthTokens, error) {
 	authURL, _ := url.Parse(codexAuthURL)
 	q := authURL.Query()
 	q.Set("response_type", "code")
-	q.Set("client_id", codexClientID)
+	q.Set("client_id", codexClientID())
 	q.Set("redirect_uri", redirectURI)
 	q.Set("scope", codexScope)
 	q.Set("code_challenge", challenge)
@@ -238,11 +250,11 @@ func codexExchangeCode(code, verifier, redirectURI string) (*CodexAuthTokens, er
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"redirect_uri":  {redirectURI},
-		"client_id":     {codexClientID},
+		"client_id":     {codexClientID()},
 		"code_verifier": {verifier},
 	}
 
-	resp, err := http.PostForm(codexTokenURL, form)
+	resp, err := oauthHTTPClient.PostForm(codexTokenURL, form)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request: %w", err)
 	}
@@ -289,13 +301,13 @@ func codexExchangeCode(code, verifier, redirectURI string) (*CodexAuthTokens, er
 func codexExchangeForAPIToken(idToken string) (accessToken, accountID string, err error) {
 	form := url.Values{
 		"grant_type":           {"urn:ietf:params:oauth:grant-type:token-exchange"},
-		"client_id":            {codexClientID},
+		"client_id":            {codexClientID()},
 		"requested_token":      {"openai-api-key"},
 		"subject_token":        {idToken},
 		"subject_token_type":   {"urn:ietf:params:oauth:token-type:id_token"},
 	}
 
-	resp, err := http.PostForm(codexTokenURL, form)
+	resp, err := oauthHTTPClient.PostForm(codexTokenURL, form)
 	if err != nil {
 		return "", "", fmt.Errorf("API token exchange request: %w", err)
 	}
@@ -323,13 +335,13 @@ func codexExchangeForAPIToken(idToken string) (accessToken, accountID string, er
 // codexRefreshToken refreshes an expired access token.
 func codexRefreshToken(refreshToken string) (*CodexAuthTokens, error) {
 	payload, _ := json.Marshal(map[string]interface{}{
-		"client_id":     codexClientID,
+		"client_id":     codexClientID(),
 		"grant_type":    "refresh_token",
 		"refresh_token": refreshToken,
 		"scope":         "openid profile email offline_access",
 	})
 
-	resp, err := http.Post(codexTokenURL, "application/json", strings.NewReader(string(payload)))
+	resp, err := oauthHTTPClient.Post(codexTokenURL, "application/json", strings.NewReader(string(payload)))
 	if err != nil {
 		return nil, fmt.Errorf("refresh request: %w", err)
 	}
@@ -396,10 +408,10 @@ func codexStartDeviceCode(ctx context.Context) (*CodexDeviceCode, error) {
 	}
 
 	payload, _ := json.Marshal(map[string]string{
-		"client_id": codexClientID,
+		"client_id": codexClientID(),
 	})
 
-	resp, err := http.Post("https://auth.openai.com/api/accounts/deviceauth/usercode", "application/json", strings.NewReader(string(payload)))
+	resp, err := oauthHTTPClient.Post("https://auth.openai.com/api/accounts/deviceauth/usercode", "application/json", strings.NewReader(string(payload)))
 	if err != nil {
 		return nil, fmt.Errorf("device code request: %w", err)
 	}
@@ -458,7 +470,7 @@ func codexPollDeviceCode(ctx context.Context, dc *CodexDeviceCode) (*CodexAuthTo
 				"user_code":      dc.UserCode,
 			})
 
-			resp, err := http.Post("https://auth.openai.com/api/accounts/deviceauth/token", "application/json", strings.NewReader(string(payload)))
+			resp, err := oauthHTTPClient.Post("https://auth.openai.com/api/accounts/deviceauth/token", "application/json", strings.NewReader(string(payload)))
 			if err != nil {
 				continue // retry on network errors
 			}

@@ -132,7 +132,7 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 		}
 	}
 
-	return openaiParseSSE(resp.Body, callback, h.config.FinishReasonMap, h.config.ContentArraySupport)
+	return openaiParseSSE(ctx, resp.Body, callback, h.config.FinishReasonMap, h.config.ContentArraySupport)
 }
 
 func (h *openaiCompatHandler) Capabilities() *ProviderInfo {
@@ -514,7 +514,7 @@ func openaiAddReasoningContent(messages []map[string]interface{}, req *Request) 
 // openaiParseSSE reads an SSE stream and emits StreamChunks.
 // Handles all known OpenAI-compatible fields across providers:
 // content, reasoning_content, tool_calls, finish_reason, usage with all cache variants.
-func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReasonMap func(string) string, contentArraySupport bool) error {
+func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChunk) error, finishReasonMap func(string) string, contentArraySupport bool) error {
 	type toolCallKey struct {
 		choice int
 		tool   int
@@ -530,6 +530,10 @@ func openaiParseSSE(body io.Reader, callback func(StreamChunk) error, finishReas
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	for scanner.Scan() {
+		// Check for context cancellation every iteration.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue

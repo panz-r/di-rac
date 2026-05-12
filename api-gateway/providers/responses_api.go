@@ -631,21 +631,25 @@ func parseResponsesSSE(body io.Reader, callback func(StreamChunk) error) error {
 			return nil
 
 		case "response.failed":
-			// Extract error
+			// Extract error and return as ProviderAPIError so gateway retry logic works.
+			statusCode := 500
 			if resp, ok := evt["response"].(map[string]interface{}); ok {
 				lastErr, _ := resp["last_error"].(map[string]interface{})
 				code, _ := lastErr["code"].(string)
 				message, _ := lastErr["message"].(string)
-				return fmt.Errorf("responses API error: %s: %s", code, message)
+				if code == "rate_limit_exceeded" {
+					statusCode = 429
+				}
+				return &ProviderAPIError{StatusCode: statusCode, Message: fmt.Sprintf("%s: %s", code, message), Retriable: statusCode == 429 || statusCode >= 500}
 			}
-			return fmt.Errorf("responses API: response failed")
+			return &ProviderAPIError{StatusCode: 500, Message: "responses API: response failed", Retriable: true}
 
 		case "error":
 			msg, _ := evt["message"].(string)
 			if msg == "" {
 				msg = string(data)
 			}
-			return fmt.Errorf("responses API stream error: %s", msg)
+			return &ProviderAPIError{StatusCode: 500, Message: msg, Retriable: true}
 		}
 	}
 

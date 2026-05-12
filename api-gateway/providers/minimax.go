@@ -216,6 +216,8 @@ type minimaxToolCallPipe struct {
 	counter        *atomic.Int64
 }
 
+const minimaxMaxBuffer = 1 << 20 // 1 MB cap on text buffer
+
 func newMinimaxToolCallPipe(callback func(StreamChunk) error, counter *atomic.Int64) *minimaxToolCallPipe {
 	return &minimaxToolCallPipe{callback: callback, counter: counter}
 }
@@ -226,6 +228,14 @@ func (p *minimaxToolCallPipe) handle(chunk StreamChunk) error {
 	if chunk.Type == "delta" && chunk.TextDelta != "" {
 		p.textBuffer.WriteString(chunk.TextDelta)
 		p.totalBuffered++
+		// If buffer exceeds cap, flush as plain text to prevent unbounded growth.
+		if p.textBuffer.Len() > minimaxMaxBuffer {
+			flushed := p.textBuffer.String()
+			p.textBuffer.Reset()
+			if err := p.callback(StreamChunk{Type: "delta", TextDelta: flushed}); err != nil {
+				return err
+			}
+		}
 		// Log text content to see if MiniMax sends XML tool calls or plain text
 		if strings.Contains(chunk.TextDelta, "<minimax") || strings.Contains(chunk.TextDelta, "<invoke") {
 		} else if p.totalBuffered <= 3 || p.textBuffer.Len() > 64 {

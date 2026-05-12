@@ -147,12 +147,20 @@ func NewOVHcloudHandler() *OVHcloudHandler {
 }
 
 // ovhcloudBaseURL constructs the model-specific base URL.
-// Only known model IDs are allowed to prevent hostname injection.
+// The model ID becomes a subdomain prefix under .endpoints.kepler.ai.cloud.ovh.net,
+// so it can never redirect to an external host. We validate characters to prevent
+// DNS-level tricks (e.g. empty labels, overlong labels, or @/.. injection).
 func ovhcloudBaseURL(model string) (string, error) {
+	if len(model) == 0 || len(model) > 63 {
+		return "", fmt.Errorf("invalid OVHcloud model ID (length): %s", model)
+	}
 	for _, c := range model {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_') {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
 			return "", fmt.Errorf("invalid OVHcloud model ID: %s", model)
 		}
+	}
+	if model[0] == '-' || model[len(model)-1] == '-' {
+		return "", fmt.Errorf("invalid OVHcloud model ID (hyphen): %s", model)
 	}
 	return "https://" + model + ".endpoints.kepler.ai.cloud.ovh.net/api/openai_compat/v1", nil
 }

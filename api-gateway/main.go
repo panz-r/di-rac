@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -991,11 +992,21 @@ func sanitizeProviderError(err error) string {
 	if pae, ok := err.(*providers.ProviderAPIError); ok {
 		return fmt.Sprintf("provider returned status %d", pae.StatusCode)
 	}
+	// For non-API errors (I/O timeouts, DNS, etc.), return only a generic
+	// category to avoid leaking internal hostnames, IPs, or paths.
 	msg := err.Error()
-	if len(msg) > 500 {
-		msg = msg[:500] + "...(truncated)"
+	switch {
+	case strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline"):
+		return "provider request timed out"
+	case strings.Contains(msg, "connection refused"):
+		return "provider connection refused"
+	case strings.Contains(msg, "DNS") || strings.Contains(msg, "lookup"):
+		return "provider DNS resolution failed"
+	case strings.Contains(msg, "TLS") || strings.Contains(msg, "certificate"):
+		return "provider TLS error"
+	default:
+		return "provider request failed"
 	}
-	return msg
 }
 
 func mustMarshal(v interface{}) json.RawMessage {

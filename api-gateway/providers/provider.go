@@ -594,6 +594,14 @@ func ValidateRequest(req *Request) error {
 		// Validate content blocks (tool_use / tool_result pairing)
 		for j, block := range msg.ContentBlocks {
 			switch block.Type {
+			case "image":
+				if block.ImageSource != nil && block.ImageSource.Data != "" {
+					// Base64 is ~4/3 the binary size; 10MB binary ≈ 13.3MB base64.
+					const maxBase64ImageSize = 14 << 20
+					if len(block.ImageSource.Data) > maxBase64ImageSize {
+						return fmt.Errorf("message %d block %d: image data exceeds 10MB limit", i, j)
+					}
+				}
 			case "tool_use":
 				if block.ToolUse == nil || block.ToolUse.ID == "" {
 					return fmt.Errorf("message %d block %d: tool_use missing id", i, j)
