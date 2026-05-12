@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // SharedHTTPClient is a reusable HTTP client with tuned transport settings.
@@ -320,6 +322,7 @@ type Registry struct {
 	meta        map[string]ProviderMeta
 	modelsCache map[string]modelsCacheEntry
 	modelsMu    sync.RWMutex
+	modelsSF    singleflight.Group
 }
 
 // NewRegistry creates a new provider registry
@@ -421,11 +424,14 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg Provid
 	}
 	r.modelsMu.RUnlock()
 
-	// Fetch from provider
-	models, err := ml.ListModels(ctx, cfg)
+	// Deduplicate concurrent requests for the same provider+baseURL.
+	v, err, _ := r.modelsSF.Do(cacheKey, func() (interface{}, error) {
+		return ml.ListModels(ctx, cfg)
+	})
 	if err != nil {
 		return nil, err
 	}
+	models := v.([]ModelEntry)
 
 	// Cache for 1 hour, evict oldest if at capacity
 	r.modelsMu.Lock()

@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -21,10 +23,27 @@ import (
 
 const Version = "0.1.0"
 
-// Build-time configurable rate limits (override via -ldflags "-X main.maxRequestsPerSecStr=10 -X main.maxInflightReqsStr=5")
-// Go's -X linker flag only works with string variables, so these are parsed at startup via parseLimit.
+// Rate limit configuration.
+// Priority: environment variable > ldflags > default.
+// Env vars: DIRAC_API_GATEWAY_RATE_PER_SEC, DIRAC_API_GATEWAY_MAX_CONCURRENT
 var maxRequestsPerSecStr string = "5"
 var maxInflightReqsStr string = "3"
+
+func resolveRateLimits() (ratePerSec, maxConcurrent int) {
+	ratePerSec = parseLimit(maxRequestsPerSecStr, 5)
+	maxConcurrent = parseLimit(maxInflightReqsStr, 3)
+	if v := os.Getenv("DIRAC_API_GATEWAY_RATE_PER_SEC"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			ratePerSec = n
+		}
+	}
+	if v := os.Getenv("DIRAC_API_GATEWAY_MAX_CONCURRENT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxConcurrent = n
+		}
+	}
+	return
+}
 
 // parseLimit parses a build-time string as an int, returning defVal on failure.
 func parseLimit(s string, defVal int) int {
@@ -207,7 +226,7 @@ func NewServer() *Server {
 		ctx:              ctx,
 		cancel:           cancel,
 		providerConfigs:  make(map[string]providers.ProviderConfig),
-		rateLimiter:      NewRateLimiter(parseLimit(maxRequestsPerSecStr, 5), parseLimit(maxInflightReqsStr, 3)),
+		rateLimiter:      NewRateLimiter(resolveRateLimits()),
 		conns:            make(map[net.Conn]struct{}),
 	}
 }
@@ -525,33 +544,31 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		// Handle codex-login (browser OAuth flow)
 		if typeCheck.Type == "codex-login" {
-			go func() {
-				tokens, err := codexStartOAuth(s.ctx)
+			tokens, err := codexStartOAuth(s.ctx)
 				if err != nil {
 					body, _ := json.Marshal(map[string]interface{}{
 						"type":    "codex-login-status",
 						"status":  "error",
 						"message": err.Error(),
 					})
-					w.write(&Response{ID: 0, Status: 200, Body: body})
-					return
-				}
-				if err := codexTokens.Save(tokens); err != nil {
+				w.write(&Response{ID: 0, Status: 200, Body: body})
+				continue
+			}
+			if err := codexTokens.Save(tokens); err != nil {
 					body, _ := json.Marshal(map[string]interface{}{
 						"type":    "codex-login-status",
 						"status":  "error",
 						"message": fmt.Sprintf("save tokens: %v", err),
 					})
-					w.write(&Response{ID: 0, Status: 200, Body: body})
-					return
-				}
-				body, _ := json.Marshal(map[string]interface{}{
-					"type":       "codex-login-status",
-					"status":     "success",
-					"account_id": tokens.AccountID,
-				})
 				w.write(&Response{ID: 0, Status: 200, Body: body})
-			}()
+				continue
+			}
+			body, _ := json.Marshal(map[string]interface{}{
+				"type":       "codex-login-status",
+				"status":     "success",
+				"account_id": tokens.AccountID,
+			})
+			w.write(&Response{ID: 0, Status: 200, Body: body})
 			continue
 		}
 
@@ -571,32 +588,30 @@ func (s *Server) handleConnection(conn net.Conn) {
 			})
 			w.write(&Response{ID: 0, Status: 200, Body: body})
 
-			// Poll in background
-			go func() {
-				tokens, err := codexPollDeviceCode(s.ctx, dc)
-				if err != nil {
-					body, _ := json.Marshal(map[string]interface{}{
-						"type":    "codex-login-status",
-						"status":  "error",
-						"message": err.Error(),
-					})
-					w.write(&Response{ID: 0, Status: 200, Body: body})
-					return
-				}
-				if err := codexTokens.Save(tokens); err != nil {
-					log.Printf("Warning: failed to save codex device tokens: %v", err)
-				}
-				body, _ := json.Marshal(map[string]interface{}{
-					"type":       "codex-login-status",
-					"status":     "success",
-					"account_id": tokens.AccountID,
+			// Poll synchronously to preserve JSON protocol ordering.
+			tokens, err := codexPollDeviceCode(s.ctx, dc)
+			if err != nil {
+				body, _ = json.Marshal(map[string]interface{}{
+					"type":    "codex-login-status",
+					"status":  "error",
+					"message": err.Error(),
 				})
 				w.write(&Response{ID: 0, Status: 200, Body: body})
-			}()
+				continue
+			}
+			if err := codexTokens.Save(tokens); err != nil {
+				log.Printf("Warning: failed to save codex device tokens: %v", err)
+			}
+			body, _ = json.Marshal(map[string]interface{}{
+				"type":       "codex-login-status",
+				"status":     "success",
+				"account_id": tokens.AccountID,
+			})
+			w.write(&Response{ID: 0, Status: 200, Body: body})
 			continue
 		}
 
-		// Handle codex-login-status (check if logged in)
+				// Handle codex-login-status (check if logged in)
 		if typeCheck.Type == "codex-login-status" {
 			tokens, err := codexTokens.Load()
 			if err != nil {
@@ -991,6 +1006,44 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 			Retriable: lastRetriable,
 		},
 	}
+}
+
+// isSafeBaseURL rejects URLs that point to private/internal networks (SSRF protection).
+// Allows localhost/127.0.0.1 for local providers (Ollama, LM Studio).
+func isSafeBaseURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return nil // relative URL, no host
+	}
+
+	// Allow localhost variants for local providers
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return nil
+	}
+
+	// Resolve and check for private/link-local/metadata IPs
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		// DNS resolution failed — allow through so users can use hostnames
+		// that may not resolve on the gateway host but resolve in the client's network.
+		// The actual request will fail if the host is truly unreachable.
+		return nil
+	}
+	for _, ip := range ips {
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			continue
+		}
+		if addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsLoopback() {
+			return fmt.Errorf("base_url host %s resolves to private/internal IP %s", host, addr)
+		}
+
+	}
+	return nil
 }
 
 // sanitizeProviderError strips raw response bodies from provider errors

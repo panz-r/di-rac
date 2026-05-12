@@ -118,7 +118,19 @@ func (s *codexTokenStore) GetValidToken() (string, error) {
 		return tokens.AccessToken, nil
 	}
 
-	// Try to refresh
+	// Acquire write lock to serialize refresh (prevents thundering herd).
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Double-check: another goroutine may have refreshed while we waited.
+	tokens, err = s.Load()
+	if err != nil {
+		return "", fmt.Errorf("no stored codex tokens: %w", err)
+	}
+	if time.Until(time.Unix(tokens.Expiry, 0)) > 5*time.Minute {
+		return tokens.AccessToken, nil
+	}
+
 	newTokens, err := codexRefreshToken(tokens.RefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("token refresh failed: %w", err)
