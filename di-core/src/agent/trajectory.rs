@@ -113,7 +113,7 @@ impl Trajectory {
 
         // Inject the continuation as a User message so the model sees what happened before
         if !continuation.is_empty() {
-            let tokens = continuation.len() / 3; // rough estimate
+            let tokens = (continuation.len() as f64 / 3.2) as usize; // match ConservativeEstimator floor_ratio
             self.add_message(Role::User, serde_json::json!(continuation), tokens);
         }
     }

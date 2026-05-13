@@ -592,7 +592,7 @@ impl ResilientDaemon {
     }
 
     /// Send a request to the analyzer daemon with automatic restart on death.
-    /// Wraps the untimed call in a 10-minute timeout to prevent indefinite hangs.
+    /// Wraps the untimed call in a 2-minute timeout to prevent indefinite hangs.
     /// Returns `Ok(R)` on success, `Err` for application or daemon errors.
     pub async fn send_request<T: Serialize, R: for<'de> Deserialize<'de>>(&mut self, request: T) -> Result<R> {
         let mut attempts = 0;
@@ -607,7 +607,7 @@ impl ResilientDaemon {
                 }
             }
 
-            let timeout = tokio::time::Duration::from_secs(600);
+            let timeout = tokio::time::Duration::from_secs(120);
             let result = tokio::time::timeout(
                 timeout,
                 self.inner.as_mut().unwrap().send_request_untimed(&request),
@@ -633,7 +633,7 @@ impl ResilientDaemon {
                 Ok(Err(UntimedError::App(e))) => return Err(e),
                 Err(_) => {
                     // Timeout — treat as dead daemon
-                    let msg = format!("Daemon timed out after 600s");
+                    let msg = format!("Daemon timed out after 120s");
                     attempts += 1;
                     if attempts > self.max_restart_attempts {
                         return Err(anyhow::anyhow!(

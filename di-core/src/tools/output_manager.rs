@@ -66,12 +66,7 @@ impl OutputManager {
     }
 
     fn save_and_replace(&self, content: &str, tool_name: &str) -> serde_json::Value {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let filename = format!("{}_{}.txt", tool_name, now);
+        let filename = format!("{}_{}.txt", tool_name, uuid::Uuid::new_v4());
         let path = self.output_dir.join(&filename);
 
         if let Err(e) = std::fs::write(&path, content) {

@@ -13,6 +13,8 @@ pub async fn edit_file(
         Err(e) => return ToolResponse::fail(ToolErrorCode::MissingArgument, e, "edit"),
     };
 
+    let dry_run = call.args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+
     let mut results = Vec::new();
     for (path, old, new) in edits {
         let content = match tokio::fs::read_to_string(&path).await {
@@ -49,20 +51,36 @@ pub async fn edit_file(
             };
         }
 
-        let new_content = content.replacen(&old, &new, 1);
-        match tokio::fs::write(&path, &new_content).await {
-            Ok(_) => results.push(json!({ "path": path, "status": "success" })),
-            Err(e) => {
-                return ToolResponse::fail(
-                    ToolErrorCode::PatchApplyFailed,
-                    format!("Failed to write {}: {}", path, e),
-                    "edit",
-                );
+        if dry_run {
+            let diff = build_diff(&old, &new);
+            results.push(json!({ "path": path, "status": "dry_run", "diff": diff }));
+        } else {
+            let new_content = content.replacen(&old, &new, 1);
+            match tokio::fs::write(&path, &new_content).await {
+                Ok(_) => results.push(json!({ "path": path, "status": "success" })),
+                Err(e) => {
+                    return ToolResponse::fail(
+                        ToolErrorCode::PatchApplyFailed,
+                        format!("Failed to write {}: {}", path, e),
+                        "edit",
+                    );
+                }
             }
         }
     }
 
     ToolResponse::ok(json!({ "edits": results }))
+}
+
+fn build_diff(old: &str, new: &str) -> String {
+    let mut diff = String::new();
+    for line in old.lines() {
+        diff.push_str(&format!("-{}\n", line));
+    }
+    for line in new.lines() {
+        diff.push_str(&format!("+{}\n", line));
+    }
+    diff
 }
 
 fn parse_edits(call: &ToolCall) -> Result<Vec<(String, String, String)>, String> {

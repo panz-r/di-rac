@@ -429,6 +429,17 @@ impl ToolExecutor {
         let content = call.args.get("content").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing content argument"))?;
 
+        let dry_run = call.args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+        if dry_run {
+            let line_count = content.lines().count();
+            return Ok(json!({
+                "path": path,
+                "status": "dry_run",
+                "lines": line_count,
+                "message": format!("Would write {} lines to {}", line_count, path)
+            }));
+        }
+
         let create_dirs = call.args.get("create_dirs")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
@@ -484,13 +495,18 @@ impl ToolExecutor {
 }
 
 /// Parse range argument like "10-50" into (start, end).
+/// Returns None if range is malformed or start < 1.
 fn parse_range(call: &ToolCall) -> Option<(usize, usize)> {
     call.args.get("range").and_then(|v| v.as_str()).and_then(|r| {
         let parts: Vec<&str> = r.split('-').collect();
         if parts.len() == 2 {
             let start: usize = parts[0].parse().ok()?;
             let end: usize = parts[1].parse().ok()?;
-            Some((start, end))
+            if start >= 1 && end >= start {
+                Some((start, end))
+            } else {
+                None
+            }
         } else {
             None
         }
