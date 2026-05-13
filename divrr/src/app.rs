@@ -5,14 +5,22 @@ use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
 
 /// Append a timestamped line to ~/.dirac/divrr.log (best-effort, never fails).
-/// Skips writing if the log exceeds 1MB to prevent unbounded growth.
+/// When the log exceeds 1MB, keeps the most recent 256KB.
 pub fn log_event(msg: &str) {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let path = std::path::Path::new(&home).join(".dirac").join("divrr.log");
-    // Rotate: truncate if file exceeds 1MB
+    // Rotate: keep the tail when file exceeds 1MB
     if let Ok(meta) = std::fs::metadata(&path) {
         if meta.len() > 1_048_576 {
-            let _ = std::fs::write(&path, "");
+            if let Ok(data) = std::fs::read(&path) {
+                let keep = 262_144; // 256 KiB
+                let start = data.len().saturating_sub(keep);
+                // Align to next newline boundary
+                let start = data[start..].iter().position(|&b| b == b'\n')
+                    .map(|p| start + p + 1)
+                    .unwrap_or(start);
+                let _ = std::fs::write(&path, &data[start..]);
+            }
         }
     }
     let _ = std::fs::OpenOptions::new().append(true).create(true).open(&path)
@@ -597,7 +605,7 @@ impl App {
                     if s.secret_edit_open {
                         s.confirm_secret_edit();
                     } else {
-                        self.pending_messages = s.save();
+                        self.pending_messages.extend(s.save());
                     }
                 }
             }

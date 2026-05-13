@@ -52,9 +52,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             let row = text_before_cursor.lines().count().max(1) - 1;
             let last_newline = text_before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
             let col = text_before_cursor[last_newline..].len() as u16;
+            let clamped_row = (row as u16).min(area.height.saturating_sub(1));
             frame.set_cursor_position((
                 if row == 0 { area.x + prefix_len + col } else { area.x + col },
-                area.y + row as u16,
+                area.y + clamped_row,
             ));
         }
         Mode::Command => {
