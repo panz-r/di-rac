@@ -916,7 +916,6 @@ impl SettingsState {
 
         // Defer gateway push + validation to background
         self.pending_async = Some(PendingAsyncOp::Save { all_settings: self.all_settings.clone() });
-        self.saved = true;
 
         messages
     }

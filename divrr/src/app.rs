@@ -579,6 +579,17 @@ impl App {
     }
 
     fn handle_settings_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
+        // While loading, only allow Esc to close
+        if let Some(s) = &self.settings {
+            if s.loading {
+                if key.code == KeyCode::Esc {
+                    self.settings = None;
+                    self.mode = Mode::Normal;
+                }
+                return None;
+            }
+        }
+
         match key.code {
             KeyCode::Esc => {
                 if let Some(s) = &self.settings {
