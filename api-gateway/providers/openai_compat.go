@@ -184,14 +184,14 @@ func (h *openaiCompatHandler) buildRequest(req *Request, stream bool) map[string
 		"messages": messages,
 	}
 
-	// Temperature
+	// Temperature: only set if config provides an explicit override.
+	// Individual providers set temperature via ModifyRequest using
+	// SettingFloat/SettingIsNull to respect user intent vs provider defaults.
 	if h.config.Temperature != nil {
 		if *h.config.Temperature >= 0 {
 			result["temperature"] = *h.config.Temperature
 		}
 		// sentinel -1 = omit temperature entirely
-	} else {
-		result["temperature"] = 0
 	}
 
 	if stream && !h.config.NoStreamOptions {

@@ -84,7 +84,8 @@ func (s *codexTokenStore) loadFromFile() (*CodexAuthTokens, error) {
 	return &tokens, nil
 }
 
-// saveToFile writes tokens to disk with restricted permissions. Caller must hold Lock.
+// saveToFile writes tokens to disk atomically via temp file + rename.
+// Caller must hold Lock.
 func (s *codexTokenStore) saveToFile(tokens *CodexAuthTokens) error {
 	if s.path == "" {
 		return fmt.Errorf("token path not set")
@@ -93,7 +94,15 @@ func (s *codexTokenStore) saveToFile(tokens *CodexAuthTokens) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0600)
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // Load reads tokens from disk (thread-safe).

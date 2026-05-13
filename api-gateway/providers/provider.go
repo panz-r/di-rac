@@ -26,7 +26,9 @@ func init() {
 	transport.ResponseHeaderTimeout = 60 * time.Second
 	SharedHTTPClient = &http.Client{
 		Transport: transport,
-		Timeout:   5 * time.Minute, // overall request timeout including body read
+		// No client-level Timeout: per-request context deadlines control
+		// stream lifetime. A fixed Timeout would abort long-running streams
+		// (deep reasoning, large context) before the context expires.
 	}
 }
 
@@ -403,8 +405,8 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg Provid
 		return nil, nil
 	}
 
-	// Check cache
-	cacheKey := providerID + ":" + cfg.BaseURL
+	// Check cache (include API key so different tiers see different model lists)
+	cacheKey := providerID + ":" + cfg.BaseURL + ":" + cfg.APIKey
 	r.modelsMu.RLock()
 	if entry, hit := r.modelsCache[cacheKey]; hit && time.Now().Before(entry.expiry) {
 		r.modelsMu.RUnlock()
@@ -548,6 +550,12 @@ func ValidateRequest(req *Request) error {
 	}
 	if len(req.Messages) == 0 {
 		return errors.New("at least one message is required")
+	}
+	if len(req.Tools) > 128 {
+		return fmt.Errorf("too many tools: %d (max 128)", len(req.Tools))
+	}
+	if req.MaxTokens > 1_000_000 {
+		return fmt.Errorf("max_tokens too large: %d (max 1,000,000)", req.MaxTokens)
 	}
 
 	pendingToolCalls := make(map[string]string) // id -> name

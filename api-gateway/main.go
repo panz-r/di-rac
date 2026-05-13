@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -296,6 +297,11 @@ func (s *Server) acceptLoop() {
 
 func (s *Server) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in handleConnection: %v\n%s", r, debug.Stack())
+		}
+	}()
 	defer func() {
 		s.connMu.Lock()
 		delete(s.conns, conn)
@@ -876,7 +882,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 			w.write(&Response{
 				ID:     id,
 				Status: 500,
-				Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error(), Retriable: providers.IsRetriable(streamErr)},
+				Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
 			})
 			return
 		case <-ctx.Done():
@@ -912,7 +918,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 				w.write(&Response{
 					ID:     id,
 					Status: 500,
-					Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error(), Retriable: providers.IsRetriable(streamErr)},
+					Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
 				})
 				return
 			default:
@@ -938,7 +944,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 						w.write(&Response{
 							ID:     id,
 							Status: 500,
-							Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: streamErr.Error(), Retriable: providers.IsRetriable(streamErr)},
+							Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
 						})
 						return
 					default:
