@@ -718,7 +718,7 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
                     }
                     /* Always invoke callback so no grant notification is ever silently dropped,
                      * even when the wakeup array is full. */
-                    if (on_granted && path_len > 0) {
+                    if (on_granted) {
                         char parent_path[4096];
                         if (node_get_path(p, parent_path, sizeof(parent_path)) >= 0) {
                             on_granted(w, parent_path, ctx);
@@ -743,6 +743,8 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
                  * even when the wakeup array is full. */
                 if (on_granted && path_len > 0) {
                     on_granted(w, path_buf, ctx);
+                } else if (on_granted) {
+                    on_granted(w, "<unknown>", ctx);
                 }
             }
         }

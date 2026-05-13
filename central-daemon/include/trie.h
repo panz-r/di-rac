@@ -23,7 +23,7 @@ typedef struct trie_node {
 
     /* Lock state */
     int owner_fd;               /* FD of the connection holding an exclusive lock on this path */
-    int intent_count;           /* Number of exclusive locks in the subtree below this node */
+    int64_t intent_count;       /* Number of exclusive locks in the subtree below this node */
     
     /* Wait queue - list of FDs waiting for this node to become available */
     int *waiters;

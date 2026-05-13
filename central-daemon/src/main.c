@@ -674,7 +674,13 @@ int main(int argc, char *argv[]) {
 
                 ev.events = EPOLLIN;
                 ev.data.ptr = ctx;
-                epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
+                if (epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) < 0) {
+                    fprintf(stderr, "[di-vrr] failed to epoll_ctl ADD for client_fd %d: %s\n", client_fd, strerror(errno));
+                    all_clients[slot] = NULL;
+                    close(client_fd);
+                    free(ctx);
+                    continue;
+                }
             } else {
                 client_ctx_t *ctx = events[i].data.ptr;
                 if (events[i].events & EPOLLOUT) {
