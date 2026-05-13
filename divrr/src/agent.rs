@@ -2,6 +2,24 @@ use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use uuid::Uuid;
 
+/// Maximum byte size for any single block's content. Larger content is truncated.
+const MAX_BLOCK_BYTES: usize = 1_048_576; // 1 MiB
+
+fn truncate_content(s: String) -> String {
+    if s.len() <= MAX_BLOCK_BYTES {
+        s
+    } else {
+        // Find a char boundary near the limit
+        let mut end = MAX_BLOCK_BYTES;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut truncated = String::from(&s[..end]);
+        truncated.push_str("\n… [truncated]");
+        truncated
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentStatus {
     Running,
@@ -75,17 +93,17 @@ impl ConversationLog {
     }
 
     pub fn push_user(&mut self, content: String) {
-        self.blocks.push(Block::User { content });
+        self.blocks.push(Block::User { content: truncate_content(content) });
     }
 
     pub fn push_assistant(&mut self, content: String) {
         if !content.is_empty() {
-            self.blocks.push(Block::Assistant { content });
+            self.blocks.push(Block::Assistant { content: truncate_content(content) });
         }
     }
 
     pub fn push_system(&mut self, content: String) {
-        self.blocks.push(Block::System { content });
+        self.blocks.push(Block::System { content: truncate_content(content) });
     }
 
     pub fn push_tool_call(&mut self, tool: String, args_summary: String) {
@@ -97,6 +115,7 @@ impl ConversationLog {
 
     /// Set the result on the last Tool block that has no result yet.
     pub fn set_tool_result(&mut self, content: String) {
+        let content = truncate_content(content);
         for block in self.blocks.iter_mut().rev() {
             if let Block::Tool { result, .. } = block {
                 if result.is_none() {
@@ -117,7 +136,9 @@ impl ConversationLog {
 
     pub fn append_streaming(&mut self, text: &str) {
         if let Some(ref mut s) = self.streaming {
-            s.content.push_str(text);
+            if s.content.len() < MAX_BLOCK_BYTES {
+                s.content.push_str(text);
+            }
         }
     }
 
