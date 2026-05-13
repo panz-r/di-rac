@@ -499,7 +499,6 @@ void test_cleanup_multi_branch_wakeup() {
         printf("   wakeup[%zu] = %d path=%s\n", i, wakeup[i], w_paths[i] ? w_paths[i] : "(null)");
     }
     assert(count == 2);
-    for (size_t i = 0; i < count; i++) free(w_paths[i]);
     /* Order depends on which one was processed first in the registry loop, 
        but both must be present. */
     bool found11 = false, found12 = false;

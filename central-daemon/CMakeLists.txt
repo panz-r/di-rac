@@ -9,13 +9,12 @@ include_directories(include)
 # Enable ctest for central-daemon's own tests
 enable_testing()
 
-# Integrate Draugr (High-performance Hash Table)
-# Suppress -Werror for draugr subdirectory so its test files (which are not
-# cleaned up yet) don't break the central-daemon build. Core daemon targets
-# (divrr-central-daemon, trie_test, broker_test) are unaffected.
-add_compile_options(-Wno-error)
-add_subdirectory(../draugr draugr_build)
-include_directories(../draugr/include)
+# Build Draugr as a separate library (not a subdirectory)
+add_library(draugr STATIC IMPORTED)
+set_target_properties(draugr PROPERTIES
+    IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/../draugr/build/libdraugr.a
+    INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/../draugr/include
+)
 
 # Main Daemon executable
 add_executable(divrr-central-daemon

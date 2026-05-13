@@ -27,7 +27,7 @@ fi
 echo "    OK"
 
 echo "==> Updating git submodules..."
-git submodule update --init --recursive
+git submodule update --init --recursive --remote
 echo "    OK"
 
 echo "==> Building C command daemon..."

@@ -1,6 +1,7 @@
 [submodule "draugr"]
 	path = draugr
 	url = https://github.com/panz-r/draugr-repo
+	branch = master
 [submodule "treesitter-daemon/vendor/tree-sitter"]
 	path = treesitter-daemon/vendor/tree-sitter
 	url = https://github.com/tree-sitter/tree-sitter

@@ -102,6 +102,27 @@ static void node_destroy(trie_node_t *node) {
     free(node);
 }
 
+static bool node_is_empty(trie_node_t *node) {
+    if (!node) return false;
+    if (node->owner_fd != -1) return false;
+    if (node->intent_count != 0) return false;
+    if (node->waiters_count != 0) return false;
+    if (ht_size(node->children) != 0) return false;
+    if (ht_size(node->settings) != 0) return false;
+    return true;
+}
+
+static void node_prune_upward(trie_node_t *node) {
+    while (node && node->parent) {
+        if (!node_is_empty(node)) break;
+        trie_node_t *parent = node->parent;
+        size_t seg_len = strlen(node->segment);
+        ht_remove(parent->children, node->segment, seg_len);
+        node_destroy(node);
+        node = parent;
+    }
+}
+
 trie_t* trie_create(void) {
     trie_t *trie = malloc(sizeof(trie_t));
     if (!trie) return NULL;
@@ -181,8 +202,11 @@ static trie_node_t* node_get_child(trie_node_t *node, const char *segment, bool 
     
     trie_node_t *new_node = node_create(segment, node);
     if (!new_node) return NULL;
-    
-    ht_insert(node->children, segment, segment_len, &new_node, sizeof(trie_node_t*));
+
+    if (ht_insert(node->children, segment, segment_len, &new_node, sizeof(trie_node_t*)) == HT_INSERT_FAILED) {
+        node_destroy(new_node);
+        return NULL;
+    }
     return new_node;
 }
 
@@ -217,11 +241,11 @@ trie_node_t* trie_traverse(trie_t *trie, const char *path, bool create, bool *an
 
 int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, const char *value, bool transient) {
     size_t klen = strlen(key);
-    size_t vlen;
-    
+    size_t ulen;
+
     if (transient) {
         ht_table_t *kv;
-        const void *found = ht_find(trie->transient_registry, &fd, sizeof(int), &vlen);
+        const void *found = ht_find(trie->transient_registry, &fd, sizeof(int), &ulen);
         if (found) {
             kv = *(ht_table_t**)found;
         } else {
@@ -234,12 +258,12 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
             }
         }
         
-        const void *existing = ht_find(kv, key, klen, &vlen);
+        const void *existing = ht_find(kv, key, klen, &ulen);
         if (existing) {
             free(*(char**)existing);
             ht_remove(kv, key, klen);
         }
-        
+
         if (value) {
             char *v_copy = strdup(value);
             if (!ht_insert(kv, key, klen, &v_copy, sizeof(char*))) {
@@ -252,7 +276,7 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
         trie_node_t *node = trie_traverse(trie, path, true, NULL);
         if (!node) return -1;
 
-        const void *existing = ht_find(node->settings, key, klen, &vlen);
+        const void *existing = ht_find(node->settings, key, klen, &ulen);
         if (existing) {
             free(*(char**)existing);
             ht_remove(node->settings, key, klen);
@@ -272,7 +296,7 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
 char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
     size_t klen = strlen(key);
     size_t vlen;
-    
+
     /* 1. Check Transient (FD) */
     const void *found_transient = ht_find(trie->transient_registry, &fd, sizeof(int), &vlen);
     if (found_transient) {
@@ -280,7 +304,7 @@ char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
         const void *val = ht_find(kv, key, klen, &vlen);
         if (val) return strdup(*(char**)val);
     }
-    
+
     /* 2. Check Node and Parents */
     const char *segments[256];
     size_t n_segments = 0;
@@ -303,51 +327,53 @@ char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
         nodes[depth++] = next;
     }
     free(path_copy);
-    
+
     /* Search from deepest found node upwards */
     for (int i = (int)depth - 1; i >= 0; i--) {
         const void *val = ht_find(nodes[i]->settings, key, klen, &vlen);
         if (val) return strdup(*(char**)val);
     }
-    
+
     return NULL;
 }
 
 /* --- Persistence --- */
 
-static void persist_escape(const char *src, char *dst, size_t dst_len) {
+static void persist_escape(const char *src, size_t klen, char *dst, size_t dst_len) {
     size_t dst_pos = 0;
-    for (const char *p = src; *p && dst_pos + 1 < dst_len; p++) {
-        if (*p == '\\' || *p == '|' || *p == '=' || *p == '\n') {
+    for (size_t i = 0; i < klen && dst_pos + 1 < dst_len; i++) {
+        char c = src[i];
+        if (c == '\\' || c == '|' || c == '=' || c == '\n') {
             if (dst_pos + 2 >= dst_len) break;
             dst[dst_pos++] = '\\';
-            switch (*p) {
+            switch (c) {
                 case '\\': dst[dst_pos++] = '\\'; break;
                 case '|':  dst[dst_pos++] = 'c'; break;
                 case '=':  dst[dst_pos++] = 'e'; break;
                 case '\n': dst[dst_pos++] = 'n'; break;
             }
         } else {
-            dst[dst_pos++] = *p;
+            dst[dst_pos++] = c;
         }
     }
     dst[dst_pos] = '\0';
 }
 
-static void persist_unescape(const char *src, char *dst, size_t dst_len) {
+static void persist_unescape(const char *src, size_t slen, char *dst, size_t dst_len) {
     size_t dst_pos = 0;
-    for (const char *p = src; *p && dst_pos + 1 < dst_len; p++) {
-        if (*p == '\\' && *(p + 1)) {
-            p++;
-            switch (*p) {
+    for (size_t i = 0; i < slen && dst_pos + 1 < dst_len; i++) {
+        char c = src[i];
+        if (c == '\\' && i + 1 < slen) {
+            i++;
+            switch (src[i]) {
                 case '\\': dst[dst_pos++] = '\\'; break;
                 case 'c':  dst[dst_pos++] = '|'; break;
                 case 'e':  dst[dst_pos++] = '='; break;
                 case 'n':  dst[dst_pos++] = '\n'; break;
-                default:   dst[dst_pos++] = *p; break;
+                default:   dst[dst_pos++] = src[i]; break;
             }
         } else {
-            dst[dst_pos++] = *p;
+            dst[dst_pos++] = c;
         }
     }
     dst[dst_pos] = '\0';
@@ -362,9 +388,9 @@ static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf, size
     size_t klen, vlen;
     while (ht_iter_next(node->settings, &it, &key, &klen, &val, &vlen)) {
         char escaped_path[8192], escaped_key[1024], escaped_val[8192];
-        persist_escape(path_buf, escaped_path, sizeof(escaped_path));
-        persist_escape((const char*)key, escaped_key, sizeof(escaped_key));
-        persist_escape(*(char**)val, escaped_val, sizeof(escaped_val));
+        persist_escape(path_buf, strlen(path_buf), escaped_path, sizeof(escaped_path));
+        persist_escape((const char*)key, klen, escaped_key, sizeof(escaped_key));
+        persist_escape(*(char**)val, strlen(*(char**)val), escaped_val, sizeof(escaped_val));
         fprintf(f, "%s|%s=%s\n", escaped_path, escaped_key, escaped_val);
     }
 
@@ -423,7 +449,7 @@ int trie_save_persist(trie_t *trie, const char *filepath) {
 int trie_load_persist(trie_t *trie, const char *filepath) {
     FILE *f = fopen(filepath, "r");
     if (!f) return -1;
-    
+
     char line[8192];
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\n")] = 0;
@@ -439,13 +465,13 @@ int trie_load_persist(trie_t *trie, const char *filepath) {
         char *val = eq + 1;
 
         char unescaped_path[4096], unescaped_key[256], unescaped_val[8192];
-        persist_unescape(path, unescaped_path, sizeof(unescaped_path));
-        persist_unescape(key, unescaped_key, sizeof(unescaped_key));
-        persist_unescape(val, unescaped_val, sizeof(unescaped_val));
+        persist_unescape(path, strlen(path), unescaped_path, sizeof(unescaped_path));
+        persist_unescape(key, strlen(key), unescaped_key, sizeof(unescaped_key));
+        persist_unescape(val, strlen(val), unescaped_val, sizeof(unescaped_val));
 
         trie_set_config(trie, unescaped_path, -1, unescaped_key, unescaped_val, false);
     }
-    
+
     fclose(f);
     return 0;
 }
@@ -468,7 +494,7 @@ static int register_node_to_fd(ht_table_t *registry, trie_node_t *node, int fd) 
         list->cap = 4;
         list->nodes = malloc(sizeof(trie_node_t*) * list->cap);
         if (!list->nodes) { free(list); return -1; }
-        if (ht_upsert(registry, &fd, sizeof(int), &list, sizeof(node_list_t*)) < 0) {
+        if (ht_upsert(registry, &fd, sizeof(int), &list, sizeof(node_list_t*)) == HT_INSERT_FAILED) {
             free(list->nodes);
             free(list);
             return -1;
@@ -732,5 +758,6 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
         ht_remove(trie->transient_registry, &fd, sizeof(int));
     }
 
+    node_prune_upward(trie->root);
     return wakeup_count;
 }
