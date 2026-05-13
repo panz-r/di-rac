@@ -300,17 +300,21 @@ fn render_selector_modal(
     };
 
     let mut lines = Vec::new();
-    for fi in scroll..count {
-        if lines.len() >= visible { break; }
-        let label = settings.selector_label_at(fi);
-        let is_selected = fi == settings.selector_cursor;
-        let style = if is_selected {
-            theme.selected_bold()
-        } else {
-            theme.text_dim()
-        };
-        let marker = if is_selected { "\u{25B6} " } else { "  " };
-        lines.push(Line::from(Span::styled(format!("{}{}", marker, label), style)));
+    if count == 0 {
+        lines.push(Line::from(Span::styled("  No matches — Esc to cancel", theme.text_dim())));
+    } else {
+        for fi in scroll..count {
+            if lines.len() >= visible { break; }
+            let label = settings.selector_label_at(fi);
+            let is_selected = fi == settings.selector_cursor;
+            let style = if is_selected {
+                theme.selected_bold()
+            } else {
+                theme.text_dim()
+            };
+            let marker = if is_selected { "\u{25B6} " } else { "  " };
+            lines.push(Line::from(Span::styled(format!("{}{}", marker, label), style)));
+        }
     }
 
     while lines.len() < visible {

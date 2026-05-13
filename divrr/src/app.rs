@@ -455,6 +455,7 @@ impl App {
                 }
             }
             CoreEvent::TaskPresented { message, .. } => {
+                self.input_queue.retain(|(id, _)| *id != agent_id);
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
                     agent.status = AgentStatus::Waiting;
                     agent.pending_input = None;

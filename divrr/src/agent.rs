@@ -171,10 +171,11 @@ impl ConversationLog {
     pub fn finalize_streaming(&mut self) {
         if let Some(s) = self.streaming.take() {
             if !s.content.is_empty() {
+                let content = truncate_content(s.content);
                 if s.is_thinking {
-                    self.blocks.push(Block::System { content: s.content });
+                    self.blocks.push(Block::System { content });
                 } else {
-                    self.blocks.push(Block::Assistant { content: s.content });
+                    self.blocks.push(Block::Assistant { content });
                 }
             }
             self.generation += 1;
