@@ -77,7 +77,6 @@ async fn main() -> Result<()> {
     let mut orchestrator = MultiAgentOrchestrator::new(
         analyzer_daemon,
         command_daemon,
-        &central_socket,
         &gateway_socket,
     );
 
@@ -136,19 +135,28 @@ async fn main() -> Result<()> {
                                     let done_tx = done_tx.clone();
                                     let task_clone = task.clone();
                                     tokio::spawn(async move {
-                                        let id = agent.id;
+                                        // Guard ensures done_tx.send runs even on panic
+                                        struct PanicGuard { agent_id: uuid::Uuid, done_tx: tokio::sync::mpsc::Sender<uuid::Uuid> }
+                                        impl Drop for PanicGuard {
+                                            fn drop(&mut self) {
+                                                // best-effort: spawn a tiny task to send the ID
+                                                let id = self.agent_id;
+                                                let tx = self.done_tx.clone();
+                                                tokio::spawn(async move { let _ = tx.send(id).await; });
+                                            }
+                                        }
+                                        let _guard = PanicGuard { agent_id: agent.id, done_tx: done_tx.clone() };
+
                                         if let Err(e) = agent.run_task(task_clone).await {
-                                            eprintln!("[di-core] agent {} FAILED: {}", id, e);
+                                            eprintln!("[di-core] agent {} FAILED: {}", agent.id, e);
                                             let event = serde_json::to_string(&CoreEvent::TaskFinished {
-                                                agent_id: id,
+                                                agent_id: agent.id,
                                                 success: false,
                                                 message: format!("Agent error: {}", e),
                                             }).unwrap_or_default();
                                             println!("{}", event);
                                             let _ = std::io::stdout().flush();
                                         }
-                                        agent.background_tracker.cleanup_finished().await;
-                                        let _ = done_tx.send(id).await;
                                     });
                                 }
                             }

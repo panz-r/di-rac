@@ -23,6 +23,7 @@ pub struct UnixDaemonClient {
 }
 
 impl UnixDaemonClient {
+    #[allow(dead_code)]
     pub fn new(socket_path: &str) -> Self {
         Self {
             socket_path: socket_path.to_string(),
@@ -606,7 +607,7 @@ impl ResilientDaemon {
                 }
             }
 
-            let timeout = tokio::time::Duration::from_secs(3600);
+            let timeout = tokio::time::Duration::from_secs(600);
             let result = tokio::time::timeout(
                 timeout,
                 self.inner.as_mut().unwrap().send_request_untimed(&request),

@@ -1,4 +1,3 @@
-pub mod background;
 pub mod cli_parse;
 pub mod list_files;
 pub mod search_files;
@@ -15,7 +14,6 @@ pub mod output_manager;
 pub mod read_file;
 
 use crate::daemons::{AnalyzerRequest, AnalyzerResponse, ResilientDaemon};
-use background::{BackgroundCommandTracker, CommandStatus};
 use response::{ToolResponse, ToolErrorCode};
 use routing::{ErrorRouter, RoutingContext, ToolErrorRoute};
 use format::{format_error_for_llm, format_error_for_log};
@@ -233,7 +231,6 @@ impl ToolCoordinator {
 pub struct ToolExecutor {
     analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
     command_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
-    background_tracker: Arc<BackgroundCommandTracker>,
     output_manager: Arc<std::sync::Mutex<output_manager::OutputManager>>,
 }
 
@@ -241,13 +238,11 @@ impl ToolExecutor {
     pub fn new(
         analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
         command_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
-        background_tracker: Arc<BackgroundCommandTracker>,
         output_manager: Arc<std::sync::Mutex<output_manager::OutputManager>>,
     ) -> Self {
         Self {
             analyzer_daemon,
             command_daemon,
-            background_tracker,
             output_manager,
         }
     }
@@ -457,11 +452,6 @@ impl ToolExecutor {
 
     /// Execute bash command via the command daemon's execute endpoint.
     async fn bash(&self, call: &ToolCall) -> Result<serde_json::Value> {
-        // Check for --await to retrieve background command result
-        if let Some(await_id) = call.args.get("await").and_then(|v| v.as_str()) {
-            return self.await_background_command(await_id).await;
-        }
-
         let command = call.args.get("command").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing command argument"))?;
 
@@ -480,50 +470,6 @@ impl ToolExecutor {
             "stdout": resp.stdout,
             "stderr": resp.stderr,
         }))
-    }
-
-    async fn await_background_command(&self, id: &str) -> Result<serde_json::Value> {
-        match self.background_tracker.get(id).await {
-            Some(cmd) => {
-                match cmd.status {
-                    CommandStatus::Running => {
-                        let log = tokio::fs::read_to_string(&cmd.log_path).await
-                            .map_err(|e| anyhow!("Failed to read log {}: {}", cmd.log_path, e))
-                            .unwrap_or_default();
-                        Ok(json!({
-                            "id": id,
-                            "status": "running",
-                            "stdout": log,
-                            "hint": format!("Command still running. Use bash --await {} later.", id)
-                        }))
-                    }
-                    CommandStatus::Completed => {
-                        let log = tokio::fs::read_to_string(&cmd.log_path).await
-                            .map_err(|e| anyhow!("Failed to read log {}: {}", cmd.log_path, e))
-                            .unwrap_or_default();
-                        Ok(json!({
-                            "id": id,
-                            "status": "completed",
-                            "exit_code": cmd.exit_code,
-                            "stdout": log,
-                        }))
-                    }
-                    CommandStatus::Failed => {
-                        let log = tokio::fs::read_to_string(&cmd.log_path).await
-                            .map_err(|e| anyhow!("Failed to read log {}: {}", cmd.log_path, e))
-                            .unwrap_or_default();
-                        Ok(json!({
-                            "id": id,
-                            "status": "failed",
-                            "exit_code": cmd.exit_code,
-                            "stdout": log,
-                        }))
-                    }
-                    _ => Ok(json!({ "id": id, "status": "unknown" })),
-                }
-            }
-            None => Err(anyhow!("Background command {} not found", id)),
-        }
     }
 
     async fn compact(&self, call: &ToolCall) -> Result<serde_json::Value> {

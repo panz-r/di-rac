@@ -9,13 +9,12 @@ use crate::context::distiller::{ContextDistiller, DistillerSource};
 use crate::context::task_state::TaskStateReducer;
 use crate::agent::metrics::ContextMetrics;
 use crate::daemons::{
-    UnixDaemonClient, GatewayStreamClient, GatewayRequest, GatewayMessage,
+    GatewayStreamClient, GatewayRequest, GatewayMessage,
     ResilientDaemon,
 };
 use crate::protocol::{CoreEvent, FrontendMessage};
 use crate::tools::{ToolExecutor, ToolCoordinator};
 use crate::prompt::{ContextCompiler, DynamicContext, session::SessionContext};
-use crate::tools::background::BackgroundCommandTracker;
 use crate::tools::approval::ApprovalManager;
 use anyhow::Result;
 use serde_json::json;
@@ -78,7 +77,6 @@ pub struct AgentEngine {
     pub tool_executor: ToolExecutor,
     pub coordinator: ToolCoordinator,
     pub approval_manager: ApprovalManager,
-    pub background_tracker: Arc<BackgroundCommandTracker>,
     pub abort: Arc<AtomicBool>,
     pub consecutive_mistake_count: usize,
     pub max_consecutive_mistakes: usize,
@@ -130,10 +128,8 @@ impl AgentEngine {
         id: Uuid,
         analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
         command_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
-        _central_client: Arc<UnixDaemonClient>,
         gateway_client: Arc<GatewayStreamClient>,
     ) -> Self {
-        let background_tracker = Arc::new(BackgroundCommandTracker::new());
         let output_manager = Arc::new(std::sync::Mutex::new(crate::tools::output_manager::OutputManager::new()));
         let (frontend_tx, frontend_rx) = mpsc::channel(32);
         Self {
@@ -144,12 +140,10 @@ impl AgentEngine {
             gateway_client,
             tool_executor: ToolExecutor::new(
                 analyzer_daemon, command_daemon,
-                background_tracker.clone(),
                 output_manager.clone(),
             ),
             coordinator: ToolCoordinator::new(),
             approval_manager: ApprovalManager::new(),
-            background_tracker,
             abort: Arc::new(AtomicBool::new(false)),
             consecutive_mistake_count: 0,
             max_consecutive_mistakes: 6,
@@ -264,6 +258,8 @@ impl AgentEngine {
     /// Called between turns so user text sent while the agent was busy gets processed.
     fn drain_user_responses(&mut self) {
         let mut should_abort = false;
+        // Collect non-matching messages to re-inject after draining
+        let mut to_reinject = Vec::new();
         if let Some(ref mut rx) = self.frontend_rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -279,12 +275,15 @@ impl AgentEngine {
                         should_abort = true;
                     }
                     other => {
-                        if std::env::var("DIRAC_DEBUG").is_ok() {
-                            eprintln!("[di-core] drain_user_responses: discarding {:?}", other);
-                        }
+                        // Don't discard — leave for recv_frontend to handle
+                        to_reinject.push(other);
                     }
                 }
             }
+        }
+        // Re-inject non-consumed messages back into the channel
+        for msg in to_reinject {
+            let _ = self.frontend_tx.try_send(msg);
         }
         if should_abort {
             self.request_abort();
@@ -434,7 +433,6 @@ impl AgentEngine {
         }
 
         // 3. Build context frame (system = stable + session + dynamic, messages = history)
-        let bg_summary = self.background_tracker.get_summary().await;
         let task_summary = Some(self.task_reducer.to_critical_summary());
 
         // Build tail reminder: goal + constraints + stale files + latest failure
@@ -462,7 +460,7 @@ impl AgentEngine {
             file_context: &self.file_context,
             observations: &self.context_manager.vault,
             current_apis: &current_apis,
-            background_summary: &bg_summary,
+            background_summary: &None,
             distilled_context: &None,
             task_state_summary: &task_summary,
             tail_reminder: &tail_reminder,
@@ -1241,21 +1239,16 @@ impl AgentEngine {
         }
 
         let deterministic_summary = summary_parts.join("\n\n");
-        let bg_summary = self.background_tracker.get_summary().await;
 
         let (enriched, _critical_files) = self.enrich_with_distiller(&deterministic_summary, recent_assistant, &file_summary).await;
 
-        let mut continuation = ContextManager::continuation_prompt(&enriched);
-        if let Some(bg) = bg_summary {
-            continuation.push_str(&format!("\n\n{}", bg));
-        }
+        let continuation = ContextManager::continuation_prompt(&enriched);
 
         self.finalize_compaction(deterministic_summary, continuation).await
     }
 
     async fn perform_compaction(&mut self, summary: &str) -> Result<()> {
         let continuation_base = ContextManager::continuation_prompt(summary);
-        let bg_summary = self.background_tracker.get_summary().await;
 
         let recent_summaries: Vec<String> = self.trajectory.messages.iter()
             .rev()
@@ -1270,10 +1263,7 @@ impl AgentEngine {
         let file_summary = self.file_context.get_summary();
         let (enriched, _critical_files) = self.enrich_with_distiller(&continuation_base, recent_summaries, &file_summary).await;
 
-        let mut continuation = enriched;
-        if let Some(bg) = bg_summary {
-            continuation.push_str(&format!("\n\n{}", bg));
-        }
+        let continuation = enriched;
 
         self.finalize_compaction(summary.to_string(), continuation).await
     }
@@ -1303,7 +1293,6 @@ pub struct MultiAgentOrchestrator {
     abort_handles: HashMap<Uuid, Arc<std::sync::atomic::AtomicBool>>,
     pub analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
     pub command_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
-    pub central_client: Arc<UnixDaemonClient>,
     pub gateway_client: Arc<GatewayStreamClient>,
     /// Default provider config for new agents (set by frontend via SetProviderConfig).
     pub default_provider_config: Option<crate::daemons::ProviderConfig>,
@@ -1325,14 +1314,13 @@ struct RuntimeConfig {
 }
 
 impl MultiAgentOrchestrator {
-    pub fn new(analyzer_daemon: ResilientDaemon, command_daemon: ResilientDaemon, central_socket: &str, gateway_socket: &str) -> Self {
+    pub fn new(analyzer_daemon: ResilientDaemon, command_daemon: ResilientDaemon, gateway_socket: &str) -> Self {
         Self {
             agents: HashMap::new(),
             frontend_channels: HashMap::new(),
             abort_handles: HashMap::new(),
             analyzer_daemon: Arc::new(tokio::sync::Mutex::new(analyzer_daemon)),
             command_daemon: Arc::new(tokio::sync::Mutex::new(command_daemon)),
-            central_client: Arc::new(UnixDaemonClient::new(central_socket)),
             gateway_client: Arc::new(GatewayStreamClient::with_socket(gateway_socket)),
             default_provider_config: None,
             distiller_config: None,
@@ -1348,7 +1336,6 @@ impl MultiAgentOrchestrator {
             id,
             self.analyzer_daemon.clone(),
             self.command_daemon.clone(),
-            self.central_client.clone(),
             self.gateway_client.clone(),
         );
         agent.provider_config = self.default_provider_config.clone();
