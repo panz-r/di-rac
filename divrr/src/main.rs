@@ -19,7 +19,19 @@ use message::FrontendMessage;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io;
+use std::time::Duration;
 use tokio::sync::mpsc;
+
+/// Send a message to di-core with a 5-second timeout to prevent UI freeze.
+async fn send_with_timeout(
+    backend: &mut DiCoreBackend,
+    msg: &FrontendMessage,
+) -> Result<(), String> {
+    tokio::time::timeout(Duration::from_secs(5), backend.send(msg))
+        .await
+        .map_err(|_| "Send timed out (di-core may be stuck)".to_string())
+        .and_then(|r| r.map_err(|e| format!("{}", e)))
+}
 
 /// Convert provider_params HashMap<String, String> to properly typed HashMap<String, Value>.
 fn role_settings_to_params(rs: &settings::RoleSettings) -> std::collections::HashMap<String, serde_json::Value> {
@@ -89,6 +101,7 @@ async fn main() -> color_eyre::Result<()> {
             Some(path) => Some(gateway::launch(&path)?),
             None => {
                 eprintln!("Warning: api-gateway binary not found. Settings panel will be limited.");
+                crate::app::log_event("gateway binary not found, settings panel limited");
                 None
             }
         },
@@ -209,14 +222,16 @@ async fn main() -> color_eyre::Result<()> {
                 }
 
                 if let Some(msg) = app.handle_key(key) {
-                    if let Err(e) = di_core.send(&msg).await {
+                    if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
+                        crate::app::log_event(&format!("send error: {}", e));
                         app.status_message = Some(format!("Send error: {}", e));
                     }
                 }
 
                 // Drain any pending messages (e.g. from settings save)
                 for msg in app.pending_messages.drain(..) {
-                    if let Err(e) = di_core.send(&msg).await {
+                    if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
+                        crate::app::log_event(&format!("send error: {}", e));
                         app.status_message = Some(format!("Send error: {}", e));
                     }
                 }
@@ -276,6 +291,11 @@ async fn main() -> color_eyre::Result<()> {
                                         error = Some(format!("Failed to save settings: {}", e));
                                     }
                                 }
+                                if let Some(ref e) = error {
+                                    crate::app::log_event(&format!("settings save failed: {}", e));
+                                } else {
+                                    crate::app::log_event("settings saved successfully");
+                                }
                                 let _ = tx.send(crate::AppEvent::SettingsLoaded(
                                     crate::settings::SettingsLoadResult::Saved {
                                         error,
@@ -293,19 +313,21 @@ async fn main() -> color_eyre::Result<()> {
                 app.handle_core_event(event);
                 // Drain pending messages (e.g. auto-approve responses)
                 for msg in app.pending_messages.drain(..) {
-                    if let Err(e) = di_core.send(&msg).await {
+                    if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
+                        crate::app::log_event(&format!("send error (core drain): {}", e));
                         app.status_message = Some(format!("Send error: {}", e));
                     }
                 }
             }
             Some(AppEvent::CoreError(e)) => {
+                crate::app::log_event(&format!("di-core error: {}", e));
                 app.status_message = Some(format!("di-core: {}", e));
             }
             Some(AppEvent::SettingsLoaded(result)) => {
                 app.apply_settings_load(result);
             }
             None => {
-                // Channel closed — di-core exited
+                crate::app::log_event("di-core process exited");
                 app.status_message = Some("di-core process exited".to_string());
                 break;
             }

@@ -4,6 +4,18 @@ use crate::message::{CoreEvent, FrontendMessage};
 use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
 
+/// Append a timestamped line to ~/.dirac/divrr.log (best-effort, never fails).
+pub fn log_event(msg: &str) {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    let path = std::path::Path::new(&home).join(".dirac").join("divrr.log");
+    let _ = std::fs::OpenOptions::new().append(true).create(true).open(&path)
+        .map(|mut f| {
+            use std::io::Write;
+            let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+            let _ = writeln!(f, "[{}] {}", ts, msg);
+        });
+}
+
 /// Prefix prepended to thinking content in System blocks.
 pub const THINKING_PREFIX: char = '\u{00B7}';
 use chrono::Utc;
@@ -285,6 +297,8 @@ impl App {
                         approved: true,
                     });
                 } else {
+                    // Remove any existing pending input for this agent to prevent duplicates
+                    self.input_queue.retain(|(id, _)| *id != agent_id);
                     let pending = PendingInput::Approval {
                         tool,
                         args,
@@ -301,6 +315,8 @@ impl App {
             CoreEvent::FollowupQuestion {
                 question, options, ..
             } => {
+                // Remove any existing pending input for this agent to prevent duplicates
+                self.input_queue.retain(|(id, _)| *id != agent_id);
                 let pending = PendingInput::Followup {
                     question: question.clone(),
                     options: options.clone(),
