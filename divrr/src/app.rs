@@ -388,6 +388,7 @@ impl App {
                         description,
                     };
                     if let Some(agent) = self.find_agent_mut(&agent_id) {
+                        agent.log.finalize_streaming();
                         agent.pending_input = Some(pending.clone());
                         agent.status = AgentStatus::Waiting;
                         agent.last_activity = Utc::now();
@@ -405,6 +406,7 @@ impl App {
                     options: options.clone(),
                 };
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
+                    agent.log.finalize_streaming();
                     agent.pending_input = Some(pending.clone());
                     agent.status = AgentStatus::Waiting;
                     agent.log.push_assistant(question);
