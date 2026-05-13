@@ -81,6 +81,7 @@ pub struct AgentEngine {
     pub consecutive_mistake_count: usize,
     pub max_consecutive_mistakes: usize,
     pub request_id_counter: i64,
+    pub tool_call_counter: i64,
     pub frontend_rx: Option<mpsc::Receiver<FrontendMessage>>,
     pub frontend_tx: mpsc::Sender<FrontendMessage>,
     pub mode: AgentMode,
@@ -148,6 +149,7 @@ impl AgentEngine {
             consecutive_mistake_count: 0,
             max_consecutive_mistakes: 6,
             request_id_counter: 0,
+            tool_call_counter: 0,
             frontend_rx: Some(frontend_rx),
             frontend_tx,
             mode: AgentMode::Act,
@@ -562,6 +564,7 @@ impl AgentEngine {
 
         debug_log!("[di-core] run_turn: sending gateway request ({} msgs, system {} chars, {} tools)",
             frame.messages.len(), frame.system.len(), frame.tools.len());
+        self.request_id_counter += 1;
         let request = GatewayRequest {
             id: self.request_id_counter,
             stream: true,
@@ -710,9 +713,10 @@ impl AgentEngine {
             json!(redacted_text)
         };
         let assistant_thinking = if thinking_text.is_empty() { None } else { Some(thinking_text) };
-        let tool_call_entries: Vec<ToolCallEntry> = tools.iter().enumerate().map(|(i, tc)| {
+        let tool_call_entries: Vec<ToolCallEntry> = tools.iter().map(|tc| {
+            self.tool_call_counter += 1;
             ToolCallEntry {
-                id: format!("call_{}", i),
+                id: format!("call_{}", self.tool_call_counter),
                 name: tc.name.clone(),
                 arguments: tc.args.to_string(),
             }
