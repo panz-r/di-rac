@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -193,21 +194,30 @@ func (rl *RateLimiter) Wait(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	// Acquire inflight slot
+	// Acquire inflight slot. Non-blocking first to skip the wait when possible.
 	select {
 	case rl.sem <- struct{}{}:
+		return nil
+	default:
+	}
+	// Semaphore full — wait, but return token if context cancels.
+	select {
+	case rl.sem <- struct{}{}:
+		return nil
 	case <-ctx.Done():
-		// Return rate-limit token on inflight acquisition failure
+		// Return the rate-limit token. The non-blocking send handles the case
+		// where the refill goroutine has filled the channel back to capacity:
+		// losing one token from the bucket is acceptable since we're about to
+		// exit and the refill loop continuously produces new ones.
 		select {
 		case rl.tokens <- struct{}{}:
 		default:
 		}
 		return ctx.Err()
 	}
-	return nil
 }
 
-// Release frees an inflight slot.
+// Release frees an inflight slot. Safe to call multiple times.
 func (rl *RateLimiter) Release() {
 	select {
 	case <-rl.sem:
@@ -337,19 +347,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return // EOF, timeout, or decode error — close connection
 		}
 
-		var typeCheck struct {
-			Type string `json:"type"`
-		}
-		json.Unmarshal(rawMsg, &typeCheck)
+		msgType := extractType(rawMsg)
 
 		// Handle ping/pong
-		if typeCheck.Type == "ping" {
+		if msgType == "ping" {
 			w.write(map[string]string{"type": "pong"})
 			continue
 		}
 
 		// Handle set-provider
-		if typeCheck.Type == "set-provider" {
+		if msgType == "set-provider" {
 			var setProviderReq SetProviderRequest
 			if err := json.Unmarshal(rawMsg, &setProviderReq); err != nil {
 				w.write(&Response{
@@ -370,7 +377,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Handle list-providers
-		if typeCheck.Type == "list-providers" {
+		if msgType == "list-providers" {
 			providerList := s.providerRegistry.SupportedProviders()
 			body, _ := json.Marshal(map[string]interface{}{
 				"providers": providerList,
@@ -380,7 +387,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Handle provider-info
-		if typeCheck.Type == "provider-info" {
+		if msgType == "provider-info" {
 			var infoReq struct {
 				Provider string `json:"provider"`
 			}
@@ -407,7 +414,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Handle validate-parameters
-		if typeCheck.Type == "validate-parameters" {
+		if msgType == "validate-parameters" {
 			var validateReq struct {
 				Provider string                    `json:"provider"`
 				Settings map[string]interface{}    `json:"settings"`
@@ -436,7 +443,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Handle models (model discovery)
-		if typeCheck.Type == "models" {
+		if msgType == "models" {
 			var modelsReq struct {
 				Provider string                  `json:"provider"`
 				Config   providers.ProviderConfig `json:"config,omitempty"`
@@ -492,7 +499,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Handle model-info (single model lookup)
-		if typeCheck.Type == "model-info" {
+		if msgType == "model-info" {
 			var modelInfoReq struct {
 				Provider string                  `json:"provider"`
 				Model    string                  `json:"model"`
@@ -556,7 +563,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Handle codex-login (browser OAuth flow)
-		if typeCheck.Type == "codex-login" {
+		if msgType == "codex-login" {
 			tokens, err := codexStartOAuth(s.ctx)
 				if err != nil {
 					body, _ := json.Marshal(map[string]interface{}{
@@ -586,7 +593,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Handle codex-login-device (headless device code flow)
-		if typeCheck.Type == "codex-login-device" {
+		if msgType == "codex-login-device" {
 			dc, err := codexStartDeviceCode(s.ctx)
 			if err != nil {
 				w.write(&Response{ID: 0, Status: 500, Error: &ErrorDetail{Code: "OAUTH_ERROR", Message: err.Error()}})
@@ -625,7 +632,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 				// Handle codex-login-status (check if logged in)
-		if typeCheck.Type == "codex-login-status" {
+		if msgType == "codex-login-status" {
 			tokens, err := codexTokens.Load()
 			if err != nil {
 				body, _ := json.Marshal(map[string]interface{}{
@@ -1110,6 +1117,25 @@ func classifyError(err error) string {
 		return "CONTEXT_EXCEEDED"
 	}
 	return "STREAM_ERROR"
+}
+
+// extractType returns the "type" field from raw JSON without a full unmarshal.
+func extractType(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return ""
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return ""
+	}
+	if v, ok := obj["type"]; ok {
+		s := string(v)
+		s = strings.TrimPrefix(s, "\"")
+		s = strings.TrimSuffix(s, "\"")
+		return s
+	}
+	return ""
 }
 
 func mustMarshal(v interface{}) json.RawMessage {

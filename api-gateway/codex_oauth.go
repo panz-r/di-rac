@@ -244,8 +244,6 @@ func codexStartOAuth(ctx context.Context) (*CodexAuthTokens, error) {
 		}
 		codeChan <- code
 		w.Write([]byte("Authentication successful! You can close this tab."))
-		// Shutdown server after receiving callback
-		go srv.Shutdown(context.Background())
 	})
 
 	go srv.Serve(listener)
@@ -266,7 +264,6 @@ func codexStartOAuth(ctx context.Context) (*CodexAuthTokens, error) {
 	case err := <-errChan:
 		return nil, err
 	case <-timeoutCtx.Done():
-		srv.Shutdown(context.Background())
 		return nil, fmt.Errorf("authentication timed out: %w", timeoutCtx.Err())
 	}
 }
@@ -481,49 +478,57 @@ func codexStartDeviceCode(ctx context.Context) (*CodexDeviceCode, error) {
 
 // codexPollDeviceCode polls for device code completion.
 func codexPollDeviceCode(ctx context.Context, dc *CodexDeviceCode) (*CodexAuthTokens, error) {
-	ticker := time.NewTicker(time.Duration(dc.Interval) * time.Second)
-	defer ticker.Stop()
+	interval := time.Duration(dc.Interval) * time.Second
+	backoff := time.Duration(0)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-ticker.C:
-			if time.Now().Unix() > dc.ExpiresAt {
-				return nil, fmt.Errorf("device code expired")
-			}
-
-			payload, _ := json.Marshal(map[string]string{
-				"device_auth_id": dc.deviceAuthID,
-				"user_code":      dc.UserCode,
-			})
-
-			resp, err := oauthHTTPClient.Post("https://auth.openai.com/api/accounts/deviceauth/token", "application/json", strings.NewReader(string(payload)))
-			if err != nil {
-				continue // retry on network errors
-			}
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-			resp.Body.Close()
-
-			if resp.StatusCode == 200 {
-				var result struct {
-					AuthorizationCode string `json:"authorization_code"`
-					CodeChallenge      string `json:"code_challenge"`
-					CodeVerifier       string `json:"code_verifier"`
-				}
-				if err := json.Unmarshal(body, &result); err != nil {
-					return nil, fmt.Errorf("parse device token response: %w", err)
-				}
-
-				// Exchange the authorization code for tokens
-				verifier := result.CodeVerifier
-				if verifier == "" {
-					verifier = dc.codeVerifier
-				}
-				return codexExchangeCode(result.AuthorizationCode, verifier, "")
-			}
-			// Non-200 means still pending, continue polling
+		case <-time.After(interval + backoff):
 		}
+
+		if time.Now().Unix() > dc.ExpiresAt {
+			return nil, fmt.Errorf("device code expired")
+		}
+
+		payload, _ := json.Marshal(map[string]string{
+			"device_auth_id": dc.deviceAuthID,
+			"user_code":      dc.UserCode,
+		})
+
+		resp, err := oauthHTTPClient.Post("https://auth.openai.com/api/accounts/deviceauth/token", "application/json", strings.NewReader(string(payload)))
+		if err != nil {
+			backoff = min(backoff+time.Second, 30*time.Second)
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+
+		if resp.StatusCode == 200 {
+			var result struct {
+				AuthorizationCode string `json:"authorization_code"`
+				CodeChallenge      string `json:"code_challenge"`
+				CodeVerifier       string `json:"code_verifier"`
+			}
+			if err := json.Unmarshal(body, &result); err != nil {
+				return nil, fmt.Errorf("parse device token response: %w", err)
+			}
+
+			verifier := result.CodeVerifier
+			if verifier == "" {
+				verifier = dc.codeVerifier
+			}
+			return codexExchangeCode(result.AuthorizationCode, verifier, "")
+		}
+
+		// 5xx: back off to avoid hammering a struggling server
+		if resp.StatusCode >= 500 {
+			backoff = min(backoff+2*time.Second, 30*time.Second)
+			continue
+		}
+		// 4xx/other: still pending, reset backoff
+		backoff = 0
 	}
 }
 
@@ -531,7 +536,9 @@ func codexPollDeviceCode(ctx context.Context, dc *CodexDeviceCode) (*CodexAuthTo
 
 func randomState() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
+	}
 	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(b)
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"sort"
 	"sync"
@@ -24,6 +25,41 @@ func init() {
 	transport.MaxIdleConnsPerHost = 10
 	transport.IdleConnTimeout = 90 * time.Second
 	transport.ResponseHeaderTimeout = 60 * time.Second
+	// Wrap DialContext to block connections to private/internal IPs at dial time.
+	// This prevents DNS rebinding attacks where DNS resolves to a public IP during
+	// pre-validation but switches to a private IP before the actual connection.
+	origDial := transport.DialContext
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+		}
+		// Allow localhost for local providers (Ollama, LM Studio, etc.)
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			if origDial != nil {
+				return origDial(ctx, network, addr)
+			}
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		// Resolve and check before dialing. This runs at connection time,
+		// closing the TOCTOU gap between pre-validation and actual dial.
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("DNS lookup for %q: %w", host, err)
+		}
+		for _, ip := range ips {
+			if ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsLoopback() {
+				return nil, fmt.Errorf("blocked connection to private/internal IP %s (host %q)", ip.IP, host)
+			}
+		}
+		// All IPs are safe — dial using the original dialer.
+		if origDial != nil {
+			return origDial(ctx, network, addr)
+		}
+		var d net.Dialer
+		return d.DialContext(ctx, network, addr)
+	}
 	SharedHTTPClient = &http.Client{
 		Transport: transport,
 		// No client-level Timeout: per-request context deadlines control
