@@ -19,7 +19,8 @@ static void ignore_sigpipe(void) {
     signal(SIGPIPE, SIG_IGN);
 }
 #define BUF_SIZE 65536
-#define SOCKET_PATH "/tmp/di-vrr-coord.sock"
+static const char *socket_path = "/tmp/di-vrr-coord.sock";
+static const char *bound_socket_path = NULL;
 
 typedef struct {
     int fd;
@@ -596,13 +597,19 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, handle_shutdown);
     signal(SIGUSR1, handle_stats);
 
+    const char *path_to_bind = socket_path;
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--persist") == 0 && i + 1 < argc) {
             strncpy(persist_path, argv[i + 1], sizeof(persist_path) - 1);
             trie_load_persist(lock_trie, persist_path);
             i++;
+        } else if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) {
+            path_to_bind = argv[i + 1];
+            i++;
         }
     }
+    bound_socket_path = path_to_bind;
 
     memset(all_clients, 0, sizeof(all_clients));
     listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -610,14 +617,15 @@ int main(int argc, char *argv[]) {
 
     int reuse = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
-    unlink(SOCKET_PATH);
+    strncpy(addr.sun_path, path_to_bind, sizeof(addr.sun_path) - 1);
+    unlink(path_to_bind);
 
     if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) { perror("bind"); exit(1); }
     if (listen(listen_fd, 128) == -1) { perror("listen"); exit(1); }
+
+    printf("[di-vrr] Coordination Daemon ready on %s\n", path_to_bind);
     
     int flags = fcntl(listen_fd, F_GETFL, 0);
     fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
@@ -627,7 +635,7 @@ int main(int argc, char *argv[]) {
     ev.data.fd = listen_fd;
     epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, listen_fd, &ev);
 
-    printf("[di-vrr] Coordination Daemon ready on %s\n", SOCKET_PATH);
+    printf("[di-vrr] Coordination Daemon ready on %s\n", bound_socket_path);
     if (persist_path[0]) printf("[di-vrr] Persistence enabled: %s\n", persist_path);
 
     while (1) {
@@ -637,7 +645,7 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "[di-vrr] CRITICAL: failed to save persistence on shutdown\n");
                 }
             }
-            unlink(SOCKET_PATH);
+            unlink(bound_socket_path);
             break;
         }
         int nfds = epoll_wait(g_epoll_fd, events, MAX_EVENTS, -1);

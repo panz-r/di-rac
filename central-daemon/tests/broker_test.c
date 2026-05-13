@@ -5,19 +5,32 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/stat.h>
 #include <assert.h>
 #include <errno.h>
 #include <poll.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
 
-#define SOCKET_PATH "/tmp/di-vrr-coord.sock"
+static char socket_path[128];
 
-int connect_to_broker() {
+static void make_test_socket_path(void) {
+    const char *tmp = getenv("TEST_SOCKET_DIR");
+    if (tmp && tmp[0]) {
+        snprintf(socket_path, sizeof(socket_path), "%s/di-vrr-test.sock", tmp);
+    } else {
+        snprintf(socket_path, sizeof(socket_path), "/tmp/di-vrr-test-%d.sock", (int)getpid());
+    }
+}
+
+int connect_to_broker(void) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
-    
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", socket_path);
+
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
         perror("connect");
         return -1;
@@ -208,7 +221,37 @@ void test_disconnect_fragmented() {
 int main() {
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("Starting Broker Integration Test...\n");
-    
+
+    make_test_socket_path();
+
+    /* Fork the daemon as a child process */
+    pid_t daemon_pid = fork();
+    if (daemon_pid < 0) {
+        perror("fork");
+        return 1;
+    }
+    if (daemon_pid == 0) {
+        /* Child: exec the daemon with test socket path */
+        char daemon_path[512];
+        snprintf(daemon_path, sizeof(daemon_path), "%s/divrr-central-daemon",
+                 getenv("BUILD_DIR") ? getenv("BUILD_DIR") : ".");
+        execlp(daemon_path, "divrr-central-daemon", "--socket", socket_path, (char *)NULL);
+        perror("execlp");
+        _exit(1);
+    }
+
+    /* Give the daemon time to bind and start listening */
+    usleep(500000);
+
+    /* Verify the daemon socket exists before running tests */
+    struct stat st;
+    if (stat(socket_path, &st) != 0) {
+        fprintf(stderr, "daemon socket %s not found after 0.5s\n", socket_path);
+        kill(daemon_pid, SIGKILL);
+        waitpid(daemon_pid, NULL, 0);
+        return 1;
+    }
+
     test_robustness();
     test_fragmented_json();
     test_oversized_payload();
@@ -241,6 +284,11 @@ int main() {
 
     close(c1);
     close(c2);
+
+    /* Shut down the daemon cleanly */
+    kill(daemon_pid, SIGTERM);
+    waitpid(daemon_pid, NULL, 0);
+    unlink(socket_path);
 
     printf("Broker Integration Test PASS\n");
     return 0;
