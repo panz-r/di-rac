@@ -706,9 +706,9 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
                 }
             }
         }
+        ht_remove(trie->waiting_registry, &fd, sizeof(int));
         free(list->nodes);
         free(list);
-        ht_remove(trie->waiting_registry, &fd, sizeof(int));
     }
 
     // 2. SECOND: Release all owned locks and grant to waiters.
@@ -768,9 +768,9 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
                 }
             }
         }
+        ht_remove(trie->fd_registry, &fd, sizeof(int));
         free(list->nodes);
         free(list);
-        ht_remove(trie->fd_registry, &fd, sizeof(int));
     }
 
     /* Cleanup transient settings */

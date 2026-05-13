@@ -456,6 +456,7 @@ void test_cleanup_massive_wakeups() {
     }
     assert(count == 1);
     for (size_t i = 0; i < count; i++) free(w_paths[i]);
+    trie_destroy(t);
     printf("PASS\n");
 }
 
