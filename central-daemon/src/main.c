@@ -36,6 +36,7 @@ static char persist_path[4096] = {0};
 static trie_t *lock_trie = NULL;
 static volatile sig_atomic_t shutdown_requested = 0;
 static int g_epoll_fd = -1;
+static int g_rejected_connections = 0;
 
 static client_ctx_t* ctx_by_fd(int fd);
 
@@ -158,7 +159,7 @@ static int broadcast_config_update(int sender_fd, const char *path, const char *
              "{\"status\": \"config_update\", \"path\": \"%s\", \"key\": \"%s\", \"value\": %s%s%s}\n",
              escaped_path, escaped_key,
              value ? "\"" : "", value ? escaped_value : "null", value ? "\"" : "");
-    if (needed < 0) {
+    if (needed < 0 || (size_t)needed > SIZE_MAX / 2) {
         free(escaped_path); free(escaped_key); free(escaped_value);
         return -1;
     }
@@ -443,10 +444,10 @@ static void process_single_object(client_ctx_t *ctx, const char *json, trie_t *t
 
         int needed = snprintf(NULL, 0,
                 "{\"status\": \"ok\", \"clients\": %zu, \"max_clients\": %zu, "
-                "\"trie_nodes\": %zu, \"locked_paths\": %zu, \"total_waiters\": %zu}\n",
+                "\"trie_nodes\": %zu, \"locked_paths\": %zu, \"total_waiters\": %zu, \"rejected\": %d}\n",
                 total_clients, (size_t)MAX_EVENTS,
-                trie_nodes, trie_locks, trie_waiters);
-        if (needed < 0) {
+                trie_nodes, trie_locks, trie_waiters, g_rejected_connections);
+        if (needed < 0 || (size_t)needed > SIZE_MAX / 2) {
             send_json(ctx, "{\"status\": \"error\", \"message\": \"format error\"}\n");
             return;
         }
@@ -457,9 +458,9 @@ static void process_single_object(client_ctx_t *ctx, const char *json, trie_t *t
         }
         snprintf(resp, (size_t)needed + 1,
                 "{\"status\": \"ok\", \"clients\": %zu, \"max_clients\": %zu, "
-                "\"trie_nodes\": %zu, \"locked_paths\": %zu, \"total_waiters\": %zu}\n",
+                "\"trie_nodes\": %zu, \"locked_paths\": %zu, \"total_waiters\": %zu, \"rejected\": %d}\n",
                 total_clients, (size_t)MAX_EVENTS,
-                trie_nodes, trie_locks, trie_waiters);
+                trie_nodes, trie_locks, trie_waiters, g_rejected_connections);
         send_json(ctx, resp);
         free(resp);
     } else {
@@ -570,7 +571,7 @@ static void send_granted_cb(int fd, const char *path, void *ctx) {
     int needed = snprintf(NULL, 0,
             "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
     char *resp = NULL;
-    if (needed >= 0) resp = malloc((size_t)needed + 1);
+    if (needed >= 0 && (size_t)needed <= SIZE_MAX / 2) resp = malloc((size_t)needed + 1);
     if (!resp) {
         free(escaped);
         send_json(c, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
@@ -625,8 +626,6 @@ int main(int argc, char *argv[]) {
     if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) { perror("bind"); exit(1); }
     if (listen(listen_fd, 128) == -1) { perror("listen"); exit(1); }
 
-    printf("[di-vrr] Coordination Daemon ready on %s\n", path_to_bind);
-    
     int flags = fcntl(listen_fd, F_GETFL, 0);
     fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
 
@@ -672,10 +671,12 @@ int main(int argc, char *argv[]) {
                 if (slot == -1) {
                     /* Can't accept — try a non-blocking write of an error message first */
                     static const char rej[] = "{\"status\": \"error\", \"message\": \"server busy\"}\n";
-                    write(client_fd, rej, sizeof(rej) - 1);
+                    ssize_t _r = write(client_fd, rej, sizeof(rej) - 1);
+                    (void)_r;
                     close(client_fd);
                     free(ctx);
                     fprintf(stderr, "[di-vrr] rejected connection: client limit reached (%d)\n", MAX_EVENTS);
+                    g_rejected_connections++;
                     continue;
                 }
                 all_clients[slot] = ctx;
