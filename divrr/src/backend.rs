@@ -65,7 +65,7 @@ impl DiCoreBackend {
         let (event_tx, event_rx) = mpsc::channel(256);
 
         // Background task: read NDJSON lines from di-core stdout
-        let framed = FramedRead::new(stdout, LinesCodec::new());
+        let framed = FramedRead::new(stdout, LinesCodec::new_with_max_length(10 * 1024 * 1024));
         tokio::spawn(async move {
             let mut stream = framed;
             while let Some(result) = stream.next().await {

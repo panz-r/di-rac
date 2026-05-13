@@ -596,7 +596,7 @@ impl App {
                         self.settings.as_mut().unwrap().cancel_secret_edit();
                     } else if s.selector_open {
                         self.settings.as_mut().unwrap().cancel_selector();
-                    } else if s.pending_async.is_some() {
+                    } else if s.saving {
                         // Don't close while async save is in flight
                     } else {
                         self.settings = None;
@@ -806,27 +806,11 @@ impl App {
             }
             KeyCode::BackTab => {
                 self.auto_approve = !self.auto_approve;
-                if self.auto_approve {
-                    // Flush all queued approvals
-                    let queue = std::mem::take(&mut self.input_queue);
-                    for (agent_id, pending) in queue {
-                        if matches!(pending, PendingInput::Approval { .. }) {
-                            self.pending_messages.push(FrontendMessage::ApprovalResponse {
-                                agent_id,
-                                approved: true,
-                            });
-                            if let Some(agent) = self.find_agent_mut(&agent_id) {
-                                agent.pending_input = None;
-                                agent.status = AgentStatus::Running;
-                            }
-                        } else {
-                            self.input_queue.push((agent_id, pending));
-                        }
-                    }
-                    self.status_message = Some("Auto-approve: ON (queued approved)".to_string());
+                self.status_message = Some(if self.auto_approve {
+                    "Auto-approve: ON (future approvals)".to_string()
                 } else {
-                    self.status_message = Some("Auto-approve: OFF".to_string());
-                }
+                    "Auto-approve: OFF".to_string()
+                });
                 None
             }
             KeyCode::Char(' ') => {
@@ -1026,6 +1010,15 @@ impl App {
                 if path.is_empty() {
                     return None;
                 }
+
+                // Reject path traversal
+                if path.split(std::path::is_separator).any(|c| c == "..") {
+                    self.status_message = Some("Save failed: path must not contain '..'".to_string());
+                    self.save_dialog = None;
+                    self.mode = Mode::Normal;
+                    return None;
+                }
+
                 let text = dialog.block_text.clone();
                 let was_warned = dialog.exists_warned;
 

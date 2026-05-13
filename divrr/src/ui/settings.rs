@@ -195,7 +195,12 @@ pub fn render(frame: &mut Frame, app: &App) {
         String::new()
     };
 
-    let status_text = if settings.saved && settings.error.is_none() {
+    let status_text = if settings.saving {
+        Line::from(Span::styled(
+            format!(" Saving...\u{2026}{}", scroll_hint),
+            Style::default().fg(theme.warning),
+        ))
+    } else if settings.saved && settings.error.is_none() {
         Line::from(Span::styled(
             format!(" Saved! Press Esc to close{}", scroll_hint),
             theme.success_style(),

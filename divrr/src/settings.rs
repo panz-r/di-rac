@@ -314,6 +314,7 @@ pub struct SettingsState {
 
     // UI state
     pub saved: bool,
+    pub saving: bool,
     pub error: Option<String>,
     pub gateway_available: bool,
 
@@ -432,6 +433,7 @@ impl SettingsState {
             selector_filter: String::new(),
             selector_filtered_indices: Vec::new(),
             saved: false,
+            saving: false,
             error: None,
             gateway_available: false,
             secret_edit_open: false,
@@ -494,6 +496,7 @@ impl SettingsState {
 
     /// Apply a save result. Messages are sent synchronously by save(); this only applies the error/status.
     pub fn apply_saved(&mut self, result: SettingsLoadResult) {
+        self.saving = false;
         if let SettingsLoadResult::Saved { error } = result {
             let ok = error.is_none();
             self.error = error;
@@ -865,7 +868,7 @@ impl SettingsState {
     /// Save settings and return FrontendMessages to send to di-core.
     /// Gateway push and validation happen asynchronously via pending_async.
     pub fn save(&mut self) -> Vec<crate::message::FrontendMessage> {
-        if self.loading || self.pending_async.is_some() {
+        if self.loading || self.saving {
             return Vec::new();
         }
         if self.selector_open {
@@ -915,6 +918,7 @@ impl SettingsState {
         }
 
         // Defer gateway push + validation to background
+        self.saving = true;
         self.pending_async = Some(PendingAsyncOp::Save { all_settings: self.all_settings.clone() });
 
         messages
