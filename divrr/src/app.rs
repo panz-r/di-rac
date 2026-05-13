@@ -472,8 +472,9 @@ impl App {
             Mode::Settings => {
                 if let Some(s) = &mut self.settings {
                     if s.secret_edit_open {
-                        s.secret_edit_buffer.insert_str(s.secret_edit_cursor, text);
-                        s.secret_edit_cursor += text.len();
+                        let filtered: String = text.chars().filter(|c| !c.is_control()).collect();
+                        s.secret_edit_buffer.insert_str(s.secret_edit_cursor, &filtered);
+                        s.secret_edit_cursor += filtered.len();
                     }
                 }
             }
