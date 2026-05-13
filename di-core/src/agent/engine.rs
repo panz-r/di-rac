@@ -88,33 +88,138 @@ fn wrap_in_envelope(content: &str, tool_name: &str, is_cached: bool, cumulative_
         let clean = severity_re.replace(&body, "").trim().to_string();
         let code = if clean.contains("not found") || clean.contains("could not be found") { "ENOENT" }
             else if clean.contains("permission") || clean.contains("blocked") { "EPERM" }
+            else if clean.contains("locked") { "ELOCK" }
             else if clean.contains("anchor") { "ANCHOR_MISS" }
             else if clean.contains("argument") || clean.contains("parameter") { "EINVAL" }
             else { "TOOL_ERROR" };
         let msg = if clean.len() > 300 { format!("{}...", &clean[..clean.floor_char_boundary(300)]) } else { clean.clone() };
-        return format!("ERROR | {} | {} | tokens:{}", code, msg, tokens);
+        let hint = get_error_hint(code, &msg);
+        let hint_truncated = if hint.len() > 200 { &hint[..hint.floor_char_boundary(200)] } else { hint };
+        return format!("ERROR | {} | {} | hint:{} | tokens:{}", code, msg, hint_truncated, tokens);
     }
+
+    let cumulative_field = format!(" | cumulative:{}", cumulative_tokens);
 
     if is_truncated {
         let hint = "Output truncated. Use --range or --detail for targeted reads.";
-        return format!("TRUNCATED | lines:{} | hint:{} | tokens:{}{}\n{}", lines, hint, tokens, cached_field, content);
+        return format!("TRUNCATED | lines:{} | hint:{} | tokens:{}{}{}\n{}", lines, hint, tokens, cached_field, cumulative_field, content);
     }
 
     if is_empty {
         let hint = match tool_name {
+            "read" => "No definitions found. File may be empty or unsupported type.",
             "search" => "No matches. Try broader pattern, different path, or --context for surrounding lines.",
             "symbols" => "No symbol matches. Try different pattern, --kind function, or use search for text patterns.",
             "repo" => "No results. Try different path or --detail files.",
-            _ => "No results found.",
+            _ => "No results found. Try different parameters.",
         };
-        return format!("EMPTY | hint:{} | tokens:{}{}", hint, tokens, cached_field);
+        return format!("EMPTY | hint:{} | tokens:{}{}{}", hint, tokens, cached_field, cumulative_field);
     }
 
     // Normal success
     let lines_field = if lines > 1 { format!(" | lines:{}", lines) } else { String::new() };
-    let cumulative_field = format!(" | cumulative:{}", cumulative_tokens);
     let reads_field = if read_count > 0 { format!(" | reads:{}", read_count) } else { String::new() };
     format!("OK | tokens:{}{}{}{}{}\n{}", tokens, lines_field, cached_field, cumulative_field, reads_field, content)
+}
+
+/// Error-specific hints matching TS ToolHints.getErrorHint.
+/// Returns a suggestion string for the given error code or message content.
+fn get_error_hint(code: &str, message: &str) -> &'static str {
+    match code {
+        "ENOENT" | "io.file.notFound" => "File not found. Try: repo <parent-dir> to list files, or search --pattern <name> to find it.",
+        "EPERM" | "io.file.permissionDenied" => "Permission denied. Check file permissions or use a different path.",
+        "ELOCK" | "io.file.locked" => "File locked by another process. Wait and retry.",
+        "ANCHOR_MISS" | "anchor.notFound" => "Anchor not found. Re-read the file (read --detail outline) to get fresh anchors.",
+        "anchor.contentMismatch" => "Content at anchor has changed. Re-read the file before editing.",
+        "anchor.invalidFormat" => "Invalid anchor format. Use hash-anchored lines from read --detail outline.",
+        "edit.multiFileConflict" => "Multi-file conflict. Edit each file separately.",
+        "EINVAL" | "validation.missingArgument" | "validation.invalidInput" => "Invalid argument. Check parameter types and retry.",
+        "lsp.timeout" => "Language server timed out. Retry or use a non-AST approach.",
+        "lsp.connectionLost" => "Language server connection lost. Retry — it may recover.",
+        "tool.internalError" => "Internal error. Retry once, or try an alternative approach.",
+        _ => {
+            if message.contains("not found") { "File not found. Try: repo <parent-dir> to list files, or search --pattern <name>." }
+            else if message.contains("anchor") { "Anchor not found. Re-read the file (read --detail outline) to get fresh anchors." }
+            else { "Tool execution failed. Try a different approach or check your inputs." }
+        }
+    }
+}
+
+/// Short description for tool results, matching TS handler.getDescription().
+fn tool_description(tool_name: &str) -> &'static str {
+    match tool_name {
+        "read" => "Read file",
+        "write" => "Write file",
+        "edit" => "Edit file",
+        "bash" => "Bash command",
+        "search" => "Search files",
+        "repo" => "Repo listing",
+        "symbols" => "Symbols",
+        "compact" => "Compact",
+        "ask" => "Ask",
+        "done" => "Done",
+        "plan" => "Plan",
+        "task" => "Task",
+        "tools" => "Tool search",
+        "get_outputs" => "Get outputs",
+        _ => "Tool",
+    }
+}
+
+/// Score tool call ambiguity (0.0–1.0) matching TS AmbiguityScorer.
+/// At >0.4: append guidance hint. At >0.6: retry recommended.
+fn score_ambiguity(
+    tool_name: &str,
+    args: &serde_json::Value,
+    file_context: &crate::agent::file_context::FileContextTracker,
+) -> f64 {
+    let mut score = 0.0f64;
+    match tool_name {
+        "read" => {
+            let has_range = args.get("range").or(args.get("start_line")).is_some();
+            let has_detail = args.get("detail").is_some();
+            let path = args.get("path").and_then(|v| v.as_str());
+            if !has_range && !has_detail {
+                if let Some(p) = path {
+                    let read_count = file_context.files_read.get(p).map(|s| s.read_count).unwrap_or(0);
+                    if read_count > 3 {
+                        score += 0.3;
+                    }
+                }
+            }
+        }
+        "search" => {
+            let pattern = args.get("pattern")
+                .or_else(|| args.get("regex"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if pattern.is_empty() {
+                score += 0.5;
+            } else if pattern.len() <= 2 {
+                score += 0.3;
+            }
+        }
+        "edit" => {
+            let has_anchor = args.get("anchor").is_some();
+            if !has_anchor {
+                score += 0.4;
+            }
+            let path = args.get("path").and_then(|v| v.as_str());
+            if let Some(p) = path {
+                if !file_context.files_read.contains_key(p) {
+                    score += 0.2;
+                }
+            }
+        }
+        "write" => {
+            let has_content = args.get("content").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+            if !has_content {
+                score += 0.4;
+            }
+        }
+        _ => {}
+    }
+    score.min(1.0)
 }
 
 /// Build exploration hints matching TS ToolHints.getSuccessHint.
@@ -170,6 +275,10 @@ pub struct AgentEngine {
     pub abort: Arc<AtomicBool>,
     pub consecutive_mistake_count: usize,
     pub max_consecutive_mistakes: usize,
+    pub write_missing_content_count: usize,
+    pub circuit_breakers: crate::agent::recovery::CircuitBreakerRegistry,
+    pub stagnation_detector: std::sync::Mutex<crate::agent::recovery::StagnationDetector>,
+    pub recovery_telemetry: std::sync::Arc<crate::agent::recovery::RecoveryTelemetry>,
     pub request_id_counter: i64,
     pub tool_call_counter: i64,
     pub frontend_rx: Option<mpsc::Receiver<FrontendMessage>>,
@@ -240,6 +349,10 @@ impl AgentEngine {
             abort: Arc::new(AtomicBool::new(false)),
             consecutive_mistake_count: 0,
             max_consecutive_mistakes: 5,
+            write_missing_content_count: 0,
+            circuit_breakers: crate::agent::recovery::CircuitBreakerRegistry::new(),
+            stagnation_detector: std::sync::Mutex::new(crate::agent::recovery::StagnationDetector::new()),
+            recovery_telemetry: std::sync::Arc::new(crate::agent::recovery::RecoveryTelemetry::new()),
             request_id_counter: 0,
             tool_call_counter: 0,
             frontend_rx: Some(frontend_rx),
@@ -1274,8 +1387,52 @@ impl AgentEngine {
             }
 
             eprintln!("[di-core] run_turn: executing tool {} ({})", ti, tool.name);
+
+            // Circuit breaker: skip execution if tool circuit is open
+            if !self.circuit_breakers.allow_execution(&tool_name) {
+                self.recovery_telemetry.blocked_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let msg = format!(
+                    "[Circuit breaker open for '{}'. Too many consecutive failures. Waiting before retry.]",
+                    tool_name
+                );
+                self.trajectory.add_tool_result(
+                    json!({"status": "error", "error": msg}),
+                    50, ti, ToolMessageMeta::default(),
+                );
+                continue;
+            }
+
             let exec_result = self.tool_executor.execute(tool, &mut self.coordinator).await;
             eprintln!("[di-core] run_turn: tool {} done ({})", ti, if exec_result.is_ok() { "ok" } else { "err" });
+
+            // Record success/failure for circuit breaker
+            if exec_result.is_ok() {
+                let result_ref = exec_result.as_ref().unwrap();
+                let is_error = result_ref.get("status").and_then(|v| v.as_str()) == Some("error");
+                if is_error {
+                    self.circuit_breakers.record_failure(&tool_name);
+                    self.recovery_telemetry.intercepted_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    self.circuit_breakers.record_success(&tool_name);
+                }
+            } else {
+                self.circuit_breakers.record_failure(&tool_name);
+                self.recovery_telemetry.escalated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+
+            // Stagnation detection
+            if let Ok(ref result_val) = exec_result {
+                let args_hash = crate::util::fast_hash(result_val.to_string().as_bytes());
+                if let Ok(mut det) = self.stagnation_detector.lock() {
+                    if let Some(warning) = det.record(&tool_name, &args_hash) {
+                        self.trajectory.add_message(
+                            Role::User,
+                            json!(format!("[SYSTEM: STAGNATION] {}", warning)),
+                            30,
+                        );
+                    }
+                }
+            }
 
             // Track file context after execution
             // - search/repo/symbols: metadata observation only (no stale detection)
@@ -1496,6 +1653,24 @@ impl AgentEngine {
                                     }
                                 }
                             }
+
+                            // Bash mistake tracking: non-zero exit increments mistakes, zero resets.
+                            // Empty command also increments.
+                            if let Some(s) = result.as_str() {
+                                let exit_code = s.strip_prefix("exit:")
+                                    .and_then(|rest| rest.lines().next())
+                                    .and_then(|line| line.trim().parse::<i32>().ok());
+                                match exit_code {
+                                    Some(0) => self.consecutive_mistake_count = 0,
+                                    Some(_) => self.consecutive_mistake_count += 1,
+                                    None => {
+                                        // exit:running or parse failure — check for empty command
+                                        if bash_command.as_ref().map_or(true, |c| c.trim().is_empty()) {
+                                            self.consecutive_mistake_count += 1;
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         // --verify: re-read the target file after write/edit to confirm changes
@@ -1521,6 +1696,31 @@ impl AgentEngine {
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        // Progressive write error: escalate guidance on repeated missing-content failures
+                        if tool_name == "write" {
+                            let error_str = result.get("error").and_then(|v| v.as_str()).unwrap_or("");
+                            let is_missing_content = result.get("status").and_then(|v| v.as_str()) == Some("error")
+                                && error_str.contains("Missing content");
+                            if is_missing_content {
+                                self.write_missing_content_count += 1;
+                                let guidance = match self.write_missing_content_count {
+                                    1 => "Tip: Use --content flag to provide file content, e.g. write path --content 'your content'.".to_string(),
+                                    2 => "You've called write without content twice. The write tool requires a --content argument with the file's full content.".to_string(),
+                                    _ => format!("Repeated write without content ({} times). Each write call MUST include --content with the complete file text.", self.write_missing_content_count),
+                                };
+                                if let Some(obj) = result.as_object_mut() {
+                                    if let Some(error_val) = obj.get_mut("error") {
+                                        if let Some(e) = error_val.as_str() {
+                                            let updated = format!("{}\n\n{}", e, guidance);
+                                            *error_val = serde_json::Value::String(updated);
+                                        }
+                                    }
+                                }
+                            } else if result.get("status").is_none() || result.get("status").and_then(|v| v.as_str()) != Some("error") {
+                                self.write_missing_content_count = 0;
                             }
                         }
 
@@ -1560,7 +1760,7 @@ impl AgentEngine {
                         let is_cached = result_str.starts_with("\"[Cache Hit]");
                         // Apply envelope wrapping to content string results
                         // Error results carry <tool_error> XML in the "error" field
-                        let mut content_for_envelope = if result.get("status").and_then(|v| v.as_str()) == Some("error") {
+                        let inner = if result.get("status").and_then(|v| v.as_str()) == Some("error") {
                             // Error result: extract the error field which contains <tool_error> XML
                             result.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string()
                         } else if let Some(s) = result.as_str() {
@@ -1568,9 +1768,22 @@ impl AgentEngine {
                         } else {
                             result_str.clone()
                         };
+                        // Prefix with tool description matching TS format
+                        let desc = tool_description(&tool_name);
+                        let mut content_for_envelope = format!("{} Result:\n{}", desc, inner);
                         // Append exploration hints for read/search/repo/symbols
                         if let Some(hint) = build_exploration_hint(&tool_name, path_arg.as_deref()) {
                             content_for_envelope.push_str(&hint);
+                        }
+                        // Append ambiguity hint if score > 0.4
+                        if let Some(tc) = tools.get(ti) {
+                            let amb_score = score_ambiguity(&tool_name, &tc.args, &self.file_context);
+                            if amb_score > 0.4 {
+                                content_for_envelope.push_str(&format!(
+                                    "\n[HINT] This call had high ambiguity ({:.2}). Consider using --clarify next time.",
+                                    amb_score
+                                ));
+                            }
                         }
                         let read_count = self.file_context.files_read.len();
                         let enveloped = wrap_in_envelope(&content_for_envelope, &tool_name, is_cached, self.cumulative_tokens, read_count);

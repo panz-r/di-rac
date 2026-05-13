@@ -4,3 +4,4 @@ pub mod parser;
 pub mod file_context;
 pub mod environment;
 pub mod metrics;
+pub mod recovery;

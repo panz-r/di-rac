@@ -593,7 +593,7 @@ impl ToolExecutor {
         let line_count = read_file::count_lines(&content);
 
         if dry_run {
-            let mut output = format!("Would write {} lines to {}", line_count, path);
+            let mut output = format!("Would write {} lines to {}.", line_count, path);
             if !security_violations.is_empty() {
                 output.push_str(&format!("\n[SECURITY_CONSTRAINTS]\n{}",
                     serde_json::to_string(&security_violations).unwrap_or_default()));
@@ -615,9 +615,12 @@ impl ToolExecutor {
 
         tokio::fs::write(path, content).await?;
 
-        let mut output = format!("File updated: {} ({} lines)", path, line_count);
+        let mut output = format!(
+            "The content was successfully saved to {}.\n\nIMPORTANT: Always base your future edit operations on this updated file state. (If you need to verify the current file content for a future edit, you may use the read tool.)",
+            path
+        );
         if !security_violations.is_empty() {
-            output.push_str(&format!("\n[SECURITY_CONSTRAINTS]\n{}",
+            output.push_str(&format!("\n\n[SECURITY_CONSTRAINTS]\n{}",
                 serde_json::to_string(&security_violations).unwrap_or_default()));
         }
         Ok(json!(output))
