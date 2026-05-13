@@ -205,11 +205,27 @@ fn parse_read(cmd: &str) -> Value {
     if let Some(detail) = get_flag(&parsed.flags, "detail") {
         result["detail"] = json!(detail);
     }
+    // Range can be specified as --range, --start-line/--end-line, or --ranges
     if let Some(range) = get_flag(&parsed.flags, "range") {
         result["range"] = json!(range);
     }
+    if let Some(start) = get_flag(&parsed.flags, "start-line") {
+        result["start_line"] = json!(start);
+    }
+    if let Some(end) = get_flag(&parsed.flags, "end-line") {
+        result["end_line"] = json!(end);
+    }
+    if let Some(ranges) = get_flag(&parsed.flags, "ranges") {
+        result["ranges"] = json!(ranges);
+    }
     if let Some(section) = get_flag(&parsed.flags, "section") {
         result["section"] = json!(section);
+    }
+    if let Some(page) = get_flag(&parsed.flags, "page") {
+        result["page"] = json!(page);
+    }
+    if let Some(max_tokens) = get_flag(&parsed.flags, "max-tokens") {
+        result["max_tokens"] = json!(max_tokens);
     }
     result
 }
@@ -274,7 +290,7 @@ fn parse_search(cmd: &str) -> Value {
         result["paths"] = json!(path);
     }
     if let Some(ctx) = get_flag(&parsed.flags, "context") {
-        result["context_lines"] = json!(ctx.parse::<u64>().unwrap_or(3));
+        result["context_lines"] = json!(ctx.parse::<u64>().unwrap_or(0));
     }
     if let Some(fp) = get_flag(&parsed.flags, "file-pattern") {
         result["file_pattern"] = json!(fp);

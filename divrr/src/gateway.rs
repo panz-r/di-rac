@@ -79,10 +79,11 @@ pub fn find_gateway() -> Option<String> {
         // Same directory as the running binary
         std::env::current_exe().ok()
             .and_then(|exe| exe.parent().map(|p| p.join("api-gateway").to_string_lossy().into_owned())),
-        // dist/ directory
+        // Current working directory dist/
+        Some(format!("{}/dist/api-gateway",
+            std::env::current_dir().unwrap_or_default().to_string_lossy())),
+        // Home dist/
         Some(format!("{}/dist/api-gateway", std::env::var("HOME").unwrap_or_else(|_| "/root".into()))),
-        // Project dist
-        Some("/w/di-rac/dist/api-gateway".into()),
         // In PATH
         which("api-gateway"),
     ];

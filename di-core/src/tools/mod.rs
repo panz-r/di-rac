@@ -193,7 +193,7 @@ impl ToolCoordinator {
         executor: &ToolExecutor,
     ) -> Option<serde_json::Value> {
         let s = result.to_string();
-        if !s.contains("[truncated]") && !s.contains("... [Content reduced") {
+        if !s.contains("[truncated]") && !s.contains("[Content reduced") {
             return None;
         }
 
@@ -214,11 +214,20 @@ impl ToolCoordinator {
         }
 
         args_map.remove("retry");
-        // Remove CLI command string so execute_raw uses structured fields instead of re-parsing
         args_map.remove("command");
         let degraded = ToolCall { name: call.name.clone(), args };
         match executor.execute_raw(&degraded).await {
-            ToolResponse::Success { data, .. } => Some(data),
+            ToolResponse::Success { data, .. } => {
+                // Append note so LLM knows degradation occurred
+                if let serde_json::Value::String(s) = &data {
+                    Some(serde_json::Value::String(format!(
+                        "{}\n[Auto-corrected: output was truncated, degraded params applied]",
+                        s
+                    )))
+                } else {
+                    Some(data)
+                }
+            }
             _ => None,
         }
     }
@@ -325,7 +334,7 @@ impl ToolExecutor {
                             Ok(content) => ToolResponse::ok(json!({
                                 "file": filename,
                                 "content": content,
-                                "lines": content.lines().count(),
+                                "lines": read_file::count_lines(&content),
                             })),
                             Err(e) => ToolResponse::fail(
                                 ToolErrorCode::IoFileNotFound,
@@ -361,26 +370,129 @@ impl ToolExecutor {
     }
 
     async fn read_file(&self, call: &ToolCall) -> Result<serde_json::Value> {
-        let path = call.args.get("path").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing path argument"))?;
+        // Multi-file support: accept `paths` array or single `path`
+        let paths: Vec<String> = if let Some(paths_val) = call.args.get("paths") {
+            match paths_val {
+                serde_json::Value::Array(arr) => {
+                    arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                }
+                serde_json::Value::String(s) => {
+                    s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+                }
+                _ => vec![],
+            }
+        } else if let Some(path) = call.args.get("path").and_then(|v| v.as_str()) {
+            vec![path.to_string()]
+        } else {
+            return Err(anyhow!("Missing path argument"));
+        };
 
+        if paths.is_empty() {
+            return Err(anyhow!("Missing path argument"));
+        }
+
+        // Single-file fast path (preserves existing behavior)
+        if paths.len() == 1 {
+            return self.read_single_file(&paths[0], call).await;
+        }
+
+        // Multi-file: process each and collect results
+        let mut results = Vec::new();
+        for p in &paths {
+            match self.read_single_file(p, call).await {
+                Ok(result) => results.push(result),
+                Err(e) => {
+                    results.push(json!({
+                        "_read_raw": true,
+                        "path": p,
+                        "detail": "full",
+                        "error": format!("Error reading file: {}", e)
+                    }));
+                }
+            }
+        }
+
+        Ok(json!({ "_read_raw": true, "_multi_file": true, "results": results }))
+    }
+
+    async fn read_single_file(&self, path: &str, call: &ToolCall) -> Result<serde_json::Value> {
+        // Handle artifact:// references — retrieve from store
         if let Some(artifact_id) = path.strip_prefix("artifact://") {
             return Err(anyhow!("Artifact references are no longer supported: {}", artifact_id));
         }
 
         let detail = call.args.get("detail").and_then(|v| v.as_str());
+        let is_md = read_file::is_markdown(path);
 
-        // Read raw content from disk for hash computation and auto-detail
-        let content = tokio::fs::read_to_string(path)
-            .await
+        // Read raw content from disk
+        let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow!("Failed to read {}: {}", path, e))?;
         let file_size = content.len();
-        let total_lines = content.lines().count();
+        let total_lines = read_file::count_lines(&content);
 
-        let effective_detail = read_file::auto_detail(file_size, detail);
+        let has_range = call.args.get("range").is_some() || call.args.get("ranges").is_some();
+        let has_page = call.args.get("page").is_some();
+        let has_section = call.args.get("section").is_some();
+        let effective_detail = read_file::auto_detail(file_size, detail, has_range, has_page, has_section);
 
+        // Markdown outline/hint: skip analyzer, handle inline
+        if is_md && matches!(effective_detail.as_str(), "outline" | "hint") {
+            let md_output = match effective_detail.as_str() {
+                "hint" => read_file::format_markdown_hint(&content),
+                _ => read_file::format_markdown_outline(&content),
+            };
+            return Ok(json!({
+                "_read_raw": true,
+                "path": path,
+                "detail": effective_detail,
+                "_markdown": true,
+                "md_output": md_output,
+            }));
+        }
+
+        // Section jump: resolve symbol handle to line range
+        if let Some(section) = call.args.get("section").and_then(|v| v.as_str()) {
+            let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+                command: "outline".to_string(),
+                file: Some(path.to_string()),
+                content: None,
+                language: None,
+                query: None,
+            }).await?;
+            if resp.ok {
+                if let Some(symbols) = resp.data.get("symbols").and_then(|s| s.as_array()) {
+                    for sym in symbols {
+                        let handle = sym.get("handle").and_then(|v| v.as_str()).unwrap_or("");
+                        if handle == section {
+                            // Analyzer returns 0-based line numbers; convert to 1-based
+                            let start = sym.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0) as usize + 1;
+                            let end = sym.get("end_line").and_then(|v| v.as_u64()).unwrap_or(start as u64 - 1) as usize + 1;
+                            return Ok(json!({
+                                "_read_raw": true,
+                                "path": path,
+                                "detail": effective_detail,
+                                "content": content,
+                                "lines": total_lines,
+                                "range": json!([start, end]),
+                                "_section": section,
+                            }));
+                        }
+                    }
+                }
+            }
+            return Ok(json!({
+                "_read_raw": true,
+                "path": path,
+                "detail": effective_detail,
+                "content": content,
+                "lines": total_lines,
+                "_section_not_found": section,
+            }));
+        }
+
+        // Analyzer-based detail levels
         match effective_detail.as_str() {
-            "outline" => {
+            "outline" | "hint" => {
                 let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
                     command: "outline".to_string(),
                     file: Some(path.to_string()),
@@ -389,7 +501,7 @@ impl ToolExecutor {
                     query: None,
                 }).await?;
                 if resp.ok {
-                    Ok(json!({ "_read_raw": true, "path": path, "detail": "outline", "analyzer_data": resp.data }))
+                    Ok(json!({ "_read_raw": true, "path": path, "detail": effective_detail, "analyzer_data": resp.data }))
                 } else {
                     Err(anyhow!("Analyzer outline failed: {:?}", resp.data))
                 }
@@ -408,9 +520,51 @@ impl ToolExecutor {
                     Err(anyhow!("Analyzer skeleton failed: {:?}", resp.data))
                 }
             }
-            _ => {
-                // full/preview: return raw content for engine-side formatting
+            "preview" => {
                 let range = parse_range(call);
+                let ranges = call.args.get("ranges").and_then(|v| read_file::parse_ranges(v));
+                let page = call.args.get("page").and_then(|v| v.as_str()).map(String::from);
+
+                let analyzer_data: Option<serde_json::Value> = match self.analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
+                    command: "outline".to_string(),
+                    file: Some(path.to_string()),
+                    content: None,
+                    language: None,
+                    query: None,
+                }).await {
+                    Ok(resp) if resp.ok => Some(resp.data),
+                    _ => None,
+                };
+
+                Ok(json!({
+                    "_read_raw": true,
+                    "path": path,
+                    "detail": "preview",
+                    "content": content,
+                    "lines": total_lines,
+                    "range": range.map(|(s, e)| json!([s, e])),
+                    "ranges": ranges.map(|r| r.iter().map(|(s, e)| json!([s, e])).collect::<Vec<_>>()),
+                    "page": page,
+                    "analyzer_data": analyzer_data,
+                }))
+            }
+            _ => {
+                let range = parse_range(call);
+                let ranges = call.args.get("ranges").and_then(|v| read_file::parse_ranges(v));
+                let page = call.args.get("page").and_then(|v| v.as_str()).map(String::from);
+
+                // Fetch analyzer data for budget degradation cascade (full→skeleton/outline/hint)
+                let analyzer_data: Option<serde_json::Value> = match self.analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
+                    command: "outline".to_string(),
+                    file: Some(path.to_string()),
+                    content: None,
+                    language: None,
+                    query: None,
+                }).await {
+                    Ok(resp) if resp.ok => Some(resp.data),
+                    _ => None,
+                };
+
                 Ok(json!({
                     "_read_raw": true,
                     "path": path,
@@ -418,6 +572,9 @@ impl ToolExecutor {
                     "content": content,
                     "lines": total_lines,
                     "range": range.map(|(s, e)| json!([s, e])),
+                    "ranges": ranges.map(|r| r.iter().map(|(s, e)| json!([s, e])).collect::<Vec<_>>()),
+                    "page": page,
+                    "analyzer_data": analyzer_data,
                 }))
             }
         }
@@ -457,7 +614,7 @@ impl ToolExecutor {
         Ok(json!({
             "path": path,
             "status": "success",
-            "lines": content.lines().count()
+            "lines": read_file::count_lines(&content)
         }))
     }
 
@@ -502,11 +659,10 @@ fn parse_range(call: &ToolCall) -> Option<(usize, usize)> {
         if parts.len() == 2 {
             let start: usize = parts[0].parse().ok()?;
             let end: usize = parts[1].parse().ok()?;
-            if start >= 1 && end >= start {
-                Some((start, end))
-            } else {
-                None
-            }
+            if start >= 1 && start <= end { Some((start, end)) } else { None }
+        } else if parts.len() == 1 {
+            let n: usize = parts[0].parse().ok()?;
+            if n >= 1 { Some((n, n)) } else { None }
         } else {
             None
         }

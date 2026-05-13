@@ -26,7 +26,8 @@ impl FileContextTracker {
         }
     }
 
-    /// Record that a file was read, with a hash of its content.
+    /// Record the content hash for a file read. The read counter should
+    /// already have been incremented via pre_increment_read.
     pub fn mark_read(&mut self, path: &str, content_hash: &str) {
         let entry = self.files_read.entry(path.to_string())
             .or_insert(FileReadState {
@@ -36,8 +37,22 @@ impl FileContextTracker {
                 edited_since_read: false,
             });
         entry.content_hash = content_hash.to_string();
-        entry.read_count += 1;
         entry.edited_since_read = false;
+        entry.last_read_event_id = Uuid::new_v4();
+    }
+
+    /// Pre-increment read count before formatting, so auto-expand logic
+    /// sees the correct count. mark_read will not double-increment if
+    /// pre_increment was already called for this read.
+    pub fn pre_increment_read(&mut self, path: &str) {
+        let entry = self.files_read.entry(path.to_string())
+            .or_insert(FileReadState {
+                content_hash: String::new(),
+                read_count: 0,
+                last_read_event_id: Uuid::nil(),
+                edited_since_read: false,
+            });
+        entry.read_count += 1;
         entry.last_read_event_id = Uuid::new_v4();
     }
 

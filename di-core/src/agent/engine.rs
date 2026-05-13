@@ -180,33 +180,154 @@ impl AgentEngine {
     /// Returns None on timeout or channel closure.
     /// Apply hash-anchored formatting to a raw read file result.
     fn format_read_result(&mut self, raw: &serde_json::Value) -> serde_json::Value {
-        use crate::tools::read_file::{format_full, format_preview, format_outline, format_skeleton};
+        // Multi-file: format each result and join with dividers
+        if raw.get("_multi_file").is_some() {
+            if let Some(results) = raw.get("results").and_then(|v| v.as_array()) {
+                let formatted: Vec<String> = results.iter().map(|r| {
+                    let f = self.format_single_read(r);
+                    f.as_str().unwrap_or("").to_string()
+                }).collect();
+                // Join with file dividers
+                let mut output = String::new();
+                for (i, text) in formatted.iter().enumerate() {
+                    if i > 0 {
+                        output.push_str("\n\n");
+                    }
+                    let path = results[i].get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                    output.push_str(&format!("--- {} ---\n{}", path, text));
+                }
+                return serde_json::Value::String(output);
+            }
+        }
+
+        self.format_single_read(raw)
+    }
+
+    fn format_single_read(&mut self, raw: &serde_json::Value) -> serde_json::Value {
+        use crate::tools::read_file::{DEFAULT_PREVIEW_LINES, AUTO_EXPAND_PREVIEW_LINES, AUTO_EXPAND_READ_THRESHOLD};
 
         let path = raw.get("path").and_then(|v| v.as_str()).unwrap_or("?");
         let detail = raw.get("detail").and_then(|v| v.as_str()).unwrap_or("full");
         let mut cache = self.read_file_cache.lock().unwrap();
 
+        // Handle errors from multi-file
+        if let Some(error) = raw.get("error").and_then(|v| v.as_str()) {
+            return serde_json::Value::String(error.to_string());
+        }
+
+        // Markdown outline/hint (pre-computed in handler)
+        if raw.get("_markdown").is_some() {
+            if let Some(md_output) = raw.get("md_output").and_then(|v| v.as_str()) {
+                let hash = crate::util::stable_hash(md_output.as_bytes());
+                cache.set_hash(path, detail, None, format!("{:.8}", hash));
+                return serde_json::Value::String(format!("[File Hash: {:.8}]\n{}", hash, md_output));
+            }
+        }
+
+        // Section not found warning
+        let section_warning = raw.get("_section_not_found").and_then(|v| v.as_str())
+            .map(|s| format!("\n[warning: section '{}' not found in outline]", s));
+
+        // Pagination: compute range from page + cursor
+        let page = raw.get("page").and_then(|v| v.as_str());
+        let computed_range = if let Some(page_val) = page {
+            let cursor = cache.get_cursor(path);
+            let read_count = self.file_context.files_read.get(path)
+                .map(|s| s.read_count).unwrap_or(0);
+            let page_size = if read_count >= AUTO_EXPAND_READ_THRESHOLD {
+                AUTO_EXPAND_PREVIEW_LINES
+            } else {
+                DEFAULT_PREVIEW_LINES
+            };
+            let total_lines = raw.get("lines").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if page_val == "section" {
+                // Section page: use the range from section jump in handler
+                if let Some(range) = raw.get("range").and_then(|v| v.as_array()) {
+                    let range_start = range.get(0).and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+                    let range_end = range.get(1).and_then(|v| v.as_u64()).unwrap_or(range_start as u64) as usize;
+                    cache.set_cursor(path, range_start);
+                    Some((range_start, range_end))
+                } else {
+                    Some((cursor, (cursor + page_size - 1).min(total_lines)))
+                }
+            } else {
+                let start = match page_val {
+                    "next" => (cursor + page_size).min(total_lines),
+                    "prev" => cursor.saturating_sub(page_size).max(1),
+                    _ => cursor,
+                };
+                cache.set_cursor(path, start);
+                Some((start, (start + page_size - 1).min(total_lines)))
+            }
+        } else {
+            None
+        };
+
+        let result = Self::format_at_detail(
+            raw, detail, &mut cache, &self.file_context, computed_range,
+        );
+
+        // Release the cache lock before calling apply_budget_degradation (which takes its own lock)
+        drop(cache);
+
+        let mut final_result = result;
+        if let Some(warn) = section_warning {
+            final_result = serde_json::Value::String(format!("{}\n{}", final_result.as_str().unwrap_or(""), warn));
+        }
+        final_result = self.apply_budget_degradation(final_result, raw, detail);
+        final_result
+    }
+
+    /// Format a raw read result at a specific detail level.
+    /// Used by format_single_read for the initial render and by apply_budget_degradation
+    /// for re-rendering at lower detail levels.
+    fn format_at_detail(
+        raw: &serde_json::Value,
+        detail: &str,
+        cache: &mut crate::tools::read_file::ReadFileCache,
+        file_context: &FileContextTracker,
+        range: Option<(usize, usize)>,
+    ) -> serde_json::Value {
+        use crate::tools::read_file::{
+            format_full, format_preview, format_outline, format_skeleton,
+            format_hint, format_ranges, format_chunk_map, merge_ranges,
+        };
+
+        let path = raw.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+
         match detail {
             "outline" => {
                 if let Some(analyzer_data) = raw.get("analyzer_data") {
-                    format_outline(path, analyzer_data, &mut cache)
+                    format_outline(path, analyzer_data, cache)
                 } else {
                     json!({ "path": path, "error": "No analyzer data for outline" })
                 }
             }
+            "hint" => {
+                if let Some(analyzer_data) = raw.get("analyzer_data") {
+                    format_hint(path, analyzer_data, cache)
+                } else {
+                    json!({ "path": path, "error": "No analyzer data for hint" })
+                }
+            }
             "skeleton" => {
                 if let Some(analyzer_data) = raw.get("analyzer_data") {
-                    format_skeleton(path, analyzer_data, &mut cache)
+                    format_skeleton(path, analyzer_data, cache)
                 } else {
                     json!({ "path": path, "error": "No analyzer data for skeleton" })
                 }
             }
             "preview" => {
                 if let Some(content) = raw.get("content").and_then(|v| v.as_str()) {
-                    let read_count = self.file_context.files_read.get(path)
+                    let read_count = file_context.files_read.get(path)
                         .map(|s| s.read_count).unwrap_or(0);
-                    let (output, hash, _) = format_preview(path, content, read_count, &mut cache);
-                    self.file_context.mark_read(path, &hash);
+                    let (mut output, _, _) = format_preview(path, content, read_count, cache);
+                    if let Some(analyzer_data) = raw.get("analyzer_data") {
+                        let chunk_map = format_chunk_map(analyzer_data);
+                        if !chunk_map.is_empty() {
+                            output.push_str(&chunk_map);
+                        }
+                    }
                     serde_json::Value::String(output)
                 } else {
                     json!({ "path": path, "error": "No content for preview" })
@@ -215,19 +336,170 @@ impl AgentEngine {
             _ => {
                 // full (default)
                 if let Some(content) = raw.get("content").and_then(|v| v.as_str()) {
-                    let range = raw.get("range").and_then(|v| v.as_array())
-                        .and_then(|a| {
-                            let start = a.get(0)?.as_u64()? as usize;
-                            let end = a.get(1)?.as_u64()? as usize;
-                            Some((start, end))
-                        });
-                    let (output, hash, _) = format_full(path, content, range, &mut cache);
-                    self.file_context.mark_read(path, &hash);
-                    serde_json::Value::String(output)
+                    let single_range = range.or_else(|| {
+                        raw.get("range").and_then(|v| v.as_array())
+                            .and_then(|a| {
+                                let start = a.get(0)?.as_u64()? as usize;
+                                let end = a.get(1)?.as_u64()? as usize;
+                                Some((start, end))
+                            })
+                    });
+
+                    let ranges_raw = raw.get("ranges").and_then(|v| v.as_array());
+                    let multi_ranges: Option<Vec<(usize, usize)>> = ranges_raw.and_then(|arr| {
+                        let parsed: Vec<(usize, usize)> = arr.iter().filter_map(|a| {
+                            let arr = a.as_array()?;
+                            Some((arr.get(0)?.as_u64()? as usize, arr.get(1)?.as_u64()? as usize))
+                        }).collect();
+                        if parsed.is_empty() { None } else { Some(merge_ranges(parsed)) }
+                    });
+
+                    if let Some(ranges) = multi_ranges {
+                        let (output, _, _) = format_ranges(path, content, &ranges, cache);
+                        serde_json::Value::String(output)
+                    } else {
+                        let (output, _, _) = format_full(path, content, single_range, cache);
+                        serde_json::Value::String(output)
+                    }
                 } else {
                     json!({ "path": path, "error": "No content for full read" })
                 }
             }
+        }
+    }
+
+    /// If the formatted output exceeds a budget threshold, downgrade the detail level
+    /// through the cascade: full → preview → skeleton → outline → hint.
+    fn apply_budget_degradation(&mut self, result: serde_json::Value, raw: &serde_json::Value, current_detail: &str) -> serde_json::Value {
+        const MAX_OUTPUT_CHARS: usize = 24000; // ~8000 tokens at 3 chars/token
+        const DEGRADATION_PATH: &[&str] = &["full", "preview", "skeleton", "outline", "hint"];
+        const DEGRADATION_NOTE: &str = "\n[Content reduced to fit budget -- use specific line ranges for full detail]";
+
+        let output = match &result {
+            serde_json::Value::String(s) => s.clone(),
+            _ => return result,
+        };
+
+        if output.len() <= MAX_OUTPUT_CHARS || output.contains("unchanged") {
+            return result;
+        }
+
+        let current_idx = DEGRADATION_PATH.iter().position(|&d| d == current_detail).unwrap_or(0);
+        if current_idx >= DEGRADATION_PATH.len() - 1 {
+            // Already at lowest level — truncate as last resort
+            let truncated: String = output.chars().take(MAX_OUTPUT_CHARS).collect();
+            return serde_json::Value::String(format!("{}{}", truncated, DEGRADATION_NOTE));
+        }
+
+        // Walk the degradation cascade: try each lower detail level
+        let mut cache = self.read_file_cache.lock().unwrap();
+        // Preserve the user's original range through degradation
+        let original_range = raw.get("range").and_then(|v| v.as_array())
+            .and_then(|a| {
+                let start = a.get(0)?.as_u64()? as usize;
+                let end = a.get(1)?.as_u64()? as usize;
+                Some((start, end))
+            });
+        for try_idx in (current_idx + 1)..DEGRADATION_PATH.len() {
+            let try_detail = DEGRADATION_PATH[try_idx];
+            let degraded = Self::format_at_detail(raw, try_detail, &mut cache, &self.file_context, original_range);
+
+            if let serde_json::Value::String(ref s) = degraded {
+                if s.len() <= MAX_OUTPUT_CHARS {
+                    return serde_json::Value::String(format!("{}{}", s, DEGRADATION_NOTE));
+                }
+            }
+            // This level still too large, continue to next
+        }
+
+        // Even the lowest level exceeded budget — return it truncated
+        let last = Self::format_at_detail(
+            raw, DEGRADATION_PATH.last().unwrap(), &mut cache, &self.file_context, original_range,
+        );
+        match last {
+            serde_json::Value::String(s) => {
+                let truncated: String = s.chars().take(MAX_OUTPUT_CHARS).collect();
+                serde_json::Value::String(format!("{}{}", truncated, DEGRADATION_NOTE))
+            }
+            _ => result,
+        }
+    }
+
+    /// Scan conversation history for the most recent file hash for a given path.
+    /// Walks backwards through tool results looking for read tool responses containing
+    /// `[File Hash: <hex>]`. Handles multi-file responses with `--- <path> ---` dividers.
+    pub fn extract_last_known_hash(&self, target_path: &str) -> Option<String> {
+        let target_normalized = target_path.trim_start_matches("./");
+
+        for msg in self.trajectory.messages.iter().rev() {
+            if msg.role != Role::Tool { continue; }
+            if msg.tool_meta.tool_name != "read" { continue; }
+
+            let text = match msg.content.as_str() {
+                Some(s) => s,
+                None => continue,
+            };
+
+            // Check if this path was in the read set
+            let path_matches = msg.tool_meta.paths_read.iter().any(|p| {
+                p.trim_start_matches("./") == target_normalized
+            });
+            if !path_matches { continue; }
+
+            // For multi-file responses, isolate the section for this path
+            let section = if text.contains(&format!("--- {} ---", target_normalized))
+                         || text.contains(&format!("--- {} ---", target_path)) {
+                let divider = format!("--- {} ---", target_normalized);
+                let alt_divider = format!("--- {} ---", target_path);
+                let start = text.find(&divider).or_else(|| text.find(&alt_divider));
+                if let Some(idx) = start {
+                    let section_start = idx + divider.len();
+                    let rest = &text[section_start..];
+                    let end = rest.find("\n--- ").unwrap_or(rest.len());
+                    &rest[..end]
+                } else {
+                    text
+                }
+            } else {
+                text
+            };
+
+            // Extract [File Hash: <hex>]
+            if let Some(hash) = Self::extract_hash_from_text(section) {
+                return Some(hash);
+            }
+        }
+        None
+    }
+
+    /// Extract the first hash value from text matching any of the read output formats:
+    /// `[File Hash: <hex>]`, `[Lines X-Y, Hash: <hex>]`, `[... (Hash: <hex>)]`
+    fn extract_hash_from_text(text: &str) -> Option<String> {
+        // Try the common patterns in order of specificity
+        // Pattern 1: `[File Hash: <hex>]`
+        if let Some(hash) = Self::extract_hash_after_marker(text, "[File Hash: ") {
+            return Some(hash);
+        }
+        // Pattern 2: `[Lines X-Y, Hash: <hex>]`
+        if let Some(hash) = Self::extract_hash_after_marker(text, ", Hash: ") {
+            return Some(hash);
+        }
+        // Pattern 3: `(Hash: <hex>)` — unchanged detection
+        if let Some(hash) = Self::extract_hash_after_marker(text, "(Hash: ") {
+            return Some(hash);
+        }
+        None
+    }
+
+    fn extract_hash_after_marker(text: &str, marker: &str) -> Option<String> {
+        let start = text.find(marker)?;
+        let rest = &text[start + marker.len()..];
+        let end = rest.chars().position(|c| c == ']' || c == ')')?;
+        let hash = &rest[..end];
+        if !hash.is_empty() && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            Some(hash.to_string())
+        } else {
+            None
         }
     }
 
@@ -1039,6 +1311,18 @@ impl AgentEngine {
 
                         // Apply read file formatting: hash-anchored lines, unchanged detection
                         if tool_name == "read" && result.get("_read_raw").is_some() {
+                            // Pre-increment read count so auto-expand logic sees correct count
+                            if let Some(p) = result.get("path").and_then(|v| v.as_str()) {
+                                self.file_context.pre_increment_read(p);
+                            }
+                            // Also pre-increment for multi-file reads
+                            if let Some(results) = result.get("results").and_then(|v| v.as_array()) {
+                                for r in results {
+                                    if let Some(p) = r.get("path").and_then(|v| v.as_str()) {
+                                        self.file_context.pre_increment_read(p);
+                                    }
+                                }
+                            }
                             result = self.format_read_result(&result);
                         }
 
@@ -1487,4 +1771,256 @@ fn extract_thematic_tags(summary: &str) -> Vec<String> {
         }
     }
     tags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- extract_hash_from_text tests (static method, no engine needed) ---
+
+    #[test]
+    fn extract_hash_from_single_file_result() {
+        let text = "[File Hash: a1b2c3d4]\n   1 │ abc|fn main() {";
+        assert_eq!(AgentEngine::extract_hash_from_text(text), Some("a1b2c3d4".to_string()));
+    }
+
+    #[test]
+    fn extract_hash_from_range_result() {
+        let text = "[Lines 10-20, Hash: deadbeef]\n  10 │ xyz|code here";
+        assert_eq!(AgentEngine::extract_hash_from_text(text), Some("deadbeef".to_string()));
+    }
+
+    #[test]
+    fn extract_hash_from_unchanged_result() {
+        let text = "[Full file: unchanged since your last read (Hash: abcdef12)]";
+        assert_eq!(AgentEngine::extract_hash_from_text(text), Some("abcdef12".to_string()));
+    }
+
+    #[test]
+    fn extract_hash_no_hash_returns_none() {
+        let text = "No file hash here, just plain text";
+        assert_eq!(AgentEngine::extract_hash_from_text(text), None);
+    }
+
+    #[test]
+    fn extract_hash_non_hex_returns_none() {
+        let text = "[File Hash: xyz!]";
+        assert_eq!(AgentEngine::extract_hash_from_text(text), None);
+    }
+
+    // --- format_at_detail tests (static method, no engine needed) ---
+
+    #[test]
+    fn format_at_detail_full() {
+        let raw = json!({
+            "path": "test.rs",
+            "detail": "full",
+            "content": "fn main() {}\n",
+            "lines": 2,
+        });
+        let mut cache = crate::tools::read_file::ReadFileCache::new();
+        let ctx = FileContextTracker::new();
+        let result = AgentEngine::format_at_detail(&raw, "full", &mut cache, &ctx, None);
+        let s = result.as_str().unwrap();
+        assert!(s.contains("[File Hash:"));
+        assert!(s.contains("fn main()"));
+    }
+
+    #[test]
+    fn format_at_detail_preview() {
+        let content: String = (0..500).map(|i| format!("line {}\n", i)).collect();
+        let raw = json!({
+            "path": "big.rs",
+            "detail": "preview",
+            "content": content,
+            "lines": 500,
+        });
+        let mut cache = crate::tools::read_file::ReadFileCache::new();
+        let ctx = FileContextTracker::new();
+        let result = AgentEngine::format_at_detail(&raw, "preview", &mut cache, &ctx, None);
+        let s = result.as_str().unwrap();
+        assert!(s.contains("Showing first 200 lines"));
+    }
+
+    #[test]
+    fn format_at_detail_outline_with_analyzer_data() {
+        let raw = json!({
+            "path": "test.rs",
+            "detail": "outline",
+            "analyzer_data": {
+                "symbols": [
+                    {"name": "main", "kind": "function", "handle": "fn:main", "start_line": 1, "end_line": 3, "signature": "fn main()"}
+                ]
+            },
+        });
+        let mut cache = crate::tools::read_file::ReadFileCache::new();
+        let ctx = FileContextTracker::new();
+        let result = AgentEngine::format_at_detail(&raw, "outline", &mut cache, &ctx, None);
+        let s = result.as_str().unwrap();
+        assert!(s.contains("[File Hash:"));
+        assert!(s.contains("fn main()"));
+        assert!(s.contains("lines 1-3"));
+    }
+
+    #[test]
+    fn format_at_detail_hint_with_analyzer_data() {
+        let raw = json!({
+            "path": "test.rs",
+            "detail": "hint",
+            "analyzer_data": {
+                "symbols": [
+                    {"name": "main", "kind": "function", "handle": "fn:main", "start_line": 1, "end_line": 3, "signature": ""},
+                    {"name": "Config", "kind": "struct", "handle": "st:Config", "start_line": 5, "end_line": 10, "signature": ""}
+                ]
+            },
+        });
+        let mut cache = crate::tools::read_file::ReadFileCache::new();
+        let ctx = FileContextTracker::new();
+        let result = AgentEngine::format_at_detail(&raw, "hint", &mut cache, &ctx, None);
+        let s = result.as_str().unwrap();
+        assert!(s.contains("function main"));
+        assert!(s.contains("struct Config"));
+        // Hint should NOT have line numbers
+        assert!(!s.contains("lines 1-3"));
+    }
+
+    #[test]
+    fn format_at_detail_skeleton_with_analyzer_data() {
+        let raw = json!({
+            "path": "test.rs",
+            "detail": "skeleton",
+            "analyzer_data": {
+                "skeleton": "fn main() {\n    // ...\n}\n"
+            },
+        });
+        let mut cache = crate::tools::read_file::ReadFileCache::new();
+        let ctx = FileContextTracker::new();
+        let result = AgentEngine::format_at_detail(&raw, "skeleton", &mut cache, &ctx, None);
+        let s = result.as_str().unwrap();
+        assert!(s.contains("[File Hash:"));
+        assert!(s.contains("fn main()"));
+    }
+
+    // --- Budget degradation cascade test ---
+
+    #[test]
+    fn degradation_cascade_walks_full_to_preview() {
+        // Create a large file that exceeds the 24000 char budget when rendered as full
+        let content: String = (0..5000).map(|i| format!("line number {} with some content to make it longer\n", i)).collect();
+        let raw = json!({
+            "path": "big.rs",
+            "detail": "full",
+            "content": content,
+            "lines": 5000,
+        });
+
+        let mut cache = crate::tools::read_file::ReadFileCache::new();
+        let ctx = FileContextTracker::new();
+
+        // Format as full — will exceed budget
+        let full_result = AgentEngine::format_at_detail(&raw, "full", &mut cache, &ctx, None);
+        let full_str = full_result.as_str().unwrap();
+        assert!(full_str.len() > 24000, "Full result ({}) should exceed 24000 budget", full_str.len());
+
+        // Now walk the degradation path manually (simulating apply_budget_degradation)
+        const MAX_OUTPUT_CHARS: usize = 24000;
+        const DEGRADATION_PATH: &[&str] = &["full", "preview", "skeleton", "outline", "hint"];
+
+        let mut found_fitting = false;
+        for try_idx in 1..DEGRADATION_PATH.len() {
+            let degraded = AgentEngine::format_at_detail(&raw, DEGRADATION_PATH[try_idx], &mut cache, &ctx, None);
+            if let serde_json::Value::String(s) = &degraded {
+                if s.len() <= MAX_OUTPUT_CHARS {
+                    // Preview should fit since it only shows 200 lines
+                    assert_eq!(DEGRADATION_PATH[try_idx], "preview");
+                    assert!(s.contains("line number 0"));
+                    found_fitting = true;
+                    break;
+                }
+            }
+        }
+        assert!(found_fitting, "Should find a fitting detail level in the cascade");
+    }
+
+    // --- extract_last_known_hash against trajectory ---
+
+    #[test]
+    fn extract_last_known_hash_finds_recent_read() {
+        let mut traj = Trajectory::new();
+
+        let mut tool_meta = ToolMessageMeta::default();
+        tool_meta.tool_name = "read".to_string();
+        tool_meta.paths_read = vec!["src/main.rs".to_string()];
+        let msg = Message {
+            id: Uuid::new_v4(),
+            role: Role::Tool,
+            content: serde_json::Value::String("[File Hash: abcdef12]\n   1 │ abc|fn main() {".to_string()),
+            timestamp: chrono::Utc::now(),
+            tokens: 50,
+            is_compressed: false,
+            tool_meta,
+            tool_calls: vec![],
+            tool_call_id: Some("call_1".to_string()),
+            thinking: None,
+        };
+        traj.messages.push(msg);
+
+        // Test extraction by iterating messages directly (same logic as extract_last_known_hash)
+        let target = "src/main.rs";
+        let mut found: Option<String> = None;
+        for msg in traj.messages.iter().rev() {
+            if msg.role != Role::Tool { continue; }
+            if msg.tool_meta.tool_name != "read" { continue; }
+            if !msg.tool_meta.paths_read.iter().any(|p| p.trim_start_matches("./") == target.trim_start_matches("./")) { continue; }
+            if let Some(s) = msg.content.as_str() {
+                found = AgentEngine::extract_hash_from_text(s);
+                if found.is_some() { break; }
+            }
+        }
+        assert_eq!(found, Some("abcdef12".to_string()));
+    }
+
+    #[test]
+    fn extract_last_known_hash_multi_file_dividers() {
+        let mut traj = Trajectory::new();
+
+        let multi_content = "--- src/main.rs ---\n[File Hash: aaaa1111]\n   1 │ abc|fn main() {\n\n--- src/lib.rs ---\n[File Hash: bbbb2222]\n   1 │ def|pub fn lib()";
+        let mut tool_meta = ToolMessageMeta::default();
+        tool_meta.tool_name = "read".to_string();
+        tool_meta.paths_read = vec!["src/main.rs".to_string(), "src/lib.rs".to_string()];
+        let msg = Message {
+            id: Uuid::new_v4(),
+            role: Role::Tool,
+            content: serde_json::Value::String(multi_content.to_string()),
+            timestamp: chrono::Utc::now(),
+            tokens: 100,
+            is_compressed: false,
+            tool_meta,
+            tool_calls: vec![],
+            tool_call_id: Some("call_1".to_string()),
+            thinking: None,
+        };
+        traj.messages.push(msg);
+
+        // Test the divider-isolation logic from extract_last_known_hash
+        let text = traj.messages.last().unwrap().content.as_str().unwrap();
+        // For src/lib.rs, should isolate the section after "--- src/lib.rs ---"
+        let divider = "--- src/lib.rs ---";
+        let idx = text.find(divider).unwrap();
+        let section = &text[idx + divider.len()..];
+        let end = section.find("\n--- ").unwrap_or(section.len());
+        let section = &section[..end];
+        let hash = AgentEngine::extract_hash_from_text(section);
+        assert_eq!(hash, Some("bbbb2222".to_string()));
+
+        // For src/main.rs
+        let divider = "--- src/main.rs ---";
+        let idx = text.find(divider).unwrap();
+        let section = &text[idx + divider.len()..];
+        let end = section.find("\n--- ").unwrap_or(section.len());
+        let section = &section[..end];
+        let hash = AgentEngine::extract_hash_from_text(section);
+        assert_eq!(hash, Some("aaaa1111".to_string()));
+    }
 }

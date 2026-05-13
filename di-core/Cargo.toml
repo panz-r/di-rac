@@ -21,3 +21,4 @@ interprocess = "1.2" # For UDS communication with C daemons
 blake3 = "1.5" # Stable content hashing across process restarts
 regex = "1.10"
 async-trait = "0.1"
+pathdiff = "0.2"
