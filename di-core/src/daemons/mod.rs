@@ -390,6 +390,7 @@ impl CommandDaemon {
     /// Execute a shell command via the command daemon.
     /// Sends {"id":"N","type":"execute","command":"..."} and waits for result.
     /// Timeout: 300s for long-running commands.
+    #[allow(dead_code)]
     pub async fn execute(&mut self, command: &str) -> Result<ExecuteResult> {
         self.request_id += 1;
         let id = self.request_id.to_string();

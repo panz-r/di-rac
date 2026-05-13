@@ -14,7 +14,7 @@ pub mod format;
 pub mod output_manager;
 pub mod read_file;
 
-use crate::daemons::{AnalyzerRequest, AnalyzerResponse, CommandDaemon, ResilientDaemon};
+use crate::daemons::{AnalyzerRequest, AnalyzerResponse, ResilientDaemon};
 use background::{BackgroundCommandTracker, CommandStatus};
 use response::{ToolResponse, ToolErrorCode};
 use routing::{ErrorRouter, RoutingContext, ToolErrorRoute};
@@ -232,7 +232,7 @@ impl ToolCoordinator {
 
 pub struct ToolExecutor {
     analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
-    command_daemon: Arc<tokio::sync::Mutex<CommandDaemon>>,
+    command_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
     background_tracker: Arc<BackgroundCommandTracker>,
     output_manager: Arc<std::sync::Mutex<output_manager::OutputManager>>,
 }
@@ -240,7 +240,7 @@ pub struct ToolExecutor {
 impl ToolExecutor {
     pub fn new(
         analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
-        command_daemon: Arc<tokio::sync::Mutex<CommandDaemon>>,
+        command_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
         background_tracker: Arc<BackgroundCommandTracker>,
         output_manager: Arc<std::sync::Mutex<output_manager::OutputManager>>,
     ) -> Self {
@@ -469,7 +469,11 @@ impl ToolExecutor {
             .and_then(|v| v.as_i64())
             .unwrap_or(300_000);
 
-        let resp = self.command_daemon.lock().await.execute(command).await?;
+        let request = json!({
+            "type": "execute",
+            "command": command,
+        });
+        let resp: crate::daemons::ExecuteResult = self.command_daemon.lock().await.send_request(request).await?;
 
         Ok(json!({
             "exit_code": resp.exit_code,

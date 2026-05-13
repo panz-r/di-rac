@@ -130,6 +130,10 @@ impl OutputManager {
         outputs
     }
 
+    pub fn cleanup(&self) {
+        Self::cleanup_old_outputs(&self.output_dir);
+    }
+
     pub fn output_dir(&self) -> &std::path::Path {
         &self.output_dir
     }

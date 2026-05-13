@@ -9,7 +9,7 @@ use crate::context::distiller::{ContextDistiller, DistillerSource};
 use crate::context::task_state::TaskStateReducer;
 use crate::agent::metrics::ContextMetrics;
 use crate::daemons::{
-    UnixDaemonClient, GatewayStreamClient, GatewayRequest, GatewayMessage, CommandDaemon,
+    UnixDaemonClient, GatewayStreamClient, GatewayRequest, GatewayMessage,
     ResilientDaemon,
 };
 use crate::protocol::{CoreEvent, FrontendMessage};
@@ -129,7 +129,7 @@ impl AgentEngine {
     pub fn new(
         id: Uuid,
         analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
-        command_daemon: Arc<tokio::sync::Mutex<CommandDaemon>>,
+        command_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
         _central_client: Arc<UnixDaemonClient>,
         gateway_client: Arc<GatewayStreamClient>,
     ) -> Self {
@@ -364,6 +364,11 @@ impl AgentEngine {
                 TurnOutcome::Continue { tools_used: _ } => {
                     self.consecutive_mistake_count = 0;
                 }
+            }
+
+            // Periodic cleanup: remove old output files every 10 turns
+            if self.turn_counter % 10 == 0 {
+                self.output_manager.lock().unwrap().cleanup();
             }
         }
     }
@@ -761,20 +766,30 @@ impl AgentEngine {
                     args: tool.args.clone(),
                 })?;
 
+                let approval_id = Uuid::new_v4();
                 let description = format!("Execute {} on behalf of agent", tool.name);
                 self.emit_event(CoreEvent::ApprovalNeeded {
                     agent_id: self.id,
+                    approval_id,
                     tool: tool.name.clone(),
                     args: tool.args.clone(),
                     description: description.clone(),
                 })?;
 
                 // Block waiting for approval response from frontend.
-                // Buffer any UserResponse messages that arrive while waiting.
+                // Match on approval_id to prevent replay attacks from stale responses.
                 let approved = loop {
                     let msg = self.recv_frontend().await;
                     match msg {
-                        Some(FrontendMessage::ApprovalResponse { approved, .. }) => break approved,
+                        Some(FrontendMessage::ApprovalResponse { approval_id: ref resp_id, approved, .. }) => {
+                            // Accept if no ID (backward compat) or if IDs match
+                            let matches = resp_id.map_or(true, |rid| rid == approval_id);
+                            if matches {
+                                break approved;
+                            }
+                            // Stale response — discard and keep waiting
+                            continue;
+                        }
                         Some(FrontendMessage::UserResponse { text, .. }) => {
                             self.task_reducer.process(&text, false);
                             self.trajectory.add_message(
@@ -1287,7 +1302,7 @@ pub struct MultiAgentOrchestrator {
     /// Shared abort handles — survive agent removal so abort_agent works for running tasks.
     abort_handles: HashMap<Uuid, Arc<std::sync::atomic::AtomicBool>>,
     pub analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
-    pub command_daemon: Arc<tokio::sync::Mutex<CommandDaemon>>,
+    pub command_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
     pub central_client: Arc<UnixDaemonClient>,
     pub gateway_client: Arc<GatewayStreamClient>,
     /// Default provider config for new agents (set by frontend via SetProviderConfig).
@@ -1310,7 +1325,7 @@ struct RuntimeConfig {
 }
 
 impl MultiAgentOrchestrator {
-    pub fn new(analyzer_daemon: ResilientDaemon, command_daemon: CommandDaemon, central_socket: &str, gateway_socket: &str) -> Self {
+    pub fn new(analyzer_daemon: ResilientDaemon, command_daemon: ResilientDaemon, central_socket: &str, gateway_socket: &str) -> Self {
         Self {
             agents: HashMap::new(),
             frontend_channels: HashMap::new(),

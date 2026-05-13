@@ -1,11 +1,11 @@
-use crate::daemons::CommandDaemon;
+use crate::daemons::ResilientDaemon;
 use crate::tools::ToolCall;
 use crate::tools::response::{ToolResponse, ToolErrorCode, ToolError};
 use serde_json::json;
 use std::sync::Arc;
 
 pub async fn edit_file(
-    _command_daemon: &Arc<tokio::sync::Mutex<CommandDaemon>>,
+    _command_daemon: &Arc<tokio::sync::Mutex<ResilientDaemon>>,
     call: &ToolCall,
 ) -> ToolResponse {
     let edits = match parse_edits(call) {

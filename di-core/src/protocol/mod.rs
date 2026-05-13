@@ -43,6 +43,7 @@ pub enum CoreEvent {
     /// Agent needs user approval before executing a tool.
     ApprovalNeeded {
         agent_id: Uuid,
+        approval_id: Uuid,
         tool: String,
         args: serde_json::Value,
         description: String,
@@ -100,6 +101,7 @@ pub enum FrontendMessage {
     /// Frontend responds to an approval request.
     ApprovalResponse {
         agent_id: Uuid,
+        approval_id: Option<Uuid>,
         approved: bool,
     },
     /// Frontend responds to a follow-up question.

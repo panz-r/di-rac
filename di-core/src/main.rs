@@ -66,8 +66,8 @@ async fn main() -> Result<()> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "/".to_string());
 
-    // Spawn command daemon as child process
-    let command_daemon = crate::daemons::CommandDaemon::spawn(&command_daemon_binary, &cwd).await?;
+    // Spawn command daemon as child process (resilient wrapper with auto-restart)
+    let command_daemon = crate::daemons::ResilientDaemon::spawn(&command_daemon_binary, &cwd).await?;
     log.log("command daemon spawned");
 
     // Spawn analyzer daemon as child process (resilient wrapper with auto-restart)
@@ -169,9 +169,9 @@ async fn main() -> Result<()> {
                                 // Also send via channel so blocking recv_frontend loops in the agent wake up
                                 orchestrator.send_to_agent(agent_id, FrontendMessage::Interrupt { agent_id }).await;
                             }
-                            FrontendMessage::ApprovalResponse { agent_id, approved } => {
+                            FrontendMessage::ApprovalResponse { agent_id, approval_id, approved } => {
                                 log.log(&format!("ApprovalResponse: agent={} approved={}", agent_id, approved));
-                                if !orchestrator.send_to_agent(agent_id, FrontendMessage::ApprovalResponse { agent_id, approved }).await {
+                                if !orchestrator.send_to_agent(agent_id, FrontendMessage::ApprovalResponse { agent_id, approval_id, approved }).await {
                                     log.log(&format!("ApprovalResponse: no channel for agent {}", agent_id));
                                 }
                             }

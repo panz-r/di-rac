@@ -1,4 +1,4 @@
-use crate::daemons::CommandDaemon;
+use crate::daemons::ResilientDaemon;
 use crate::tools::ToolCall;
 use crate::tools::response::{ToolResponse, ToolErrorCode};
 use serde_json::json;
@@ -8,7 +8,7 @@ const MAX_RESULTS: usize = 30;
 const MAX_LINE_LENGTH: usize = 300;
 
 pub async fn search_files(
-    command_daemon: &Arc<tokio::sync::Mutex<CommandDaemon>>,
+    command_daemon: &Arc<tokio::sync::Mutex<ResilientDaemon>>,
     call: &ToolCall,
 ) -> ToolResponse {
     let pattern = match call.args.get("pattern")
@@ -64,7 +64,11 @@ pub async fn search_files(
 
         let command = build_rg_command(&rg_args);
 
-        let result = match command_daemon.lock().await.execute(&command).await {
+        let request = json!({
+            "type": "execute",
+            "command": command,
+        });
+        let result: crate::daemons::ExecuteResult = match command_daemon.lock().await.send_request(request).await {
             Ok(r) => r,
             Err(e) => {
                 return ToolResponse::fail(
