@@ -21,6 +21,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let size = frame.area();
 
+    // Reserve space: 1 for top bar, ensure conversation gets at least 1 row.
+    let available = size.height.saturating_sub(1);
+
     let queue_height = if app.input_queue.is_empty() {
         0
     } else {
@@ -32,6 +35,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         1
     };
+
+    // Clamp to prevent layout panic when terminal is too small.
+    // Priority: input > queue, then give conversation whatever remains.
+    let max_fixed = available.saturating_sub(1); // at least 1 row for conversation
+    let input_height = input_height.min(max_fixed);
+    let queue_height = queue_height.min(max_fixed.saturating_sub(input_height));
 
     let constraints = vec![
         Constraint::Length(1),      // top bar

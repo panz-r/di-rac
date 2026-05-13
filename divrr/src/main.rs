@@ -169,7 +169,14 @@ async fn main() -> color_eyre::Result<()> {
 
     // Push saved per-role provider settings to API gateway in background (non-blocking)
     tokio::task::spawn_blocking(|| {
-        settings::push_all_to_gateway();
+        match std::panic::catch_unwind(|| {
+            settings::push_all_to_gateway();
+        }) {
+            Ok(()) => {}
+            Err(_) => {
+                crate::app::log_event("push_all_to_gateway panicked");
+            }
+        }
     });
 
     // Send provider config to di-core BEFORE spawning any agents
@@ -258,64 +265,69 @@ async fn main() -> color_eyre::Result<()> {
                 if let Some(op) = app.settings.as_mut().and_then(|s| s.pending_async.take()) {
                     let tx = event_tx.clone();
                     tokio::task::spawn_blocking(move || {
-                        let mut gw = crate::settings::GatewayConnection::new();
-                        let _ = gw.ensure_connected();
-                        match op {
-                            crate::settings::PendingAsyncOp::ProviderChanged { seq, rs, providers, gateway_available } => {
-                                let (fields, models, provider_info, gateway_error) = crate::settings::build_role_fields(
-                                    &rs, &providers, &mut gw, gateway_available,
-                                );
-                                let _ = tx.send(crate::AppEvent::SettingsLoaded(
-                                    crate::settings::SettingsLoadResult::ProviderChanged {
-                                        seq, fields, model_entries: models, provider_info, gateway_error,
-                                    }
-                                ));
-                            }
-                            crate::settings::PendingAsyncOp::RoleSwitched { seq, rs, providers, gateway_available } => {
-                                let (fields, models, provider_info, gateway_error) = crate::settings::build_role_fields(
-                                    &rs, &providers, &mut gw, gateway_available,
-                                );
-                                let _ = tx.send(crate::AppEvent::SettingsLoaded(
-                                    crate::settings::SettingsLoadResult::RoleSwitched {
-                                        seq, fields, model_entries: models, provider_info, gateway_error,
-                                    }
-                                ));
-                            }
-                            crate::settings::PendingAsyncOp::Save { all_settings } => {
-                                let mut error = None;
-                                for role in crate::settings::ROLES {
-                                    if let Some(rs) = all_settings.roles.get(*role) {
-                                        if rs.provider.is_empty() { continue; }
-                                        // Validate credentials before pushing
-                                        if let Err(e) = crate::settings::validate_parameters(
-                                            &mut gw, &rs.provider, &rs.api_key, &rs.model, &rs.base_url,
-                                        ) {
-                                            error = Some(format!("Validation failed for {}: {}", role, e));
-                                            break;
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let mut gw = crate::settings::GatewayConnection::new();
+                            let _ = gw.ensure_connected();
+                            match op {
+                                crate::settings::PendingAsyncOp::ProviderChanged { seq, rs, providers, gateway_available } => {
+                                    let (fields, models, provider_info, gateway_error) = crate::settings::build_role_fields(
+                                        &rs, &providers, &mut gw, gateway_available,
+                                    );
+                                    let _ = tx.send(crate::AppEvent::SettingsLoaded(
+                                        crate::settings::SettingsLoadResult::ProviderChanged {
+                                            seq, fields, model_entries: models, provider_info, gateway_error,
                                         }
-                                        if let Err(e) = crate::settings::push_role_to_gateway(&mut gw, role, rs) {
-                                            error = Some(format!("Gateway push failed for {}: {}", role, e));
-                                            break;
+                                    ));
+                                }
+                                crate::settings::PendingAsyncOp::RoleSwitched { seq, rs, providers, gateway_available } => {
+                                    let (fields, models, provider_info, gateway_error) = crate::settings::build_role_fields(
+                                        &rs, &providers, &mut gw, gateway_available,
+                                    );
+                                    let _ = tx.send(crate::AppEvent::SettingsLoaded(
+                                        crate::settings::SettingsLoadResult::RoleSwitched {
+                                            seq, fields, model_entries: models, provider_info, gateway_error,
+                                        }
+                                    ));
+                                }
+                                crate::settings::PendingAsyncOp::Save { all_settings } => {
+                                    let mut error = None;
+                                    for role in crate::settings::ROLES {
+                                        if let Some(rs) = all_settings.roles.get(*role) {
+                                            if rs.provider.is_empty() { continue; }
+                                            // Validate credentials before pushing
+                                            if let Err(e) = crate::settings::validate_parameters(
+                                                &mut gw, &rs.provider, &rs.api_key, &rs.model, &rs.base_url,
+                                            ) {
+                                                error = Some(format!("Validation failed for {}: {}", role, e));
+                                                break;
+                                            }
+                                            if let Err(e) = crate::settings::push_role_to_gateway(&mut gw, role, rs) {
+                                                error = Some(format!("Gateway push failed for {}: {}", role, e));
+                                                break;
+                                            }
                                         }
                                     }
-                                }
-                                // Persist to disk only after validation and gateway push succeed
-                                if error.is_none() {
-                                    if let Err(e) = crate::settings::save_all_settings_to_disk(&all_settings) {
-                                        error = Some(format!("Failed to save settings: {}", e));
+                                    // Persist to disk only after validation and gateway push succeed
+                                    if error.is_none() {
+                                        if let Err(e) = crate::settings::save_all_settings_to_disk(&all_settings) {
+                                            error = Some(format!("Failed to save settings: {}", e));
+                                        }
                                     }
-                                }
-                                if let Some(ref e) = error {
-                                    crate::app::log_event(&format!("settings save failed: {}", e));
-                                } else {
-                                    crate::app::log_event("settings saved successfully");
-                                }
-                                let _ = tx.send(crate::AppEvent::SettingsLoaded(
-                                    crate::settings::SettingsLoadResult::Saved {
-                                        error,
+                                    if let Some(ref e) = error {
+                                        crate::app::log_event(&format!("settings save failed: {}", e));
+                                    } else {
+                                        crate::app::log_event("settings saved successfully");
                                     }
-                                ));
+                                    let _ = tx.send(crate::AppEvent::SettingsLoaded(
+                                        crate::settings::SettingsLoadResult::Saved {
+                                            error,
+                                        }
+                                    ));
+                                }
                             }
+                        }));
+                        if let Err(_) = result {
+                            crate::app::log_event("settings async operation panicked");
                         }
                     });
                 }
