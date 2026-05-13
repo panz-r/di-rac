@@ -319,6 +319,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 	w := &responseWriter{conn: conn, encoder: encoder}
 
 	for {
+		// Exit promptly on server shutdown
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+
 		// Refresh read deadline for each message
 		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Minute)); err != nil {
 			log.Printf("SetReadDeadline error: %v", err)
@@ -655,7 +662,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Merge stored provider config (set-provider) into request
-		s.mergeProviderConfig(&req)
+		if err := s.mergeProviderConfig(&req); err != nil {
+			w.write(&Response{
+				ID:     req.ID,
+				Status: 400,
+				Error:  &ErrorDetail{Code: "CONFIG_ERROR", Message: err.Error()},
+			})
+			continue
+		}
 
 		// Validate request after merging stored config
 		if err := providers.ValidateRequest(s.buildProviderRequest(&req)); err != nil {
@@ -699,9 +713,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 // mergeProviderConfig fills in missing fields from the stored set-provider config.
 // Precedence: request fields > stored config > handler defaults (resolved by the handler itself).
-func (s *Server) mergeProviderConfig(req *Request) {
+func (s *Server) mergeProviderConfig(req *Request) error {
 	if req.Provider.ID == "" {
-		return
+		return nil
 	}
 
 	// For codex provider, inject OAuth token if no API key is set
@@ -717,7 +731,7 @@ func (s *Server) mergeProviderConfig(req *Request) {
 	stored, ok := s.providerConfigs[req.Provider.ID]
 	s.configMu.RUnlock()
 	if !ok {
-		return
+		return nil
 	}
 	// Do not merge stored API key when the request overrides base_url to
 	// a different host. This prevents key exfiltration via base_url redirect.
@@ -756,9 +770,10 @@ func (s *Server) mergeProviderConfig(req *Request) {
 	if req.Provider.BaseURL != "" {
 		if err := isSafeBaseURL(req.Provider.BaseURL); err != nil {
 			log.Printf("[SSRF] rejected base_url %q: %v", req.Provider.BaseURL, err)
-			req.Provider.BaseURL = "" // clear to prevent use
+			return fmt.Errorf("base_url rejected: %v", err)
 		}
 	}
+	return nil
 }
 
 // enrichModelCapabilities fills in missing capability fields on ModelEntry

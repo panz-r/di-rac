@@ -257,15 +257,17 @@ func codexStartOAuth(ctx context.Context) (*CodexAuthTokens, error) {
 
 	log.Printf("Waiting for Codex OAuth callback on port %d...", port)
 
-	// Wait for callback or context cancellation
+	// Wait for callback, context cancellation, or 5-minute timeout
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer timeoutCancel()
 	select {
 	case code := <-codeChan:
 		return codexExchangeCode(code, verifier, redirectURI)
 	case err := <-errChan:
 		return nil, err
-	case <-ctx.Done():
+	case <-timeoutCtx.Done():
 		srv.Shutdown(context.Background())
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("authentication timed out: %w", timeoutCtx.Err())
 	}
 }
 
