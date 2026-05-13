@@ -80,6 +80,10 @@ impl InputBuffer {
         let text = self.content.clone();
         if !text.is_empty() {
             self.history.push(text.clone());
+            // Cap history at 100 entries
+            if self.history.len() > 100 {
+                self.history.remove(0);
+            }
         }
         self.clear();
         text

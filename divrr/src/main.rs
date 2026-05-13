@@ -270,6 +270,12 @@ async fn main() -> color_eyre::Result<()> {
                                         }
                                     }
                                 }
+                                // Persist to disk only after validation and gateway push succeed
+                                if error.is_none() {
+                                    if let Err(e) = crate::settings::save_all_settings_to_disk(&all_settings) {
+                                        error = Some(format!("Failed to save settings: {}", e));
+                                    }
+                                }
                                 let _ = tx.send(crate::AppEvent::SettingsLoaded(
                                     crate::settings::SettingsLoadResult::Saved {
                                         error,

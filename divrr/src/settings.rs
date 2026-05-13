@@ -883,11 +883,6 @@ impl SettingsState {
             return Vec::new();
         }
 
-        if let Err(e) = save_all_settings(&self.all_settings) {
-            self.error = Some(format!("Failed to save: {}", e));
-            return Vec::new();
-        }
-
         // Build SetProviderConfig messages for all configured roles
         let mut messages = Vec::new();
         for role in ROLES {
@@ -1188,7 +1183,7 @@ pub fn load_all_settings() -> AllSettings {
         .unwrap_or_default()
 }
 
-fn save_all_settings(settings: &AllSettings) -> std::io::Result<()> {
+pub fn save_all_settings_to_disk(settings: &AllSettings) -> std::io::Result<()> {
     let path = settings_path();
     let json = serde_json::to_string_pretty(settings)?;
     std::fs::write(path, json)
@@ -1220,7 +1215,7 @@ pub fn push_role_to_gateway(gw: &mut GatewayConnection, role: &str, rs: &RoleSet
         "config": config,
     });
 
-    let _ = gw.request(&msg);
+    let _resp = gw.request(&msg)?;
     Ok(())
 }
 

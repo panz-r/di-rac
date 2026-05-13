@@ -123,7 +123,8 @@ fn render_block(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expan
                         ]));
                     } else {
                         lines.push(Line::from(vec![
-                            Span::raw(truncate_single(line, max_width.saturating_sub(2))),
+                            Span::raw("        "),
+                            Span::raw(truncate_single(line, max_width.saturating_sub(10))),
                         ]));
                     }
                 }
