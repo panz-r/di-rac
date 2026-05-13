@@ -193,7 +193,6 @@ async fn main() -> color_eyre::Result<()> {
         let event = event_rx.recv().await;
         match event {
             Some(AppEvent::Key(key)) => {
-                // Ignore key release/repeat events (crossterm 0.28+ sends both press and release)
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }

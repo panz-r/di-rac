@@ -3,8 +3,11 @@ use crate::input::InputBuffer;
 use crate::message::{CoreEvent, FrontendMessage};
 use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
+
+/// Prefix prepended to thinking content in System blocks.
+pub const THINKING_PREFIX: char = '\u{00B7}';
 use chrono::Utc;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -30,6 +33,14 @@ pub enum Mode {
     Command,
     Settings,
     Action,
+    SaveDialog,
+}
+
+pub struct SaveDialogState {
+    pub path: String,
+    pub cursor: usize,
+    pub exists_warned: bool,
+    pub block_text: String,
 }
 
 pub struct App {
@@ -58,6 +69,10 @@ pub struct App {
     pub pending_messages: Vec<FrontendMessage>,
     /// Channel to send async results back to the event loop.
     pub event_tx: Option<mpsc::UnboundedSender<crate::AppEvent>>,
+    /// Active save dialog state.
+    pub save_dialog: Option<Box<SaveDialogState>>,
+    /// Expand state saved before entering Action mode, restored on close.
+    pub saved_expanded: Option<std::collections::HashSet<usize>>,
 }
 
 impl App {
@@ -84,6 +99,8 @@ impl App {
             auto_approve: false,
             pending_messages: Vec::new(),
             event_tx: None,
+            save_dialog: None,
+            saved_expanded: None,
         }
     }
 
@@ -210,14 +227,14 @@ impl App {
 
                     if !has_streaming {
                         agent.log.set_streaming(
-                            if is_thinking { format!("[thinking] {}", text) } else { text.clone() },
+                            if is_thinking { format!("{} {}", THINKING_PREFIX, text) } else { text.clone() },
                             is_thinking,
                         );
                         agent.status = AgentStatus::Running;
                     } else if was_thinking != is_thinking {
                         agent.log.finalize_streaming();
                         agent.log.set_streaming(
-                            if is_thinking { format!("[thinking] {}", text) } else { text.clone() },
+                            if is_thinking { format!("{} {}", THINKING_PREFIX, text) } else { text.clone() },
                             is_thinking,
                         );
                     } else {
@@ -384,16 +401,47 @@ impl App {
 
     /// Handle a key event and optionally produce a message to send to di-core.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
+        if key.kind != KeyEventKind::Press {
+            return None;
+        }
+
         match self.mode {
             Mode::Normal => self.handle_normal_mode(key),
             Mode::Insert => self.handle_insert_mode(key),
             Mode::Command => self.handle_command_mode(key),
             Mode::Settings => self.handle_settings_mode(key),
             Mode::Action => self.handle_action_mode(key),
+            Mode::SaveDialog => self.handle_save_dialog(key),
         }
     }
 
-    /// Handle a paste event. Only routes to the secret edit modal or insert mode.
+    /// Enter Action mode: save expand state, force-expand selected block.
+    fn enter_action_mode(&mut self) {
+        if let Some(agent) = self.active_agent() {
+            self.saved_expanded = Some(agent.expanded.clone());
+        }
+        let idx = self.selected_block;
+        if let Some(agent) = self.active_agent_mut() {
+            agent.expanded.insert(idx);
+        }
+        self.mode = Mode::Action;
+        self.action_cursor = 0;
+    }
+
+    /// Exit Action mode: restore saved expand state (unless user explicitly toggled).
+    fn exit_action_mode(&mut self) {
+        if let Some(saved) = self.saved_expanded.take() {
+            if let Some(agent) = self.active_agent_mut() {
+                agent.expanded = saved;
+            }
+        }
+        self.mode = Mode::Normal;
+    }
+
+    pub fn show_action_palette(&self) -> bool {
+        true
+    }
+
     pub fn handle_paste(&mut self, text: &str) {
         match self.mode {
             Mode::Settings => {
@@ -402,6 +450,14 @@ impl App {
                         s.secret_edit_buffer.insert_str(s.secret_edit_cursor, text);
                         s.secret_edit_cursor += text.len();
                     }
+                }
+            }
+            Mode::SaveDialog => {
+                if let Some(d) = &mut self.save_dialog {
+                    let byte_pos = char_to_byte(&d.path, d.cursor);
+                    d.path.insert_str(byte_pos, text);
+                    d.cursor += text.chars().count();
+                    d.exists_warned = false;
                 }
             }
             Mode::Insert => {
@@ -604,7 +660,6 @@ impl App {
                 None
             }
             KeyCode::Char('e') => {
-                // Toggle expand/collapse on the selected block
                 let idx = self.selected_block;
                 if let Some(agent) = self.active_agent_mut() {
                     if idx < agent.log.blocks().len() {
@@ -656,8 +711,7 @@ impl App {
                     .map(|a| !a.log.blocks().is_empty())
                     .unwrap_or(false);
                 if has_blocks {
-                    self.mode = Mode::Action;
-                    self.action_cursor = 0;
+                    self.enter_action_mode();
                 }
                 None
             }
@@ -739,10 +793,17 @@ impl App {
         const ACTION_COUNT: usize = ACTIONS.len();
 
         match key.code {
+            // Escape → restore original expand state, close
             KeyCode::Esc => {
-                self.mode = Mode::Normal;
+                self.exit_action_mode();
                 None
             }
+            // Space → close (toggle off)
+            KeyCode::Char(' ') => {
+                self.exit_action_mode();
+                None
+            }
+            // Navigation keys → process normally
             KeyCode::Up | KeyCode::Char('k') => {
                 self.action_cursor = self.action_cursor.saturating_sub(1);
                 None
@@ -755,53 +816,137 @@ impl App {
             KeyCode::Char('2') => { self.action_cursor = 1; self.execute_block_action() }
             KeyCode::Char('3') => { self.action_cursor = 2; self.execute_block_action() }
             KeyCode::Enter => self.execute_block_action(),
-            _ => None,
+            // Any other key → close
+            _ => {
+                self.exit_action_mode();
+                None
+            }
         }
     }
 
     fn execute_block_action(&mut self) -> Option<FrontendMessage> {
-        self.mode = Mode::Normal;
-
         let block_text = self.active_agent()
             .and_then(|a| a.log.blocks().get(self.selected_block))
             .map(|b| block_full_text(b))
             .unwrap_or_default();
 
         if block_text.is_empty() {
+            self.exit_action_mode();
             self.status_message = Some("No content in selected block".to_string());
             return None;
         }
 
         match self.action_cursor {
             0 => {
-                // Expand/Collapse
+                // Expand/Collapse — toggle in the saved state so it persists after close
                 let idx = self.selected_block;
-                if let Some(agent) = self.active_agent_mut() {
-                    if agent.expanded.contains(&idx) {
-                        agent.expanded.remove(&idx);
+                if let Some(saved) = &mut self.saved_expanded {
+                    if saved.contains(&idx) {
+                        saved.remove(&idx);
                     } else {
-                        agent.expanded.insert(idx);
+                        saved.insert(idx);
                     }
                 }
+                self.exit_action_mode();
                 self.status_message = None;
             }
             1 => {
-                // Save to file
-                let dir = std::path::Path::new(".di/out");
-                let _ = std::fs::create_dir_all(dir);
-                let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-                let filename = format!(".di/out/block-{}.md", timestamp);
-                match std::fs::write(&filename, &block_text) {
-                    Ok(_) => self.status_message = Some(format!("Saved to {}", filename)),
-                    Err(e) => self.status_message = Some(format!("Save failed: {}", e)),
-                }
+                // Open save dialog instead of saving immediately
+                let default_path = "~/note.txt".to_string();
+                self.mode = Mode::SaveDialog;
+                self.save_dialog = Some(Box::new(SaveDialogState {
+                    cursor: default_path.chars().count(),
+                    path: default_path,
+                    exists_warned: false,
+                    block_text,
+                }));
             }
             2 => {
                 // Copy to clipboard
+                self.exit_action_mode();
                 match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(&block_text)) {
                     Ok(_) => self.status_message = Some("Copied to clipboard".to_string()),
                     Err(e) => self.status_message = Some(format!("Clipboard failed: {}", e)),
                 }
+            }
+            _ => { self.exit_action_mode(); }
+        }
+        None
+    }
+
+    fn handle_save_dialog(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
+        let dialog = match &mut self.save_dialog {
+            Some(d) => d,
+            None => { self.mode = Mode::Normal; return None; }
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                self.save_dialog = None;
+                self.mode = Mode::Normal;
+                return None;
+            }
+            KeyCode::Enter => {
+                let path = dialog.path.trim().to_string();
+                if path.is_empty() {
+                    return None;
+                }
+                let text = dialog.block_text.clone();
+                let was_warned = dialog.exists_warned;
+
+                let expanded = shellexpand::tilde(&path).to_string();
+                let p = std::path::Path::new(&expanded);
+
+                if p.exists() && !was_warned {
+                    dialog.exists_warned = true;
+                    return None;
+                }
+
+                if let Some(parent) = p.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+
+                match std::fs::write(p, &text) {
+                    Ok(_) => self.status_message = Some(format!("Saved to {}", path)),
+                    Err(e) => self.status_message = Some(format!("Save failed: {}", e)),
+                }
+                self.save_dialog = None;
+                self.mode = Mode::Normal;
+                return None;
+            }
+            KeyCode::Backspace => {
+                if dialog.cursor > 0 {
+                    dialog.cursor -= 1;
+                    let byte_pos = char_to_byte(&dialog.path, dialog.cursor);
+                    dialog.path.remove(byte_pos);
+                    dialog.exists_warned = false;
+                }
+            }
+            KeyCode::Delete => {
+                let char_count = dialog.path.chars().count();
+                if dialog.cursor < char_count {
+                    let byte_pos = char_to_byte(&dialog.path, dialog.cursor);
+                    dialog.path.remove(byte_pos);
+                    dialog.exists_warned = false;
+                }
+            }
+            KeyCode::Left => {
+                dialog.cursor = dialog.cursor.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                dialog.cursor = (dialog.cursor + 1).min(dialog.path.chars().count());
+            }
+            KeyCode::Home => {
+                dialog.cursor = 0;
+            }
+            KeyCode::End => {
+                dialog.cursor = dialog.path.chars().count();
+            }
+            KeyCode::Char(c) => {
+                let byte_pos = char_to_byte(&dialog.path, dialog.cursor);
+                dialog.path.insert(byte_pos, c);
+                dialog.cursor += 1;
+                dialog.exists_warned = false;
             }
             _ => {}
         }
@@ -1165,6 +1310,14 @@ fn format_result_summary(result: &serde_json::Value) -> String {
             s
         }
     }
+}
+
+/// Convert a char index to a byte index in a string.
+fn char_to_byte(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len())
 }
 
 fn block_full_text(block: &crate::agent::Block) -> String {

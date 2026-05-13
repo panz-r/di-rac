@@ -77,6 +77,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::DarkGray),
             ));
         }
+        Mode::SaveDialog => {
+            spans.push(Span::styled(
+                "[Save dialog open]",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
     }
 
     let paragraph = Paragraph::new(Line::from(spans));

@@ -52,8 +52,13 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // Action palette popup (spacebar on selected block)
-    if app.mode == crate::app::Mode::Action {
+    if app.mode == crate::app::Mode::Action && app.show_action_palette() {
         render_action_palette(frame, input_area, app);
+    }
+
+    // Save dialog popup
+    if app.mode == crate::app::Mode::SaveDialog {
+        render_save_dialog(frame, input_area, app);
     }
 
     // Settings overlay on top of everything
@@ -62,14 +67,20 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 }
 
-const BLOCK_ACTIONS: &[(&str, &str)] = &[
-    ("1 Expand", "Toggle expand/collapse"),
-    ("2 Save",   "Write block to .di/out/"),
-    ("3 Copy",   "Copy to clipboard"),
-];
-
 fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
-    let count = BLOCK_ACTIONS.len() as u16;
+    // Use pre-menu saved state for the expand/collapse label
+    let was_expanded = app.saved_expanded
+        .as_ref()
+        .map(|s| s.contains(&app.selected_block))
+        .unwrap_or(false);
+    let expand_label = if was_expanded { "1 Collapse" } else { "1 Expand" };
+    let actions: &[(&str, &str)] = &[
+        (expand_label, "Toggle expand/collapse"),
+        ("2 Save",     "Write block to file"),
+        ("3 Copy",     "Copy to clipboard"),
+    ];
+
+    let count = actions.len() as u16;
     let w = 36u16;
     let h = count + 2;
     let y = input_area.y.saturating_sub(h);
@@ -79,7 +90,7 @@ fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
     frame.render_widget(Clear, area);
 
     let mut lines = Vec::new();
-    for (i, (label, desc)) in BLOCK_ACTIONS.iter().enumerate() {
+    for (i, (label, desc)) in actions.iter().enumerate() {
         let is_selected = i == app.action_cursor;
         let marker = if is_selected { "\u{25B6} " } else { "  " };
         let style = if is_selected {
@@ -89,11 +100,54 @@ fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
         };
         lines.push(Line::from(vec![
             Span::styled(marker.to_string(), style),
-            Span::styled(format!("{:<10}", label), style),
+            Span::styled(format!("{:<12}", label), style),
             Span::styled(format!(" {}", desc), Style::default().fg(Color::DarkGray)),
         ]));
     }
 
     let para = Paragraph::new(lines);
     frame.render_widget(para, area);
+}
+
+fn render_save_dialog(frame: &mut Frame, input_area: Rect, app: &App) {
+    let dialog = match &app.save_dialog {
+        Some(d) => d,
+        None => return,
+    };
+
+    let w = 50u16;
+    let h = 3u16;
+    let y = input_area.y.saturating_sub(h);
+    let x = input_area.x + 4;
+
+    let area = Rect::new(x, y, w, h);
+    frame.render_widget(Clear, area);
+
+    let mut lines = Vec::new();
+
+    // File path input line
+    let path_style = Style::default().fg(Color::White);
+    let prefix = Span::styled("Save to: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let path_span = Span::styled(&dialog.path, path_style);
+    lines.push(Line::from(vec![prefix, path_span]));
+
+    // Warning or hint line
+    if dialog.exists_warned {
+        lines.push(Line::from(Span::styled(
+            "WARNING: File exists, Enter will overwrite",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "Esc to cancel, Enter to save",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let para = Paragraph::new(lines);
+    frame.render_widget(para, area);
+
+    // Position cursor in the path input
+    let cursor_col = "Save to: ".len() + dialog.cursor;
+    frame.set_cursor_position((x + cursor_col as u16, y));
 }

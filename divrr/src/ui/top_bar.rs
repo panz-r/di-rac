@@ -104,6 +104,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::Cyan),
             ));
         }
+        crate::app::Mode::SaveDialog => {
+            spans.push(Span::styled(
+                " | SAVE",
+                Style::default().fg(Color::Yellow),
+            ));
+        }
     }
 
     let paragraph = Paragraph::new(Line::from(spans));
