@@ -140,11 +140,7 @@ func NewDeepSeekHandler() *DeepSeekHandler {
 					delete(result, "top_p")
 				} else {
 					// Non-thinking mode: apply temperature and top_p from settings
-					if req.SettingIsNull("temperature") {
-						delete(result, "temperature")
-					} else {
-						result["temperature"] = req.SettingFloat("temperature")
-					}
+					req.ApplySettingFloat(result, "temperature")
 					if req.SettingIsNull("top_p") {
 						delete(result, "top_p")
 					} else {

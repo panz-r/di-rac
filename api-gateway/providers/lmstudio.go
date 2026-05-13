@@ -15,16 +15,8 @@ func NewLmStudioHandler() *LmStudioHandler {
 			BaseURL:             "http://localhost:1234/api/v0",
 			MaxCompletionTokens: true,
 			ModifyRequest: func(req *Request, result map[string]interface{}) {
-				if req.SettingIsNull("temperature") {
-					delete(result, "temperature")
-				} else {
-					result["temperature"] = req.SettingFloat("temperature")
-				}
-				if req.SettingIsNull("top_p") {
-					delete(result, "top_p")
-				} else {
-					result["top_p"] = req.SettingFloat("top_p")
-				}
+				req.ApplySettingFloat(result, "temperature")
+				req.ApplySettingFloat(result, "top_p")
 			},
 			Capabilities: &ProviderInfo{
 				ID:               "lmstudio",

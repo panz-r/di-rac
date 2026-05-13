@@ -290,11 +290,7 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 					delete(result, "temperature")
 					delete(result, "top_p")
 				} else {
-					if req.SettingIsNull("temperature") {
-						delete(result, "temperature")
-					} else {
-						result["temperature"] = req.SettingFloat("temperature")
-					}
+					req.ApplySettingFloat(result, "temperature")
 					if req.SettingIsNull("top_p") {
 						delete(result, "top_p")
 					} else {

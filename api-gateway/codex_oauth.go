@@ -307,9 +307,7 @@ func codexExchangeCode(code, verifier, redirectURI string) (*CodexAuthTokens, er
 	// Step 2: Exchange id_token for API access token (token exchange grant)
 	apiToken, accountID, err := codexExchangeForAPIToken(tokenResp.IDToken)
 	if err != nil {
-		// If token exchange fails, fall back to the access token directly
-		log.Printf("Warning: API token exchange failed (%v), using access token directly", err)
-		apiToken = tokenResp.AccessToken
+		return nil, fmt.Errorf("API token exchange failed (re-authentication required): %w", err)
 	}
 
 	return &CodexAuthTokens{
@@ -394,8 +392,7 @@ func codexRefreshToken(refreshToken string) (*CodexAuthTokens, error) {
 	// Also refresh the API token
 	apiToken, accountID, err := codexExchangeForAPIToken(tokenResp.IDToken)
 	if err != nil {
-		log.Printf("Warning: API token exchange on refresh failed (%v), using access token directly", err)
-		apiToken = tokenResp.AccessToken
+		return nil, fmt.Errorf("API token exchange on refresh failed (re-authentication required): %w", err)
 	}
 
 	newRefresh := tokenResp.RefreshToken

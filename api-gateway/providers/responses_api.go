@@ -529,38 +529,23 @@ func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(Stream
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var eventType string
+	var dataBuf strings.Builder
+	var processErr error
 
-	for scanner.Scan() {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	processEvent := func() {
+		if processErr != nil {
+			return
 		}
-		line := scanner.Text()
-
-		// Empty line = event boundary
-		if line == "" {
-			eventType = ""
-			continue
-		}
-
-		// Parse event type
-		if strings.HasPrefix(line, "event: ") {
-			eventType = strings.TrimPrefix(line, "event: ")
-			continue
-		}
-
-		// Parse data
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
+		data := dataBuf.String()
+		dataBuf.Reset()
 		if data == "" {
-			continue
+			return
 		}
 
 		var evt map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &evt); err != nil {
 			log.Printf("responses SSE: parse error: %v", err)
-			continue
+			return
 		}
 
 		switch eventType {
@@ -568,7 +553,8 @@ func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(Stream
 			delta, _ := evt["delta"].(string)
 			if delta != "" {
 				if err := callback(StreamChunk{Type: "delta", TextDelta: delta}); err != nil {
-					return err
+					processErr = err
+					return
 				}
 			}
 
@@ -583,12 +569,12 @@ func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(Stream
 					Index:      idx,
 					ToolCallID: callID,
 				}); err != nil {
-					return err
+					processErr = err
+					return
 				}
 			}
 
 		case "response.output_item.added":
-			// Detect function_call start
 			item, _ := evt["item"].(map[string]interface{})
 			if item != nil {
 				if itemType, _ := item["type"].(string); itemType == "function_call" {
@@ -601,7 +587,8 @@ func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(Stream
 						ToolCallID:   callID,
 						ToolCallName: name,
 					}); err != nil {
-						return err
+						processErr = err
+						return
 					}
 				}
 			}
@@ -610,7 +597,8 @@ func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(Stream
 			delta, _ := evt["delta"].(string)
 			if delta != "" {
 				if err := callback(StreamChunk{Type: "delta", Thinking: delta}); err != nil {
-					return err
+					processErr = err
+					return
 				}
 			}
 
@@ -618,23 +606,22 @@ func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(Stream
 			delta, _ := evt["delta"].(string)
 			if delta != "" {
 				if err := callback(StreamChunk{Type: "delta", Thinking: delta}); err != nil {
-					return err
+					processErr = err
+					return
 				}
 			}
 
 		case "response.completed":
-			// Extract usage from the completed response
 			var usage *Usage
 			if resp, ok := evt["response"].(map[string]interface{}); ok {
 				usage = parseResponsesUsage(resp)
 			}
 			if err := callback(StreamChunk{Type: "complete", Usage: usage}); err != nil {
-				return err
+				processErr = err
+				return
 			}
-			return nil
 
 		case "response.failed":
-			// Extract error and return as ProviderAPIError so gateway retry logic works.
 			statusCode := 500
 			if resp, ok := evt["response"].(map[string]interface{}); ok {
 				lastErr, _ := resp["last_error"].(map[string]interface{})
@@ -643,17 +630,57 @@ func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(Stream
 				if code == "rate_limit_exceeded" {
 					statusCode = 429
 				}
-				return &ProviderAPIError{StatusCode: statusCode, Message: fmt.Sprintf("%s: %s", code, message), Retriable: statusCode == 429 || statusCode >= 500}
+				processErr = &ProviderAPIError{StatusCode: statusCode, Message: fmt.Sprintf("%s: %s", code, message), Retriable: statusCode == 429 || statusCode >= 500}
+				return
 			}
-			return &ProviderAPIError{StatusCode: 500, Message: "responses API: response failed", Retriable: true}
+			processErr = &ProviderAPIError{StatusCode: 500, Message: "responses API: response failed", Retriable: true}
+			return
 
 		case "error":
 			msg, _ := evt["message"].(string)
 			if msg == "" {
-				msg = string(data)
+				msg = data
 			}
-			return &ProviderAPIError{StatusCode: 500, Message: msg, Retriable: true}
+			processErr = &ProviderAPIError{StatusCode: 500, Message: msg, Retriable: true}
+			return
 		}
+	}
+
+	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		line := scanner.Text()
+
+		// Empty line = event boundary: flush accumulated data
+		if line == "" {
+			processEvent()
+			if processErr != nil {
+				return processErr
+			}
+			eventType = ""
+			continue
+		}
+
+		// Parse event type
+		if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+			continue
+		}
+
+		// Accumulate data lines
+		if strings.HasPrefix(line, "data: ") {
+			if dataBuf.Len() > 0 {
+				dataBuf.WriteByte('\n')
+			}
+			dataBuf.WriteString(strings.TrimPrefix(line, "data: "))
+		}
+	}
+
+	// Flush any remaining data
+	processEvent()
+	if processErr != nil {
+		return processErr
 	}
 
 	if err := scanner.Err(); err != nil {

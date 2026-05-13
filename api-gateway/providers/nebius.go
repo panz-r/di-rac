@@ -183,11 +183,7 @@ func NewNebiusHandler() *NebiusHandler {
 				},
 			},
 			ModifyRequest: func(req *Request, result map[string]interface{}) {
-				if req.SettingIsNull("temperature") {
-					delete(result, "temperature")
-				} else {
-					result["temperature"] = req.SettingFloat("temperature")
-				}
+				req.ApplySettingFloat(result, "temperature")
 
 				if topP := req.SettingFloat("top_p"); topP > 0 {
 					result["top_p"] = topP

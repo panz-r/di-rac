@@ -901,6 +901,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 	for {
 		select {
 		case streamErr := <-errChan:
+			log.Printf("[streaming] request %d: provider error: %v", id, streamErr)
 			w.write(&Response{
 				ID:     id,
 				Status: 500,
@@ -937,6 +938,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 			// Check for error that arrived simultaneously with done signal
 			select {
 			case streamErr := <-errChan:
+				log.Printf("[streaming] request %d: provider error: %v", id, streamErr)
 				w.write(&Response{
 					ID:     id,
 					Status: 500,
@@ -963,6 +965,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 					// Final check: an error may have arrived between the first check and now
 					select {
 					case streamErr := <-errChan:
+						log.Printf("[streaming] request %d: provider error: %v", id, streamErr)
 						w.write(&Response{
 							ID:     id,
 							Status: 500,

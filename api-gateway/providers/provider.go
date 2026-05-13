@@ -132,6 +132,32 @@ func (r *Request) SettingFloat(key string) float64 {
 	return 0
 }
 
+// ApplySettingFloat sets result[key] from the settings map, handling three cases:
+//   - key absent from settings: no-op (preserve provider default)
+//   - key present with nil: delete result[key] (user explicitly excluded)
+//   - key present with value: set result[key] = value
+func (r *Request) ApplySettingFloat(result map[string]interface{}, key string) {
+	if r.Settings == nil {
+		return
+	}
+	v, ok := r.Settings[key]
+	if !ok {
+		return // absent — don't touch result, let provider default stand
+	}
+	if v == nil {
+		delete(result, key)
+		return
+	}
+	switch n := v.(type) {
+	case float64:
+		result[key] = n
+	case int:
+		result[key] = float64(n)
+	case int64:
+		result[key] = float64(n)
+	}
+}
+
 // SettingBool returns a setting value as bool, or false if not set.
 func (r *Request) SettingBool(key string) bool {
 	b, _ := r.SettingBoolOK(key)
