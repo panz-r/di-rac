@@ -10,15 +10,14 @@ pub struct GatewayChild {
 }
 
 impl GatewayChild {
-    /// Send SIGTERM, wait briefly, then SIGKILL if still alive. Clean up socket.
+    /// Send SIGTERM then SIGKILL. Clean up socket.
     pub fn kill(&mut self) {
         if let Some(ref mut child) = self.child {
             // Try graceful SIGTERM first
             unsafe {
                 libc::kill(child.id() as i32, libc::SIGTERM);
             }
-            // Give it 200ms to shut down
-            std::thread::sleep(Duration::from_millis(200));
+            // Non-blocking check — if already exited, skip SIGKILL
             match child.try_wait() {
                 Ok(Some(_)) => {} // exited gracefully
                 _ => {

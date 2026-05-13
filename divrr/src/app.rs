@@ -5,9 +5,16 @@ use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
 
 /// Append a timestamped line to ~/.dirac/divrr.log (best-effort, never fails).
+/// Skips writing if the log exceeds 1MB to prevent unbounded growth.
 pub fn log_event(msg: &str) {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let path = std::path::Path::new(&home).join(".dirac").join("divrr.log");
+    // Rotate: truncate if file exceeds 1MB
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > 1_048_576 {
+            let _ = std::fs::write(&path, "");
+        }
+    }
     let _ = std::fs::OpenOptions::new().append(true).create(true).open(&path)
         .map(|mut f| {
             use std::io::Write;
@@ -458,10 +465,6 @@ impl App {
             }
         }
         self.mode = Mode::Normal;
-    }
-
-    pub fn show_action_palette(&self) -> bool {
-        true
     }
 
     pub fn handle_paste(&mut self, text: &str) {

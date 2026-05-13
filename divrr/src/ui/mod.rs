@@ -52,7 +52,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // Action palette popup (spacebar on selected block)
-    if app.mode == crate::app::Mode::Action && app.show_action_palette() {
+    if app.mode == crate::app::Mode::Action {
         render_action_palette(frame, input_area, app);
     }
 
