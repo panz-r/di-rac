@@ -369,6 +369,11 @@ impl App {
             } => {
                 self.input_queue.retain(|(id, _)| *id != agent_id);
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
+                    // Ignore duplicate TaskFinished if agent already finished
+                    if matches!(agent.status, AgentStatus::Finished | AgentStatus::Error) {
+                        log_event(&format!("Duplicate TaskFinished for {} ignored", agent_id));
+                        return;
+                    }
                     agent.status = if success {
                         AgentStatus::Finished
                     } else {
