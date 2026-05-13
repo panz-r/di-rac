@@ -156,25 +156,40 @@ trie_t* trie_create(void) {
 }
 
 static void free_registry_contents(ht_table_t *registry) {
+    node_list_t **lists = malloc(sizeof(node_list_t*) * ht_size(registry));
+    if (!lists) return;
+    size_t count = 0;
+
     ht_iter_t it = ht_iter_begin(registry);
     const void *key, *val;
     size_t klen, vlen;
     while (ht_iter_next(registry, &it, &key, &klen, &val, &vlen)) {
-        node_list_t *list = *(node_list_t**)val;
-        free(list->nodes);
-        free(list);
+        lists[count++] = *(node_list_t**)val;
     }
     ht_destroy(registry);
+
+    for (size_t i = 0; i < count; i++) {
+        free(lists[i]->nodes);
+        free(lists[i]);
+    }
+    free(lists);
 }
 
 static void free_kv_table(ht_table_t *kv) {
+    char **vals = malloc(sizeof(char*) * ht_size(kv));
+    if (!vals) return;
+    size_t count = 0;
+
     ht_iter_t it = ht_iter_begin(kv);
     const void *key, *val;
     size_t klen, vlen;
     while (ht_iter_next(kv, &it, &key, &klen, &val, &vlen)) {
-        free(*(char**)val);
+        vals[count++] = *(char**)val;
     }
     ht_destroy(kv);
+
+    for (size_t i = 0; i < count; i++) free(vals[i]);
+    free(vals);
 }
 
 void trie_destroy(trie_t *trie) {
@@ -184,13 +199,20 @@ void trie_destroy(trie_t *trie) {
     free_registry_contents(trie->waiting_registry);
     
     /* Clean up transient settings */
+    ht_table_t **tables = malloc(sizeof(ht_table_t*) * ht_size(trie->transient_registry));
+    if (!tables) return;
+    size_t count = 0;
+
     ht_iter_t it = ht_iter_begin(trie->transient_registry);
     const void *key, *val;
     size_t klen, vlen;
     while (ht_iter_next(trie->transient_registry, &it, &key, &klen, &val, &vlen)) {
-        free_kv_table(*(ht_table_t**)val);
+        tables[count++] = *(ht_table_t**)val;
     }
     ht_destroy(trie->transient_registry);
+
+    for (size_t i = 0; i < count; i++) free_kv_table(tables[i]);
+    free(tables);
     
     free(trie);
 }
