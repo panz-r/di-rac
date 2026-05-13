@@ -857,8 +857,9 @@ impl App {
                 self.status_message = None;
             }
             1 => {
-                // Open save dialog instead of saving immediately
-                let default_path = "~/note.txt".to_string();
+                // Open save dialog with a timestamped default path
+                let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                let default_path = format!("~/block-{}.md", ts);
                 self.mode = Mode::SaveDialog;
                 self.save_dialog = Some(Box::new(SaveDialogState {
                     cursor: default_path.chars().count(),

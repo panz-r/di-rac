@@ -112,11 +112,12 @@ impl DiCoreBackend {
                 let log_path = std::path::Path::new(&home).join(".dirac").join("di-core.log");
                 let framed = FramedRead::new(stderr, LinesCodec::new());
                 let mut stream = framed;
-                while let Some(Ok(line)) = stream.next().await {
-                    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&log_path) {
-                        use std::io::Write;
+                if let Ok(file) = std::fs::OpenOptions::new().append(true).create(true).open(&log_path) {
+                    use std::io::{BufWriter, Write};
+                    let mut writer = BufWriter::new(file);
+                    while let Some(Ok(line)) = stream.next().await {
                         let ts = chrono::Local::now().format("%H:%M:%S%.3f");
-                        let _ = writeln!(f, "[{}] {}", ts, line);
+                        let _ = writeln!(writer, "[{}] {}", ts, line);
                     }
                 }
             });

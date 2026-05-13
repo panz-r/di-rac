@@ -118,6 +118,10 @@ async fn main() -> color_eyre::Result<()> {
                         break;
                     }
                 }
+                Some(Ok(CrosstermEvent::Resize(..))) => {
+                    // Resize is handled on next render pass — no action needed here.
+                    // The event breaks the recv() await so we redraw immediately.
+                }
                 _ => {}
             }
         }
