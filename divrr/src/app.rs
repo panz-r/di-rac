@@ -92,6 +92,7 @@ impl VisualLineCache {
 }
 
 pub struct App {
+    pub theme: crate::theme::Theme,
     pub agents: Vec<AgentState>,
     pub active_tab: usize,
     pub mode: Mode,
@@ -130,6 +131,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         Self {
+            theme: crate::theme::Theme::copper_cobalt(),
             agents: Vec::new(),
             active_tab: 0,
             mode: Mode::Normal,
@@ -190,7 +192,7 @@ impl App {
         for (i, block) in agent.log.blocks().iter().enumerate() {
             let is_expanded = agent.expanded.contains(&i);
             let is_wrapped = agent.wrapped.contains(&i);
-            let count = crate::ui::conversation::count_block_visual_lines(block, width, is_expanded, is_wrapped);
+            let count = crate::ui::conversation::count_block_visual_lines(block, width, is_expanded, is_wrapped, &self.theme);
             per_block.push(count);
             blocks_total += count;
         }

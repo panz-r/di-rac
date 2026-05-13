@@ -1,8 +1,9 @@
 use crate::agent::{AgentState, Block};
 use crate::app::App;
+use crate::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block as WidgetBlock, Paragraph, Wrap};
 
@@ -11,13 +12,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Some(a) => a,
         None => {
             let placeholder = Paragraph::new("No agent running. Use :new <task> to start.")
-                .style(Style::default().fg(Color::DarkGray));
+                .style(app.theme.text_dim());
             frame.render_widget(placeholder, area);
             return;
         }
     };
 
-    let lines = build_all_lines(agent, area.width as usize, app.selected_block, app.mode);
+    let lines = build_all_lines(agent, area.width as usize, app.selected_block, app.mode, &app.theme);
 
     let widget = WidgetBlock::default();
     let paragraph = Paragraph::new(lines)
@@ -29,7 +30,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Build all Lines for the conversation view (blocks + streaming + pending).
-pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usize, mode: crate::app::Mode) -> Vec<Line<'static>> {
+pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usize, mode: crate::app::Mode, theme: &Theme) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::new();
     let highlight_active = mode == crate::app::Mode::Action;
 
@@ -38,23 +39,23 @@ pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usi
         let is_wrapped = agent.wrapped.contains(&i);
         let is_selected = i == selected_block;
         let is_highlighted = highlight_active && is_selected;
-        build_block_lines(&mut lines, block, max_width, is_expanded, is_wrapped, is_selected, is_highlighted);
+        build_block_lines(&mut lines, block, max_width, is_expanded, is_wrapped, is_selected, is_highlighted, theme);
     }
 
     // Streaming text (active thinking/response)
     if let Some(streaming) = agent.log.streaming() {
         let is_thinking = streaming.is_thinking;
         let style = if is_thinking {
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+            theme.dim_italic()
         } else {
-            Style::default().fg(Color::Blue)
+            Style::default().fg(theme.accent)
         };
         let content = truncate_single(&streaming.content, max_width.saturating_sub(10));
         lines.push(Line::from(vec![
-            Span::styled("< ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
-            Span::styled("Agent: ", Style::default().fg(Color::Blue)),
+            Span::styled("< ", theme.accent_bold()),
+            Span::styled("Agent: ", Style::default().fg(theme.accent)),
             Span::styled(content, style),
-            Span::styled("\u{2588}", Style::default().fg(Color::Blue)),
+            Span::styled("\u{2588}", Style::default().fg(theme.accent)),
         ]));
     }
 
@@ -74,7 +75,7 @@ pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usi
         };
         lines.push(Line::from(vec![Span::styled(
             hint,
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            theme.warning_bold(),
         )]));
     }
 
@@ -82,9 +83,9 @@ pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usi
 }
 
 /// Count the visual lines a single block will occupy after wrapping.
-pub fn count_block_visual_lines(block: &Block, width: u16, is_expanded: bool, is_wrapped: bool) -> usize {
+pub fn count_block_visual_lines(block: &Block, width: u16, is_expanded: bool, is_wrapped: bool, theme: &Theme) -> usize {
     let mut lines: Vec<Line> = Vec::new();
-    build_block_lines(&mut lines, block, width as usize, is_expanded, is_wrapped, false, false);
+    build_block_lines(&mut lines, block, width as usize, is_expanded, is_wrapped, false, false, theme);
     if lines.is_empty() {
         return 0;
     }
@@ -94,14 +95,14 @@ pub fn count_block_visual_lines(block: &Block, width: u16, is_expanded: bool, is
 }
 
 /// Build Lines for a single block. Shared between rendering and line counting.
-pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expanded: bool, is_wrapped: bool, is_selected: bool, is_highlighted: bool) {
+pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expanded: bool, is_wrapped: bool, is_selected: bool, is_highlighted: bool, theme: &Theme) {
     let marker = if is_selected {
-        Span::styled("\u{25B8} ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        Span::styled("\u{25B8} ", theme.selected_bold())
     } else {
         Span::raw("  ")
     };
 
-    let hl_bg = if is_highlighted { Some(Color::Rgb(30, 30, 30)) } else { None };
+    let hl_bg = if is_highlighted { Some(theme.selected_bg) } else { None };
 
     let start = lines.len();
     match block {
@@ -110,13 +111,13 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                 for (i, line) in content.lines().enumerate() {
                     if i == 0 {
                         lines.push(Line::from(vec![
-                            if is_selected { marker.clone() } else { Span::styled("> ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)) },
-                            Span::styled("User: ", Style::default().fg(Color::Green)),
+                            if is_selected { marker.clone() } else { Span::styled("> ", theme.success_bold()) },
+                            Span::styled("User: ", Style::default().fg(theme.success)),
                             Span::raw(maybe_truncate(line, max_width.saturating_sub(10), is_wrapped)),
                         ]));
                     } else {
                         lines.push(Line::from(vec![
-                            Span::styled("       ", Style::default().fg(Color::Green)),
+                            Span::styled("       ", Style::default().fg(theme.success)),
                             Span::raw(maybe_truncate(line, max_width.saturating_sub(8), is_wrapped)),
                         ]));
                     }
@@ -124,8 +125,8 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
             } else {
                 let first_line = content.lines().next().unwrap_or("");
                 lines.push(Line::from(vec![
-                    if is_selected { marker.clone() } else { Span::styled("> ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)) },
-                    Span::styled("User: ", Style::default().fg(Color::Green)),
+                    if is_selected { marker.clone() } else { Span::styled("> ", theme.success_bold()) },
+                    Span::styled("User: ", Style::default().fg(theme.success)),
                     Span::raw(truncate_single(first_line, max_width.saturating_sub(10))),
                 ]));
             }
@@ -136,8 +137,8 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                 for (i, line) in content.lines().enumerate() {
                     if i == 0 {
                         lines.push(Line::from(vec![
-                            if is_selected { marker.clone() } else { Span::styled("< ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)) },
-                            Span::styled("Agent: ", Style::default().fg(Color::Blue)),
+                            if is_selected { marker.clone() } else { Span::styled("< ", theme.accent_bold()) },
+                            Span::styled("Agent: ", Style::default().fg(theme.accent)),
                             Span::raw(maybe_truncate(line, max_width.saturating_sub(10), is_wrapped)),
                         ]));
                     } else {
@@ -156,13 +157,13 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                     String::new()
                 };
                 lines.push(Line::from(vec![
-                    if is_selected { marker.clone() } else { Span::styled("< ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)) },
-                    Span::styled("Agent: ", Style::default().fg(Color::Blue)),
+                    if is_selected { marker.clone() } else { Span::styled("< ", theme.accent_bold()) },
+                    Span::styled("Agent: ", Style::default().fg(theme.accent)),
                     Span::raw(truncate_single(first_line, max_width.saturating_sub(14))),
                     if hint.is_empty() {
                         Span::raw("")
                     } else {
-                        Span::styled(hint, Style::default().fg(Color::DarkGray))
+                        Span::styled(hint, theme.text_dim())
                     },
                 ]));
             }
@@ -173,23 +174,23 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                     if is_selected { marker.clone() } else { Span::raw("  ") },
                     Span::styled(
                         format!("{} ", call.tool),
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        theme.accent_bold(),
                     ),
                     Span::raw(maybe_truncate(&call.args_summary, max_width.saturating_sub(12), is_wrapped)),
                 ]));
                 if let Some(res) = result {
                     for line in res.content.lines() {
                         lines.push(Line::from(vec![
-                            Span::styled("    ", Style::default().fg(Color::Cyan)),
-                            Span::styled("-> ", Style::default().fg(Color::Cyan)),
+                            Span::styled("    ", Style::default().fg(theme.accent)),
+                            Span::styled("-> ", Style::default().fg(theme.accent)),
                             Span::raw(maybe_truncate(line, max_width.saturating_sub(6), is_wrapped)),
                         ]));
                     }
                 } else {
                     lines.push(Line::from(vec![
-                        Span::styled("    ", Style::default().fg(Color::Cyan)),
-                        Span::styled("-> ", Style::default().fg(Color::Cyan)),
-                        Span::styled("running...", Style::default().fg(Color::DarkGray)),
+                        Span::styled("    ", Style::default().fg(theme.accent)),
+                        Span::styled("-> ", Style::default().fg(theme.accent)),
+                        Span::styled("running...", theme.text_dim()),
                     ]));
                 }
             } else {
@@ -201,13 +202,13 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                     if is_selected { marker.clone() } else { Span::raw("  ") },
                     Span::styled(
                         format!("{} ", call.tool),
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        theme.accent_bold(),
                     ),
                     Span::raw(truncate_single(&call.args_summary, max_width.saturating_sub(14))),
                     if status_hint.is_empty() {
                         Span::raw("")
                     } else {
-                        Span::styled(status_hint, Style::default().fg(Color::DarkGray))
+                        Span::styled(status_hint, theme.text_dim())
                     },
                 ]));
             }
@@ -215,9 +216,9 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
         Block::System { content } => {
             let is_thinking = content.starts_with(crate::app::THINKING_PREFIX);
             let style = if is_thinking {
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+                theme.dim_italic()
             } else {
-                Style::default().fg(Color::DarkGray)
+                theme.text_dim()
             };
 
             if is_thinking {
@@ -263,9 +264,7 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
             lines.push(Line::from(""));
             lines.push(Line::from(vec![Span::styled(
                 format!("--- {} ---", message),
-                Style::default()
-                    .fg(if *success { Color::Green } else { Color::Red })
-                    .add_modifier(Modifier::BOLD),
+                if *success { theme.success_bold() } else { theme.error_bold() },
             )]));
         }
     }

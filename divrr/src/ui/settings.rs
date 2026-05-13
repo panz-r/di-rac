@@ -1,8 +1,9 @@
 use crate::app::App;
 use crate::settings::{FieldKind, ROLES, role_label};
+use crate::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
@@ -15,21 +16,22 @@ pub fn render(frame: &mut Frame, app: &App) {
         None => return,
     };
 
+    let theme = &app.theme;
     let size = frame.area();
     let panel_w = size.width.min(72);
 
     if settings.loading {
-        render_loading_overlay(frame, size, panel_w);
+        render_loading_overlay(frame, theme, size, panel_w);
         return;
     }
 
     if settings.secret_edit_open {
-        render_secret_edit_modal(frame, settings, size, panel_w);
+        render_secret_edit_modal(frame, theme, settings, size, panel_w);
         return;
     }
 
     if settings.selector_open {
-        render_selector_modal(frame, settings, size, panel_w);
+        render_selector_modal(frame, theme, settings, size, panel_w);
         return;
     }
 
@@ -56,9 +58,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let block = Block::default()
         .title(" Provider Settings ")
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .title_style(theme.accent_bold())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(theme.text_dim());
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -75,7 +77,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let rows = Layout::vertical(&constraints).split(inner);
 
     // -- Role tabs --
-    render_role_tabs(frame, rows[0], settings);
+    render_role_tabs(frame, theme, rows[0], settings);
 
     // -- Fields (single-line each) --
     let provider_settings = settings.provider_info.as_ref()
@@ -92,9 +94,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let is_secret = field.kind() == FieldKind::Secret;
         let is_dynamic = fi >= 4;
 
-        let active_label = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-        let dim_label = Style::default().fg(Color::DarkGray);
-        let label_style = if is_active { active_label } else { dim_label };
+        let label_style = if is_active { theme.selected_bold() } else { theme.text_dim() };
 
         // Build label text
         let label_text = if is_dynamic {
@@ -116,8 +116,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         // Build value text
         let display = field.display_value();
         let is_empty = display.is_empty();
-        let value_style = if is_active { Style::default().fg(Color::White) } else { Style::default().fg(Color::Gray) };
-        let placeholder_style = Style::default().fg(Color::DarkGray);
+        let value_style = if is_active { theme.text() } else { theme.text_dim() };
 
         let mut value_str = String::new();
         let mut value_fg = value_style;
@@ -127,13 +126,13 @@ pub fn render(frame: &mut Frame, app: &App) {
                 FieldKind::Secret => {
                     if is_active {
                         value_str = "\u{2588} enter API key...".into();
-                        value_fg = placeholder_style;
+                        value_fg = theme.text_dim();
                     }
                 }
                 FieldKind::Text => {
                     let ph = if is_dynamic { "(default)" } else { "(optional)" };
                     value_str = if is_active { format!("\u{2588} {}", ph) } else { ph.to_string() };
-                    value_fg = placeholder_style;
+                    value_fg = theme.text_dim();
                 }
                 _ => {}
             }
@@ -161,7 +160,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             } else {
                 // Non-empty text/number field: show value + cursor block as separate spans
                 spans.push(Span::styled(&display, value_style));
-                spans.push(Span::styled("\u{2588}", Style::default().fg(Color::White)));
+                spans.push(Span::styled("\u{2588}", theme.text()));
             }
         } else if !value_str.is_empty() {
             spans.push(Span::styled(&value_str, value_fg));
@@ -170,9 +169,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         // Hints
         if is_active {
             if is_secret {
-                spans.push(Span::styled(" [Tab=edit]", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(" [Tab=edit]", theme.text_dim()));
             } else if is_selector {
-                spans.push(Span::styled(" [\u{2190}\u{2192} Tab]", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(" [\u{2190}\u{2192} Tab]", theme.text_dim()));
             }
         }
 
@@ -199,17 +198,17 @@ pub fn render(frame: &mut Frame, app: &App) {
     let status_text = if settings.saved && settings.error.is_none() {
         Line::from(Span::styled(
             format!(" Saved! Press Esc to close{}", scroll_hint),
-            Style::default().fg(Color::Green),
+            theme.success_style(),
         ))
     } else if let Some(err) = &settings.error {
         Line::from(Span::styled(
             format!(" {}{}", err, scroll_hint),
-            Style::default().fg(Color::Red),
+            theme.error_style(),
         ))
     } else {
         Line::from(Span::styled(
             format!(" Enter=save  Esc=cancel  Tab=select  j/k=nav{}", scroll_hint),
-            Style::default().fg(Color::DarkGray),
+            theme.text_dim(),
         ))
     };
     frame.render_widget(Paragraph::new(status_text).alignment(Alignment::Center), status_row);
@@ -233,7 +232,7 @@ fn format_range(min: Option<f64>, max: Option<f64>, step: Option<f64>) -> String
     }
 }
 
-fn render_role_tabs(frame: &mut Frame, area: Rect, settings: &crate::settings::SettingsState) {
+fn render_role_tabs(frame: &mut Frame, theme: &Theme, area: Rect, settings: &crate::settings::SettingsState) {
     let is_active = settings.cursor == 0;
     let mut spans = Vec::new();
 
@@ -243,11 +242,11 @@ fn render_role_tabs(frame: &mut Frame, area: Rect, settings: &crate::settings::S
         }
         let is_current = i == settings.role_index;
         let style = if is_active && is_current {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            theme.accent_bold()
         } else if is_current {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme.accent)
         } else {
-            Style::default().fg(Color::DarkGray)
+            theme.text_dim()
         };
 
         let prefix = if is_active && is_current { "\u{25C0} " } else if is_current { "[" } else { "" };
@@ -261,6 +260,7 @@ fn render_role_tabs(frame: &mut Frame, area: Rect, settings: &crate::settings::S
 
 fn render_selector_modal(
     frame: &mut Frame,
+    theme: &Theme,
     settings: &crate::settings::SettingsState,
     size: Rect,
     panel_w: u16,
@@ -286,9 +286,9 @@ fn render_selector_modal(
     };
     let block = Block::default()
         .title(title.as_str())
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .title_style(theme.accent_bold())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(theme.warning));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -305,9 +305,9 @@ fn render_selector_modal(
         let label = settings.selector_label_at(fi);
         let is_selected = fi == settings.selector_cursor;
         let style = if is_selected {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            theme.selected_bold()
         } else {
-            Style::default().fg(Color::Gray)
+            theme.text_dim()
         };
         let marker = if is_selected { "\u{25B6} " } else { "  " };
         lines.push(Line::from(Span::styled(format!("{}{}", marker, label), style)));
@@ -323,6 +323,7 @@ fn render_selector_modal(
 
 fn render_secret_edit_modal(
     frame: &mut Frame,
+    theme: &Theme,
     settings: &crate::settings::SettingsState,
     size: Rect,
     panel_w: u16,
@@ -340,9 +341,9 @@ fn render_secret_edit_modal(
     let title = format!(" {} ", field.label());
     let block = Block::default()
         .title(title.as_str())
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .title_style(theme.accent_bold())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(theme.warning));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -350,12 +351,12 @@ fn render_secret_edit_modal(
     let display = if settings.secret_edit_buffer.is_empty() {
         Paragraph::new(Line::from(Span::styled(
             "(empty \u{2014} type or paste your API key)",
-            Style::default().fg(Color::DarkGray),
+            theme.text_dim(),
         )))
     } else {
         Paragraph::new(Line::from(Span::styled(
             settings.secret_edit_buffer.clone(),
-            Style::default().fg(Color::White),
+            theme.text(),
         )))
         .wrap(Wrap { trim: false })
     };
@@ -381,7 +382,7 @@ fn render_secret_edit_modal(
     }
 }
 
-fn render_loading_overlay(frame: &mut Frame, size: Rect, panel_w: u16) {
+fn render_loading_overlay(frame: &mut Frame, theme: &Theme, size: Rect, panel_w: u16) {
     let overlay_h: u16 = 5;
     let x = (size.width.saturating_sub(panel_w)) / 2;
     let y = (size.height.saturating_sub(overlay_h)) / 2;
@@ -391,13 +392,13 @@ fn render_loading_overlay(frame: &mut Frame, size: Rect, panel_w: u16) {
 
     let block = Block::default()
         .title(" Provider Settings ")
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .title_style(theme.accent_bold())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(theme.text_dim());
 
     let loading = Paragraph::new(Line::from(Span::styled(
         "Loading settings...",
-        Style::default().fg(Color::Yellow),
+        Style::default().fg(theme.warning),
     )))
     .block(block)
     .alignment(Alignment::Center);

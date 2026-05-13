@@ -8,11 +8,17 @@ pub mod palette;
 use crate::app::App;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::{Block as WidgetBlock, Clear, Paragraph};
 
 pub fn render(frame: &mut Frame, app: &App) {
+    // Root background — Aged Copper base
+    frame.render_widget(Clear, frame.area());
+    frame.render_widget(
+        WidgetBlock::default().style(app.theme.root()),
+        frame.area(),
+    );
+
     let size = frame.area();
 
     let queue_height = if app.input_queue.is_empty() {
@@ -68,6 +74,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 }
 
 fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
+    let theme = &app.theme;
+
     // Use pre-menu saved state for the expand/collapse label
     let was_expanded = app.saved_expanded
         .as_ref()
@@ -99,14 +107,14 @@ fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
         let is_selected = i == app.action_cursor;
         let marker = if is_selected { "\u{25B6} " } else { "  " };
         let style = if is_selected {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            theme.selected_bold()
         } else {
-            Style::default().fg(Color::Gray)
+            theme.text_dim()
         };
         lines.push(Line::from(vec![
             Span::styled(marker.to_string(), style),
             Span::styled(format!("{:<12}", label), style),
-            Span::styled(format!(" {}", desc), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!(" {}", desc), theme.text_dim()),
         ]));
     }
 
@@ -115,6 +123,7 @@ fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
 }
 
 fn render_save_dialog(frame: &mut Frame, input_area: Rect, app: &App) {
+    let theme = &app.theme;
     let dialog = match &app.save_dialog {
         Some(d) => d,
         None => return,
@@ -131,21 +140,20 @@ fn render_save_dialog(frame: &mut Frame, input_area: Rect, app: &App) {
     let mut lines = Vec::new();
 
     // File path input line
-    let path_style = Style::default().fg(Color::White);
-    let prefix = Span::styled("Save to: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
-    let path_span = Span::styled(&dialog.path, path_style);
+    let prefix = Span::styled("Save to: ", theme.warning_bold());
+    let path_span = Span::styled(&dialog.path, theme.text());
     lines.push(Line::from(vec![prefix, path_span]));
 
     // Warning or hint line
     if dialog.exists_warned {
         lines.push(Line::from(Span::styled(
             "WARNING: File exists, Enter will overwrite",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            theme.error_bold(),
         )));
     } else {
         lines.push(Line::from(Span::styled(
             "Esc to cancel, Enter to save",
-            Style::default().fg(Color::DarkGray),
+            theme.text_dim(),
         )));
     }
 

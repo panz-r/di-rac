@@ -2,7 +2,7 @@ use crate::agent::PendingInput;
 use crate::app::App;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -11,6 +11,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    let theme = &app.theme;
     let mut lines: Vec<Line> = Vec::new();
     for (i, (agent_id, pending)) in app.input_queue.iter().enumerate() {
         let agent_name = app
@@ -34,16 +35,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         };
 
         let style = if i == 0 {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+            theme.warning_bold()
         } else {
-            Style::default().fg(Color::DarkGray)
+            theme.text_dim()
         };
 
         lines.push(Line::from(vec![
-            Span::styled(format!("[{}] ", i + 1), Style::default().fg(Color::Yellow)),
-            Span::styled(format!("{}: ", agent_name), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("[{}] ", i + 1), Style::default().fg(theme.warning)),
+            Span::styled(format!("{}: ", agent_name), Style::default().fg(theme.accent)),
             Span::styled(format!("{}{}", label, detail), style),
         ]));
     }

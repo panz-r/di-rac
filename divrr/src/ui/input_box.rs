@@ -1,16 +1,18 @@
 use crate::app::{App, Mode};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+
     if app.mode == Mode::Settings {
         // Don't render input box when settings overlay is active
         let hint = Paragraph::new(Line::from(Span::styled(
             "  Settings open — press Esc to close",
-            Style::default().fg(Color::DarkGray),
+            theme.text_dim(),
         )));
         frame.render_widget(hint, area);
         return;
@@ -36,14 +38,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut spans: Vec<Span> = vec![Span::styled(
         &prefix,
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        theme.accent_bold(),
     )];
 
     match app.mode {
         Mode::Normal => {
             spans.push(Span::styled(
                 &app.input.content,
-                Style::default().fg(Color::DarkGray),
+                theme.text_dim(),
             ));
         }
         Mode::Insert => {
@@ -60,10 +62,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             ));
         }
         Mode::Command => {
-            spans.push(Span::styled(": ", Style::default().fg(Color::Magenta)));
+            spans.push(Span::styled(": ", Style::default().fg(theme.command)));
             spans.push(Span::styled(
                 &app.command_buffer,
-                Style::default().fg(Color::Magenta),
+                Style::default().fg(theme.command),
             ));
             let cmd_visual = unicode_width::UnicodeWidthStr::width(app.command_buffer.as_str()) as u16;
             frame.set_cursor_position((
@@ -77,13 +79,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Mode::Action => {
             spans.push(Span::styled(
                 "[Space: select action]",
-                Style::default().fg(Color::DarkGray),
+                theme.text_dim(),
             ));
         }
         Mode::SaveDialog => {
             spans.push(Span::styled(
                 "[Save dialog open]",
-                Style::default().fg(Color::DarkGray),
+                theme.text_dim(),
             ));
         }
     }

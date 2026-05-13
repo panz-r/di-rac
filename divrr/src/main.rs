@@ -5,6 +5,7 @@ mod gateway;
 mod input;
 mod message;
 mod settings;
+mod theme;
 mod ui;
 
 use app::App;

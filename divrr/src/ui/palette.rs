@@ -1,9 +1,8 @@
 use crate::app::App;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
+use ratatui::text::{Line, Span};
 
 /// Render the command palette popup above the input line.
 pub fn render(frame: &mut Frame, input_area: Rect, app: &App) {
@@ -11,6 +10,7 @@ pub fn render(frame: &mut Frame, input_area: Rect, app: &App) {
         return;
     }
 
+    let theme = &app.theme;
     let count = app.command_palette.len().min(8) as u16;
     let w = 44u16;
     let h = count + 2; // border
@@ -24,17 +24,16 @@ pub fn render(frame: &mut Frame, input_area: Rect, app: &App) {
     for (i, cmd) in app.command_palette.iter().enumerate() {
         let is_selected = i == app.palette_cursor;
         let style = if is_selected {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            theme.selected_bold()
         } else {
-            Style::default().fg(Color::Gray)
+            theme.text_dim()
         };
 
         let marker = if is_selected { "\u{25B6} " } else { "  " };
-        let desc_style = Style::default().fg(Color::DarkGray);
 
         lines.push(Line::from(vec![
             Span::styled(format!("{}:{:<14}", marker, cmd.name), style),
-            Span::styled(format!(" {}", cmd.description), desc_style),
+            Span::styled(format!(" {}", cmd.description), theme.text_dim()),
         ]));
     }
 
