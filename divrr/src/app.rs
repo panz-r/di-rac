@@ -692,6 +692,8 @@ impl App {
                         s.confirm_secret_edit();
                     } else {
                         self.pending_messages.extend(s.save());
+                        // Apply theme change immediately
+                        self.theme = crate::theme::Theme::by_name(&s.all_settings.theme);
                     }
                 }
             }

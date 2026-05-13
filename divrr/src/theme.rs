@@ -48,6 +48,56 @@ impl Theme {
         }
     }
 
+    pub fn copper_cobalt_boosted() -> Self {
+        Self {
+            bg: Color::Rgb(40, 34, 30),
+            fg: Color::Rgb(245, 232, 214),
+            accent: Color::Rgb(51, 133, 224),
+            selected_bg: Color::Rgb(0, 51, 102),
+            selected_fg: Color::Rgb(249, 240, 225),
+            dim_fg: Color::Rgb(176, 159, 140),
+            success: Color::Rgb(170, 214, 186),
+            info: Color::Rgb(51, 133, 224),
+            error: Color::Rgb(127, 79, 66),
+            warning: Color::Rgb(210, 160, 80),
+            command: Color::Rgb(180, 140, 90),
+            alert: Color::Rgb(240, 190, 60),
+        }
+    }
+
+    pub fn terminal() -> Self {
+        Self {
+            bg: Color::Reset,
+            fg: Color::White,
+            accent: Color::Cyan,
+            selected_bg: Color::DarkGray,
+            selected_fg: Color::White,
+            dim_fg: Color::DarkGray,
+            success: Color::Green,
+            info: Color::Cyan,
+            error: Color::Red,
+            warning: Color::Yellow,
+            command: Color::Magenta,
+            alert: Color::Yellow,
+        }
+    }
+
+    pub fn by_name(name: &str) -> Self {
+        match name {
+            "copper-cobalt-boosted" => Self::copper_cobalt_boosted(),
+            "terminal" => Self::terminal(),
+            _ => Self::copper_cobalt(),
+        }
+    }
+
+    pub fn theme_names() -> &'static [&'static str] {
+        &["copper-cobalt-dimmed", "copper-cobalt-boosted", "terminal"]
+    }
+
+    pub fn theme_labels() -> &'static [&'static str] {
+        &["Copper Cobalt Dimmed", "Copper Cobalt Boosted", "Terminal"]
+    }
+
     pub fn root(&self) -> Style {
         Style::default().fg(self.fg).bg(self.bg)
     }

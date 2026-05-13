@@ -167,6 +167,10 @@ async fn main() -> color_eyre::Result<()> {
     let mut app = App::new();
     app.event_tx = Some(event_tx.clone());
 
+    // Apply saved theme
+    let saved_settings = crate::settings::load_all_settings();
+    app.theme = crate::theme::Theme::by_name(&saved_settings.theme);
+
     // Push saved per-role provider settings to API gateway in background (non-blocking)
     tokio::task::spawn_blocking(|| {
         match std::panic::catch_unwind(|| {

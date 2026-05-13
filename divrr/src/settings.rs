@@ -338,18 +338,35 @@ impl RoleBehaviorSettings {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AllSettings {
     #[serde(flatten)]
     pub roles: HashMap<String, RoleSettings>,
     #[serde(default)]
     pub behaviors: HashMap<String, RoleBehaviorSettings>,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "copper-cobalt-dimmed".to_string()
+}
+
+impl Default for AllSettings {
+    fn default() -> Self {
+        Self {
+            roles: HashMap::new(),
+            behaviors: HashMap::new(),
+            theme: default_theme(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SettingsPanel {
     Provider,
     Role,
+    Theme,
 }
 
 // ---------------------------------------------------------------------------
@@ -578,7 +595,8 @@ impl SettingsState {
         self.flush_current_fields();
         self.active_panel = match self.active_panel {
             SettingsPanel::Provider => SettingsPanel::Role,
-            SettingsPanel::Role => SettingsPanel::Provider,
+            SettingsPanel::Role => SettingsPanel::Theme,
+            SettingsPanel::Theme => SettingsPanel::Provider,
         };
         self.rebuild_fields_for_panel();
         self.cursor = 0;
@@ -589,7 +607,6 @@ impl SettingsState {
         let role = self.current_role().to_string();
         match self.active_panel {
             SettingsPanel::Provider => {
-                // Provider fields are rebuilt via async — use minimal base fields
                 let rs = self.all_settings.roles.get(&role).cloned().unwrap_or_default();
                 self.fields = build_minimal_base_fields(&rs);
             }
@@ -599,6 +616,9 @@ impl SettingsState {
                     .unwrap_or_else(|| RoleBehaviorSettings::defaults_for(&role));
                 self.fields = build_role_behavior_fields(&role, &beh);
             }
+            SettingsPanel::Theme => {
+                self.fields = build_theme_fields(&self.all_settings.theme);
+            }
         }
     }
 
@@ -607,6 +627,7 @@ impl SettingsState {
         match self.active_panel {
             SettingsPanel::Provider => self.flush_fields_to_settings(),
             SettingsPanel::Role => self.flush_behavior_fields(),
+            SettingsPanel::Theme => self.flush_theme_fields(),
         }
     }
 
@@ -634,6 +655,17 @@ impl SettingsState {
         }
 
         self.all_settings.behaviors.insert(role, beh);
+    }
+
+    /// Write theme field back to all_settings.theme.
+    fn flush_theme_fields(&mut self) {
+        if let Some(field) = self.fields.first() {
+            if let SettingsField::Selector { options, index, .. } = field {
+                if let Some(name) = options.get(*index) {
+                    self.all_settings.theme = name.clone();
+                }
+            }
+        }
     }
 
     fn current_role(&self) -> &str {
@@ -1135,6 +1167,21 @@ pub fn build_role_behavior_fields(role: &str, beh: &RoleBehaviorSettings) -> Vec
         ],
         _ => Vec::new(),
     }
+}
+
+fn build_theme_fields(current: &str) -> Vec<SettingsField> {
+    let names = crate::theme::Theme::theme_names();
+    let labels: Vec<String> = crate::theme::Theme::theme_labels().iter().map(|s| s.to_string()).collect();
+    let options: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+    let index = names.iter().position(|&n| n == current).unwrap_or(0);
+    vec![
+        SettingsField::Selector {
+            label: "Theme".to_string(),
+            options,
+            labels,
+            index,
+        },
+    ]
 }
 
 pub fn build_role_fields(

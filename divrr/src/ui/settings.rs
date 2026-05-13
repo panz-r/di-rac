@@ -59,6 +59,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let panel_title = match settings.active_panel {
         crate::settings::SettingsPanel::Provider => " Provider Settings ",
         crate::settings::SettingsPanel::Role => " Role Settings ",
+        crate::settings::SettingsPanel::Theme => " Theme Settings ",
     };
     let block = Block::default()
         .title(panel_title)
@@ -84,8 +85,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     // -- Panel tabs --
     render_panel_tabs(frame, theme, rows[0], settings);
 
-    // -- Role tabs --
-    render_role_tabs(frame, theme, rows[1], settings);
+    // -- Role tabs (hidden for Theme panel) --
+    if !matches!(settings.active_panel, crate::settings::SettingsPanel::Theme) {
+        render_role_tabs(frame, theme, rows[1], settings);
+    }
 
     // -- Fields (single-line each) --
     let provider_settings = settings.provider_info.as_ref()
@@ -257,6 +260,7 @@ fn render_panel_tabs(frame: &mut Frame, theme: &Theme, area: Rect, settings: &cr
     let panels: &[(&str, crate::settings::SettingsPanel)] = &[
         ("Provider Settings", crate::settings::SettingsPanel::Provider),
         ("Role Settings", crate::settings::SettingsPanel::Role),
+        ("Theme Settings", crate::settings::SettingsPanel::Theme),
     ];
     let mut spans = Vec::new();
     for (i, (label, panel)) in panels.iter().enumerate() {
