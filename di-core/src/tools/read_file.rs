@@ -241,7 +241,7 @@ pub fn format_preview(
     let next_line = take + 1;
     let nav_hint = if total_lines > take {
         format!(
-            "\nTo view other sections, use read {} --start-line {} --end-line {}.",
+            "\nTo view other sections, use read {} --range \"{}-{}\".",
             path, next_line, next_line + DEFAULT_PREVIEW_LINES - 1
         )
     } else {

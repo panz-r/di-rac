@@ -65,7 +65,7 @@ impl ContextManager {
     }
 
     pub fn continuation_prompt(summary: &str) -> String {
-        format!("This session is being continued from a previous conversation that ran out of context. The conversation is summarized below:\n\n{}\n\nPlease continue the conversation from where we left off without asking the user any further questions.", summary)
+        format!("This session is being continued from a previous conversation that ran out of context. The conversation is summarized below:\n\n{}\n\nONLY ask the user what they'd like you to work on next. Do not take initiative or start working without their direction.", summary)
     }
 
     /// Build conversation messages with stale-read exclusion.

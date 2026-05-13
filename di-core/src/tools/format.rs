@@ -1,7 +1,8 @@
 use super::response::ToolError;
 
 // ---------------------------------------------------------------------------
-// LLM error formatting — policy-driven, redacted by default
+// LLM error formatting - policy-driven, redacted by default
+// Produces <tool_error severity="..."> XML tags matching TS formatToolErrorForLLM
 // ---------------------------------------------------------------------------
 
 /// Registry of LLM-safe error templates keyed by error code.
@@ -28,41 +29,89 @@ const LLM_TEMPLATES: &[(&str, &str)] = &[
     ("unknown", "An unexpected error occurred. Try an alternative approach or report the issue."),
 ];
 
-/// Format a tool error for the LLM. Uses the template registry for safety.
-/// Details from the error are selectively included (never stack traces or hashes).
+/// Recovery steps per error code, matching TS formatToolErrorGuidance.
+const RECOVERY_STEPS: &[(&str, &[&str])] = &[
+    ("io.file.notFound", &[
+        "repo <parent-dir> -- Check what files exist in the parent directory",
+        "search <path> --regex <pattern> -- Search for a file matching the pattern",
+    ]),
+    ("anchor.notFound", &[
+        "read <path> -- Re-read the file to get current anchors",
+    ]),
+    ("anchor.ambiguous", &[
+        "read <path> --range \"<range>\" -- Read a more specific section",
+    ]),
+    ("patch.applyFailed", &[
+        "read <path> -- Re-read current content and retry with updated anchors",
+    ]),
+    ("patch.conflict", &[
+        "read <path> --range \"<range>\" -- Read the conflicting section",
+    ]),
+    ("shell.timeout", &[
+        "bash <command> --timeout <ms> -- Use a longer timeout for slow commands",
+    ]),
+    ("io.file.changed", &[
+        "read <path> --range \"<range>\" -- Re-read the changed section",
+    ]),
+    ("context.stale", &[
+        "read <path> -- Re-read files that may have changed",
+    ]),
+];
+
+/// Map Rust ErrorSeverity to TS severity strings for the XML tag.
+fn severity_to_ts(severity: &super::response::ErrorSeverity) -> &'static str {
+    use super::response::ErrorSeverity;
+    match severity {
+        ErrorSeverity::Warning | ErrorSeverity::Error => "recoverable",
+        ErrorSeverity::Critical => "unrecoverable",
+    }
+}
+
+/// Format a tool error for the LLM using <tool_error> XML tags with recovery steps.
+/// Matches TS formatToolErrorForLLM output format.
 pub fn format_error_for_llm(error: &ToolError) -> String {
     let code_str = error.code.as_str();
+    let severity = severity_to_ts(&error.severity);
 
-    // Look up template
     let template = LLM_TEMPLATES
         .iter()
         .find(|(code, _)| *code == code_str)
         .map(|(_, msg)| *msg)
         .unwrap_or("An error occurred. Try an alternative approach.");
 
-    let mut parts = vec![template.to_string()];
+    let mut body = template.to_string();
 
-    // Selectively include safe details
+    // Selectively include safe details as "Additional context:" block
+    let mut detail_parts: Vec<String> = Vec::new();
     if let Some(details) = &error.details {
         if let Some(path) = details.get("path").and_then(|v| v.as_str()) {
-            parts.push(format!("File: {}", path));
+            detail_parts.push(format!("path: {}", serde_json::json!(path)));
         }
         if let Some(cmd) = details.get("command").and_then(|v| v.as_str()) {
-            parts.push(format!("Command: {}", cmd));
+            detail_parts.push(format!("command: {}", serde_json::json!(cmd)));
         }
         if let Some(exit_code) = details.get("exit_code").and_then(|v| v.as_i64()) {
-            parts.push(format!("Exit code: {}", exit_code));
+            detail_parts.push(format!("exit_code: {}", exit_code));
+        }
+    }
+    if !detail_parts.is_empty() {
+        body.push_str(&format!("\nAdditional context: {}", detail_parts.join(", ")));
+    }
+
+    // Append recovery steps if available
+    let steps = RECOVERY_STEPS.iter()
+        .find(|(code, _)| *code == code_str)
+        .map(|(_, steps)| *steps);
+    if let Some(steps) = steps {
+        if !steps.is_empty() {
+            body.push_str("\n\nSuggested next steps:");
+            for (i, step) in steps.iter().enumerate() {
+                body.push_str(&format!("\n{}. {}", i + 1, step));
+            }
         }
     }
 
-    // Include remediation hint if available
-    if let Some(rem) = &error.remediation {
-        if !rem.suggested_tools.is_empty() {
-            parts.push(format!("Suggested: {}", rem.suggested_tools.join(", ")));
-        }
-    }
-
-    parts.join(" ")
+    format!("<tool_error severity=\"{}\">\n{}\n</tool_error>", severity, body)
 }
 
 /// Format a tool error for logging (full detail, not LLM-safe).

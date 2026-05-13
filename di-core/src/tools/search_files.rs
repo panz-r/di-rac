@@ -417,7 +417,7 @@ fn format_results(parsed: &ParsedResults, total_match_count: usize) -> String {
         // Read full file for anchor computation
         let anchor_index = match std::fs::read_to_string(&file.path) {
             Ok(content) => {
-                let lines: Vec<&str> = content.lines().collect();
+                let lines: Vec<&str> = content.split('\n').collect();
                 crate::util::FileAnchorIndex::new(&lines)
             }
             Err(_) => crate::util::FileAnchorIndex::new(&[] as &[&str]),

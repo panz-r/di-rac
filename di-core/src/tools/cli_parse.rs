@@ -243,10 +243,13 @@ fn parse_write(cmd: &str) -> Value {
     if let Some(content) = get_flag(&parsed.flags, "content") {
         result["content"] = json!(content);
     }
+    if has_flag(&parsed.flags, "verify") {
+        result["verify"] = json!(true);
+    }
     result
 }
 
-/// edit: [path] --anchor <hash|text> [--end-anchor <hash|text>] --content <text> [--type <type>] [--dry-run]
+/// edit: [path] --anchor <hash|text> [--end-anchor <hash|text>] --content <text> [--type <type>] [--dry-run] [--verify]
 fn parse_edit(cmd: &str) -> Value {
     let tokens = tokenize(cmd);
     let parsed = extract_flags(&tokens);
@@ -270,6 +273,9 @@ fn parse_edit(cmd: &str) -> Value {
     }
     if has_flag(&parsed.flags, "dry-run") {
         result["dry_run"] = json!(true);
+    }
+    if has_flag(&parsed.flags, "verify") {
+        result["verify"] = json!(true);
     }
     result
 }

@@ -149,8 +149,8 @@ impl ToolCoordinator {
             value
         };
 
-        // 4. Cache store with bounded eviction
-        if is_cacheable {
+        // 4. Cache store with bounded eviction (skip error results)
+        if is_cacheable && value.get("status").and_then(|v| v.as_str()) != Some("error") {
             if self.cache.len() >= MAX_CACHE_ENTRIES {
                 // Remove oldest 25% to avoid unbounded growth
                 let evict_count = MAX_CACHE_ENTRIES / 4;
@@ -586,15 +586,19 @@ impl ToolExecutor {
         let content = call.args.get("content").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing content argument"))?;
 
+        // Security scanning: detect dangerous patterns and sensitive paths
+        let security_violations = scan_write_security(path, content);
+
         let dry_run = call.args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+        let line_count = read_file::count_lines(&content);
+
         if dry_run {
-            let line_count = content.lines().count();
-            return Ok(json!({
-                "path": path,
-                "status": "dry_run",
-                "lines": line_count,
-                "message": format!("Would write {} lines to {}", line_count, path)
-            }));
+            let mut output = format!("Would write {} lines to {}", line_count, path);
+            if !security_violations.is_empty() {
+                output.push_str(&format!("\n[SECURITY_CONSTRAINTS]\n{}",
+                    serde_json::to_string(&security_violations).unwrap_or_default()));
+            }
+            return Ok(json!(output));
         }
 
         let create_dirs = call.args.get("create_dirs")
@@ -611,60 +615,171 @@ impl ToolExecutor {
 
         tokio::fs::write(path, content).await?;
 
-        Ok(json!({
-            "path": path,
-            "status": "success",
-            "lines": read_file::count_lines(&content)
-        }))
+        let mut output = format!("File updated: {} ({} lines)", path, line_count);
+        if !security_violations.is_empty() {
+            output.push_str(&format!("\n[SECURITY_CONSTRAINTS]\n{}",
+                serde_json::to_string(&security_violations).unwrap_or_default()));
+        }
+        Ok(json!(output))
     }
 
     /// Execute bash command via the command daemon's execute endpoint.
+    /// Output is formatted as text matching TS BashToolHandler format:
+    /// exit:N\nstdout\n[stderr]\nstderr\n[truncated]\n[timed out]\n[blocked: reason]
     async fn bash(&self, call: &ToolCall) -> Result<serde_json::Value> {
+        // Handle --await <id>: retrieve result of a background command
+        if let Some(await_id) = call.args.get("await").and_then(|v| v.as_str()) {
+            return Ok(json!({
+                "status": "error",
+                "error": format!("Background command await is not yet supported. ID: {}", await_id)
+            }));
+        }
+
         let command = call.args.get("command").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing command argument"))?;
 
-        let _timeout_ms: i64 = call.args.get("timeout")
+        let timeout_ms: i64 = call.args.get("timeout")
             .and_then(|v| v.as_i64())
             .unwrap_or(300_000);
 
         let request = json!({
             "type": "execute",
             "command": command,
+            "timeout_ms": timeout_ms,
         });
         let resp: crate::daemons::ExecuteResult = self.command_daemon.lock().await.send_request(request).await?;
 
-        Ok(json!({
-            "exit_code": resp.exit_code,
-            "stdout": resp.stdout,
-            "stderr": resp.stderr,
-        }))
+        // Format as text matching TS BashToolHandler output
+        let mut output = format!("exit:{}", resp.exit_code);
+        if !resp.stdout.is_empty() {
+            output.push_str(&format!("\n{}", resp.stdout));
+        }
+        if !resp.stderr.is_empty() {
+            output.push_str(&format!("\n[stderr]\n{}", resp.stderr));
+        }
+        if resp.meta.truncated {
+            output.push_str("\n[truncated]");
+        }
+        if resp.meta.timed_out {
+            output.push_str("\n[timed out]");
+        }
+        if let Some(ref blocked) = resp.meta.blocked {
+            output.push_str(&format!("\n[blocked: {}]", blocked));
+        }
+        if !resp.meta.detected_patterns.is_empty() {
+            output.push_str(&format!("\n[detected_patterns: {}]", resp.meta.detected_patterns.join(", ")));
+        }
+        if let Some(ref hint) = resp.meta.hint {
+            output.push_str(&format!("\n[hint: {}]", hint));
+        }
+
+        Ok(json!(output))
     }
 
     async fn compact(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let context = call.args.get("context").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing context parameter for compact tool"))?;
 
-        Ok(json!({
+        let required_files: Vec<String> = call.args.get("required_files")
+            .or_else(|| call.args.get("keep"))
+            .and_then(|v| {
+                if let Some(arr) = v.as_array() {
+                    Some(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                } else if let Some(s) = v.as_str() {
+                    // Comma-separated string
+                    Some(s.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        let mut result = json!({
             "compact": true,
             "summary": context
-        }))
+        });
+        if !required_files.is_empty() {
+            result["required_files"] = json!(required_files);
+        }
+        Ok(result)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Write security scanning (matching TS WriteToFileToolHandler.scanContentSecurity)
+// ---------------------------------------------------------------------------
+
+struct SecurityViolation {
+    path: &'static str,
+    constraint: &'static str,
+    detected_pattern: String,
+}
+
+fn scan_write_security(file_path: &str, content: &str) -> Vec<serde_json::Value> {
+    let mut violations: Vec<SecurityViolation> = Vec::new();
+
+    // Dangerous content patterns
+    let patterns: &[(&regex::Regex, &str)] = &[
+        (&regex::Regex::new(r"(?i)curl\s*\|.*(?:bash|sh)").unwrap(), "curl piped to shell"),
+        (&regex::Regex::new(r"(?i)wget\s*\|.*(?:bash|sh)").unwrap(), "wget piped to shell"),
+        (&regex::Regex::new(r"(?i)rm\s+-rf\s+/").unwrap(), "recursive root delete"),
+        (&regex::Regex::new(r"(?i)nc\s+-.*-e\s+/bin/(?:bash|sh)").unwrap(), "reverse shell"),
+    ];
+
+    for (re, label) in patterns {
+        if let Some(m) = re.find(content) {
+            violations.push(SecurityViolation {
+                path: "$.content",
+                constraint: label,
+                detected_pattern: m.as_str().to_string(),
+            });
+        }
+    }
+
+    // Sensitive file extensions
+    let sensitive_suffixes = [".env", "id_rsa", "credentials"];
+    for suffix in &sensitive_suffixes {
+        if file_path.ends_with(suffix) || file_path.ends_with(&format!("{}.json", suffix)) {
+            violations.push(SecurityViolation {
+                path: "$.path",
+                constraint: "sensitive file extension",
+                detected_pattern: file_path.to_string(),
+            });
+            break;
+        }
+    }
+
+    violations.iter().map(|v| {
+        json!({
+            "path": v.path,
+            "constraint": v.constraint,
+            "detected_pattern": v.detected_pattern,
+        })
+    }).collect()
 }
 
 /// Parse range argument like "10-50" into (start, end).
 /// Returns None if range is malformed or start < 1.
 fn parse_range(call: &ToolCall) -> Option<(usize, usize)> {
-    call.args.get("range").and_then(|v| v.as_str()).and_then(|r| {
-        let parts: Vec<&str> = r.split('-').collect();
+    // Priority 1: --range "start-end"
+    if let Some(range) = call.args.get("range").and_then(|v| v.as_str()) {
+        let parts: Vec<&str> = range.split('-').collect();
         if parts.len() == 2 {
             let start: usize = parts[0].parse().ok()?;
             let end: usize = parts[1].parse().ok()?;
-            if start >= 1 && start <= end { Some((start, end)) } else { None }
+            if start >= 1 && start <= end { return Some((start, end)); }
         } else if parts.len() == 1 {
             let n: usize = parts[0].parse().ok()?;
-            if n >= 1 { Some((n, n)) } else { None }
-        } else {
-            None
+            if n >= 1 { return Some((n, n)); }
         }
-    })
+    }
+    // Priority 2: --start-line X --end-line Y (or just one of them)
+    let start = call.args.get("start_line").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let end = call.args.get("end_line").and_then(|v| v.as_u64()).map(|n| n as usize);
+    match (start, end) {
+        (Some(s), Some(e)) if s >= 1 && s <= e => Some((s, e)),
+        (Some(s), None) if s >= 1 => Some((s, s)),
+        (None, Some(e)) if e >= 1 => Some((1, e)),
+        _ => None,
+    }
 }

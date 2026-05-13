@@ -47,6 +47,96 @@ fn safe_truncate(s: &str, max_len: usize) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// Wrap a tool result in the compact pipe-delimited envelope format
+/// matching the TS ToolResultUtils.wrapInEnvelope behavior.
+///
+/// Format: `OK | tokens:N | lines:N | cached:yes/no` header followed by content.
+/// Also handles ERROR, TRUNCATED, and EMPTY variants.
+fn wrap_in_envelope(content: &str, tool_name: &str, is_cached: bool, cumulative_tokens: usize, read_count: usize) -> String {
+    let trimmed = content.trim_start();
+
+    // Skip if already wrapped
+    if trimmed.starts_with("OK |") || trimmed.starts_with("ERROR |") || trimmed.starts_with("TRUNCATED |") || trimmed.starts_with("EMPTY |") {
+        return content.to_string();
+    }
+
+    // Skip structured JSON with status/ok fields
+    if trimmed.starts_with('{') {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if parsed.get("status").is_some() || parsed.get("ok").is_some() {
+                return content.to_string();
+            }
+        }
+    }
+
+    let lines = content.lines().count();
+    let tokens = (content.len() + 3) / 4; // ~4 chars per token
+    let is_truncated = content.contains("[truncated]") || content.contains("[Content reduced");
+    let is_error = trimmed.starts_with("<tool_error");
+    let is_empty = trimmed.is_empty()
+        || trimmed == "No definitions found."
+        || trimmed == "No matches found."
+        || trimmed == "No results found."
+        || trimmed.starts_with("Found 0 results");
+
+    let cached_field = if is_cached { " | cached:yes" } else { "" };
+
+    if is_error {
+        // Extract message from <tool_error> tag
+        let body = trimmed.replace("<tool_error>", "").replace("</tool_error>", "");
+        let severity_re = regex::Regex::new(r#"severity="[^"]*""#).unwrap();
+        let clean = severity_re.replace(&body, "").trim().to_string();
+        let code = if clean.contains("not found") || clean.contains("could not be found") { "ENOENT" }
+            else if clean.contains("permission") || clean.contains("blocked") { "EPERM" }
+            else if clean.contains("anchor") { "ANCHOR_MISS" }
+            else if clean.contains("argument") || clean.contains("parameter") { "EINVAL" }
+            else { "TOOL_ERROR" };
+        let msg = if clean.len() > 300 { format!("{}...", &clean[..clean.floor_char_boundary(300)]) } else { clean.clone() };
+        return format!("ERROR | {} | {} | tokens:{}", code, msg, tokens);
+    }
+
+    if is_truncated {
+        let hint = "Output truncated. Use --range or --detail for targeted reads.";
+        return format!("TRUNCATED | lines:{} | hint:{} | tokens:{}{}\n{}", lines, hint, tokens, cached_field, content);
+    }
+
+    if is_empty {
+        let hint = match tool_name {
+            "search" => "No matches. Try broader pattern, different path, or --context for surrounding lines.",
+            "symbols" => "No symbol matches. Try different pattern, --kind function, or use search for text patterns.",
+            "repo" => "No results. Try different path or --detail files.",
+            _ => "No results found.",
+        };
+        return format!("EMPTY | hint:{} | tokens:{}{}", hint, tokens, cached_field);
+    }
+
+    // Normal success
+    let lines_field = if lines > 1 { format!(" | lines:{}", lines) } else { String::new() };
+    let cumulative_field = format!(" | cumulative:{}", cumulative_tokens);
+    let reads_field = if read_count > 0 { format!(" | reads:{}", read_count) } else { String::new() };
+    format!("OK | tokens:{}{}{}{}{}\n{}", tokens, lines_field, cached_field, cumulative_field, reads_field, content)
+}
+
+/// Build exploration hints matching TS ToolHints.getSuccessHint.
+fn build_exploration_hint(tool_name: &str, path: Option<&str>) -> Option<String> {
+    match tool_name {
+        "read" => {
+            let p = path.unwrap_or("<path>");
+            Some(format!("\n---\nFollow-up: symbols {} --action expand --symbol <handle> | read {} --detail outline", p, p))
+        }
+        "search" => {
+            Some("\n---\nFollow-up: read <matched-path> | repo <matched-path>".to_string())
+        }
+        "repo" => {
+            Some("\n---\nFollow-up: read <path> | symbols search --name <query> | search <path> --pattern <regex>".to_string())
+        }
+        "symbols" => {
+            Some("\n---\nFollow-up: symbols <path> --action expand --symbol <handle> | symbols <path> refs --name <name>".to_string())
+        }
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AgentMode {
     Plan,
@@ -110,6 +200,8 @@ pub struct AgentEngine {
     context_compiler: Option<ContextCompiler>,
     /// Pending model-initiated compaction summary. Advisory only — runtime decides when to compact.
     pending_compact_summary: Option<String>,
+    /// Files to re-read into context after compaction completes.
+    pending_compact_required_files: Vec<String>,
     /// Whether to use the reranking pipeline for context selection. Opt-in; default false.
     use_reranking: bool,
     pub output_manager: Arc<std::sync::Mutex<crate::tools::output_manager::OutputManager>>,
@@ -147,7 +239,7 @@ impl AgentEngine {
             approval_manager: ApprovalManager::new(),
             abort: Arc::new(AtomicBool::new(false)),
             consecutive_mistake_count: 0,
-            max_consecutive_mistakes: 6,
+            max_consecutive_mistakes: 5,
             request_id_counter: 0,
             tool_call_counter: 0,
             frontend_rx: Some(frontend_rx),
@@ -166,6 +258,7 @@ impl AgentEngine {
             last_activity: std::time::Instant::now(),
             context_compiler: None,
             pending_compact_summary: None,
+            pending_compact_required_files: Vec::new(),
             use_reranking: false,
             output_manager,
             read_file_cache: std::sync::Mutex::new(crate::tools::read_file::ReadFileCache::new()),
@@ -704,6 +797,35 @@ impl AgentEngine {
             self.lifecycle.notify_compaction_complete();
             // Reset retry counters after compaction — pre-compaction errors may no longer be relevant
             self.coordinator.reset_router();
+            // Re-read required files into context after compaction (max 8 files)
+            let required_files: Vec<String> = self.pending_compact_required_files.drain(..).take(8).collect();
+            let mut total_required_chars = 0usize;
+            const MAX_REQUIRED_CHARS: usize = 100_000;
+            for path in &required_files {
+                if total_required_chars >= MAX_REQUIRED_CHARS { break; }
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    total_required_chars += content.len();
+                    let tokens = self.estimator.count_text(&content);
+                    self.trajectory.add_message(
+                        Role::User,
+                        json!(format!("[Context reload after compaction: {} ({} lines)]", path, content.lines().count())),
+                        self.estimator.count_text(&format!("[Context reload: {}]", path)),
+                    );
+                    // Add the file content as a tool result so the model can see it
+                    self.trajectory.add_tool_result(
+                        json!(content),
+                        tokens,
+                        0,
+                        crate::agent::trajectory::ToolMessageMeta {
+                            tool_name: "read".to_string(),
+                            paths_read: vec![path.clone()],
+                            paths_written: Vec::new(),
+                            is_compacted: false,
+                            artifact_ref: None,
+                        },
+                    );
+                }
+            }
         }
 
         // 3. Build context frame (system = stable + session + dynamic, messages = history)
@@ -944,6 +1066,11 @@ impl AgentEngine {
                     if let Some(usage) = &chunk.usage {
                         _usage_total = Some(usage.clone());
                     }
+                    // Detect MAX_TOKENS: if the model hit its output limit,
+                    // inject a continuation prompt so it can resume.
+                    if chunk.finish_reason.as_deref() == Some("MAX_TOKENS") {
+                        full_text.push_str("\n\n[Output was truncated due to token limit. Please continue from where you left off.]");
+                    }
                 }
                 "complete" => break,
                 _ => {}
@@ -1029,6 +1156,12 @@ impl AgentEngine {
             // Track file context (moved after execution so we can hash result content)
             let path_arg = tool.args.get("path").and_then(|v| v.as_str()).map(String::from);
             let tool_name = tool.name.clone();
+            // Extract bash command for post-execution security checks
+            let bash_command = if tool_name == "bash" {
+                tool.args.get("command").and_then(|v| v.as_str()).map(String::from)
+            } else {
+                None
+            };
 
             // Pre-execution approval gate: destructive tools (write/edit/bash)
             // require user approval BEFORE execution. Read-only tools auto-approve.
@@ -1276,6 +1409,12 @@ impl AgentEngine {
                         );
                         if advisory.allowed {
                             self.pending_compact_summary = Some(safe_summary);
+                            // Store required files for re-reading after compaction
+                            if let Some(files) = result.get("required_files").and_then(|v| v.as_array()) {
+                                self.pending_compact_required_files = files.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect();
+                            }
                             let guidance_suffix = advisory.guidance
                                 .map(|g| format!(" {}", g))
                                 .unwrap_or_default();
@@ -1310,6 +1449,57 @@ impl AgentEngine {
                             result
                         };
 
+                        // Write-execute risk detection: warn when bash runs a script
+                        // that was written/edited by the agent in this session.
+                        if tool_name == "bash" {
+                            if let Some(ref cmd) = bash_command {
+                                let script_extensions = [".sh", ".py", ".rb", ".js", ".ts", ".pl", ".lua", ".php", ".bash"];
+                                let risky_paths: Vec<&str> = self.file_context.files_edited.iter()
+                                    .filter(|p| {
+                                        let path = p.as_str();
+                                        let has_script_ext = script_extensions.iter().any(|ext| path.ends_with(ext));
+                                        has_script_ext && cmd.contains(path)
+                                    })
+                                    .map(|p| p.as_str())
+                                    .collect();
+                                if !risky_paths.is_empty() {
+                                    let warning = format!(
+                                        "\n[security: executing AI-written file: {}]",
+                                        risky_paths.join(", ")
+                                    );
+                                    if let Some(s) = result.as_str() {
+                                        result = serde_json::json!(format!("{}{}", s, warning));
+                                    }
+                                }
+                            }
+                        }
+
+                        // --verify: re-read the target file after write/edit to confirm changes
+                        if matches!(tool_name.as_str(), "write" | "edit") && path_arg.is_some() {
+                            let verify_requested = tools.get(ti)
+                                .and_then(|t| t.args.get("verify"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            if verify_requested {
+                                if let Some(ref path) = path_arg {
+                                    let verify_msg = if let Ok(content) = std::fs::read_to_string(path) {
+                                        let line_count = crate::tools::read_file::count_lines(&content);
+                                        format!("\n[verify: {} ({} lines) — changes confirmed on disk]", path, line_count)
+                                    } else {
+                                        format!("\n[verify: WARNING — could not re-read {} after write]", path)
+                                    };
+                                    // Write tool returns a plain string; edit tool returns {"result": "...", ...}
+                                    if let Some(s) = result.as_str() {
+                                        result = serde_json::json!(format!("{}{}", s, verify_msg));
+                                    } else if let Some(s) = result.get("result").and_then(|v| v.as_str()).map(String::from) {
+                                        if let Some(obj) = result.as_object_mut() {
+                                            obj.insert("result".to_string(), serde_json::json!(format!("{}{}", s, verify_msg)));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Apply read file formatting: hash-anchored lines, unchanged detection
                         if tool_name == "read" && result.get("_read_raw").is_some() {
                             // Pre-increment read count so auto-expand logic sees correct count
@@ -1342,9 +1532,27 @@ impl AgentEngine {
                             is_compacted: false,
                             artifact_ref: None,
                         };
-                        let safe_result_str = crate::util::secrets::redact_secrets(&result.to_string());
+                        let result_str = result.to_string();
+                        let is_cached = result_str.starts_with("\"[Cache Hit]");
+                        // Apply envelope wrapping to content string results
+                        // Error results carry <tool_error> XML in the "error" field
+                        let mut content_for_envelope = if result.get("status").and_then(|v| v.as_str()) == Some("error") {
+                            // Error result: extract the error field which contains <tool_error> XML
+                            result.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string()
+                        } else if let Some(s) = result.as_str() {
+                            s.to_string()
+                        } else {
+                            result_str.clone()
+                        };
+                        // Append exploration hints for read/search/repo/symbols
+                        if let Some(hint) = build_exploration_hint(&tool_name, path_arg.as_deref()) {
+                            content_for_envelope.push_str(&hint);
+                        }
+                        let read_count = self.file_context.files_read.len();
+                        let enveloped = wrap_in_envelope(&content_for_envelope, &tool_name, is_cached, self.cumulative_tokens, read_count);
+                        let safe_result_str = crate::util::secrets::redact_secrets(&enveloped);
                         let safe_result: serde_json::Value = serde_json::from_str(&safe_result_str).unwrap_or_else(|_| json!(safe_result_str));
-                        if safe_result_str != result.to_string() { self.metrics.inc_redaction(); }
+                        if safe_result_str != result_str { self.metrics.inc_redaction(); }
                         self.trajectory.add_tool_result(safe_result, estimated_tokens, ti, meta);
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
@@ -1363,6 +1571,17 @@ impl AgentEngine {
                     }).await?;
                 }
             }
+        }
+
+        // Tool call count warning (matching TS: warn at 50, then every 25 after)
+        if self.tool_call_counter >= 50 && (self.tool_call_counter - 50) % 25 == 0 {
+            let warning = format!(
+                "[SYSTEM NOTE: You have executed {} tool calls in this task. Consider whether you have enough information to complete the task or should attempt completion.]",
+                self.tool_call_counter
+            );
+            self.trajectory.add_message(
+                Role::User, json!(warning), self.estimator.count_text(&warning),
+            );
         }
 
         // Record turn metrics for lifecycle evaluation

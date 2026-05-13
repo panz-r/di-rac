@@ -238,7 +238,8 @@ fn truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        let end = s.floor_char_boundary(max_len);
+        format!("{}...", &s[..end])
     }
 }
 
@@ -530,10 +531,12 @@ fn apply_edits(
 
     for re in &sorted {
         let clean_text = strip_hashes(&re.edit.text).replace("\r\n", "\n");
-        let replacement_lines: Vec<String> = if clean_text.is_empty() {
+        // Trim trailing newline to avoid spurious empty line in output
+        let trimmed = clean_text.trim_end_matches('\n');
+        let replacement_lines: Vec<String> = if trimmed.is_empty() {
             Vec::new()
         } else {
-            clean_text.split('\n').map(|s| s.to_string()).collect()
+            trimmed.split('\n').map(|s| s.to_string()).collect()
         };
 
         let (splice_index, removed_count) = match re.edit.edit_type {
@@ -544,30 +547,29 @@ fn apply_edits(
 
         new_lines.splice(splice_index..splice_index + removed_count, replacement_lines.clone());
 
-        // Update anchor index for replacement lines
-        for (i, rep_line) in replacement_lines.iter().enumerate() {
-            let target = splice_index + i;
-            if target < new_lines.len() {
-                index.update_line(target, rep_line);
-            }
-        }
+        // Note: anchor index is rebuilt from scratch after all edits apply,
+        // so no per-line index update needed here.
 
         changes.push((re.line_idx, replacement_lines.len(), removed_count, re.edit.clone()));
     }
 
-    // Compute AppliedEdit metadata with shift offsets
+    // Compute AppliedEdit metadata with shift offsets using signed arithmetic
+    // so that edits which remove more lines than they add produce negative shifts.
     let applied_edits: Vec<AppliedEdit> = changes
         .iter()
         .map(|(orig_idx, rep_count, removed, edit)| {
-            let shift: usize = changes
+            let shift: isize = changes
                 .iter()
                 .filter(|(other_orig, _, _, _)| *other_orig < *orig_idx)
-                .map(|(_, rep, rem, _)| rep.saturating_sub(*rem))
+                .map(|(_, rep, rem, _)| (*rep as isize) - (*rem as isize))
                 .sum();
 
+            let start = (*orig_idx as isize + shift) as usize;
+            let end = (*orig_idx as isize + shift + (*rep_count as isize - 1).max(0)) as usize;
+
             AppliedEdit {
-                start_idx: orig_idx + shift,
-                end_idx: orig_idx + shift + rep_count.saturating_sub(1),
+                start_idx: start,
+                end_idx: end,
                 original_start_idx: *orig_idx,
                 original_end_idx: orig_idx + removed.saturating_sub(1),
                 edit: edit.clone(),

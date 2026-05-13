@@ -18,11 +18,8 @@ pub async fn list_files(
                 .unwrap_or_else(|| vec![".".to_string()])
         });
 
-    let recursive = call.args.get("recursive")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let mut output_parts: Vec<String> = Vec::new();
 
-    let mut results = Vec::new();
     for path in &paths {
         match analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
             command: "repo-map".to_string(),
@@ -32,11 +29,8 @@ pub async fn list_files(
             query: None,
         }).await {
             Ok(resp) if resp.ok => {
-                results.push(json!({
-                    "path": path,
-                    "recursive": recursive,
-                    "entries": resp.data
-                }));
+                let section = format_repo_results(path, &resp.data);
+                output_parts.push(section);
             }
             Ok(resp) => {
                 return ToolResponse::Failure {
@@ -55,5 +49,35 @@ pub async fn list_files(
         }
     }
 
-    ToolResponse::ok(json!({ "results": results }))
+    ToolResponse::ok(json!(output_parts.join("\n\n")))
+}
+
+/// Format analyzer repo-map data as human-readable text.
+/// Input: {"files": [{"file": "path", "symbols": [{"name": "...", "kind": "..."}]}]}
+fn format_repo_results(root_path: &str, data: &serde_json::Value) -> String {
+    let files = data.get("files").and_then(|v| v.as_array());
+    match files {
+        Some(files) if !files.is_empty() => {
+            let mut lines = Vec::new();
+            lines.push(format!("{} ({} files with symbols)", root_path, files.len()));
+            for entry in files {
+                let file_path = entry.get("file").and_then(|v| v.as_str()).unwrap_or("?");
+                let symbols = entry.get("symbols").and_then(|v| v.as_array());
+                if let Some(syms) = symbols {
+                    let sym_strs: Vec<String> = syms.iter()
+                        .filter_map(|s| {
+                            let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                            let kind = s.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+                            Some(format!("{} {}", kind, name))
+                        })
+                        .collect();
+                    lines.push(format!("  {} [{}]", file_path, sym_strs.join(", ")));
+                } else {
+                    lines.push(format!("  {}", file_path));
+                }
+            }
+            lines.join("\n")
+        }
+        _ => format!("{} (no files with symbols found)", root_path),
+    }
 }
