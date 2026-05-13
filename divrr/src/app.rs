@@ -604,6 +604,13 @@ impl App {
                     }
                 }
             }
+            KeyCode::BackTab => {
+                if let Some(s) = &mut self.settings {
+                    if !s.selector_open && !s.secret_edit_open && !s.loading {
+                        s.switch_panel();
+                    }
+                }
+            }
             KeyCode::Up => {
                 if let Some(s) = &mut self.settings {
                     if s.secret_edit_open {

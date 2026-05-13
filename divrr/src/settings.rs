@@ -286,9 +286,70 @@ pub struct RoleSettings {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
+pub struct RoleBehaviorSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer_turns: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer_critic_frequency: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer_verbose: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer_token_threshold: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer_buffer_activation: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer_block_after: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer_reflection_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer_reflection_token_threshold: Option<u32>,
+}
+
+impl RoleBehaviorSettings {
+    pub fn defaults_for(role: &str) -> Self {
+        match role {
+            "observer" => Self {
+                enabled: Some(false),
+                observer_turns: Some(2),
+                observer_critic_frequency: Some(6),
+                observer_verbose: Some(false),
+                observer_token_threshold: Some(15000),
+                observer_buffer_activation: Some(0.8),
+                observer_block_after: Some(0.7),
+                observer_reflection_enabled: Some(true),
+                observer_reflection_token_threshold: Some(10000),
+            },
+            "distiller" => Self {
+                enabled: Some(false),
+                ..Default::default()
+            },
+            _ => Self::default(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn has_settings(&self, role: &str) -> bool {
+        match role {
+            "observer" | "distiller" => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct AllSettings {
     #[serde(flatten)]
     pub roles: HashMap<String, RoleSettings>,
+    #[serde(default)]
+    pub behaviors: HashMap<String, RoleBehaviorSettings>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SettingsPanel {
+    Provider,
+    Role,
 }
 
 // ---------------------------------------------------------------------------
@@ -296,11 +357,14 @@ pub struct AllSettings {
 // ---------------------------------------------------------------------------
 
 pub struct SettingsState {
+    // Panel (Provider Settings or Role Settings)
+    pub active_panel: SettingsPanel,
+
     // Role selector
     pub role_options: Vec<String>,
     pub role_index: usize,
 
-    // Per-role fields
+    // Per-role fields (either provider or behavior fields depending on active_panel)
     pub fields: Vec<SettingsField>,
 
     // Cursor: 0 = role tabs row, 1..N = fields
@@ -424,6 +488,7 @@ impl SettingsState {
         ];
 
         Self {
+            active_panel: SettingsPanel::Provider,
             role_options,
             role_index: 0,
             fields,
@@ -506,6 +571,71 @@ impl SettingsState {
         }
     }
 
+    // -- Panel & behavior fields --
+
+    /// Switch active panel (Provider <-> Role), flushing and rebuilding fields.
+    pub fn switch_panel(&mut self) {
+        self.flush_current_fields();
+        self.active_panel = match self.active_panel {
+            SettingsPanel::Provider => SettingsPanel::Role,
+            SettingsPanel::Role => SettingsPanel::Provider,
+        };
+        self.rebuild_fields_for_panel();
+        self.cursor = 0;
+    }
+
+    /// Rebuild fields for the current panel and role.
+    pub fn rebuild_fields_for_panel(&mut self) {
+        let role = self.current_role().to_string();
+        match self.active_panel {
+            SettingsPanel::Provider => {
+                // Provider fields are rebuilt via async — use minimal base fields
+                let rs = self.all_settings.roles.get(&role).cloned().unwrap_or_default();
+                self.fields = build_minimal_base_fields(&rs);
+            }
+            SettingsPanel::Role => {
+                let beh = self.all_settings.behaviors.get(&role)
+                    .cloned()
+                    .unwrap_or_else(|| RoleBehaviorSettings::defaults_for(&role));
+                self.fields = build_role_behavior_fields(&role, &beh);
+            }
+        }
+    }
+
+    /// Flush current fields back to settings (provider or behavior depending on panel).
+    fn flush_current_fields(&mut self) {
+        match self.active_panel {
+            SettingsPanel::Provider => self.flush_fields_to_settings(),
+            SettingsPanel::Role => self.flush_behavior_fields(),
+        }
+    }
+
+    /// Write behavior field values back to all_settings.behaviors.
+    fn flush_behavior_fields(&mut self) {
+        let role = self.current_role().to_string();
+        let mut beh = self.all_settings.behaviors.get(&role)
+            .cloned()
+            .unwrap_or_else(|| RoleBehaviorSettings::defaults_for(&role));
+
+        for field in &self.fields {
+            let val = field.display_value();
+            match field.label() {
+                "Enabled" => beh.enabled = Some(val == "on"),
+                "Turns" => beh.observer_turns = val.parse().ok(),
+                "Critic Frequency" => beh.observer_critic_frequency = val.parse().ok(),
+                "Verbose" => beh.observer_verbose = Some(val == "on"),
+                "Token Threshold" => beh.observer_token_threshold = val.parse().ok(),
+                "Buffer Activation" => beh.observer_buffer_activation = val.parse().ok(),
+                "Block After" => beh.observer_block_after = val.parse().ok(),
+                "Reflection" => beh.observer_reflection_enabled = Some(val == "on"),
+                "Reflection Threshold" => beh.observer_reflection_token_threshold = val.parse().ok(),
+                _ => {}
+            }
+        }
+
+        self.all_settings.behaviors.insert(role, beh);
+    }
+
     fn current_role(&self) -> &str {
         self.role_options.get(self.role_index).map(|s| s.as_str()).unwrap_or(ROLES[0])
     }
@@ -547,14 +677,18 @@ impl SettingsState {
         if self.selector_open { return; }
         if self.cursor == 0 {
             if self.role_index > 0 {
-                self.flush_fields_to_settings();
+                self.flush_current_fields();
                 self.role_index -= 1;
-                self.load_role_fields();
+                if self.active_panel == SettingsPanel::Provider {
+                    self.load_role_fields();
+                } else {
+                    self.rebuild_fields_for_panel();
+                }
             }
             return;
         }
         let fo = self.field_offset();
-        let is_provider = fo == F_PROVIDER;
+        let is_provider = fo == F_PROVIDER && self.active_panel == SettingsPanel::Provider;
         if let SettingsField::Selector { index, .. } = &mut self.fields[fo] {
             if *index > 0 {
                 *index -= 1;
@@ -570,14 +704,18 @@ impl SettingsState {
         if self.selector_open { return; }
         if self.cursor == 0 {
             if self.role_index < self.role_options.len() - 1 {
-                self.flush_fields_to_settings();
+                self.flush_current_fields();
                 self.role_index += 1;
-                self.load_role_fields();
+                if self.active_panel == SettingsPanel::Provider {
+                    self.load_role_fields();
+                } else {
+                    self.rebuild_fields_for_panel();
+                }
             }
             return;
         }
         let fo = self.field_offset();
-        let is_provider = fo == F_PROVIDER;
+        let is_provider = fo == F_PROVIDER && self.active_panel == SettingsPanel::Provider;
         if let SettingsField::Selector { index, options, .. } = &mut self.fields[fo] {
             if !options.is_empty() && *index < options.len() - 1 {
                 *index += 1;
@@ -697,7 +835,7 @@ impl SettingsState {
     pub fn confirm_selector(&mut self) {
         if !self.selector_open { return; }
         let fo = self.field_offset();
-        let is_provider = fo == F_PROVIDER;
+        let is_provider = fo == F_PROVIDER && self.active_panel == SettingsPanel::Provider;
         // Map filtered cursor back to real index
         let real_index = self.selector_filtered_indices
             .get(self.selector_cursor)
@@ -880,7 +1018,7 @@ impl SettingsState {
             return Vec::new();
         }
 
-        self.flush_fields_to_settings();
+        self.flush_current_fields();
 
         let mut error_msgs = Vec::new();
         for role in ROLES {
@@ -928,6 +1066,76 @@ impl SettingsState {
 // ---------------------------------------------------------------------------
 // Field construction helpers
 // ---------------------------------------------------------------------------
+
+/// Build minimal provider fields without gateway data (used during loading/panel switch).
+fn build_minimal_base_fields(rs: &RoleSettings) -> Vec<SettingsField> {
+    vec![
+        SettingsField::Selector {
+            label: "Provider".to_string(),
+            options: Vec::new(),
+            labels: Vec::new(),
+            index: 0,
+        },
+        SettingsField::Secret {
+            label: "API Key".to_string(),
+            value: rs.api_key.clone(),
+        },
+        SettingsField::Selector {
+            label: "Model".to_string(),
+            options: Vec::new(),
+            labels: Vec::new(),
+            index: 0,
+        },
+        SettingsField::Text {
+            label: "Base URL".to_string(),
+            value: rs.base_url.clone(),
+        },
+    ]
+}
+
+fn toggle_field(label: &str, value: bool) -> SettingsField {
+    SettingsField::Selector {
+        label: label.to_string(),
+        options: vec!["off".to_string(), "on".to_string()],
+        labels: vec!["Off".to_string(), "On".to_string()],
+        index: if value { 1 } else { 0 },
+    }
+}
+
+fn number_field(label: &str, value: Option<u32>) -> SettingsField {
+    SettingsField::Text {
+        label: label.to_string(),
+        value: value.map(|v| v.to_string()).unwrap_or_default(),
+    }
+}
+
+fn decimal_field(label: &str, value: Option<f64>) -> SettingsField {
+    SettingsField::Text {
+        label: label.to_string(),
+        value: value.map(|v| format!("{:.2}", v)).unwrap_or_default(),
+    }
+}
+
+/// Build behavior fields for a given role.
+pub fn build_role_behavior_fields(role: &str, beh: &RoleBehaviorSettings) -> Vec<SettingsField> {
+    match role {
+        "observer" => vec![
+            toggle_field("Enabled", beh.enabled.unwrap_or(false)),
+            number_field("Turns", beh.observer_turns),
+            number_field("Critic Frequency", beh.observer_critic_frequency),
+            toggle_field("Verbose", beh.observer_verbose.unwrap_or(false)),
+            number_field("Token Threshold", beh.observer_token_threshold),
+            decimal_field("Buffer Activation", beh.observer_buffer_activation),
+            decimal_field("Block After", beh.observer_block_after),
+            toggle_field("Reflection", beh.observer_reflection_enabled.unwrap_or(true)),
+            number_field("Reflection Threshold", beh.observer_reflection_token_threshold),
+        ],
+        "distiller" => vec![
+            toggle_field("Enabled", beh.enabled.unwrap_or(false)),
+        ],
+        _ => Vec::new(),
+    }
+}
 
 pub fn build_role_fields(
     rs: &RoleSettings,

@@ -35,11 +35,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         return;
     }
 
-    // Layout: 2 border + 1 role tabs + 1 separator + fields + 1 status
+    // Layout: 2 border + 1 panel tabs + 1 role tabs + 1 separator + fields + 1 status
     let field_count = settings.fields.len();
-    let desired_h: u16 = 5 + field_count as u16;
+    let desired_h: u16 = 6 + field_count as u16;
     let panel_h = desired_h.min(size.height);
-    let max_visible_fields = (panel_h as usize).saturating_sub(5);
+    let max_visible_fields = (panel_h as usize).saturating_sub(6);
 
     // Scroll so active field stays visible
     let active_field = if settings.cursor > 0 { settings.cursor - 1 } else { 0 };
@@ -56,8 +56,12 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, area);
 
+    let panel_title = match settings.active_panel {
+        crate::settings::SettingsPanel::Provider => " Provider Settings ",
+        crate::settings::SettingsPanel::Role => " Role Settings ",
+    };
     let block = Block::default()
-        .title(" Provider Settings ")
+        .title(panel_title)
         .title_style(theme.accent_bold())
         .borders(Borders::ALL)
         .border_style(theme.text_dim());
@@ -66,6 +70,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(block, area);
 
     let mut constraints = vec![
+        Constraint::Length(1), // panel tabs
         Constraint::Length(1), // role tabs
         Constraint::Length(1), // separator
     ];
@@ -76,23 +81,34 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let rows = Layout::vertical(&constraints).split(inner);
 
+    // -- Panel tabs --
+    render_panel_tabs(frame, theme, rows[0], settings);
+
     // -- Role tabs --
-    render_role_tabs(frame, theme, rows[0], settings);
+    render_role_tabs(frame, theme, rows[1], settings);
 
     // -- Fields (single-line each) --
     let provider_settings = settings.provider_info.as_ref()
         .map(|info| info.settings.as_slice())
         .unwrap_or(&[]);
 
+    if settings.fields.is_empty() {
+        let msg = Paragraph::new(Line::from(Span::styled(
+            "  No role-specific settings",
+            theme.text_dim(),
+        )));
+        frame.render_widget(msg, rows[2]);
+    }
+
     for vi in 0..visible_fields {
         let fi = scroll + vi;
         if fi >= field_count { break; }
         let field = &settings.fields[fi];
-        let row = rows[2 + vi];
+        let row = rows[3 + vi];
         let is_active = settings.cursor == fi + 1;
         let is_selector = field.kind() == FieldKind::Selector;
         let is_secret = field.kind() == FieldKind::Secret;
-        let is_dynamic = fi >= 4;
+        let is_dynamic = fi >= 4 && matches!(settings.active_panel, crate::settings::SettingsPanel::Provider);
 
         let label_style = if is_active { theme.selected_bold() } else { theme.text_dim() };
 
@@ -212,7 +228,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         ))
     } else {
         Line::from(Span::styled(
-            format!(" Enter=save  Esc=cancel  Tab=select  j/k=nav{}", scroll_hint),
+            format!(" Enter=save  Esc=cancel  Tab=select  Shift+Tab=panel  j/k=nav{}", scroll_hint),
             theme.text_dim(),
         ))
     };
@@ -235,6 +251,30 @@ fn format_range(min: Option<f64>, max: Option<f64>, step: Option<f64>) -> String
         (None, Some(hi)) => format!("..{}", hi),
         _ => String::new(),
     }
+}
+
+fn render_panel_tabs(frame: &mut Frame, theme: &Theme, area: Rect, settings: &crate::settings::SettingsState) {
+    let panels: &[(&str, crate::settings::SettingsPanel)] = &[
+        ("Provider Settings", crate::settings::SettingsPanel::Provider),
+        ("Role Settings", crate::settings::SettingsPanel::Role),
+    ];
+    let mut spans = Vec::new();
+    for (i, (label, panel)) in panels.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(" | "));
+        }
+        let is_current = *panel == settings.active_panel;
+        let style = if is_current {
+            theme.accent_bold()
+        } else {
+            theme.text_dim()
+        };
+        let prefix = if is_current { "\u{25C0} " } else { "" };
+        let suffix = if is_current { " \u{25B6}" } else { "" };
+        spans.push(Span::styled(format!("{}{}{}", prefix, label, suffix), style));
+    }
+    let para = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
+    frame.render_widget(para, area);
 }
 
 fn render_role_tabs(frame: &mut Frame, theme: &Theme, area: Rect, settings: &crate::settings::SettingsState) {
