@@ -26,13 +26,20 @@ if [ $MISSING_TOOLS -ne 0 ]; then
 fi
 echo "    OK"
 
-echo "==> Updating git submodules..."
-git submodule update --init --recursive --remote
-echo "    OK"
+# Submodule sync only when explicitly requested via './build.sh submodules'
+if [ "${1:-}" = "submodules" ]; then
+    echo "==> Updating git submodules..."
+    git submodule update --init --recursive --remote
+    echo "    OK"
+fi
 
 echo "==> Building C command daemon..."
 (cd command-daemon && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build)
 cp command-daemon/build/di-rvv-cmd dist/di-rvv-cmd
+echo "    OK"
+
+echo "==> Building draugr library..."
+(cd draugr && cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF && cmake --build build)
 echo "    OK"
 
 echo "==> Building C central coordination daemon..."
