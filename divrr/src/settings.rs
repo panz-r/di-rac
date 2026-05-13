@@ -466,6 +466,7 @@ impl SettingsState {
                 self.fields = fields;
                 self.model_entries = model_entries;
                 self.provider_info = provider_info;
+                self.flush_fields_to_settings();
                 self.loading = false;
             }
         }
@@ -478,6 +479,7 @@ impl SettingsState {
                 self.fields = fields;
                 self.model_entries = model_entries;
                 self.provider_info = provider_info;
+                self.flush_fields_to_settings();
                 self.loading = false;
             }
         }

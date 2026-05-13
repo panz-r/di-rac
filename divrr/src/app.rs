@@ -391,7 +391,13 @@ impl App {
                 }
             }
             CoreEvent::FrontendTimeout { tool, question, .. } => {
+                // Remove stale queue items for this agent
+                self.input_queue.retain(|(id, _)| *id != agent_id);
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
+                    agent.pending_input = None;
+                    if agent.status == AgentStatus::Waiting {
+                        agent.status = AgentStatus::Running;
+                    }
                     let detail = tool.as_deref().unwrap_or_else(|| question.as_deref().unwrap_or("unknown"));
                     agent.log.push_system(format!("Timed out waiting for response: {}", detail));
                 }
