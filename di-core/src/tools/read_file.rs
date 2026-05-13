@@ -78,8 +78,8 @@ fn content_hash(content: &str) -> String {
     crate::util::stable_hash(content.as_bytes())[..8].to_string()
 }
 
-/// 3-char line hash for gutter anchors.
-fn line_hash(line: &str) -> String {
+/// 3-char line hash for gutter anchors. Shared with edit_file for anchor matching.
+pub fn line_hash(line: &str) -> String {
     crate::util::fast_hash(line.as_bytes())[..3].to_string()
 }
 
