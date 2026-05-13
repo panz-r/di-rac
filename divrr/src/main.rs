@@ -200,9 +200,21 @@ async fn main() -> color_eyre::Result<()> {
     loop {
         // Render
         let term_size = terminal.size().unwrap_or_default();
-        app.content_lines = app.count_rendered_lines(term_size.width as usize);
-        // Top bar (1) + input bar (2) = 3 rows reserved
-        app.visible_lines = if term_size.height > 3 { term_size.height as usize - 3 } else { 24 };
+        // Compute layout heights to match ui/mod.rs
+        let queue_h = if app.input_queue.is_empty() { 0 } else { app.input_queue.len().min(5) as u16 };
+        let input_h = if app.input.multi_line {
+            app.input.content.lines().count().max(1).min(8) as u16
+        } else {
+            1
+        };
+        let reserved = 1 + queue_h + input_h; // top bar + queue + input
+        app.visible_lines = if term_size.height > reserved {
+            (term_size.height - reserved) as usize
+        } else {
+            24
+        };
+        app.conv_width = term_size.width as usize;
+        app.content_lines = app.count_rendered_lines(term_size.width);
         app.clamp_scroll();
         terminal.draw(|f| app.view(f))?;
 

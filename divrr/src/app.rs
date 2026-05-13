@@ -3,6 +3,7 @@ use crate::input::InputBuffer;
 use crate::message::{CoreEvent, FrontendMessage};
 use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
+use std::collections::HashSet;
 
 /// Append a timestamped line to ~/.dirac/divrr.log (best-effort, never fails).
 /// When the log exceeds 1MB, keeps the most recent 256KB.
@@ -70,6 +71,24 @@ pub struct SaveDialogState {
     pub block_text: String,
 }
 
+/// Cached per-block visual line counts. Invalidated when width, generation,
+/// or expand state changes.
+struct VisualLineCache {
+    width: u16,
+    generation: u64,
+    expanded: HashSet<usize>,
+    /// Per-block visual line count after wrapping.
+    per_block: Vec<usize>,
+    /// Total visual lines (blocks only, excluding streaming/pending).
+    blocks_total: usize,
+}
+
+impl VisualLineCache {
+    fn is_valid(&self, width: u16, generation: u64, expanded: &HashSet<usize>) -> bool {
+        self.width == width && self.generation == generation && self.expanded == *expanded
+    }
+}
+
 pub struct App {
     pub agents: Vec<AgentState>,
     pub active_tab: usize,
@@ -82,6 +101,8 @@ pub struct App {
     pub scroll_offset: usize,
     pub content_lines: usize,
     pub visible_lines: usize,
+    /// Last known conversation area width (set during render, used for block cursor math).
+    pub conv_width: usize,
     pub auto_scroll: bool,
     /// Block-level cursor — index into the active agent's block list.
     pub selected_block: usize,
@@ -100,6 +121,8 @@ pub struct App {
     pub save_dialog: Option<Box<SaveDialogState>>,
     /// Expand state saved before entering Action mode, restored on close.
     pub saved_expanded: Option<std::collections::HashSet<usize>>,
+    /// Cached visual line counts per block (invalidated on width/content/expand change).
+    line_cache: Option<VisualLineCache>,
 }
 
 impl App {
@@ -116,6 +139,7 @@ impl App {
             scroll_offset: 0,
             content_lines: 0,
             visible_lines: 24,
+            conv_width: 80,
             auto_scroll: true,
             selected_block: 0,
             action_cursor: 0,
@@ -128,6 +152,7 @@ impl App {
             event_tx: None,
             save_dialog: None,
             saved_expanded: None,
+            line_cache: None,
         }
     }
 
@@ -139,13 +164,56 @@ impl App {
         self.agents.get_mut(self.active_tab)
     }
 
-    /// Count rendered lines using the canonical log representation.
-    pub fn count_rendered_lines(&self, width: usize) -> usize {
-        self.active_agent().map(|a| {
-            let mut total = a.log.total_lines(width, &a.expanded);
-            if a.pending_input.is_some() { total += 1; }
-            total
-        }).unwrap_or(0)
+    /// Ensure the visual line cache is populated and valid. Returns a reference
+    /// to the cache (recomputes if width, generation, or expand state changed).
+    fn ensure_line_cache(&mut self, width: u16) {
+        let (generation, expanded) = self.active_agent()
+            .map(|a| (a.log.generation(), a.expanded.clone()))
+            .unwrap_or((0, HashSet::new()));
+
+        if self.line_cache.as_ref().map_or(false, |c| c.is_valid(width, generation, &expanded)) {
+            return;
+        }
+
+        // Recompute per-block visual line counts
+        let agent = match self.active_agent() {
+            Some(a) => a,
+            None => {
+                self.line_cache = None;
+                return;
+            }
+        };
+
+        let mut per_block = Vec::with_capacity(agent.log.blocks().len());
+        let mut blocks_total = 0usize;
+        for (i, block) in agent.log.blocks().iter().enumerate() {
+            let is_expanded = agent.expanded.contains(&i);
+            let count = crate::ui::conversation::count_block_visual_lines(block, width, is_expanded);
+            per_block.push(count);
+            blocks_total += count;
+        }
+
+        self.line_cache = Some(VisualLineCache {
+            width,
+            generation,
+            expanded,
+            per_block,
+            blocks_total,
+        });
+    }
+
+    /// Count total rendered lines (blocks + streaming + pending) with caching.
+    pub fn count_rendered_lines(&mut self, width: u16) -> usize {
+        self.ensure_line_cache(width);
+        let blocks_total = self.line_cache.as_ref().map(|c| c.blocks_total).unwrap_or(0);
+
+        // Add streaming and pending input lines (not cached — change every frame during streaming)
+        let mut total = blocks_total;
+        if let Some(agent) = self.active_agent() {
+            if agent.log.streaming().is_some() { total += 1; }
+            if agent.pending_input.is_some() { total += 1; }
+        }
+        total
     }
 
     pub fn clamp_scroll(&mut self) {
@@ -186,28 +254,17 @@ impl App {
         };
         self.selected_block = new;
 
-        // Compute the line offset where the selected block starts
-        let block_start = self.active_agent()
-            .map(|a| {
-                let width = 80;
-                let mut acc = 0usize;
-                for (i, block) in a.log.blocks().iter().enumerate() {
-                    if i == new { break; }
-                    let is_expanded = a.expanded.contains(&i);
-                    acc += crate::agent::block_line_count(block, width, is_expanded);
-                }
-                acc
-            })
-            .unwrap_or(0);
+        // Ensure cache is warm, then use cached per-block counts
+        let width = self.conv_width as u16;
+        self.ensure_line_cache(width);
 
-        // Compute the height of the selected block
-        let block_height = self.active_agent()
-            .map(|a| {
-                let width = 80;
-                let block = &a.log.blocks()[new];
-                crate::agent::block_line_count(block, width, a.expanded.contains(&new))
+        let (block_start, block_height) = self.line_cache.as_ref()
+            .map(|cache| {
+                let start: usize = cache.per_block.iter().take(new).sum();
+                let height = cache.per_block.get(new).copied().unwrap_or(1);
+                (start, height)
             })
-            .unwrap_or(1);
+            .unwrap_or((0, 1));
 
         // Scroll to keep the selected block visible
         let visible = self.visible_lines;
@@ -863,6 +920,8 @@ impl App {
             KeyCode::Char('2') => { self.action_cursor = 1; self.execute_block_action() }
             KeyCode::Char('3') => { self.action_cursor = 2; self.execute_block_action() }
             KeyCode::Enter => self.execute_block_action(),
+            // Navigation keys that should be ignored without closing the palette
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => None,
             // Any other key → close
             _ => {
                 self.exit_action_mode();
@@ -1119,6 +1178,7 @@ impl App {
             _ if cmd.starts_with("new ") => {
                 let task = cmd[4..].trim().to_string();
                 if task.is_empty() {
+                    self.status_message = Some("Task cannot be empty".to_string());
                     None
                 } else if task.chars().any(|c| c.is_control()) {
                     self.status_message = Some("Task contains control characters".to_string());

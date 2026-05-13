@@ -1,3 +1,6 @@
+/// Maximum input buffer size (1 MiB). Pastes and keystrokes beyond this are silently dropped.
+const MAX_INPUT_BYTES: usize = 1_048_576;
+
 pub struct InputBuffer {
     pub content: String,
     pub cursor: usize,
@@ -18,6 +21,9 @@ impl InputBuffer {
     }
 
     pub fn insert(&mut self, c: char) {
+        if self.content.len() + c.len_utf8() > MAX_INPUT_BYTES {
+            return;
+        }
         self.content.insert(self.cursor, c);
         self.cursor += c.len_utf8();
     }

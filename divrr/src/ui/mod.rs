@@ -148,6 +148,7 @@ fn render_save_dialog(frame: &mut Frame, input_area: Rect, app: &App) {
     frame.render_widget(para, area);
 
     // Position cursor in the path input
-    let cursor_col = "Save to: ".len() + dialog.cursor;
+    let path_before_cursor: String = dialog.path.chars().take(dialog.cursor).collect();
+    let cursor_col = "Save to: ".len() + unicode_width::UnicodeWidthStr::width(path_before_cursor.as_str());
     frame.set_cursor_position((x + cursor_col as u16, y));
 }

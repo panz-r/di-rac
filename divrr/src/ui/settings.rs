@@ -181,7 +181,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Cursor position for text fields
         if is_active && !is_selector && !is_secret && !is_empty {
-            let cursor_x = LABEL_W + display.len();
+            let visual_w = unicode_width::UnicodeWidthStr::width(display.as_str());
+            let cursor_x = LABEL_W + visual_w;
             frame.set_cursor_position((row.x + cursor_x as u16, row.y));
         }
     }

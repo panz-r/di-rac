@@ -74,6 +74,9 @@ pub struct StreamingBlock {
 pub struct ConversationLog {
     blocks: Vec<Block>,
     streaming: Option<StreamingBlock>,
+    /// Monotonically increasing generation counter — bumped on every mutation.
+    /// Used to invalidate visual line caches.
+    generation: u64,
 }
 
 impl ConversationLog {
@@ -81,6 +84,7 @@ impl ConversationLog {
         Self {
             blocks: Vec::new(),
             streaming: None,
+            generation: 0,
         }
     }
 
@@ -92,18 +96,25 @@ impl ConversationLog {
         &self.streaming
     }
 
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn push_user(&mut self, content: String) {
         self.blocks.push(Block::User { content: truncate_content(content) });
+        self.generation += 1;
     }
 
     pub fn push_assistant(&mut self, content: String) {
         if !content.is_empty() {
             self.blocks.push(Block::Assistant { content: truncate_content(content) });
+            self.generation += 1;
         }
     }
 
     pub fn push_system(&mut self, content: String) {
         self.blocks.push(Block::System { content: truncate_content(content) });
+        self.generation += 1;
     }
 
     pub fn push_tool_call(&mut self, tool: String, args_summary: String) {
@@ -111,6 +122,7 @@ impl ConversationLog {
             call: ToolCallInfo { tool, args_summary },
             result: None,
         });
+        self.generation += 1;
     }
 
     /// Set the result on the last Tool block that has no result yet.
@@ -120,6 +132,7 @@ impl ConversationLog {
             if let Block::Tool { result, .. } = block {
                 if result.is_none() {
                     *result = Some(ToolResultInfo { content });
+                    self.generation += 1;
                     return;
                 }
             }
@@ -128,16 +141,19 @@ impl ConversationLog {
 
     pub fn push_finish(&mut self, message: String, success: bool) {
         self.blocks.push(Block::Finish { message, success });
+        self.generation += 1;
     }
 
     pub fn set_streaming(&mut self, content: String, is_thinking: bool) {
         self.streaming = Some(StreamingBlock { content, is_thinking });
+        self.generation += 1;
     }
 
     pub fn append_streaming(&mut self, text: &str) {
         if let Some(ref mut s) = self.streaming {
             if s.content.len() < MAX_BLOCK_BYTES {
                 s.content.push_str(text);
+                self.generation += 1;
             }
         }
     }
@@ -161,63 +177,15 @@ impl ConversationLog {
                     self.blocks.push(Block::Assistant { content: s.content });
                 }
             }
+            self.generation += 1;
         }
     }
 
     /// Clear the streaming block without storing it.
     pub fn clear_streaming(&mut self) {
-        self.streaming = None;
-    }
-
-    /// Compute total rendered lines across all blocks given width and expand state.
-    pub fn total_lines(&self, width: usize, expanded: &HashSet<usize>) -> usize {
-        let mut total = 0;
-        for (i, block) in self.blocks.iter().enumerate() {
-            total += block_line_count(block, width, expanded.contains(&i));
+        if self.streaming.take().is_some() {
+            self.generation += 1;
         }
-        if self.streaming.is_some() {
-            total += 1;
-        }
-        total
-    }
-}
-
-/// How many rendered lines a block occupies.
-pub fn block_line_count(block: &Block, _width: usize, is_expanded: bool) -> usize {
-    match block {
-        Block::User { content } => {
-            if is_expanded {
-                content.lines().count().max(1)
-            } else {
-                1
-            }
-        }
-        Block::Assistant { content } => {
-            let lines = content.lines().count();
-            if lines == 0 { return 0; }
-            if is_expanded {
-                lines
-            } else {
-                1
-            }
-        }
-        Block::Tool { call: _, result } => {
-            if is_expanded {
-                let call_lines = 1;
-                let result_lines = result.as_ref().map(|r| r.content.lines().count().max(1)).unwrap_or(1);
-                call_lines + result_lines
-            } else {
-                1
-            }
-        }
-        Block::System { content } => {
-            if is_expanded {
-                content.lines().count().max(1)
-            } else {
-                1
-            }
-        }
-        Block::Finish { .. } => 2,
     }
 }
 

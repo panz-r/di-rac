@@ -1,4 +1,4 @@
-use crate::agent::{Block};
+use crate::agent::{AgentState, Block};
 use crate::app::App;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -17,16 +17,27 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
     };
 
-    let max_width = area.width as usize;
-    let mut lines: Vec<Line> = Vec::new();
+    let lines = build_all_lines(agent, area.width as usize, app.selected_block, app.mode);
 
-    // Render each block
-    let highlight_active = app.mode == crate::app::Mode::Action;
+    let widget = WidgetBlock::default();
+    let paragraph = Paragraph::new(lines)
+        .block(widget)
+        .wrap(Wrap { trim: false })
+        .scroll((app.scroll_offset as u16, 0));
+
+    frame.render_widget(paragraph, area);
+}
+
+/// Build all Lines for the conversation view (blocks + streaming + pending).
+pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usize, mode: crate::app::Mode) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line> = Vec::new();
+    let highlight_active = mode == crate::app::Mode::Action;
+
     for (i, block) in agent.log.blocks().iter().enumerate() {
         let is_expanded = agent.expanded.contains(&i);
-        let is_selected = i == app.selected_block;
+        let is_selected = i == selected_block;
         let is_highlighted = highlight_active && is_selected;
-        render_block(&mut lines, block, max_width, is_expanded, is_selected, is_highlighted);
+        build_block_lines(&mut lines, block, max_width, is_expanded, is_selected, is_highlighted);
     }
 
     // Streaming text (active thinking/response)
@@ -66,18 +77,25 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         )]));
     }
 
-    let widget = WidgetBlock::default();
-    let paragraph = Paragraph::new(lines)
-        .block(widget)
-        .wrap(Wrap { trim: false })
-        .scroll((app.scroll_offset as u16, 0));
-
-    frame.render_widget(paragraph, area);
+    lines
 }
 
-fn render_block(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expanded: bool, is_selected: bool, is_highlighted: bool) {
+/// Count the visual lines a single block will occupy after wrapping.
+pub fn count_block_visual_lines(block: &Block, width: u16, is_expanded: bool) -> usize {
+    let mut lines: Vec<Line> = Vec::new();
+    build_block_lines(&mut lines, block, width as usize, is_expanded, false, false);
+    if lines.is_empty() {
+        return 0;
+    }
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .line_count(width)
+}
+
+/// Build Lines for a single block. Shared between rendering and line counting.
+pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expanded: bool, is_selected: bool, is_highlighted: bool) {
     let marker = if is_selected {
-        Span::styled("▸ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        Span::styled("\u{25B8} ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
     } else {
         Span::raw("  ")
     };
@@ -202,12 +220,10 @@ fn render_block(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expan
             };
 
             if is_thinking {
-                // Strip the '· ' prefix from content
                 let stripped = &content[crate::app::THINKING_PREFIX.len_utf8()..];
                 if is_expanded {
                     for (i, line) in stripped.lines().enumerate() {
                         if i == 0 {
-                            // First line: marker overdraws the interpunct
                             lines.push(Line::from(vec![
                                 if is_selected { marker.clone() } else { Span::styled(format!("{} ", crate::app::THINKING_PREFIX), style) },
                                 Span::styled(truncate_single(line, max_width.saturating_sub(2)), style),
@@ -226,7 +242,6 @@ fn render_block(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expan
                     ]));
                 }
             } else {
-                // Non-thinking system blocks
                 if is_expanded {
                     for line in content.lines() {
                         lines.push(Line::from(vec![Span::styled(

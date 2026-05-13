@@ -51,7 +51,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             let text_before_cursor = &app.input.content[..app.input.cursor.min(app.input.content.len())];
             let row = text_before_cursor.lines().count().max(1) - 1;
             let last_newline = text_before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
-            let col = text_before_cursor[last_newline..].len() as u16;
+            let line_part = &text_before_cursor[last_newline..];
+            let col = unicode_width::UnicodeWidthStr::width(line_part) as u16;
             let clamped_row = (row as u16).min(area.height.saturating_sub(1));
             frame.set_cursor_position((
                 if row == 0 { area.x + prefix_len + col } else { area.x + col },
@@ -64,8 +65,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 &app.command_buffer,
                 Style::default().fg(Color::Magenta),
             ));
+            let cmd_visual = unicode_width::UnicodeWidthStr::width(app.command_buffer.as_str()) as u16;
             frame.set_cursor_position((
-                area.x + prefix_len + 2 + app.command_buffer.len() as u16,
+                area.x + prefix_len + 2 + cmd_visual,
                 area.y,
             ));
         }
