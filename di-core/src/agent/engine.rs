@@ -279,6 +279,16 @@ pub struct AgentEngine {
     pub circuit_breakers: crate::agent::recovery::CircuitBreakerRegistry,
     pub stagnation_detector: std::sync::Mutex<crate::agent::recovery::StagnationDetector>,
     pub recovery_telemetry: std::sync::Arc<crate::agent::recovery::RecoveryTelemetry>,
+    /// Per-file consecutive edit count for streak breaker.
+    pub edit_streaks: HashMap<String, usize>,
+    /// Total net lines changed this session (for budget guard).
+    pub net_change_lines: isize,
+    /// Files edited in current turn (for overlapping edit detection).
+    pub turn_edits: HashSet<String>,
+    /// Bash execution history: (id, command, exit_code).
+    pub bash_history: Vec<(String, String, i32)>,
+    /// Whether the last LLM output was truncated (hit MAX_TOKENS).
+    pub last_output_truncated: bool,
     pub request_id_counter: i64,
     pub tool_call_counter: i64,
     pub frontend_rx: Option<mpsc::Receiver<FrontendMessage>>,
@@ -353,6 +363,11 @@ impl AgentEngine {
             circuit_breakers: crate::agent::recovery::CircuitBreakerRegistry::new(),
             stagnation_detector: std::sync::Mutex::new(crate::agent::recovery::StagnationDetector::new()),
             recovery_telemetry: std::sync::Arc::new(crate::agent::recovery::RecoveryTelemetry::new()),
+            edit_streaks: HashMap::new(),
+            net_change_lines: 0,
+            turn_edits: HashSet::new(),
+            bash_history: Vec::new(),
+            last_output_truncated: false,
             request_id_counter: 0,
             tool_call_counter: 0,
             frontend_rx: Some(frontend_rx),
@@ -876,6 +891,158 @@ impl AgentEngine {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Pre-flight firewall
+    // -----------------------------------------------------------------------
+
+    /// Run pre-flight checks before tool execution. Returns Some(error_json) if
+    /// the tool should be blocked, None if it should proceed.
+    /// Returns (block_error, modified_args) where modified_args contains
+    /// any auto-fixes applied to the tool arguments.
+    fn run_preflight_firewall(
+        &mut self,
+        tool: &crate::tools::ToolCall,
+    ) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+        let tool_name = tool.name.as_str();
+
+        match tool_name {
+            "read" => self.preflight_read(tool),
+            "write" | "edit" => self.preflight_mutation(tool),
+            "bash" => self.preflight_bash(tool),
+            "done" => self.preflight_done(tool),
+            _ => (None, None),
+        }
+    }
+
+    fn preflight_read(&mut self, tool: &crate::tools::ToolCall) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+        // Paradoxical range auto-fix: swap start/end if inverted
+        let start = tool.args.get("start_line").and_then(|v| v.as_u64());
+        let end = tool.args.get("end_line").and_then(|v| v.as_u64());
+        if let (Some(s), Some(e)) = (start, end) {
+            if s > e && s >= 1 {
+                let mut modified = tool.args.clone();
+                if let Some(map) = modified.as_object_mut() {
+                    map.insert("start_line".to_string(), json!(e));
+                    map.insert("end_line".to_string(), json!(s));
+                }
+                return (None, Some(modified));
+            }
+        }
+
+        (None, None)
+    }
+
+    fn preflight_mutation(&mut self, tool: &crate::tools::ToolCall) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+        let tool_name = tool.name.as_str();
+        let path = tool.args.get("path").and_then(|v| v.as_str()).map(String::from);
+
+        // Block mutations after truncated LLM output (arguments may be incomplete)
+        if self.last_output_truncated {
+            self.last_output_truncated = false;
+            return (Some(json!({
+                "status": "error",
+                "error": "<tool_error severity=\"recoverable\">Previous output was truncated. Your arguments may be incomplete. Please retry the full operation.</tool_error>"
+            })), None);
+        }
+
+        if let Some(ref path) = path {
+            // Protected file locking
+            let protected_suffixes = [
+                "package-lock.json", "yarn.lock", "Cargo.lock", ".gitignore",
+            ];
+            let protected_patterns = [".generated.", ".min.", ".bundle."];
+            let is_protected = protected_suffixes.iter().any(|s| path.ends_with(s))
+                || protected_patterns.iter().any(|p| path.contains(p))
+                || path.starts_with("vendor/");
+            if is_protected {
+                return (Some(json!({
+                    "status": "error",
+                    "error": format!("<tool_error severity=\"recoverable\">File '{}' is protected. Generated, lock, and vendor files should not be edited directly.</tool_error>", path)
+                })), None);
+            }
+
+            // Truncation placeholder guard for write/edit content
+            if let Some(content) = tool.args.get("content").and_then(|v| v.as_str()) {
+                if crate::agent::recovery::detect_truncation(content) {
+                    return (Some(json!({
+                        "status": "error",
+                        "error": "<tool_error severity=\"recoverable\">Content contains truncation placeholders (e.g. '... rest'). Provide complete content without placeholders.</tool_error>"
+                    })), None);
+                }
+            }
+
+            // Per-file edit streak breaker
+            let streak = self.edit_streaks.entry(path.clone()).or_insert(0);
+            *streak += 1;
+            if *streak >= 5 {
+                return (Some(json!({
+                    "status": "error",
+                    "error": format!("<tool_error severity=\"recoverable\">File '{}' has been edited {} times consecutively. Read the file first to verify its current state.</tool_error>", path, streak)
+                })), None);
+            }
+
+            // Overlapping edit block: same file edited twice in current turn
+            if tool_name == "edit" && self.turn_edits.contains(path.as_str()) {
+                return (Some(json!({
+                    "status": "error",
+                    "error": format!("<tool_error severity=\"recoverable\">File '{}' was already edited this turn. Line numbers may have shifted. Re-read the file first.</tool_error>", path)
+                })), None);
+            }
+
+            // Net-change budget check (500 lines)
+            if self.net_change_lines.abs() > 500 {
+                return (Some(json!({
+                    "status": "error",
+                    "error": format!("<tool_error severity=\"recoverable\">Session net change budget exceeded ({} lines). Break the task into smaller increments.</tool_error>", self.net_change_lines)
+                })), None);
+            }
+        }
+
+        (None, None)
+    }
+
+    fn preflight_bash(&mut self, tool: &crate::tools::ToolCall) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+        // Block mutations after truncated LLM output
+        if self.last_output_truncated {
+            self.last_output_truncated = false;
+            return (Some(json!({
+                "status": "error",
+                "error": "<tool_error severity=\"recoverable\">Previous output was truncated. Your command may be incomplete. Please retry.</tool_error>"
+            })), None);
+        }
+
+        // /tmp redirect: rewrite /tmp paths to .dirac-tmp/
+        if let Some(cmd) = tool.args.get("command").and_then(|v| v.as_str()) {
+            if cmd.contains("/tmp/") {
+                let redirected = cmd.replace("/tmp/", ".dirac-tmp/");
+                let mut modified = tool.args.clone();
+                if let Some(map) = modified.as_object_mut() {
+                    map.insert("command".to_string(), json!(redirected));
+                }
+                let _ = std::fs::create_dir_all(".dirac-tmp");
+                return (None, Some(modified));
+            }
+        }
+
+        (None, None)
+    }
+
+    fn preflight_done(&mut self, _tool: &crate::tools::ToolCall) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+        // Proof-of-execution completion gate: if files were edited this session,
+        // check that at least one bash command succeeded after the last edit.
+        if !self.file_context.files_edited.is_empty() && !self.bash_history.is_empty() {
+            let last_bash = self.bash_history.last().unwrap();
+            if last_bash.2 != 0 {
+                return (Some(json!({
+                    "status": "error",
+                    "error": "<tool_error severity=\"recoverable\">Files were edited but no verification command succeeded. Run a test or build command to verify changes first.</tool_error>"
+                })), None);
+            }
+        }
+
+        (None, None)
+    }
+
     /// Execute one turn of the agent loop.
     pub async fn run_turn(&mut self) -> Result<TurnOutcome> {
         debug_log!("[di-core] run_turn: agent {} starting, provider={:?}",
@@ -1207,6 +1374,7 @@ impl AgentEngine {
                     // inject a continuation prompt so it can resume.
                     if chunk.finish_reason.as_deref() == Some("MAX_TOKENS") {
                         full_text.push_str("\n\n[Output was truncated due to token limit. Please continue from where you left off.]");
+                        self.last_output_truncated = true;
                     }
                 }
                 "complete" => break,
@@ -1276,6 +1444,7 @@ impl AgentEngine {
 
         // 7. Execute tools
         eprintln!("[di-core] run_turn: executing {} tools", tools.len());
+        self.turn_edits.clear();
         for (ti, tool) in tools.iter().enumerate() {
             if self.is_aborted() {
                 break;
@@ -1408,6 +1577,33 @@ impl AgentEngine {
                     50, ti, ToolMessageMeta::default(),
                 );
                 continue;
+            }
+
+            // Pre-flight firewall: block dangerous or malformed tool calls
+            let (preflight_block, modified_args) = self.run_preflight_firewall(tool);
+            if let Some(block_error) = preflight_block {
+                self.recovery_telemetry.blocked_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.trajectory.add_tool_result(block_error, 50, ti, ToolMessageMeta::default());
+                continue;
+            }
+
+            // If pre-flight auto-fixed args, create a modified tool for execution
+            let exec_tool;
+            let tool = if let Some(ref new_args) = modified_args {
+                exec_tool = crate::tools::ToolCall {
+                    name: tool.name.clone(),
+                    args: new_args.clone(),
+                };
+                &exec_tool
+            } else {
+                tool
+            };
+
+            // Track turn edits for overlapping edit detection
+            if matches!(tool_name.as_str(), "write" | "edit") {
+                if let Some(p) = tool.args.get("path").and_then(|v| v.as_str()) {
+                    self.turn_edits.insert(p.to_string());
+                }
             }
 
             let exec_result = self.tool_executor.execute(tool, &mut self.coordinator).await;
@@ -1690,16 +1886,22 @@ impl AgentEngine {
                             if let Some(s) = result.as_str() {
                                 let exit_code = s.strip_prefix("exit:")
                                     .and_then(|rest| rest.lines().next())
-                                    .and_then(|line| line.trim().parse::<i32>().ok());
+                                    .and_then(|line| line.trim().parse::<i32>().ok())
+                                    .unwrap_or(-1);
+
+                                // Bash execution history tracking
+                                let exec_id = format!("exec-{}", self.bash_history.len() + 1);
+                                let cmd_str = bash_command.clone().unwrap_or_default();
+                                self.bash_history.push((exec_id.clone(), cmd_str, exit_code));
+
+                                // Append execution_id to result for proof-of-execution
+                                let exec_tag = format!("\n[execution_id: {}]", exec_id);
+                                result = serde_json::json!(format!("{}{}", s, exec_tag));
+
+                                // Mistake tracking
                                 match exit_code {
-                                    Some(0) => self.consecutive_mistake_count = 0,
-                                    Some(_) => self.consecutive_mistake_count += 1,
-                                    None => {
-                                        // exit:running or parse failure — check for empty command
-                                        if bash_command.as_ref().map_or(true, |c| c.trim().is_empty()) {
-                                            self.consecutive_mistake_count += 1;
-                                        }
-                                    }
+                                    0 => self.consecutive_mistake_count = 0,
+                                    _ => self.consecutive_mistake_count += 1,
                                 }
                             }
                         }
@@ -1753,6 +1955,34 @@ impl AgentEngine {
                             } else if result.get("status").is_none() || result.get("status").and_then(|v| v.as_str()) != Some("error") {
                                 self.write_missing_content_count = 0;
                             }
+                        }
+
+                        // Done tool: append recovery telemetry summary
+                        if tool_name == "done" {
+                            let intercepted = self.recovery_telemetry.intercepted_count.load(std::sync::atomic::Ordering::Relaxed);
+                            if intercepted > 0 {
+                                let summary = self.recovery_telemetry.summary();
+                                if let Some(s) = result.as_str() {
+                                    result = serde_json::json!(format!("{}\n\n{}", s, summary));
+                                }
+                            }
+                        }
+
+                        // Apply read file formatting: hash-anchored lines, unchanged detection
+                        if tool_name == "read" && result.get("_read_raw").is_some() {
+                            // Pre-increment read count so auto-expand logic sees correct count
+                            if let Some(p) = result.get("path").and_then(|v| v.as_str()) {
+                                self.file_context.pre_increment_read(p);
+                            }
+                            // Also pre-increment for multi-file reads
+                            if let Some(results) = result.get("results").and_then(|v| v.as_array()) {
+                                for r in results {
+                                    if let Some(p) = r.get("path").and_then(|v| v.as_str()) {
+                                        self.file_context.pre_increment_read(p);
+                                    }
+                                }
+                            }
+                            result = self.format_read_result(&result);
                         }
 
                         let estimated_tokens = self.estimator.count_text(&result.to_string());

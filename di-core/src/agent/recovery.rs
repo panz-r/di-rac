@@ -206,6 +206,8 @@ pub struct ToolCallRecord {
 pub struct StagnationDetector {
     history: Vec<ToolCallRecord>,
     max_history: usize,
+    /// Total stagnation warnings issued (for graduated response).
+    pub warning_count: usize,
 }
 
 impl StagnationDetector {
@@ -213,10 +215,12 @@ impl StagnationDetector {
         Self {
             history: Vec::new(),
             max_history: 20,
+            warning_count: 0,
         }
     }
 
     /// Record a tool call and return a stagnation warning if detected.
+    /// Graduated response: 1st warning = soft hint, 2nd+ = escalate.
     pub fn record(&mut self, tool: &str, args_hash: &str) -> Option<String> {
         self.history.push(ToolCallRecord {
             tool: tool.to_string(),
@@ -237,10 +241,12 @@ impl StagnationDetector {
             .filter(|r| r.tool == last.tool && r.args_hash == last.args_hash)
             .count();
         if count >= 3 {
-            return Some(format!(
+            self.warning_count += 1;
+            let base = format!(
                 "Repeated identical call to {} ({}x). Loop broken.",
                 last.tool, count
-            ));
+            );
+            return Some(self.graduate_warning(&base));
         }
 
         // Alternating A-B-A-B pattern
@@ -253,10 +259,12 @@ impl StagnationDetector {
                 && b.tool == d.tool && b.args_hash == d.args_hash
                 && a.tool != b.tool
             {
-                return Some(format!(
+                self.warning_count += 1;
+                let base = format!(
                     "Alternating loop detected between {} and {}. Strategy thrashing.",
                     a.tool, b.tool
-                ));
+                );
+                return Some(self.graduate_warning(&base));
             }
         }
 
@@ -268,15 +276,26 @@ impl StagnationDetector {
                 x.tool == y.tool && x.args_hash == y.args_hash
             });
             if is_circular {
+                self.warning_count += 1;
                 let tools: Vec<&str> = self.history.iter().rev().take(3).map(|r| r.tool.as_str()).collect();
-                return Some(format!(
+                let base = format!(
                     "Circular strategy loop detected ({}). Consider a different approach.",
                     tools.join(" -> ")
-                ));
+                );
+                return Some(self.graduate_warning(&base));
             }
         }
 
         None
+    }
+
+    /// Escalate warning severity based on how many warnings have been issued.
+    fn graduate_warning(&self, base: &str) -> String {
+        match self.warning_count {
+            1 => base.to_string(),
+            2 => format!("{}. This is the second warning. Re-read relevant files and reconsider your strategy.", base),
+            _ => format!("{}. CRITICAL: Repeated stagnation ({} warnings). Stop retrying the same approach. Use a fundamentally different strategy or ask the user for guidance.", base, self.warning_count),
+        }
     }
 }
 
