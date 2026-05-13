@@ -38,6 +38,11 @@ typedef struct {
     ht_table_t *fd_registry;    /* Key: int fd, Value: node_list_t* (Owned nodes) */
     ht_table_t *waiting_registry; /* Key: int fd, Value: node_list_t* (Nodes being waited on) */
     ht_table_t *transient_registry; /* Key: int fd, Value: ht_table_t* (Per-connection KV overrides) */
+
+    /* O(1) cumulative stats — updated at every mutation point */
+    size_t total_nodes;      /* total nodes in the trie */
+    size_t total_locks;      /* nodes with owner_fd != -1 */
+    size_t total_waiters;    /* sum of all waiters_count */
 } trie_t;
 
 /* Core Trie Operations */

@@ -112,13 +112,14 @@ static bool node_is_empty(trie_node_t *node) {
     return true;
 }
 
-static void node_prune_upward(trie_node_t *node) {
+static void node_prune_upward(trie_t *trie, trie_node_t *node) {
     while (node && node->parent) {
         if (!node_is_empty(node)) break;
         trie_node_t *parent = node->parent;
         size_t seg_len = strlen(node->segment);
         ht_remove(parent->children, node->segment, seg_len);
         node_destroy(node);
+        trie->total_nodes--;
         node = parent;
     }
 }
@@ -146,7 +147,11 @@ trie_t* trie_create(void) {
         free(trie);
         return NULL;
     }
-    
+
+    trie->total_nodes = 1;   /* root node created above */
+    trie->total_locks = 0;
+    trie->total_waiters = 0;
+
     return trie;
 }
 
@@ -192,14 +197,14 @@ void trie_destroy(trie_t *trie) {
 
 /* --- Trie Helper Operations --- */
 
-static trie_node_t* node_get_child(trie_node_t *node, const char *segment, bool create) {
+static trie_node_t* node_get_child(trie_node_t *node, const char *segment, bool create, trie_t *trie) {
     size_t segment_len = strlen(segment);
     size_t vlen;
     const void *found = ht_find(node->children, segment, segment_len, &vlen);
-    
+
     if (found) return *(trie_node_t**)found;
     if (!create) return NULL;
-    
+
     trie_node_t *new_node = node_create(segment, node);
     if (!new_node) return NULL;
 
@@ -207,6 +212,7 @@ static trie_node_t* node_get_child(trie_node_t *node, const char *segment, bool 
         node_destroy(new_node);
         return NULL;
     }
+    trie->total_nodes++;
     return new_node;
 }
 
@@ -230,7 +236,7 @@ trie_node_t* trie_traverse(trie_t *trie, const char *path, bool create, bool *an
             free(path_copy);
             return NULL;
         }
-        current = node_get_child(current, segments[i], create);
+        current = node_get_child(current, segments[i], create, trie);
         if (!current) { free(path_copy); return NULL; }
     }
     free(path_copy);
@@ -322,7 +328,7 @@ char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
     nodes[0] = trie->root;
     size_t depth = 1;
     for (size_t i = 0; i < n_segments; i++) {
-        trie_node_t *next = node_get_child(nodes[depth - 1], segments[i], false);
+        trie_node_t *next = node_get_child(nodes[depth - 1], segments[i], false, NULL);
         if (!next) break;
         nodes[depth++] = next;
     }
@@ -549,6 +555,7 @@ int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
         if (!tmp) return -1;
         current->waiters = tmp;
         current->waiters[current->waiters_count++] = fd;
+        trie->total_waiters++;
         if (register_node_to_fd(trie->waiting_registry, current, fd) < 0) {
             current->waiters_count--;
             return -1;
@@ -556,6 +563,7 @@ int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
         return 1;
     }
     current->owner_fd = fd;
+    trie->total_locks++;
     if (register_node_to_fd(trie->fd_registry, current, fd) < 0) {
         current->owner_fd = -1;
         return -1;
@@ -573,14 +581,17 @@ static int node_grant_to_next_waiter(trie_t *trie, trie_node_t *node) {
     int next_fd = node->waiters[0];
     memmove(node->waiters, node->waiters + 1, sizeof(int) * (node->waiters_count - 1));
     node->waiters_count--;
+    trie->total_waiters--;
     if (node->waiters_count == 0) {
         free(node->waiters);
         node->waiters = NULL;
     }
     unregister_node_from_fd(trie->waiting_registry, node, next_fd);
     node->owner_fd = next_fd;
+    trie->total_locks++;
     if (register_node_to_fd(trie->fd_registry, node, next_fd) < 0) {
         node->owner_fd = -1;
+        trie->total_locks--;
         return -1;
     }
     trie_node_t *p = node->parent;
@@ -592,6 +603,7 @@ int trie_release_lock(trie_t *trie, const char *path, int fd) {
     trie_node_t *current = trie_traverse(trie, path, false, NULL);
     if (!current || current->owner_fd != fd) return -1;
     current->owner_fd = -1;
+    trie->total_locks--;
     unregister_node_from_fd(trie->fd_registry, current, fd);
     trie_node_t *p = current->parent;
     while (p) { p->intent_count--; p = p->parent; }
@@ -614,27 +626,11 @@ size_t trie_get_owned_count(trie_t *trie, int fd) {
     return (*(node_list_t**)found)->count;
 }
 
-static void count_nodes_recursive(trie_node_t *node, size_t *out_nodes, size_t *out_waiters, size_t *out_locks) {
-    if (!node) return;
-    (*out_nodes)++;
-    if (node->owner_fd != -1) (*out_locks)++;
-    *out_waiters += node->waiters_count;
-
-    ht_iter_t it = ht_iter_begin(node->children);
-    const void *key, *val;
-    size_t klen, vlen;
-    while (ht_iter_next(node->children, &it, &key, &klen, &val, &vlen)) {
-        count_nodes_recursive(*(trie_node_t**)val, out_nodes, out_waiters, out_locks);
-    }
-}
-
 void trie_get_stats(trie_t *trie, size_t *out_nodes, size_t *out_waiters, size_t *out_locks) {
-    *out_nodes = 0;
-    *out_waiters = 0;
-    *out_locks = 0;
-    if (trie && trie->root) {
-        count_nodes_recursive(trie->root, out_nodes, out_waiters, out_locks);
-    }
+    if (!trie) { *out_nodes = 0; *out_waiters = 0; *out_locks = 0; return; }
+    *out_nodes = trie->total_nodes;
+    *out_locks = trie->total_locks;
+    *out_waiters = trie->total_waiters;
 }
 
 // Recursion depth is bounded by the 256-segment path limit in trie_traverse.
@@ -679,6 +675,7 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
                     memmove(node->waiters + j, node->waiters + j + 1,
                             sizeof(int) * (node->waiters_count - j - 1));
                     node->waiters_count--;
+                    trie->total_waiters--;
                     if (node->waiters_count == 0) {
                         free(node->waiters);
                         node->waiters = NULL;
@@ -699,6 +696,7 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
         while (list->count > 0) {
             trie_node_t *node = list->nodes[0];
             node->owner_fd = -1;
+            trie->total_locks--;
             list->nodes[0] = list->nodes[list->count - 1];
             list->count--;
             char path_buf[4096];
@@ -760,6 +758,6 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
         ht_remove(trie->transient_registry, &fd, sizeof(int));
     }
 
-    node_prune_upward(trie->root);
+    node_prune_upward(trie, trie->root);
     return wakeup_count;
 }
