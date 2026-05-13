@@ -600,7 +600,7 @@ impl AgentEngine {
                     agent_id: self.id,
                     success: false,
                     message: "Interrupted by user".to_string(),
-                })?;
+                }).await?;
                 return Ok(());
             }
 
@@ -611,7 +611,7 @@ impl AgentEngine {
                         agent_id: self.id,
                         success: false,
                         message: format!("Error: {}", e),
-                    })?;
+                    }).await?;
                     return Err(e);
                 }
             };
@@ -625,7 +625,7 @@ impl AgentEngine {
                             agent_id: self.id,
                             success: false,
                             message: "Too many consecutive turns without tool use".to_string(),
-                        })?;
+                        }).await?;
                         return Ok(());
                     }
                     self.trajectory.add_message(
@@ -925,7 +925,7 @@ impl AgentEngine {
                                 agent_id: self.id,
                                 text: text.clone(),
                                 thinking: false,
-                            });
+                            }).await;
                         }
                         if let Some(thinking) = &chunk.thinking {
                             thinking_text.push_str(thinking);
@@ -933,7 +933,7 @@ impl AgentEngine {
                                 agent_id: self.id,
                                 text: thinking.clone(),
                                 thinking: true,
-                            });
+                            }).await;
                         }
                     }
                 }
@@ -959,7 +959,7 @@ impl AgentEngine {
                 sqs: sqs.score,
                 token_usage: self.cumulative_tokens,
                 latency_ms: 0,
-            })?;
+            }).await?;
         }
 
         // Record assistant thought (redact secrets before storage)
@@ -1006,7 +1006,7 @@ impl AgentEngine {
             tool_call_id: None,
             thinking: assistant_thinking,
         });
-        self.emit_event(CoreEvent::ThoughtFinished { agent_id: self.id })?;
+        self.emit_event(CoreEvent::ThoughtFinished { agent_id: self.id }).await?;
 
         // 7. Execute tools
         eprintln!("[di-core] run_turn: executing {} tools", tools.len());
@@ -1022,7 +1022,7 @@ impl AgentEngine {
                 self.emit_event(CoreEvent::ToolCallFinished {
                     agent_id: self.id,
                     result: skip_msg,
-                })?;
+                }).await?;
                 continue;
             }
 
@@ -1038,7 +1038,7 @@ impl AgentEngine {
                     agent_id: self.id,
                     tool: tool.name.clone(),
                     args: tool.args.clone(),
-                })?;
+                }).await?;
 
                 let approval_id = Uuid::new_v4();
                 let description = format!("Execute {} on behalf of agent", tool.name);
@@ -1048,10 +1048,13 @@ impl AgentEngine {
                     tool: tool.name.clone(),
                     args: tool.args.clone(),
                     description: description.clone(),
-                })?;
+                }).await?;
 
                 // Block waiting for approval response from frontend.
                 // Match on approval_id to prevent replay attacks from stale responses.
+                // Note: emit_event flushes stdout before we block here, so the frontend
+                // receives ApprovalNeeded. The main loop uses try_send (non-blocking)
+                // to route the response, preventing deadlock even under fast auto-approve.
                 let approved = loop {
                     let msg = self.recv_frontend().await;
                     match msg {
@@ -1077,7 +1080,7 @@ impl AgentEngine {
                                 agent_id: self.id,
                                 tool: Some(tool.name.clone()),
                                 question: None,
-                            })?;
+                            }).await?;
                             break false;
                         }
                         Some(FrontendMessage::Interrupt { .. }) => {
@@ -1089,7 +1092,7 @@ impl AgentEngine {
                                 agent_id: self.id,
                                 tool: Some(tool.name.clone()),
                                 question: None,
-                            })?;
+                            }).await?;
                             break false;
                         }
                     }
@@ -1101,7 +1104,7 @@ impl AgentEngine {
                     self.emit_event(CoreEvent::ToolCallFinished {
                         agent_id: self.id,
                         result: skip_msg,
-                    })?;
+                    }).await?;
                     continue;
                 }
             } else {
@@ -1110,7 +1113,7 @@ impl AgentEngine {
                     agent_id: self.id,
                     tool: tool.name.clone(),
                     args: tool.args.clone(),
-                })?;
+                }).await?;
             }
 
             eprintln!("[di-core] run_turn: executing tool {} ({})", ti, tool.name);
@@ -1152,20 +1155,20 @@ impl AgentEngine {
                             self.emit_event(CoreEvent::ToolCallFinished {
                                 agent_id: self.id,
                                 result: plan_json,
-                            })?;
+                            }).await?;
                         } else {
                         let message = result.get("result").and_then(|v| v.as_str()).unwrap_or("Task complete").to_string();
                         self.trajectory.add_tool_result(json!({ "status": "completed", "message": &message }), self.estimator.count_text(&message), ti, ToolMessageMeta::default());
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
                             result: json!({ "status": "completed", "message": &message }),
-                        })?;
+                        }).await?;
                         // Emit TaskPresented instead of TaskFinished — agent signals done
                         // but the user should be able to send follow-up messages
                         self.emit_event(CoreEvent::TaskPresented {
                             agent_id: self.id,
                             message: message.clone(),
-                        })?;
+                        }).await?;
                         eprintln!("[di-core] TaskPresented emitted, waiting for user follow-up");
                         // Block waiting for user follow-up (approve/continue/new message)
                         let user_msg = loop {
@@ -1204,7 +1207,7 @@ impl AgentEngine {
                             agent_id: self.id,
                             question: question.clone(),
                             options: options.clone(),
-                        })?;
+                        }).await?;
 
                         // Block waiting for followup answer from frontend.
                         // Buffer any UserResponse messages that arrive while waiting.
@@ -1225,7 +1228,7 @@ impl AgentEngine {
                                         agent_id: self.id,
                                         tool: None,
                                         question: Some(question.clone()),
-                                    })?;
+                                    }).await?;
                                     break String::new();
                                 }
                                 Some(FrontendMessage::Interrupt { .. }) => {
@@ -1237,7 +1240,7 @@ impl AgentEngine {
                                         agent_id: self.id,
                                         tool: None,
                                         question: Some(question.clone()),
-                                    })?;
+                                    }).await?;
                                     break String::new();
                                 }
                             }
@@ -1248,7 +1251,7 @@ impl AgentEngine {
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
                             result: answer_json,
-                        })?;
+                        }).await?;
                     } else if action == Some("new_task") {
                         // New task: emit event for orchestrator to spawn a new agent
                         let task_text = result.get("task").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -1256,7 +1259,7 @@ impl AgentEngine {
                             agent_id: self.id,
                             success: true,
                             message: format!("Spawning new task: {}", task_text),
-                        })?;
+                        }).await?;
                         self.request_abort();
                         return Ok(TurnOutcome::Finished);
                     } else if result.get("compact").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -1297,7 +1300,7 @@ impl AgentEngine {
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
                             result: json!({ "status": if advisory.allowed { "compact_advisory" } else { "compact_rejected" } }),
-                        })?;
+                        }).await?;
                     } else {
                         // Output budget enforcement: write large tool results to disk.
                         let mut result = if tool_name == "bash" || tool_name == "read" {
@@ -1346,7 +1349,7 @@ impl AgentEngine {
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
                             result,
-                        })?;
+                        }).await?;
                     }
                 }
                 Err(e) => {
@@ -1357,7 +1360,7 @@ impl AgentEngine {
                     self.emit_event(CoreEvent::ToolCallFinished {
                         agent_id: self.id,
                         result: error_msg,
-                    })?;
+                    }).await?;
                 }
             }
         }
@@ -1493,7 +1496,7 @@ impl AgentEngine {
         self.emit_event(CoreEvent::ContextCompacted {
             agent_id: self.id,
             remaining_tokens: self.trajectory.get_total_tokens(),
-        })?;
+        }).await?;
         Ok(())
     }
 
@@ -1554,15 +1557,20 @@ impl AgentEngine {
         self.finalize_compaction(summary.to_string(), continuation).await
     }
 
-    fn emit_event(&self, event: CoreEvent) -> Result<()> {
+    async fn emit_event(&self, event: CoreEvent) -> Result<()> {
         match serde_json::to_string(&event) {
             Ok(json) => {
-                use std::io::Write;
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
-                // Ignore write/flush errors (broken pipe) — the agent should continue running.
-                let _ = writeln!(handle, "{}", json);
-                let _ = handle.flush();
+                // Use spawn_blocking to avoid blocking the tokio worker thread
+                // during stdout write+flush. This prevents pipe-buffer deadlocks
+                // where di-core blocks on flush while divrr blocks on writing a
+                // response to di-core's stdin.
+                tokio::task::spawn_blocking(move || {
+                    use std::io::Write;
+                    let stdout = std::io::stdout();
+                    let mut handle = stdout.lock();
+                    let _ = writeln!(handle, "{}", json);
+                    let _ = handle.flush();
+                }).await?;
             }
             Err(e) => {
                 eprintln!("[di-core] emit_event: serialization failed: {}", e);
@@ -1745,14 +1753,16 @@ impl MultiAgentOrchestrator {
         Ok(())
     }
 
-    pub fn emit_event(&self, event: CoreEvent) -> Result<()> {
+    pub async fn emit_event(&self, event: CoreEvent) -> Result<()> {
         match serde_json::to_string(&event) {
             Ok(json) => {
-                use std::io::Write;
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
-                let _ = writeln!(handle, "{}", json);
-                let _ = handle.flush();
+                tokio::task::spawn_blocking(move || {
+                    use std::io::Write;
+                    let stdout = std::io::stdout();
+                    let mut handle = stdout.lock();
+                    let _ = writeln!(handle, "{}", json);
+                    let _ = handle.flush();
+                }).await?;
             }
             Err(e) => eprintln!("[di-core] emit_event: serialization failed: {}", e),
         }

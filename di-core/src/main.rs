@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
                                 orchestrator.emit_event(CoreEvent::TaskInitialized {
                                     agent_id: id,
                                     history_count: 0,
-                                })?;
+                                }).await?;
 
                                 if let Some(mut agent) = orchestrator.remove_agent(id) {
                                     log.log(&format!("agent {} spawning task, provider={:?}", id, agent.provider_config.as_ref().map(|c| &c.id)));
@@ -168,7 +168,7 @@ async fn main() -> Result<()> {
                                         agent_id,
                                         success: false,
                                         message: format!("Error: {}", e),
-                                    })?;
+                                    }).await?;
                                 }
                             }
                             FrontendMessage::Interrupt { agent_id } => {
