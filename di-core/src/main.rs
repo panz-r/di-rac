@@ -175,17 +175,17 @@ async fn main() -> Result<()> {
                                 log.log(&format!("Interrupt: agent={}", agent_id));
                                 orchestrator.abort_agent(agent_id);
                                 // Also send via channel so blocking recv_frontend loops in the agent wake up
-                                orchestrator.send_to_agent(agent_id, FrontendMessage::Interrupt { agent_id }).await;
+                                orchestrator.send_to_agent(agent_id, FrontendMessage::Interrupt { agent_id });
                             }
                             FrontendMessage::ApprovalResponse { agent_id, approval_id, approved } => {
                                 log.log(&format!("ApprovalResponse: agent={} approved={}", agent_id, approved));
-                                if !orchestrator.send_to_agent(agent_id, FrontendMessage::ApprovalResponse { agent_id, approval_id, approved }).await {
+                                if !orchestrator.send_to_agent(agent_id, FrontendMessage::ApprovalResponse { agent_id, approval_id, approved }) {
                                     log.log(&format!("ApprovalResponse: no channel for agent {}", agent_id));
                                 }
                             }
                             FrontendMessage::FollowupAnswer { agent_id, text } => {
                                 log.log(&format!("FollowupAnswer: agent={}", agent_id));
-                                if !orchestrator.send_to_agent(agent_id, FrontendMessage::FollowupAnswer { agent_id, text }).await {
+                                if !orchestrator.send_to_agent(agent_id, FrontendMessage::FollowupAnswer { agent_id, text }) {
                                     log.log(&format!("FollowupAnswer: no channel for agent {}", agent_id));
                                 }
                             }

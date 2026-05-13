@@ -132,7 +132,7 @@ impl AgentEngine {
         gateway_client: Arc<GatewayStreamClient>,
     ) -> Self {
         let output_manager = Arc::new(std::sync::Mutex::new(crate::tools::output_manager::OutputManager::new()));
-        let (frontend_tx, frontend_rx) = mpsc::channel(32);
+        let (frontend_tx, frontend_rx) = mpsc::channel(256);
         Self {
             id,
             trajectory: Trajectory::new(),
@@ -1299,10 +1299,8 @@ impl AgentEngine {
                             result: json!({ "status": if advisory.allowed { "compact_advisory" } else { "compact_rejected" } }),
                         })?;
                     } else {
-                        // Output budget enforcement: write large bash results to disk.
-                        // Only bash — other tools have their own size management
-                        // (read has detail levels, search has context_lines, etc.)
-                        let mut result = if tool_name == "bash" {
+                        // Output budget enforcement: write large tool results to disk.
+                        let mut result = if tool_name == "bash" || tool_name == "read" {
                             let om = self.output_manager.lock().unwrap();
                             om.enforce_budget(result, &tool_name)
                         } else {
@@ -1647,9 +1645,17 @@ impl MultiAgentOrchestrator {
 
     /// Route a frontend message (approval, followup answer, user response) to the agent's channel.
     /// Returns true if the message was sent successfully.
-    pub async fn send_to_agent(&self, agent_id: Uuid, msg: FrontendMessage) -> bool {
+    /// Uses try_send to avoid blocking the main loop if the agent's channel is full.
+    pub fn send_to_agent(&self, agent_id: Uuid, msg: FrontendMessage) -> bool {
         if let Some(tx) = self.frontend_channels.get(&agent_id) {
-            tx.send(msg).await.is_ok()
+            match tx.try_send(msg) {
+                Ok(()) => true,
+                Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
+                    eprintln!("[di-core] send_to_agent: channel full for agent {}, dropping {:?}", agent_id, msg);
+                    false
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => false,
+            }
         } else {
             eprintln!("[di-core] send_to_agent: no channel for agent {}", agent_id);
             false
@@ -1735,7 +1741,7 @@ impl MultiAgentOrchestrator {
     }
 
     pub async fn handle_user_response(&self, agent_id: Uuid, text: String) -> Result<()> {
-        self.send_to_agent(agent_id, FrontendMessage::UserResponse { agent_id, text }).await;
+        self.send_to_agent(agent_id, FrontendMessage::UserResponse { agent_id, text });
         Ok(())
     }
 
