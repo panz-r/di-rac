@@ -787,6 +787,7 @@ impl SettingsState {
 
     fn on_provider_changed(&mut self) {
         self.flush_fields_to_settings();
+        self.error = None;
         self.loading = true;
         let provider_id = match &self.fields[F_PROVIDER] {
             SettingsField::Selector { options, index, .. } => {
@@ -1186,7 +1187,10 @@ pub fn load_all_settings() -> AllSettings {
 pub fn save_all_settings_to_disk(settings: &AllSettings) -> std::io::Result<()> {
     let path = settings_path();
     let json = serde_json::to_string_pretty(settings)?;
-    std::fs::write(path, json)
+    let tmp_path = path.with_extension("tmp");
+    std::fs::write(&tmp_path, &json)?;
+    std::fs::rename(&tmp_path, &path)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

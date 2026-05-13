@@ -1077,12 +1077,15 @@ impl App {
             }
             _ if cmd.starts_with("new ") => {
                 let task = cmd[4..].trim().to_string();
-                if !task.is_empty() {
+                if task.is_empty() {
+                    None
+                } else if task.chars().any(|c| c.is_control()) {
+                    self.status_message = Some("Task contains control characters".to_string());
+                    None
+                } else {
                     // Queue SetProviderConfig before SpawnAgent
                     self.queue_provider_config();
                     Some(FrontendMessage::SpawnAgent { task })
-                } else {
-                    None
                 }
             }
             _ => {
