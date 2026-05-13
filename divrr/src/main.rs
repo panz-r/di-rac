@@ -261,22 +261,22 @@ async fn main() -> color_eyre::Result<()> {
                         let _ = gw.ensure_connected();
                         match op {
                             crate::settings::PendingAsyncOp::ProviderChanged { seq, rs, providers, gateway_available } => {
-                                let (fields, models, provider_info) = crate::settings::build_role_fields(
+                                let (fields, models, provider_info, gateway_error) = crate::settings::build_role_fields(
                                     &rs, &providers, &mut gw, gateway_available,
                                 );
                                 let _ = tx.send(crate::AppEvent::SettingsLoaded(
                                     crate::settings::SettingsLoadResult::ProviderChanged {
-                                        seq, fields, model_entries: models, provider_info,
+                                        seq, fields, model_entries: models, provider_info, gateway_error,
                                     }
                                 ));
                             }
                             crate::settings::PendingAsyncOp::RoleSwitched { seq, rs, providers, gateway_available } => {
-                                let (fields, models, provider_info) = crate::settings::build_role_fields(
+                                let (fields, models, provider_info, gateway_error) = crate::settings::build_role_fields(
                                     &rs, &providers, &mut gw, gateway_available,
                                 );
                                 let _ = tx.send(crate::AppEvent::SettingsLoaded(
                                     crate::settings::SettingsLoadResult::RoleSwitched {
-                                        seq, fields, model_entries: models, provider_info,
+                                        seq, fields, model_entries: models, provider_info, gateway_error,
                                     }
                                 ));
                             }

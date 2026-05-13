@@ -35,9 +35,10 @@ pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usi
 
     for (i, block) in agent.log.blocks().iter().enumerate() {
         let is_expanded = agent.expanded.contains(&i);
+        let is_wrapped = agent.wrapped.contains(&i);
         let is_selected = i == selected_block;
         let is_highlighted = highlight_active && is_selected;
-        build_block_lines(&mut lines, block, max_width, is_expanded, is_selected, is_highlighted);
+        build_block_lines(&mut lines, block, max_width, is_expanded, is_wrapped, is_selected, is_highlighted);
     }
 
     // Streaming text (active thinking/response)
@@ -81,9 +82,9 @@ pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usi
 }
 
 /// Count the visual lines a single block will occupy after wrapping.
-pub fn count_block_visual_lines(block: &Block, width: u16, is_expanded: bool) -> usize {
+pub fn count_block_visual_lines(block: &Block, width: u16, is_expanded: bool, is_wrapped: bool) -> usize {
     let mut lines: Vec<Line> = Vec::new();
-    build_block_lines(&mut lines, block, width as usize, is_expanded, false, false);
+    build_block_lines(&mut lines, block, width as usize, is_expanded, is_wrapped, false, false);
     if lines.is_empty() {
         return 0;
     }
@@ -93,7 +94,7 @@ pub fn count_block_visual_lines(block: &Block, width: u16, is_expanded: bool) ->
 }
 
 /// Build Lines for a single block. Shared between rendering and line counting.
-pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expanded: bool, is_selected: bool, is_highlighted: bool) {
+pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize, is_expanded: bool, is_wrapped: bool, is_selected: bool, is_highlighted: bool) {
     let marker = if is_selected {
         Span::styled("\u{25B8} ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
     } else {
@@ -111,12 +112,12 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                         lines.push(Line::from(vec![
                             if is_selected { marker.clone() } else { Span::styled("> ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)) },
                             Span::styled("User: ", Style::default().fg(Color::Green)),
-                            Span::raw(truncate_single(line, max_width.saturating_sub(10))),
+                            Span::raw(maybe_truncate(line, max_width.saturating_sub(10), is_wrapped)),
                         ]));
                     } else {
                         lines.push(Line::from(vec![
                             Span::styled("       ", Style::default().fg(Color::Green)),
-                            Span::raw(truncate_single(line, max_width.saturating_sub(8))),
+                            Span::raw(maybe_truncate(line, max_width.saturating_sub(8), is_wrapped)),
                         ]));
                     }
                 }
@@ -137,12 +138,12 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                         lines.push(Line::from(vec![
                             if is_selected { marker.clone() } else { Span::styled("< ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)) },
                             Span::styled("Agent: ", Style::default().fg(Color::Blue)),
-                            Span::raw(truncate_single(line, max_width.saturating_sub(10))),
+                            Span::raw(maybe_truncate(line, max_width.saturating_sub(10), is_wrapped)),
                         ]));
                     } else {
                         lines.push(Line::from(vec![
                             Span::raw("        "),
-                            Span::raw(truncate_single(line, max_width.saturating_sub(10))),
+                            Span::raw(maybe_truncate(line, max_width.saturating_sub(10), is_wrapped)),
                         ]));
                     }
                 }
@@ -174,14 +175,14 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                         format!("{} ", call.tool),
                         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                     ),
-                    Span::raw(truncate_single(&call.args_summary, max_width.saturating_sub(12))),
+                    Span::raw(maybe_truncate(&call.args_summary, max_width.saturating_sub(12), is_wrapped)),
                 ]));
                 if let Some(res) = result {
                     for line in res.content.lines() {
                         lines.push(Line::from(vec![
                             Span::styled("    ", Style::default().fg(Color::Cyan)),
                             Span::styled("-> ", Style::default().fg(Color::Cyan)),
-                            Span::raw(truncate_single(line, max_width.saturating_sub(6))),
+                            Span::raw(maybe_truncate(line, max_width.saturating_sub(6), is_wrapped)),
                         ]));
                     }
                 } else {
@@ -226,11 +227,11 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                         if i == 0 {
                             lines.push(Line::from(vec![
                                 if is_selected { marker.clone() } else { Span::styled(format!("{} ", crate::app::THINKING_PREFIX), style) },
-                                Span::styled(truncate_single(line, max_width.saturating_sub(2)), style),
+                                Span::styled(maybe_truncate(line, max_width.saturating_sub(2), is_wrapped), style),
                             ]));
                         } else {
                             lines.push(Line::from(vec![
-                                Span::styled(truncate_single(line, max_width.saturating_sub(2)), style),
+                                Span::styled(maybe_truncate(line, max_width.saturating_sub(2), is_wrapped), style),
                             ]));
                         }
                     }
@@ -245,7 +246,7 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                 if is_expanded {
                     for line in content.lines() {
                         lines.push(Line::from(vec![Span::styled(
-                            truncate_single(line, max_width.saturating_sub(2)),
+                            maybe_truncate(line, max_width.saturating_sub(2), is_wrapped),
                             style,
                         )]));
                     }
@@ -274,6 +275,16 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
         for line in lines.iter_mut().skip(start) {
             line.style = line.style.patch(Style::default().bg(bg));
         }
+    }
+}
+
+/// Truncate a single line to max_len characters (appending "…").
+/// When wrapping is enabled, return the full string unchanged.
+fn maybe_truncate(s: &str, max_len: usize, is_wrapped: bool) -> String {
+    if is_wrapped {
+        s.to_string()
+    } else {
+        truncate_single(s, max_len)
     }
 }
 

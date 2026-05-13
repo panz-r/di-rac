@@ -222,6 +222,8 @@ pub struct AgentState {
     pub status: AgentStatus,
     pub log: ConversationLog,
     pub expanded: HashSet<usize>,
+    /// Per-block wrap toggle — when set, expanded blocks show full text instead of truncating.
+    pub wrapped: HashSet<usize>,
     pub pending_input: Option<PendingInput>,
     pub metrics: Option<Metrics>,
     pub last_activity: DateTime<Utc>,
@@ -235,6 +237,7 @@ impl AgentState {
             status: AgentStatus::Running,
             log: ConversationLog::new(),
             expanded: HashSet::new(),
+            wrapped: HashSet::new(),
             pending_input: None,
             metrics: None,
             last_activity: Utc::now(),

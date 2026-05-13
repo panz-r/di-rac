@@ -74,10 +74,15 @@ fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
         .map(|s| s.contains(&app.selected_block))
         .unwrap_or(false);
     let expand_label = if was_expanded { "1 Collapse" } else { "1 Expand" };
+    let was_wrapped = app.active_agent()
+        .map(|a| a.wrapped.contains(&app.selected_block))
+        .unwrap_or(false);
+    let wrap_label = if was_wrapped { "4 Unwrap" } else { "4 Wrap" };
     let actions: &[(&str, &str)] = &[
         (expand_label, "Toggle expand/collapse"),
         ("2 Save",     "Write block to file"),
         ("3 Copy",     "Copy to clipboard"),
+        (wrap_label,   "Toggle text wrapping"),
     ];
 
     let count = actions.len() as u16;

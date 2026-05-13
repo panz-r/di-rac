@@ -358,18 +358,21 @@ pub enum SettingsLoadResult {
         model_entries: Vec<ModelEntry>,
         provider_info: Option<ProviderInfo>,
         gateway_available: bool,
+        gateway_error: Option<String>,
     },
     ProviderChanged {
         seq: u64,
         fields: Vec<SettingsField>,
         model_entries: Vec<ModelEntry>,
         provider_info: Option<ProviderInfo>,
+        gateway_error: Option<String>,
     },
     RoleSwitched {
         seq: u64,
         fields: Vec<SettingsField>,
         model_entries: Vec<ModelEntry>,
         provider_info: Option<ProviderInfo>,
+        gateway_error: Option<String>,
     },
     Saved {
         error: Option<String>,
@@ -446,13 +449,15 @@ impl SettingsState {
 
     /// Apply the initial gateway load result (providers, models, fields).
     pub fn apply_initial_load(&mut self, result: SettingsLoadResult) {
-        if let SettingsLoadResult::Initial { providers, fields, model_entries, provider_info, gateway_available } = result {
+        if let SettingsLoadResult::Initial { providers, fields, model_entries, provider_info, gateway_available, gateway_error } = result {
             self.provider_metas = providers;
             self.fields = fields;
             self.model_entries = model_entries;
             self.provider_info = provider_info;
             self.gateway_available = gateway_available;
-            if !gateway_available {
+            if let Some(err) = gateway_error {
+                self.error = Some(err);
+            } else if !gateway_available {
                 self.error = Some("API gateway not available".into());
             }
         }
@@ -461,11 +466,12 @@ impl SettingsState {
 
     /// Apply a provider change result.
     pub fn apply_provider_changed(&mut self, result: SettingsLoadResult) {
-        if let SettingsLoadResult::ProviderChanged { seq, fields, model_entries, provider_info } = result {
+        if let SettingsLoadResult::ProviderChanged { seq, fields, model_entries, provider_info, gateway_error } = result {
             if seq == self.async_op_seq {
                 self.fields = fields;
                 self.model_entries = model_entries;
                 self.provider_info = provider_info;
+                self.error = gateway_error;
                 self.flush_fields_to_settings();
                 self.loading = false;
             }
@@ -474,11 +480,12 @@ impl SettingsState {
 
     /// Apply a role switch result.
     pub fn apply_role_switched(&mut self, result: SettingsLoadResult) {
-        if let SettingsLoadResult::RoleSwitched { seq, fields, model_entries, provider_info } = result {
+        if let SettingsLoadResult::RoleSwitched { seq, fields, model_entries, provider_info, gateway_error } = result {
             if seq == self.async_op_seq {
                 self.fields = fields;
                 self.model_entries = model_entries;
                 self.provider_info = provider_info;
+                self.error = gateway_error;
                 self.flush_fields_to_settings();
                 self.loading = false;
             }
@@ -924,7 +931,7 @@ pub fn build_role_fields(
     providers: &[ProviderMeta],
     gw: &mut GatewayConnection,
     gateway_ok: bool,
-) -> (Vec<SettingsField>, Vec<ModelEntry>, Option<ProviderInfo>) {
+) -> (Vec<SettingsField>, Vec<ModelEntry>, Option<ProviderInfo>, Option<String>) {
     let provider_index = providers.iter().position(|p| p.id == rs.provider).unwrap_or(0);
     let provider_id = providers.get(provider_index)
         .map(|p| p.id.clone())
@@ -936,12 +943,20 @@ pub fn build_role_fields(
     let provider_options: Vec<String> = providers.iter().map(|p| p.id.clone()).collect();
 
     let (models, model_index) = if gateway_ok && !provider_id.is_empty() {
-        let models = match query_models(gw, &provider_id, &rs.api_key) {
-            Ok(m) => m,
-            Err(_) => Vec::new(),
-        };
-        let idx = models.iter().position(|m| m.id == rs.model).unwrap_or(0);
-        (models, idx)
+        match query_models(gw, &provider_id, &rs.api_key) {
+            Ok(m) => {
+                let idx = m.iter().position(|m| m.id == rs.model).unwrap_or(0);
+                (m, idx)
+            }
+            Err(e) => {
+                return (
+                    build_minimal_fields(rs, providers),
+                    Vec::new(),
+                    None,
+                    Some(format!("Failed to load models: {}", e)),
+                );
+            }
+        }
     } else {
         (Vec::new(), 0)
     };
@@ -976,7 +991,13 @@ pub fn build_role_fields(
 
     // Fetch provider-info and append dynamic parameter fields
     let provider_info = if gateway_ok && !provider_id.is_empty() {
-        query_provider_info(gw, &provider_id).ok()
+        match query_provider_info(gw, &provider_id) {
+            Ok(info) => Some(info),
+            Err(e) => {
+                // Non-fatal: we still have models, just no dynamic params
+                return (fields, models, None, Some(format!("Provider params unavailable: {}", e)));
+            }
+        }
     } else {
         None
     };
@@ -988,7 +1009,39 @@ pub fn build_role_fields(
         }
     }
 
-    (fields, models, provider_info)
+    (fields, models, provider_info, None)
+}
+
+/// Build minimal base fields when gateway queries fail.
+fn build_minimal_fields(rs: &RoleSettings, providers: &[ProviderMeta]) -> Vec<SettingsField> {
+    let provider_index = providers.iter().position(|p| p.id == rs.provider).unwrap_or(0);
+    let provider_labels: Vec<String> = providers.iter()
+        .map(|p| format!("{} ({})", p.label, p.id))
+        .collect();
+    let provider_options: Vec<String> = providers.iter().map(|p| p.id.clone()).collect();
+
+    vec![
+        SettingsField::Selector {
+            label: "Provider".to_string(),
+            options: provider_options,
+            labels: provider_labels,
+            index: provider_index,
+        },
+        SettingsField::Secret {
+            label: "API Key".to_string(),
+            value: rs.api_key.clone(),
+        },
+        SettingsField::Selector {
+            label: "Model".to_string(),
+            options: Vec::new(),
+            labels: Vec::new(),
+            index: 0,
+        },
+        SettingsField::Text {
+            label: "Base URL".to_string(),
+            value: rs.base_url.clone(),
+        },
+    ]
 }
 
 fn gather_role_settings(fields: &[SettingsField], provider_settings: &[ProviderSetting]) -> RoleSettings {

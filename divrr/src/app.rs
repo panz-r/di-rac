@@ -52,6 +52,7 @@ const COMMANDS: &[CommandEntry] = &[
     CommandEntry { name: "quit", description: "Exit divrr", prefix: "q" },
     CommandEntry { name: "interrupt", description: "Interrupt active agent", prefix: "" },
     CommandEntry { name: "new", description: "Spawn a new agent with a task", prefix: "" },
+    CommandEntry { name: "close", description: "Close active agent tab", prefix: "" },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,11 +73,12 @@ pub struct SaveDialogState {
 }
 
 /// Cached per-block visual line counts. Invalidated when width, generation,
-/// or expand state changes.
+/// expand state, or wrap state changes.
 struct VisualLineCache {
     width: u16,
     generation: u64,
     expanded: HashSet<usize>,
+    wrapped: HashSet<usize>,
     /// Per-block visual line count after wrapping.
     per_block: Vec<usize>,
     /// Total visual lines (blocks only, excluding streaming/pending).
@@ -84,8 +86,8 @@ struct VisualLineCache {
 }
 
 impl VisualLineCache {
-    fn is_valid(&self, width: u16, generation: u64, expanded: &HashSet<usize>) -> bool {
-        self.width == width && self.generation == generation && self.expanded == *expanded
+    fn is_valid(&self, width: u16, generation: u64, expanded: &HashSet<usize>, wrapped: &HashSet<usize>) -> bool {
+        self.width == width && self.generation == generation && self.expanded == *expanded && self.wrapped == *wrapped
     }
 }
 
@@ -164,14 +166,13 @@ impl App {
         self.agents.get_mut(self.active_tab)
     }
 
-    /// Ensure the visual line cache is populated and valid. Returns a reference
-    /// to the cache (recomputes if width, generation, or expand state changed).
+    /// Ensure the visual line cache is populated and valid.
     fn ensure_line_cache(&mut self, width: u16) {
-        let (generation, expanded) = self.active_agent()
-            .map(|a| (a.log.generation(), a.expanded.clone()))
-            .unwrap_or((0, HashSet::new()));
+        let (generation, expanded, wrapped) = self.active_agent()
+            .map(|a| (a.log.generation(), a.expanded.clone(), a.wrapped.clone()))
+            .unwrap_or((0, HashSet::new(), HashSet::new()));
 
-        if self.line_cache.as_ref().map_or(false, |c| c.is_valid(width, generation, &expanded)) {
+        if self.line_cache.as_ref().map_or(false, |c| c.is_valid(width, generation, &expanded, &wrapped)) {
             return;
         }
 
@@ -188,7 +189,8 @@ impl App {
         let mut blocks_total = 0usize;
         for (i, block) in agent.log.blocks().iter().enumerate() {
             let is_expanded = agent.expanded.contains(&i);
-            let count = crate::ui::conversation::count_block_visual_lines(block, width, is_expanded);
+            let is_wrapped = agent.wrapped.contains(&i);
+            let count = crate::ui::conversation::count_block_visual_lines(block, width, is_expanded, is_wrapped);
             per_block.push(count);
             blocks_total += count;
         }
@@ -197,6 +199,7 @@ impl App {
             width,
             generation,
             expanded,
+            wrapped,
             per_block,
             blocks_total,
         });
@@ -893,21 +896,17 @@ impl App {
     }
 
     fn handle_action_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
-        const ACTIONS: &[&str] = &["Expand/Collapse", "Save to file", "Copy to clipboard"];
-        const ACTION_COUNT: usize = ACTIONS.len();
+        const ACTION_COUNT: usize = 4;
 
         match key.code {
-            // Escape → restore original expand state, close
             KeyCode::Esc => {
                 self.exit_action_mode();
                 None
             }
-            // Space → close (toggle off)
             KeyCode::Char(' ') => {
                 self.exit_action_mode();
                 None
             }
-            // Navigation keys → process normally
             KeyCode::Up | KeyCode::Char('k') => {
                 self.action_cursor = self.action_cursor.saturating_sub(1);
                 None
@@ -919,6 +918,7 @@ impl App {
             KeyCode::Char('1') => { self.action_cursor = 0; self.execute_block_action() }
             KeyCode::Char('2') => { self.action_cursor = 1; self.execute_block_action() }
             KeyCode::Char('3') => { self.action_cursor = 2; self.execute_block_action() }
+            KeyCode::Char('4') => { self.action_cursor = 3; self.execute_block_action() }
             KeyCode::Enter => self.execute_block_action(),
             // Navigation keys that should be ignored without closing the palette
             KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => None,
@@ -975,6 +975,18 @@ impl App {
                     Ok(_) => self.status_message = Some("Copied to clipboard".to_string()),
                     Err(e) => self.status_message = Some(format!("Clipboard failed: {}", e)),
                 }
+            }
+            3 => {
+                // Wrap/Unwrap — toggle per-block wrapping, persists after close
+                let idx = self.selected_block;
+                if let Some(agent) = self.active_agent_mut() {
+                    if agent.wrapped.contains(&idx) {
+                        agent.wrapped.remove(&idx);
+                    } else {
+                        agent.wrapped.insert(idx);
+                    }
+                }
+                self.exit_action_mode();
             }
             _ => { self.exit_action_mode(); }
         }
@@ -1153,7 +1165,7 @@ impl App {
                         };
                         let all = crate::settings::load_all_settings();
                         let rs = all.roles.get("act").cloned().unwrap_or_default();
-                        let (fields, models, provider_info) = crate::settings::build_role_fields(&rs, &providers, &mut gw, gateway_ok);
+                        let (fields, models, provider_info, gateway_error) = crate::settings::build_role_fields(&rs, &providers, &mut gw, gateway_ok);
                         let _ = tx.send(crate::AppEvent::SettingsLoaded(
                             SettingsLoadResult::Initial {
                                 providers,
@@ -1161,6 +1173,7 @@ impl App {
                                 model_entries: models,
                                 provider_info,
                                 gateway_available: gateway_ok,
+                                gateway_error,
                             }
                         ));
                     });
@@ -1174,6 +1187,9 @@ impl App {
                 } else {
                     None
                 }
+            }
+            "close" => {
+                self.close_active_tab()
             }
             _ if cmd.starts_with("new ") => {
                 let task = cmd[4..].trim().to_string();
@@ -1347,10 +1363,51 @@ impl App {
         self.agents.iter_mut().find(|a| a.id == *id)
     }
 
+    /// Close the active agent tab. Sends Interrupt if still running,
+    /// removes queue items, and adjusts tab/scroll state.
+    fn close_active_tab(&mut self) -> Option<FrontendMessage> {
+        let agent = match self.agents.get(self.active_tab) {
+            Some(a) => a,
+            None => {
+                self.status_message = Some("No active tab to close".to_string());
+                return None;
+            }
+        };
+        let id = agent.id;
+        let is_running = matches!(agent.status, AgentStatus::Running | AgentStatus::Waiting);
+
+        // Remove all pending queue items for this agent
+        self.input_queue.retain(|(qid, _)| *qid != id);
+
+        // Remove the agent
+        self.agents.remove(self.active_tab);
+
+        // Adjust active_tab to stay in bounds
+        if self.agents.is_empty() {
+            self.active_tab = 0;
+        } else if self.active_tab >= self.agents.len() {
+            self.active_tab = self.agents.len() - 1;
+        }
+
+        // Reset view state for the new active tab
+        self.scroll_offset = 0;
+        self.selected_block = 0;
+        self.line_cache = None;
+
+        self.status_message = Some("Tab closed".to_string());
+
+        // Send Interrupt if agent was still running
+        if is_running {
+            Some(FrontendMessage::Interrupt { agent_id: id })
+        } else {
+            None
+        }
+    }
+
     /// Apply a settings load result from a background gateway operation.
     pub fn apply_settings_load(&mut self, result: SettingsLoadResult) {
         if let Some(s) = &mut self.settings {
-            match result {
+            match &result {
                 SettingsLoadResult::Initial { .. } => s.apply_initial_load(result),
                 SettingsLoadResult::ProviderChanged { .. } => s.apply_provider_changed(result),
                 SettingsLoadResult::RoleSwitched { .. } => s.apply_role_switched(result),
