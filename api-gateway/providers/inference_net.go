@@ -3,6 +3,8 @@ package providers
 import (
 	"context"
 	"net/http"
+	"log"
+	"net/url"
 	"strings"
 )
 
@@ -195,8 +197,13 @@ func NewInferenceNetHandler() *InferenceNetHandler {
 				if key := req.SettingString("catalyst_provider_api_key"); key != "" {
 					httpReq.Header.Set("x-inference-provider-api-key", key)
 				}
-				if url := req.SettingString("catalyst_provider_url"); url != "" {
-					httpReq.Header.Set("x-inference-provider-url", url)
+				if rawURL := req.SettingString("catalyst_provider_url"); rawURL != "" {
+					u, err := url.Parse(rawURL)
+					if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+						log.Printf("[inference-net] rejected invalid catalyst_provider_url: %q", rawURL)
+					} else {
+						httpReq.Header.Set("x-inference-provider-url", rawURL)
+					}
 				}
 				if env := req.SettingString("environment"); env != "" {
 					httpReq.Header.Set("x-inference-environment", env)

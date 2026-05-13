@@ -885,6 +885,11 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 	completeSent := false
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errChan <- fmt.Errorf("panic in stream handler: %v", r)
+			}
+		}()
 		if streamErr := handler.Stream(streamCtx, providerReq, func(chunk providers.StreamChunk) error {
 			select {
 			case chunks <- chunk:
@@ -1017,6 +1022,16 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 
 		result, err := handler.Send(ctx, req)
 		if err == nil {
+			// Check if the response itself signals context exceeded
+			// (e.g., Groq/Together return 200 with finish_reason "context_length_exceeded")
+			if providers.IsContextExceededFinishReason(result.StopReason) {
+				log.Printf("[non-streaming] request %d: context exceeded (stop_reason=%s)", id, result.StopReason)
+				return &Response{
+					ID:     id,
+					Status: 200,
+					Error:  &ErrorDetail{Code: "CONTEXT_EXCEEDED", Message: fmt.Sprintf("context window exceeded: %s", result.StopReason)},
+				}
+			}
 			body, err := json.Marshal(result)
 			if err != nil {
 				return &Response{

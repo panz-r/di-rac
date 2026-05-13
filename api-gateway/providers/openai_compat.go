@@ -15,6 +15,23 @@ import (
 
 const maxBodySize = 10 << 20 // 10 MB safety cap on response bodies
 
+// contextReader wraps an io.Reader so that Read respects context cancellation.
+// Without this, a blocked read on an HTTP response body can outlive context
+// cancellation, leaking goroutines until the provider closes the connection.
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (cr *contextReader) Read(p []byte) (n int, err error) {
+	select {
+	case <-cr.ctx.Done():
+		return 0, cr.ctx.Err()
+	default:
+	}
+	return cr.r.Read(p)
+}
+
 // OpenAICompatConfig configures an OpenAI-compatible provider.
 // Fill in only what differs from defaults; the rest are zero-valued.
 type OpenAICompatConfig struct {
@@ -125,7 +142,7 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 		return newAPIError(resp.StatusCode, string(body))
 	}
 
-	return openaiParseSSE(ctx, resp.Body, callback, h.config.FinishReasonMap, h.config.ContentArraySupport)
+	return openaiParseSSE(ctx, &contextReader{ctx: ctx, r: resp.Body}, callback, h.config.FinishReasonMap, h.config.ContentArraySupport)
 }
 
 func (h *openaiCompatHandler) Capabilities() *ProviderInfo {
@@ -758,7 +775,7 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			}
 			// Normalize context-exceeded finish reasons into an error so
 			// the caller gets a single signal path regardless of provider.
-			if isContextExceededFinishReason(fr) {
+			if IsContextExceededFinishReason(fr) {
 				err := newAPIError(http.StatusBadRequest, fmt.Sprintf("context window exceeded (finish_reason: %s)", fr))
 				err.ContextExceeded = true
 				return err
@@ -777,9 +794,9 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 	return scanner.Err()
 }
 
-// isContextExceededFinishReason returns true for finish reasons that indicate
+// IsContextExceededFinishReason returns true for finish reasons that indicate
 // the model hit a context window limit rather than a normal stop condition.
-func isContextExceededFinishReason(reason string) bool {
+func IsContextExceededFinishReason(reason string) bool {
 	lower := strings.ToLower(reason)
 	return strings.Contains(lower, "context") && strings.Contains(lower, "exceeded") ||
 		reason == "model_context_window_exceeded" ||
