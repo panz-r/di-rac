@@ -897,7 +897,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 			w.write(&Response{
 				ID:     id,
 				Status: 500,
-				Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
+				Error:  &ErrorDetail{Code: classifyError(streamErr), Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
 			})
 			return
 		case <-ctx.Done():
@@ -933,7 +933,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 				w.write(&Response{
 					ID:     id,
 					Status: 500,
-					Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
+					Error:  &ErrorDetail{Code: classifyError(streamErr), Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
 				})
 				return
 			default:
@@ -959,7 +959,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 						w.write(&Response{
 							ID:     id,
 							Status: 500,
-							Error:  &ErrorDetail{Code: "STREAM_ERROR", Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
+							Error:  &ErrorDetail{Code: classifyError(streamErr), Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
 						})
 						return
 					default:
@@ -1035,7 +1035,7 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 		ID:     id,
 		Status: 500,
 		Error: &ErrorDetail{
-			Code:      "PROVIDER_ERROR",
+			Code:      classifyError(lastErr),
 			Message:   sanitizeProviderError(lastErr),
 			Retriable: lastRetriable,
 		},
@@ -1101,6 +1101,15 @@ func sanitizeProviderError(err error) string {
 	default:
 		return "provider request failed"
 	}
+}
+
+// classifyError returns the structured error code for a provider error.
+// Providers set ContextExceeded on their own errors; this just reads it.
+func classifyError(err error) string {
+	if providers.IsContextExceeded(err) {
+		return "CONTEXT_EXCEEDED"
+	}
+	return "STREAM_ERROR"
 }
 
 func mustMarshal(v interface{}) json.RawMessage {

@@ -91,13 +91,19 @@ func NewMiniMaxHandler() *MiniMaxHandler {
 			},
 			ModifyRequest: func(req *Request, result map[string]interface{}) {
 				result["reasoning_split"] = true
-				// Log request summary for debugging
 				model, _ := result["model"].(string)
 				nTools := 0
 				if tools, ok := result["tools"].([]map[string]interface{}); ok {
 					nTools = len(tools)
 				}
-				log.Printf("[MiniMax] request: model=%s tools=%d stream=%v", model, nTools, result["stream"])
+				msgs, _ := result["messages"].([]map[string]interface{})
+				nToolResults := 0
+				for _, m := range msgs {
+					if m["role"] == "tool" {
+						nToolResults++
+					}
+				}
+				log.Printf("[MiniMax] request: model=%s tools=%d msgs=%d toolResults=%d stream=%v", model, nTools, len(msgs), nToolResults, result["stream"])
 			},
 		}),
 	}

@@ -28,12 +28,7 @@ func NewZAIHandler() *ZAIHandler {
 				"HTTP-Referer": "https://dirac.run",
 				"X-Title":      "Dirac",
 			},
-			FinishReasonMap: func(reason string) string {
-				if reason == "model_context_window_exceeded" {
-					return "length"
-				}
-				return reason
-			},
+
 			ModifyMessages: func(messages []map[string]interface{}, req *Request) []map[string]interface{} {
 				messages = openaiAddReasoningContent(messages, req)
 				return coerceAssistantMessages(messages)

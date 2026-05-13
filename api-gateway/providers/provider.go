@@ -275,6 +275,10 @@ type ProviderAPIError struct {
 	StatusCode int
 	Message    string
 	Retriable  bool
+	// ContextExceeded is true when the provider rejected the request because
+	// the total prompt exceeded its context window. Providers set this when
+	// they detect their own provider-specific context-limit response.
+	ContextExceeded bool
 }
 
 func (e *ProviderAPIError) Error() string {
@@ -290,6 +294,19 @@ func IsRetriable(err error) bool {
 	var pae *ProviderAPIError
 	if errors.As(err, &pae) {
 		return pae.Retriable
+	}
+	return false
+}
+
+// IsContextExceeded returns true if the error indicates the provider's context
+// window was exceeded. Each provider detects this from its own error format.
+func IsContextExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pae *ProviderAPIError
+	if errors.As(err, &pae) {
+		return pae.ContextExceeded
 	}
 	return false
 }

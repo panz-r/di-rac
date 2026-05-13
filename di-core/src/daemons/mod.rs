@@ -277,7 +277,15 @@ impl GatewayStreamClient {
                         match serde_json::from_str::<GatewayResponse>(&line) {
                             Ok(resp) => {
                                 if resp.status != 200 {
-                                    let _ = tx.send(Err(anyhow!("Gateway error {}: {}", resp.status, resp.error.unwrap_or_default()))).await;
+                                    let code = resp.error.as_ref()
+                                        .and_then(|e| e.get("code"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("UNKNOWN");
+                                    let msg = resp.error.as_ref()
+                                        .and_then(|e| e.get("message"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("unknown error");
+                                    let _ = tx.send(Err(anyhow!("{}: {}", code, msg))).await;
                                     break;
                                 }
 

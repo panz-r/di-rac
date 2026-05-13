@@ -81,11 +81,7 @@ func (h *openaiCompatHandler) Send(ctx context.Context, req *Request) (*SendResu
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, &ProviderAPIError{
-			StatusCode: resp.StatusCode,
-			Message:    fmt.Sprintf("API error (status %d): %s", resp.StatusCode, string(body)),
-			Retriable:  resp.StatusCode == 429 || resp.StatusCode >= 500,
-		}
+		return nil, newAPIError(resp.StatusCode, string(body))
 	}
 
 	var raw map[string]interface{}
@@ -124,12 +120,9 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize)) // best-effort; error path anyway
-		return &ProviderAPIError{
-			StatusCode: resp.StatusCode,
-			Message:    fmt.Sprintf("API error (status %d): %s", resp.StatusCode, string(body)),
-			Retriable:  resp.StatusCode == 429 || resp.StatusCode >= 500,
-		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
+		log.Printf("[openai-compat] %s %s → status %d: %s", httpReq.Method, httpReq.URL.Path, resp.StatusCode, string(body))
+		return newAPIError(resp.StatusCode, string(body))
 	}
 
 	return openaiParseSSE(ctx, resp.Body, callback, h.config.FinishReasonMap, h.config.ContentArraySupport)
@@ -149,6 +142,27 @@ func (h *openaiCompatHandler) resolveConfig(req *Request) (baseURL, apiKey strin
 		apiKey = req.Provider.APIKey
 	}
 	return
+}
+
+// newAPIError creates a ProviderAPIError with ContextExceeded auto-detected
+// from the response body. Each provider's error format is checked here so
+// the detection stays in the provider layer.
+func newAPIError(statusCode int, body string) *ProviderAPIError {
+	ctxExceeded := false
+	if statusCode == 400 || statusCode == 413 {
+		lower := strings.ToLower(body)
+		ctxExceeded = strings.Contains(lower, "context window") ||
+			strings.Contains(lower, "context_length_exceeded") ||
+			strings.Contains(lower, "maximum context length") ||
+			strings.Contains(lower, "token limit") ||
+			strings.Contains(lower, "input is too long")
+	}
+	return &ProviderAPIError{
+		StatusCode:      statusCode,
+		Message:         fmt.Sprintf("API error (status %d): %s", statusCode, body),
+		Retriable:       statusCode == 429 || statusCode >= 500,
+		ContextExceeded: ctxExceeded,
+	}
 }
 
 func (h *openaiCompatHandler) setHeaders(httpReq *http.Request, apiKey string, req *Request) {
@@ -285,7 +299,53 @@ func openaiConvertMessages(req *Request) []map[string]interface{} {
 		messages = append(messages, m)
 	}
 
-	return messages
+	return sanitizeOrphanedToolMessages(messages)
+}
+
+// sanitizeOrphanedToolMessages detects "tool" role messages that have no matching
+// preceding assistant message with tool_calls, and converts them to user role.
+// This can happen when a client compresses conversation history and drops the
+// assistant tool-call messages but keeps the tool results.
+func sanitizeOrphanedToolMessages(messages []map[string]interface{}) []map[string]interface{} {
+	knownToolIDs := map[string]bool{}
+
+	for _, m := range messages {
+		role, _ := m["role"].(string)
+		if role == "assistant" {
+			if tcs, ok := m["tool_calls"].([]map[string]interface{}); ok {
+				for _, tc := range tcs {
+					if id, ok := tc["id"].(string); ok && id != "" {
+						knownToolIDs[id] = true
+					}
+				}
+			}
+		}
+	}
+
+	var cleaned []map[string]interface{}
+	orphanCount := 0
+	for _, m := range messages {
+		role, _ := m["role"].(string)
+		if role == "tool" {
+			id, _ := m["tool_call_id"].(string)
+			if id == "" || !knownToolIDs[id] {
+				orphanCount++
+				content, _ := m["content"].(string)
+				cleaned = append(cleaned, map[string]interface{}{
+					"role":    "user",
+					"content": fmt.Sprintf("[Tool result for %s]: %s", id, content),
+				})
+				continue
+			}
+		}
+		cleaned = append(cleaned, m)
+	}
+
+	if orphanCount > 0 {
+		log.Printf("[openai-compat] sanitized %d orphaned tool messages (missing assistant tool_calls)", orphanCount)
+	}
+
+	return cleaned
 }
 
 func openaiConvertContentBlockMessage(messages []map[string]interface{}, msg Message) []map[string]interface{} {
@@ -696,6 +756,13 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			if finishReasonMap != nil {
 				fr = finishReasonMap(fr)
 			}
+			// Normalize context-exceeded finish reasons into an error so
+			// the caller gets a single signal path regardless of provider.
+			if isContextExceededFinishReason(fr) {
+				err := newAPIError(http.StatusBadRequest, fmt.Sprintf("context window exceeded (finish_reason: %s)", fr))
+				err.ContextExceeded = true
+				return err
+			}
 			// Prefer usage from finish_reason chunk; fall back to accumulated usage.
 			stopUsage := usage
 			if stopUsage == nil {
@@ -708,6 +775,16 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 	}
 
 	return scanner.Err()
+}
+
+// isContextExceededFinishReason returns true for finish reasons that indicate
+// the model hit a context window limit rather than a normal stop condition.
+func isContextExceededFinishReason(reason string) bool {
+	lower := strings.ToLower(reason)
+	return strings.Contains(lower, "context") && strings.Contains(lower, "exceeded") ||
+		reason == "model_context_window_exceeded" ||
+		reason == "context_length_exceeded" ||
+		reason == "content_length_exceeded"
 }
 
 // openaiExtractUsage builds a Usage from the unified SSE usage struct.

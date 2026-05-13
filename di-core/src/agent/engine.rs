@@ -700,6 +700,30 @@ impl AgentEngine {
             let outcome = match self.run_turn().await {
                 Ok(o) => o,
                 Err(e) => {
+                    let err_msg = format!("{}", e);
+                    // Gateway sends structured code "CONTEXT_EXCEEDED" — match on that.
+                    if err_msg.starts_with("CONTEXT_EXCEEDED:") {
+                        eprintln!("[di-core] context window exceeded, triggering hard compaction");
+                        match self.perform_runtime_compaction().await {
+                            Ok(()) => {
+                                self.lifecycle.notify_compaction_complete();
+                                self.trajectory.add_message(
+                                    Role::User,
+                                    serde_json::json!("Context was too long and has been compacted. Continue the task from where you left off."),
+                                    20,
+                                );
+                                continue;
+                            }
+                            Err(ce) => {
+                                self.emit_event(CoreEvent::TaskFinished {
+                                    agent_id: self.id,
+                                    success: false,
+                                    message: format!("Context exceeded and compaction failed: {}", ce),
+                                }).await?;
+                                return Err(e);
+                            }
+                        }
+                    }
                     self.emit_event(CoreEvent::TaskFinished {
                         agent_id: self.id,
                         success: false,
