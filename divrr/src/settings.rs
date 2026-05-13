@@ -858,6 +858,9 @@ impl SettingsState {
     /// Save settings and return FrontendMessages to send to di-core.
     /// Gateway push and validation happen asynchronously via pending_async.
     pub fn save(&mut self) -> Vec<crate::message::FrontendMessage> {
+        if self.loading || self.pending_async.is_some() {
+            return Vec::new();
+        }
         if self.selector_open {
             self.confirm_selector();
             return Vec::new();

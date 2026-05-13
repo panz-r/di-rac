@@ -232,6 +232,10 @@ impl App {
 
         match event {
             CoreEvent::TaskInitialized { agent_id, .. } => {
+                if self.agents.iter().any(|a| a.id == agent_id) {
+                    log_event(&format!("Duplicate agent_id ignored: {}", agent_id));
+                    return;
+                }
                 let idx = self.agents.len() + 1;
                 let agent = AgentState::new(agent_id, format!("Agent-{}", idx));
                 self.agents.push(agent);
@@ -270,6 +274,7 @@ impl App {
             }
             CoreEvent::ToolCallStarted { tool, args, .. } => {
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
+                    agent.log.finalize_streaming();
                     let summary = summarize_tool_args(&tool, &args);
                     agent.log.push_tool_call(tool, summary);
                     agent.status = AgentStatus::Running;
@@ -278,6 +283,7 @@ impl App {
             }
             CoreEvent::ToolCallFinished { result, .. } => {
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
+                    agent.log.finalize_streaming();
                     let status = result
                         .get("status")
                         .and_then(|v| v.as_str())
@@ -498,11 +504,13 @@ impl App {
     fn handle_settings_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
         match key.code {
             KeyCode::Esc => {
-                if let Some(s) = &mut self.settings {
+                if let Some(s) = &self.settings {
                     if s.secret_edit_open {
-                        s.cancel_secret_edit();
+                        self.settings.as_mut().unwrap().cancel_secret_edit();
                     } else if s.selector_open {
-                        s.cancel_selector();
+                        self.settings.as_mut().unwrap().cancel_selector();
+                    } else if s.pending_async.is_some() {
+                        // Don't close while async save is in flight
                     } else {
                         self.settings = None;
                         self.mode = Mode::Normal;
