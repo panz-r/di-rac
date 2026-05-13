@@ -571,9 +571,7 @@ impl App {
                 }
             }
             Mode::Insert => {
-                for c in text.chars() {
-                    self.input.insert(c);
-                }
+                self.input.insert_str(text);
             }
             _ => {}
         }
@@ -821,6 +819,8 @@ impl App {
                                 agent.pending_input = None;
                                 agent.status = AgentStatus::Running;
                             }
+                        } else {
+                            self.input_queue.push((agent_id, pending));
                         }
                     }
                     self.status_message = Some("Auto-approve: ON (queued approved)".to_string());

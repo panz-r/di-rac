@@ -9,7 +9,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
 
     if app.mode == Mode::Settings {
-        // Don't render input box when settings overlay is active
         let hint = Paragraph::new(Line::from(Span::styled(
             "  Settings open — press Esc to close",
             theme.text_dim(),
@@ -35,10 +34,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let prefix_len = prefix.len() as u16;
+    let scroll = app.input.scroll_offset;
+
+    let prefix_style = if app.mode == Mode::Insert {
+        theme.alert_bold()
+    } else {
+        theme.accent_bold()
+    };
 
     let mut spans: Vec<Span> = vec![Span::styled(
         &prefix,
-        theme.accent_bold(),
+        prefix_style,
     )];
 
     match app.mode {
@@ -50,27 +56,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
         Mode::Insert => {
             spans.push(Span::raw(&app.input.content));
-            let text_before_cursor = &app.input.content[..app.input.cursor.min(app.input.content.len())];
-            let row = text_before_cursor.lines().count().max(1) - 1;
-            let last_newline = text_before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
-            let line_part = &text_before_cursor[last_newline..];
-            let col = unicode_width::UnicodeWidthStr::width(line_part) as u16;
-            let clamped_row = (row as u16).min(area.height.saturating_sub(1));
-            frame.set_cursor_position((
-                if row == 0 { area.x + prefix_len + col } else { area.x + col },
-                area.y + clamped_row,
-            ));
         }
         Mode::Command => {
             spans.push(Span::styled(": ", Style::default().fg(theme.command)));
             spans.push(Span::styled(
                 &app.command_buffer,
                 Style::default().fg(theme.command),
-            ));
-            let cmd_visual = unicode_width::UnicodeWidthStr::width(app.command_buffer.as_str()) as u16;
-            frame.set_cursor_position((
-                area.x + prefix_len + 2 + cmd_visual,
-                area.y,
             ));
         }
         Mode::Settings => {
@@ -90,6 +81,34 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    let paragraph = Paragraph::new(Line::from(spans));
+    let mut paragraph = Paragraph::new(Line::from(spans));
+    if app.input.multi_line && scroll > 0 {
+        paragraph = paragraph.scroll((scroll as u16, 0));
+    }
     frame.render_widget(paragraph, area);
+
+    // Cursor positioning
+    match app.mode {
+        Mode::Insert => {
+            let cursor_row = app.input.cursor_row();
+            let visual_row = cursor_row.saturating_sub(scroll);
+
+            let text_before_cursor = &app.input.content[..app.input.cursor.min(app.input.content.len())];
+            let last_newline = text_before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
+            let line_part = &text_before_cursor[last_newline..];
+            let col = unicode_width::UnicodeWidthStr::width(line_part) as u16;
+
+            let cx = if visual_row == 0 { area.x + prefix_len + col } else { area.x + col };
+            let cy = area.y + (visual_row as u16).min(area.height.saturating_sub(1));
+            frame.set_cursor_position((cx, cy));
+        }
+        Mode::Command => {
+            let cmd_visual = unicode_width::UnicodeWidthStr::width(app.command_buffer.as_str()) as u16;
+            frame.set_cursor_position((
+                area.x + prefix_len + 2 + cmd_visual,
+                area.y,
+            ));
+        }
+        _ => {}
+    }
 }

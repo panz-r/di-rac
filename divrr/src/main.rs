@@ -207,14 +207,17 @@ async fn main() -> color_eyre::Result<()> {
     // Main event loop
     loop {
         // Render
-        let term_size = terminal.size().unwrap_or_default();
+        let term_size = terminal.size().unwrap_or_else(|_| ratatui::layout::Rect::new(0, 0, 80, 24).into());
         // Compute layout heights to match ui/mod.rs
         let queue_h = if app.input_queue.is_empty() { 0 } else { app.input_queue.len().min(5) as u16 };
         let input_h = if app.input.multi_line {
-            app.input.content.lines().count().max(1).min(8) as u16
+            let content_lines = app.input.content.lines().count().max(1);
+            let max_h = (term_size.height as usize * 3 / 4).max(1);
+            content_lines.min(max_h) as u16
         } else {
             1
         };
+        app.input.clamp_scroll(input_h as usize);
         let reserved = 1 + queue_h + input_h; // top bar + queue + input
         app.visible_lines = if term_size.height > reserved {
             (term_size.height - reserved) as usize

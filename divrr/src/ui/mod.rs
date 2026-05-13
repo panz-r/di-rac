@@ -31,7 +31,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     };
 
     let input_height = if app.input.multi_line {
-        app.input.content.lines().count().max(1).min(8) as u16
+        let content_lines = app.input.content.lines().count().max(1);
+        let max_h = (size.height as usize * 3 / 4).max(1);
+        content_lines.min(max_h) as u16
     } else {
         1
     };
