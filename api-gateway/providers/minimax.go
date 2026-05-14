@@ -340,14 +340,8 @@ func (p *minimaxToolCallPipe) tryParse() error {
 			args := map[string]interface{}{}
 			for _, pm := range inv.Parameters {
 				paramVal := strings.TrimSpace(pm.Value)
-				var parsed interface{}
-				if err := json.Unmarshal([]byte(paramVal), &parsed); err == nil {
-					args[pm.Name] = parsed
-				} else {
-					args[pm.Name] = paramVal
-				}
+				args[pm.Name] = paramVal
 			}
-
 			argsJSON, _ := json.Marshal(args)
 			callID := fmt.Sprintf("minimax_%d_%s", p.counter.Add(1), inv.Name)
 
@@ -441,12 +435,7 @@ func extractToolCallsFromResult(result *SendResult, counter *atomic.Int64) *Send
 					if paramVal == "" {
 						continue
 					}
-					var parsed interface{}
-					if err := json.Unmarshal([]byte(paramVal), &parsed); err == nil {
-						args[pm.Name] = parsed
-					} else {
 						args[pm.Name] = paramVal
-					}
 				}
 				argsJSON, _ := json.Marshal(args)
 				callID := fmt.Sprintf("minimax_%d_%s", counter.Add(1), inv.Name)
