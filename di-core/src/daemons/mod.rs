@@ -620,14 +620,27 @@ impl ResilientDaemon {
     /// Send a request to the analyzer daemon with automatic restart on death.
     /// Wraps the untimed call in a 2-minute timeout to prevent indefinite hangs.
     /// Returns `Ok(R)` on success, `Err` for application or daemon errors.
+    /// Send a request with restart and retry.
+    /// Safe default: no retry on daemon death (prevents duplicate mutations).
     pub async fn send_request<T: Serialize, R: for<'de> Deserialize<'de>>(&mut self, request: T) -> Result<R> {
+        self.send_request_impl(request, false).await
+    }
+
+    /// Send a request with restart and retry enabled.
+    /// Use for read-only operations where retry is safe (e.g. analyzer queries).
+    pub async fn send_request_retry<T: Serialize, R: for<'de> Deserialize<'de>>(&mut self, request: T) -> Result<R> {
+        self.send_request_impl(request, true).await
+    }
+
+    async fn send_request_impl<T: Serialize, R: for<'de> Deserialize<'de>>(&mut self, request: T, retry_on_death: bool) -> Result<R> {
+        let max_attempts = if retry_on_death { self.max_restart_attempts } else { 1 };
         let mut attempts = 0;
         loop {
             if self.inner.is_none() {
                 if let Err(msg) = self.restart().await {
                     attempts += 1;
-                    if attempts > self.max_restart_attempts {
-                        return Err(anyhow::anyhow!("Analyzer daemon unavailable after {} attempts: {}", self.max_restart_attempts, msg));
+                    if attempts >= max_attempts {
+                        return Err(anyhow::anyhow!("Analyzer daemon unavailable after {} attempts: {}", max_attempts, msg));
                     }
                     continue;
                 }
@@ -643,33 +656,32 @@ impl ResilientDaemon {
                 Ok(Ok(r)) => return Ok(r),
                 Ok(Err(UntimedError::Dead(msg))) => {
                     attempts += 1;
-                    if attempts > self.max_restart_attempts {
+                    if attempts >= max_attempts {
                         return Err(anyhow::anyhow!(
-                            "Analyzer daemon failed after {} restart attempts: {}",
-                            self.max_restart_attempts, msg
+                            "Analyzer daemon failed after {} attempt{}: {}",
+                            max_attempts, if max_attempts == 1 { "" } else { "s" }, msg
                         ));
                     }
                     eprintln!(
                         "[di-core] ResilientDaemon: daemon dead ({}), restarting {}/{}",
-                        msg, attempts, self.max_restart_attempts
+                        msg, attempts, max_attempts
                     );
                     self.inner = None;
                     continue;
                 }
                 Ok(Err(UntimedError::App(e))) => return Err(e),
                 Err(_) => {
-                    // Timeout — treat as dead daemon
-                    let msg = format!("Daemon timed out after 120s");
+                    let msg = "Daemon timed out after 120s";
                     attempts += 1;
-                    if attempts > self.max_restart_attempts {
+                    if attempts >= max_attempts {
                         return Err(anyhow::anyhow!(
-                            "Analyzer daemon timed out after {} restart attempts: {}",
-                            self.max_restart_attempts, msg
+                            "Analyzer daemon timed out after {} attempt{}",
+                            max_attempts, if max_attempts == 1 { "" } else { "s" }
                         ));
                     }
                     eprintln!(
                         "[di-core] ResilientDaemon: {}, restarting {}/{}",
-                        msg, attempts, self.max_restart_attempts
+                        msg, attempts, max_attempts
                     );
                     self.inner = None;
                     continue;

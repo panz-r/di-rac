@@ -50,9 +50,8 @@ fn safe_truncate(s: &str, max_len: usize) -> std::borrow::Cow<'_, str> {
 /// Format: `OK | tokens:N | lines:N | cached:yes/no` header followed by content.
 /// Also handles ERROR, TRUNCATED, and EMPTY variants.
 fn wrap_in_envelope(content: &str, tool_name: &str, is_cached: bool, cumulative_tokens: usize, read_count: usize) -> String {
-    let trimmed = content.trim_start();
-
-    // Skip if already wrapped
+    // Skip if already wrapped (trim whitespace fully to catch "\nOK |" etc.)
+    let trimmed = content.trim();
     if trimmed.starts_with("OK |") || trimmed.starts_with("ERROR |") || trimmed.starts_with("TRUNCATED |") || trimmed.starts_with("EMPTY |") {
         return content.to_string();
     }
@@ -1677,7 +1676,11 @@ impl AgentEngine {
                 // Note: emit_event flushes stdout before we block here, so the frontend
                 // receives ApprovalNeeded. The main loop uses try_send (non-blocking)
                 // to route the response, preventing deadlock even under fast auto-approve.
+                // Check is_aborted() on each iteration so interrupts break the loop.
                 let approved = loop {
+                    if self.is_aborted() {
+                        break false;
+                    }
                     let msg = self.recv_frontend().await;
                     match msg {
                         Some(FrontendMessage::ApprovalResponse { approval_id: ref resp_id, approved, .. }) => {
@@ -1919,6 +1922,9 @@ impl AgentEngine {
                         // Block waiting for followup answer from frontend.
                         // Buffer any UserResponse messages that arrive while waiting.
                         let answer_text = loop {
+                            if self.is_aborted() {
+                                break String::new();
+                            }
                             let msg = self.recv_frontend().await;
                             match msg {
                                 Some(FrontendMessage::FollowupAnswer { text, .. }) => break text,

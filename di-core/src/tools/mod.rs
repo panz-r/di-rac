@@ -570,7 +570,7 @@ impl ToolExecutor {
 
         // Section jump: resolve symbol handle to line range
         if let Some(section) = call.args.get("section").and_then(|v| v.as_str()) {
-            let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+            let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request_retry(AnalyzerRequest {
                 command: "outline".to_string(),
                 file: Some(path.to_string()),
                 content: None,
@@ -612,7 +612,7 @@ impl ToolExecutor {
         // Analyzer-based detail levels
         match effective_detail.as_str() {
             "outline" | "hint" => {
-                let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+                let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request_retry(AnalyzerRequest {
                     command: "outline".to_string(),
                     file: Some(path.to_string()),
                     content: None,
@@ -627,7 +627,7 @@ impl ToolExecutor {
                 }
             }
             "skeleton" => {
-                let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+                let resp: AnalyzerResponse = self.analyzer_daemon.lock().await.send_request_retry(AnalyzerRequest {
                     command: "skeleton".to_string(),
                     file: Some(path.to_string()),
                     content: None,

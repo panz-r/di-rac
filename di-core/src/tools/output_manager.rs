@@ -102,7 +102,33 @@ impl OutputManager {
             tail_start += 1;
         }
         let omitted = content.len() - head_end - (content.len() - tail_start);
-        format!("{}...[{} bytes truncated]...\n{}", &content[..head_end], omitted, &content[tail_start..]).into()
+
+        // Scan for error lines in the omitted middle section
+        let error_lines: Vec<&str> = content[head_end..tail_start].lines()
+            .filter(|l| {
+                let lower = l.to_lowercase();
+                lower.contains("error") || lower.contains("fail") || lower.contains("fatal") || lower.contains("traceback")
+            })
+            .take(5)
+            .collect();
+
+        let mut result = format!("{}...[{} bytes truncated]...\n{}",
+            &content[..head_end], omitted, &content[tail_start..]);
+
+        if !error_lines.is_empty() {
+            result.push_str("\n\n[Error lines from truncated section:\n");
+            for line in &error_lines {
+                let truncated = if line.len() > 200 {
+                    format!("{}...", &line[..line.floor_char_boundary(200)])
+                } else {
+                    line.to_string()
+                };
+                result.push_str(&format!("  {}\n", truncated));
+            }
+            result.push(']');
+        }
+
+        result.into()
     }
 
     fn cleanup_old_outputs(output_dir: &std::path::Path) {

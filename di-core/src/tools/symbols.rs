@@ -31,7 +31,7 @@ async fn symbol_search(
     let kind = call.args.get("kind").and_then(|v| v.as_str()).unwrap_or("");
     let path = call.args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
 
-    let resp: AnalyzerResponse = analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+    let resp: AnalyzerResponse = analyzer_daemon.lock().await.send_request_retry(AnalyzerRequest {
         command: "search-symbols".to_string(),
         query: Some(name.to_string()),
         file: Some(path.to_string()),
@@ -56,7 +56,7 @@ async fn symbol_replace(
     let text = call.args.get("text").and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("Missing text for symbols replace"))?;
 
-    let resp: AnalyzerResponse = analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+    let resp: AnalyzerResponse = analyzer_daemon.lock().await.send_request_retry(AnalyzerRequest {
         command: "symbols-replace".to_string(),
         query: Some(name.to_string()),
         file: None,
@@ -81,7 +81,7 @@ async fn symbol_rename(
     let new_name = call.args.get("new").and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("Missing new name for symbols rename"))?;
 
-    let resp: AnalyzerResponse = analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+    let resp: AnalyzerResponse = analyzer_daemon.lock().await.send_request_retry(AnalyzerRequest {
         command: "symbols-rename".to_string(),
         query: Some(format!("{}:{}", old_name, new_name)),
         file: None,
@@ -104,7 +104,7 @@ async fn symbol_refs(
     let name = call.args.get("name").and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("Missing name for symbols refs"))?;
 
-    let resp: AnalyzerResponse = analyzer_daemon.lock().await.send_request(AnalyzerRequest {
+    let resp: AnalyzerResponse = analyzer_daemon.lock().await.send_request_retry(AnalyzerRequest {
         command: "symbols-refs".to_string(),
         query: Some(name.to_string()),
         file: None,
