@@ -179,7 +179,7 @@ func newAPIError(statusCode int, body string) *ProviderAPIError {
 	return &ProviderAPIError{
 		StatusCode:      statusCode,
 		Message:         fmt.Sprintf("API error (status %d): %s", statusCode, body),
-		Retriable:       statusCode == 429 || statusCode >= 500,
+		Retriable:       statusCode == 429,
 		ContextExceeded: ctxExceeded,
 	}
 }

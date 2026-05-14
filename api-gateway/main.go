@@ -1083,7 +1083,7 @@ func (s *Server) handleStreaming(ctx context.Context, connID, id int64, req *Req
 }
 
 func (s *Server) handleNonStreaming(ctx context.Context, connID, id int64, handler providers.Handler, req *providers.Request) *Response {
-	const maxAttempts = 9 // 1 initial + 8 retries
+	const maxAttempts = 3 // 1 initial + 2 retries; non-idempotent POST so keep low
 	var lastErr error
 	var lastRetriable bool
 

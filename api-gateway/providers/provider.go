@@ -517,7 +517,10 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg Provid
 	if err != nil {
 		return nil, err
 	}
-	models := v.([]ModelEntry)
+	models, ok := v.([]ModelEntry)
+		if !ok || models == nil {
+			return nil, fmt.Errorf("unexpected type from model lister")
+		}
 
 	// Cache for 1 hour, evict oldest if at capacity
 	r.modelsMu.Lock()
