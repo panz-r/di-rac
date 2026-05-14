@@ -78,7 +78,7 @@ static trie_node_t* node_create(const char *segment, trie_node_t *parent) {
     node->owner_fd = -1;
 
     ht_config_t cfg = {
-        .initial_capacity = 8,
+        .initial_capacity = 16,
         .max_load_factor = 0.75,
         .min_load_factor = 0.20,
         .tomb_threshold = 0.20,
@@ -339,7 +339,7 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
         if (found) {
             kv = *(ht_table_t**)found;
         } else {
-            ht_config_t cfg = {.initial_capacity = 8, .max_load_factor = 0.75, .min_load_factor = 0.20, .tomb_threshold = 0.20, .zombie_window = 8};
+            ht_config_t cfg = {.initial_capacity = 16, .max_load_factor = 0.75, .min_load_factor = 0.20, .tomb_threshold = 0.20, .zombie_window = 8};
             kv = ht_create(&cfg, string_hash, string_eq, NULL);
             if (!kv) return -1;
             if (!ht_insert(trie->transient_registry, &fd, sizeof(int), &kv, sizeof(ht_table_t*))) {
@@ -724,8 +724,16 @@ int trie_acquire_lock(trie_t *trie, const char *path, int fd, bool wait) {
             fprintf(stderr, "[di-vrr] trie_acquire_lock: wait queue overflow on path, rejecting fd %d\n", fd);
             return -1;
         }
-        void *tmp = realloc(current->waiters, sizeof(int) * (current->waiters_count + 1));
-        if (!tmp) return -1;
+        /* Doubling growth — initial 32, then double per expansion. Graceful
+         * OOM: return -1 and let caller unwind. waiters_count was already
+         * incremented but fd was NOT added, so state is consistent. */
+        size_t new_cap = current->waiters_count == 0 ? 32 : current->waiters_count * 2;
+        if (current->waiters_count >= new_cap) new_cap = current->waiters_count + 1;
+        void *tmp = realloc(current->waiters, sizeof(int) * new_cap);
+        if (!tmp) {
+            fprintf(stderr, "[di-vrr] trie_acquire_lock: realloc failed for waiters of fd %d\n", fd);
+            return -1;
+        }
         current->waiters = tmp;
         current->waiters[current->waiters_count++] = fd;
         trie->total_waiters++;

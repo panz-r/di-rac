@@ -344,14 +344,16 @@ static const char* find_string_val(const char *json, const char *key, char *out,
     }
     if (*end != '"') return NULL;
 
-    /* Extract raw string then unescape into caller's buffer */
-    char raw[8192];
+    /* Dynamically allocate raw buffer — no hard limit on token size */
     size_t raw_len = (size_t)(end - start);
-    if (raw_len >= sizeof(raw)) raw_len = sizeof(raw) - 1;
+    char *raw = malloc(raw_len + 1);
+    if (!raw) return NULL;
     memcpy(raw, start, raw_len);
     raw[raw_len] = '\0';
 
-    if (json_unescape(raw, out, out_len) < 0) return NULL;
+    int res = json_unescape(raw, out, out_len);
+    free(raw);
+    if (res < 0) return NULL;
     return end;
 }
 

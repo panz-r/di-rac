@@ -29,13 +29,13 @@
 | P1-1 | trie.h / trie.c | 43-45 | `trie_get_stats` reads non-atomic `size_t` counters from signal handler while event loop mutates | **FIXED** — made counters `_Atomic size_t` |
 | P1-2 | main.c | 706-711 | `trie_save_persist` called from signal handler context (deferred flag) — not async-signal-safe | **WONTFIX** — flag-only signal handler, I/O deferred to main loop |
 | P1-3 | main.c | 59,127 | Unregister EPOLLOUT sets `out_epoll_registered=false` BEFORE epoll_ctl succeeds | **FIXED** — flag set only after confirmed MOD succeeds |
-| P1-4 | trie.c | 649 | `realloc(current->waiters, +1)` per waiter — heap churn under contention | **PARTIAL** — realloc failure now logged without corrupting state; growth unchanged |
+| P1-4 | trie.c | 649 | `realloc(current->waiters, +1)` per waiter — heap churn under contention | **FIXED** — doubling growth (initial 32, then cap*2), graceful OOM with consistent state |
 | P1-5 | trie.c | 292,417 | `strdup(path)` in `trie_traverse` and `trie_get_config` — redundant copy on every acquire/release/set_config | **FIXED** — replaced with inline segment parsing (zero malloc per call) |
-| P1-6 | trie.c | 327-328 | HT `initial_capacity=8` for transient_registry per-FD tables — rehash storm for chatty clients | **WONTFIX** — not a correctness issue; profiling needed before changing HT params |
+| P1-6 | trie.c | 327-328 | HT `initial_capacity=8` for transient_registry per-FD tables — rehash storm for chatty clients | **FIXED** — bumped to 16 |
 | P1-7 | main.c | 701 | `setsockopt(SO_REUSEADDR)` return ignored — startup fails silently if it doesn't bind | **FIXED** |
 | P1-8 | main.c | 705 | `unlink` before bind return ignored — bind failure misattributed | **FIXED** |
 | P1-9 | trie.c | 724-755 | `send_granted_cb` calls `epoll_ctl` MOD inside epoll dispatch loop — re-entrancy risk | **WONTFIX** — single-threaded event loop prevents re-entrancy; documented in trie.c header |
-| P1-10 | main.c | 563 | `find_string_val` silently truncates raw strings >8191 bytes into 8192-byte buffer | **WONTFIX** — truncation is acceptable boundary behavior |
+| P1-10 | main.c | 563 | `find_string_val` silently truncates raw strings >8191 bytes into 8192-byte buffer | **FIXED** — dynamic malloc+free raw buffer, no hard limit |
 
 ---
 
