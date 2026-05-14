@@ -112,6 +112,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
+    // Status message (e.g., errors, confirmations)
+    if let Some(msg) = &app.status_message {
+        spans.push(Span::raw(" | "));
+        spans.push(Span::styled(msg.as_str(), theme.text_dim()));
+    }
+
     let paragraph = Paragraph::new(Line::from(spans));
     frame.render_widget(paragraph, area);
 }
