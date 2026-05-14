@@ -136,21 +136,15 @@ async fn main() -> color_eyre::Result<()> {
         let mut reader = EventStream::new();
         loop {
             match reader.next().await {
-                Some(Ok(CrosstermEvent::Key(key))) => {
-                    if key_tx.send(AppEvent::Key(key)).is_err() {
-                        break;
-                    }
-                }
+                Some(Ok(CrosstermEvent::Key(key)))
+                    if key_tx.send(AppEvent::Key(key)).is_err() => break,
                 Some(Ok(CrosstermEvent::Paste(text))) => {
                     if key_tx.send(AppEvent::Paste(text)).is_err() {
                         break;
                     }
                 }
-                Some(Ok(CrosstermEvent::Resize(..))) => {
-                    if key_tx.send(AppEvent::Resize).is_err() {
-                        break;
-                    }
-                }
+                Some(Ok(CrosstermEvent::Resize(..)))
+                    if key_tx.send(AppEvent::Resize).is_err() => break,
                 _ => {}
             }
         }
@@ -374,7 +368,7 @@ async fn main() -> color_eyre::Result<()> {
                                 }
                             }
                         }));
-                        if let Err(_) = result {
+                        if result.is_err() {
                             crate::app::log_event("settings async operation panicked");
                         }
                     });

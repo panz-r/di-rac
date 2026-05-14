@@ -19,7 +19,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let prefix = if app.queue_focused && !app.input_queue.is_empty() {
         "[Queue] >>> ".to_string()
-    } else if app.agents.len() >= 1 {
+    } else if !app.agents.is_empty() {
         let name = app
             .active_agent()
             .map(|a| a.name.as_str())

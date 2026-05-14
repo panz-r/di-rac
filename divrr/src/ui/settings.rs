@@ -318,7 +318,7 @@ fn render_selector_modal(
     let field = &settings.fields[fo];
     let count = settings.selector_filtered_indices.len();
 
-    let visible = (size.height as usize).saturating_sub(8).min(15).max(3);
+    let visible = (size.height as usize).saturating_sub(8).clamp(3, 15);
     let visible = visible.min(count).max(1);
     let modal_h = visible as u16 + 4;
 

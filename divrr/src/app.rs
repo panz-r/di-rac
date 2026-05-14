@@ -22,8 +22,7 @@ pub fn log_event(msg: &str) {
                 let start = data.len().saturating_sub(keep);
                 // Align to next newline boundary
                 let start = data[start..].iter().position(|&b| b == b'\n')
-                    .map(|p| start + p + 1)
-                    .unwrap_or(start);
+                    .map_or(start, |p| start + p + 1);
                 let _ = std::fs::write(&path, &data[start..]);
             }
         }
@@ -177,7 +176,7 @@ impl App {
             .map(|a| (a.log.generation(), a.expanded.clone(), a.wrapped.clone()))
             .unwrap_or((0, HashSet::new(), HashSet::new()));
 
-        if self.line_cache.as_ref().map_or(false, |c| c.is_valid(width, generation, &expanded, &wrapped)) {
+        if self.line_cache.as_ref().is_some_and(|c| c.is_valid(width, generation, &expanded, &wrapped)) {
             return;
         }
 
@@ -941,7 +940,7 @@ impl App {
     fn execute_block_action(&mut self) -> Option<FrontendMessage> {
         let block_text = self.active_agent()
             .and_then(|a| a.log.blocks().get(self.selected_block))
-            .map(|b| block_full_text(b))
+            .map(block_full_text)
             .unwrap_or_default();
 
         if block_text.is_empty() {

@@ -346,10 +346,7 @@ impl RoleBehaviorSettings {
 
     #[allow(dead_code)]
     pub fn has_settings(&self, role: &str) -> bool {
-        match role {
-            "observer" | "distiller" => true,
-            _ => false,
-        }
+        matches!(role, "observer" | "distiller")
     }
 }
 
@@ -964,12 +961,9 @@ impl SettingsState {
         if self.cursor == 0 { return; }
         let fo = self.field_offset();
         // Don't allow inline typing on Secret fields — must use Tab modal
-        match &mut self.fields[fo] {
-            SettingsField::Text { value, .. } => {
-                value.push(c);
-                self.saved = false;
-            }
-            _ => {}
+        if let SettingsField::Text { value, .. } = &mut self.fields[fo] {
+            value.push(c);
+            self.saved = false;
         }
     }
 
@@ -982,12 +976,9 @@ impl SettingsState {
         }
         if self.cursor == 0 { return; }
         let fo = self.field_offset();
-        match &mut self.fields[fo] {
-            SettingsField::Text { value, .. } => {
-                value.pop();
-                self.saved = false;
-            }
-            _ => {}
+        if let SettingsField::Text { value, .. } = &mut self.fields[fo] {
+            value.pop();
+            self.saved = false;
         }
     }
 
@@ -1368,7 +1359,7 @@ fn gather_role_settings(fields: &[SettingsField], provider_settings: &[ProviderS
 
 fn provider_setting_to_field(ps: &ProviderSetting, current_value: Option<&String>) -> SettingsField {
     let val = current_value.cloned().unwrap_or_else(|| {
-        ps.default.as_ref().map(|v| value_to_string(v)).unwrap_or_default()
+        ps.default.as_ref().map(value_to_string).unwrap_or_default()
     });
 
     match ps.setting_type.as_str() {

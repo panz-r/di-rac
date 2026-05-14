@@ -134,7 +134,7 @@ impl DiCoreBackend {
                         let _ = writeln!(writer, "[{}] {}", ts, line);
                         line_count += 1;
                         // Recheck file size every 1000 lines so large bursts are trimmed
-                        if line_count % 1000 == 0 {
+                        if line_count.is_multiple_of(1000) {
                             writer.flush().ok();
                             rotate();
                         }

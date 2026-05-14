@@ -87,11 +87,9 @@ pub fn find_gateway() -> Option<String> {
         which("api-gateway"),
     ];
 
-    for candidate in candidates {
-        if let Some(ref path) = candidate {
-            if std::path::Path::new(path).exists() {
-                return Some(path.clone());
-            }
+    for ref path in candidates.into_iter().flatten() {
+        if std::path::Path::new(path).exists() {
+            return Some(path.clone());
         }
     }
     None
