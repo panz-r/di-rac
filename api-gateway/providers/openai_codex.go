@@ -101,6 +101,13 @@ func NewOpenAICodexHandler() *OpenAICodexHandler {
 						},
 						Description: "Controls output verbosity.",
 					},
+					{
+						Key:         "store",
+						Label:       "Store Response",
+						Type:        SettingToggle,
+						Group:       "output",
+						Description: "Store the response for later retrieval via the API.",
+					},
 				},
 			},
 			ModifyRequest: func(req *Request, result map[string]interface{}) {
@@ -144,6 +151,11 @@ func NewOpenAICodexHandler() *OpenAICodexHandler {
 							"summary": "auto",
 						}
 					}
+				}
+
+				// Store
+				if req.SettingBool("store") {
+					result["store"] = true
 				}
 			},
 		}),

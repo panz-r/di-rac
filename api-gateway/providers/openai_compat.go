@@ -626,6 +626,7 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 	// Accumulate usage from usage-only chunks (choices empty) to attach
 	// to the real stop/complete event instead of emitting a duplicate stop.
 	var pendingUsage *Usage
+	var stopped bool
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 32*1024), 256*1024)
@@ -646,6 +647,10 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			}
 			return nil
 		}
+			if stopped {
+				continue
+			}
+
 
 		var chunk struct {
 			Choices []struct {
@@ -805,6 +810,7 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 				return err
 			}
 		}
+			stopped = true
 	}
 
 	return scanner.Err()

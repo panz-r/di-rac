@@ -649,6 +649,9 @@ func ValidateRequest(req *Request) error {
 	if len(req.Messages) == 0 {
 		return errors.New("at least one message is required")
 	}
+	if len(req.Messages) > 1000 {
+		return fmt.Errorf("too many messages: %d (max 1000)", len(req.Messages))
+	}
 	if len(req.Tools) > 128 {
 		return fmt.Errorf("too many tools: %d (max 128)", len(req.Tools))
 	}
@@ -664,6 +667,12 @@ func ValidateRequest(req *Request) error {
 	for i, msg := range req.Messages {
 		if msg.Role == "" {
 			return fmt.Errorf("message at index %d has no role", i)
+		}
+		if len(msg.ToolCalls) > 100 {
+			return fmt.Errorf("message at index %d has too many tool calls: %d (max 100)", i, len(msg.ToolCalls))
+		}
+		if len(msg.ContentBlocks) > 100 {
+			return fmt.Errorf("message at index %d has too many content blocks: %d (max 100)", i, len(msg.ContentBlocks))
 		}
 		// Check for content presence: legacy Content field, ContentBlocks, or Thinking
 		hasContent := msg.Content != ""
