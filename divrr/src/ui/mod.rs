@@ -64,17 +64,17 @@ pub fn render(frame: &mut Frame, app: &App) {
     input_box::render(frame, input_area, app);
 
     // Command palette popup (above input box)
-    if app.mode == crate::app::Mode::Command && !app.command_palette.is_empty() {
+    if app.mode == crate::app_types::Mode::Command && !app.command_palette.is_empty() {
         palette::render(frame, input_area, app);
     }
 
     // Action palette popup (spacebar on selected block)
-    if app.mode == crate::app::Mode::Action {
+    if app.mode == crate::app_types::Mode::Action {
         render_action_palette(frame, input_area, app);
     }
 
     // Save dialog popup
-    if app.mode == crate::app::Mode::SaveDialog {
+    if app.mode == crate::app_types::Mode::SaveDialog {
         render_save_dialog(frame, input_area, app);
     }
 

@@ -79,32 +79,32 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Mode indicator
     match app.mode {
-        crate::app::Mode::Normal => {}
-        crate::app::Mode::Insert => {
+        crate::app_types::Mode::Normal => {}
+        crate::app_types::Mode::Insert => {
             spans.push(Span::styled(
                 " | INSERT",
                 theme.success_style(),
             ));
         }
-        crate::app::Mode::Command => {
+        crate::app_types::Mode::Command => {
             spans.push(Span::styled(
                 " | COMMAND",
                 Style::default().fg(theme.command),
             ));
         }
-        crate::app::Mode::Settings => {
+        crate::app_types::Mode::Settings => {
             spans.push(Span::styled(
                 " | SETTINGS",
                 Style::default().fg(theme.warning),
             ));
         }
-        crate::app::Mode::Action => {
+        crate::app_types::Mode::Action => {
             spans.push(Span::styled(
                 " | ACTION",
                 Style::default().fg(theme.accent),
             ));
         }
-        crate::app::Mode::SaveDialog => {
+        crate::app_types::Mode::SaveDialog => {
             spans.push(Span::styled(
                 " | SAVE",
                 Style::default().fg(theme.warning),

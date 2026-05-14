@@ -35,11 +35,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 /// for non-selected blocks to avoid per-frame rebuild cost.
 pub fn build_all_lines(
     agent: &AgentState, max_width: usize, selected_block: usize,
-    mode: crate::app::Mode, theme: &Theme,
+    mode: crate::app_types::Mode, theme: &Theme,
     cached_block_lines: Option<&[Vec<Line<'static>>]>,
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::with_capacity(agent.log.blocks().len() + 2);
-    let highlight_active = mode == crate::app::Mode::Action;
+    let highlight_active = mode == crate::app_types::Mode::Action;
 
     if let Some(cached) = cached_block_lines {
         if cached.len() == agent.log.blocks().len() {
