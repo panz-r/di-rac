@@ -1209,7 +1209,7 @@ func isSafeBaseURL(rawURL string) error {
 	}
 
 	// Allow localhost variants for local providers
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+	if host == "localhost" || host == "::1" || strings.HasPrefix(host, "127.") {
 		return nil
 	}
 

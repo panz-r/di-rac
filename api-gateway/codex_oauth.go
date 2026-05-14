@@ -507,10 +507,13 @@ func codexPollDeviceCode(ctx context.Context, dc *CodexDeviceCode) (*CodexAuthTo
 	}
 
 	for {
+		wait := interval + backoff + time.Duration(mrand.Int64N(int64(jitterMax)))
+		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return nil, ctx.Err()
-		case <-time.After(interval + backoff + time.Duration(mrand.Int64N(int64(jitterMax)))):
+		case <-t.C:
 		}
 
 		if time.Now().Unix() > dc.ExpiresAt {

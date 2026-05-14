@@ -647,11 +647,6 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			}
 			return nil
 		}
-			if stopped {
-				continue
-			}
-
-
 		var chunk struct {
 			Choices []struct {
 				Index int `json:"index"`
@@ -707,6 +702,9 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			}
 			continue
 		}
+			if stopped {
+				continue
+			}
 
 		choice := chunk.Choices[0]
 		choiceIdx := choice.Index
