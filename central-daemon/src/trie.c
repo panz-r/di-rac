@@ -496,50 +496,90 @@ static void persist_unescape(const char *src, size_t slen, char *dst, size_t dst
     dst[dst_pos] = '\0';
 }
 
-/* Recursion depth is bounded by trie_traverse's 256-segment limit, so the
- * recursive path depth is at most 256 (each level uses ~12KB of stack for
- * escaped_* buffers). On an SBC with 1MB stack this is at the limit, but
- * the limit is enforced. We add a compile-time guard to ensure depth stays
- * bounded if the segment limit changes. */
+/* Iterative pre-order traversal to avoid recursion stack overflow on SBC.
+ * Each stack entry saves the node, the path length at the start of the node's
+ * segment, and the full computed path length so we can backtrack correctly
+ * after processing the subtree. Escape buffers are heap-allocated once and
+ * reused, eliminating per-frame stack usage. */
 #define MAX_SAVE_DEPTH 256
+typedef struct {
+    trie_node_t *node;
+    size_t parent_path_len;  /* path length before this node's segment was appended */
+    size_t path_len;         /* full path length after appending this node's segment */
+} save_stack_entry_t;
 
-static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf, size_t buf_cap, int *truncated) {
-    size_t path_len = strlen(path_buf);
-
-    /* Save settings for this node */
-    ht_iter_t it = ht_iter_begin(node->settings);
-    const void *key, *val;
-    size_t klen, vlen;
-    while (ht_iter_next(node->settings, &it, &key, &klen, &val, &vlen)) {
-        char escaped_path[8192], escaped_key[1024], escaped_val[8192];
-        persist_escape(path_buf, strlen(path_buf), escaped_path, sizeof(escaped_path));
-        persist_escape((const char*)key, klen, escaped_key, sizeof(escaped_key));
-        persist_escape(*(char**)val, strlen(*(char**)val), escaped_val, sizeof(escaped_val));
-        fprintf(f, "%s|%s=%s\n", escaped_path, escaped_key, escaped_val);
+static void node_save_recursive_iterative(trie_node_t *root, FILE *f, char *path_buf, size_t buf_cap, int *truncated) {
+    save_stack_entry_t *stack = malloc(sizeof(save_stack_entry_t) * MAX_SAVE_DEPTH);
+    char *escaped_path = malloc(8192);
+    char *escaped_key = malloc(1024);
+    char *escaped_val = malloc(8192);
+    if (!stack || !escaped_path || !escaped_key || !escaped_val) {
+        fprintf(stderr, "[di-vrr] trie_save_persist: out of memory, skipping save\n");
+        free(stack); free(escaped_path); free(escaped_key); free(escaped_val);
+        return;
     }
+    size_t stack_top = 0;
+    /* Root: path="/" (len=1), no parent segment to backtrack through */
+    stack[stack_top++] = (save_stack_entry_t){root, 1, 1};
 
-    /* Recurse into children */
-    ht_iter_t cit = ht_iter_begin(node->children);
-    while (ht_iter_next(node->children, &cit, &key, &klen, &val, &vlen)) {
-        trie_node_t *child = *(trie_node_t**)val;
+    while (stack_top > 0) {
+        save_stack_entry_t entry = stack[--stack_top];
+        path_buf[entry.parent_path_len] = '\0';  /* backtrack to parent path */
 
-        if (strcmp(path_buf, "/") == 0) {
-            if ((size_t)snprintf(path_buf + 1, buf_cap - 1, "%s", child->segment) >= buf_cap - 1) {
-                fprintf(stderr, "[di-vrr] trie_save_persist: path overflow at /%s, skipping subtree\n", child->segment);
-                *truncated = 1;
-                continue;
-            }
-        } else {
-            if ((size_t)snprintf(path_buf + path_len, buf_cap - path_len, "/%s", child->segment) >= buf_cap - path_len) {
-                fprintf(stderr, "[di-vrr] trie_save_persist: path overflow at %s/%s, skipping subtree\n", path_buf, child->segment);
-                *truncated = 1;
-                continue;
-            }
+        /* Save this node's settings */
+        ht_iter_t it = ht_iter_begin(entry.node->settings);
+        const void *key, *val;
+        size_t klen, vlen;
+        while (ht_iter_next(entry.node->settings, &it, &key, &klen, &val, &vlen)) {
+            persist_escape(path_buf, entry.parent_path_len, escaped_path, 8192);
+            persist_escape((const char*)key, klen, escaped_key, 1024);
+            persist_escape(*(char**)val, strlen(*(char**)val), escaped_val, 8192);
+            fprintf(f, "%s|%s=%s\n", escaped_path, escaped_key, escaped_val);
         }
 
-        node_save_recursive(child, f, path_buf, buf_cap, truncated);
-        path_buf[path_len] = '\0'; /* Backtrack */
+        /* Push all children onto stack in reverse order so they process in order.
+         * For each child: compute its full path and store both parent_path_len
+         * (where child's segment starts) and the computed path_len. */
+        size_t child_count = ht_size(entry.node->children);
+        if (child_count == 0) continue;
+
+        trie_node_t **children = malloc(sizeof(trie_node_t*) * child_count);
+        const void *c_key, *c_val;
+        size_t c_klen, c_vlen;
+        size_t idx = 0;
+        ht_iter_t cit = ht_iter_begin(entry.node->children);
+        while (ht_iter_next(entry.node->children, &cit, &c_key, &c_klen, &c_val, &c_vlen)) {
+            children[idx++] = *(trie_node_t**)c_val;
+        }
+
+        for (size_t i = child_count; i > 0; i--) {
+            trie_node_t *child = children[i - 1];
+            size_t needed;
+            if (entry.parent_path_len == 1) {
+                /* At root "/" — child path is "/<segment>" (starts at pos 1) */
+                needed = snprintf(path_buf + 1, buf_cap - 1, "%s", child->segment);
+            } else {
+                /* Not at root — child path is "<parent>/<segment>" (append to parent) */
+                needed = snprintf(path_buf + entry.parent_path_len, buf_cap - entry.parent_path_len, "/%s", child->segment);
+            }
+            if (needed >= buf_cap - entry.parent_path_len) {
+                fprintf(stderr, "[di-vrr] trie_save_persist: path overflow, skipping subtree\n");
+                *truncated = 1;
+                continue;
+            }
+            /* Store the path length before the child segment for backtracking (parent_path_len)
+             * and after the child segment for the child's entry (path_len). */
+            size_t child_parent_len = entry.parent_path_len;
+            size_t child_full_len = entry.parent_path_len + needed;
+            stack[stack_top++] = (save_stack_entry_t){child, child_parent_len, child_full_len};
+        }
+        free(children);
     }
+
+    free(escaped_path);
+    free(escaped_key);
+    free(escaped_val);
+    free(stack);
 }
 
 int trie_save_persist(trie_t *trie, const char *filepath) {
@@ -553,7 +593,7 @@ int trie_save_persist(trie_t *trie, const char *filepath) {
 
     char path_buf[8192] = "/";
     int truncated = 0;
-    node_save_recursive(trie->root, f, path_buf, sizeof(path_buf), &truncated);
+    node_save_recursive_iterative(trie->root, f, path_buf, sizeof(path_buf), &truncated);
 
     if (fclose(f) != 0) {
         unlink(tmp_path);
@@ -768,26 +808,44 @@ void trie_get_stats(trie_t *trie, size_t *out_nodes, size_t *out_waiters, size_t
 
 // Recursion depth is bounded by the 256-segment path limit in trie_traverse.
 // If that limit is ever removed, this recursion could overflow the stack.
+/* Iterative version — builds path by walking up the parent chain, then reverses
+ * it into the output buffer. Uses a fixed-size temp array for path segments instead
+ * of recursion to avoid stack overflow on deep tries. Max depth 256. */
 int node_get_path(trie_node_t *node, char *buf, size_t len) {
     if (!node || !node->parent) {
         if (len > 1) { buf[0] = '/'; buf[1] = '\0'; }
         return len > 1 ? 1 : 0;
     }
 
-    char temp[4096];
-    int n = node_get_path(node->parent, temp, sizeof(temp));
-    if (n < 0) return -1;
-
-    size_t available = len;
-    int written;
-    if (n == 1 && temp[0] == '/') {
-        written = snprintf(buf, available, "/%s", node->segment);
-    } else {
-        written = snprintf(buf, available, "%s/%s", temp, node->segment);
+    /* Collect segments in reverse order using a fixed-size temp array.
+     * Max 256 segments, each up to 127 chars + null = ~32KB worst case,
+     * but this is the path, not a per-node scratch buffer. */
+    const char *segments[256];
+    int depth = 0;
+    trie_node_t *n = node;
+    while (n->parent && depth < 256) {
+        segments[depth++] = n->segment;
+        n = n->parent;
     }
-    if (written < 0) return -1;
-    if ((size_t)written >= len) return -1;
-    return written;
+    if (depth == 0) { buf[0] = '\0'; return 0; }
+
+    /* Build forward: root "/" then each segment preceded by "/" */
+    size_t pos = 0;
+    int written = snprintf(buf + pos, len - pos, "/");
+    if (written < 0 || (size_t)written >= len - pos) return -1;
+    pos += (size_t)written;
+
+    for (int i = depth - 1; i >= 0; i--) {
+        written = snprintf(buf + pos, len - pos, "%s", segments[i]);
+        if (written < 0 || pos + (size_t)written >= len) return -1;
+        pos += (size_t)written;
+        if (i > 0) {
+            written = snprintf(buf + pos, len - pos, "/");
+            if (written < 0 || pos + (size_t)written >= len) return -1;
+            pos += (size_t)written;
+        }
+    }
+    return (int)pos;
 }
 
 size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t wakeup_cap,

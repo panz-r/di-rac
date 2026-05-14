@@ -556,18 +556,15 @@ static size_t process_json_stream(client_ctx_t *ctx, char *data, size_t len, tri
             *mutable_obj_end = saved;
             p = mutable_obj_end;
         } else {
-            /* No closing brace found — return 0 so caller preserves the
-             * partial data in the buffer for the next call when more arrives.
-             * We avoid O(n^2) by only advancing past the '{' when we can
-             * prove there is no closing brace anywhere in the remainder. */
-            if (memchr(obj_start + 1, '}', end - obj_start - 1)) {
-                /* A '}' exists somewhere after this '{', but not close enough
-                 * for find_end_of_object to reach — likely an escaped brace
-                 * inside a string. Leave the partial data for next call. */
-                p = obj_start;
-                break;
-            }
-            p = obj_start + 1;
+            /* No closing brace found — either the object is truncated in this
+             * chunk (no '}' exists at all after the '{') or an escaped quote
+             * inside a string is fooling find_end_of_object. For case 1, break
+             * and wait for more data to arrive. For case 2 (escaped quote),
+             * memchr will find a '}' but find_end_of_object couldn't reach it —
+             * also break to wait. In both cases, p = obj_start so the same '{'
+             * is retried when more data arrives. */
+            p = obj_start;
+            break;
         }
     }
     return p - data;
