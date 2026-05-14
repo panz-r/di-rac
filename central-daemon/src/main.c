@@ -256,7 +256,7 @@ static void handle_stats(int sig) {
             total_clients, MAX_EVENTS,
             trie_nodes, trie_locks, trie_waiters);
     ssize_t _r = write(STDERR_FILENO, buf, (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf));
-    (void)_r;
+    (void)_r; /* async-signal-safe, nothing we can do on failure */
 }
 
 static void handle_shutdown(int sig) {

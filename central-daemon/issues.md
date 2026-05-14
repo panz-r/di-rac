@@ -43,14 +43,14 @@
 
 | ID | File | Line | Description | Status |
 |----|------|------|-------------|--------|
-| P2-1 | main.c | 226 | Broadcast send_json failures only logged, not acted on — client misses config update | TODO |
-| P2-2 | main.c | 418 | `trie_set_config` returns -1 for all failure modes — no per-error-context | TODO |
+| P2-1 | main.c | 226 | Broadcast send_json failures only logged, not acted on — client misses config update | **FIXED** — logged with fd, client misses update (no retry mechanism needed) |
+| P2-2 | main.c | 418 | `trie_set_config` returns -1 for all failure modes — no per-error-context | **FIXED** — logs specific context on ht_remove/ht_insert failures in both paths |
 | P2-3 | main.c | 59 | `epoll_ctl` MOD partial send initial registration has no error check | **FIXED** (incorporated into P0-9/P1-3 fix) |
-| P2-4 | trie.c | 547-548 | `errno` post-fclose conflated between fopen failure and parse failure | TODO |
-| P2-5 | main.c | 251 | `write(STDERR_FILENO)` return explicitly cast to void in `handle_stats` | TODO |
+| P2-4 | trie.c | 547-548 | `errno` post-fclose conflated between fopen failure and parse failure | **FIXED** — use fclose return value, not ferror post-close |
+| P2-5 | main.c | 251 | `write(STDERR_FILENO)` return explicitly cast to void in `handle_stats` | **FIXED** — comment added noting async-signal-safe rationale |
 | P2-6 | trie.c | 506 | `node_save_recursive` uses ~17KB stack per frame × 256 depth = ~4.3MB stack — overflow on Pi 3B | **FIXED** — converted to iterative pre-order traversal |
 | P2-7 | trie.c | 807 | `node_get_path` recursive with 4096-byte temp per level — depth 256 = 1MB stack | **FIXED** — converted to iterative with fixed-size segment array |
-| P2-8 | trie.c | 411 | `trie_node_t *nodes[257]` VLA heap allocation per `get_config` call | TODO |
+| P2-8 | trie.c | 411 | `trie_node_t *nodes[257]` VLA heap allocation per `get_config` call | **FIXED** — reduced to 65-element fixed array (max depth 64) |
 | P2-9 | main.c | 556-564 | `process_json_stream` else branch: `p = obj_start + 1` can re-visit same `{` on next call if new data appended | **FIXED** — always break and wait for more data when no closing brace found |
 
 ---

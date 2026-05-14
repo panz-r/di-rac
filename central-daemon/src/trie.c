@@ -435,10 +435,10 @@ char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
         while (*p == '/') p++;
     }
 
-    trie_node_t *nodes[257];
+    trie_node_t *nodes[65];
     nodes[0] = trie->root;
     size_t depth = 1;
-    for (size_t i = 0; i < seg_count; i++) {
+    for (size_t i = 0; i < seg_count && depth < 65; i++) {
         const char *seg = seg_buf + i * 128;
         trie_node_t *next = node_get_child(nodes[depth - 1], seg, false, NULL);
         if (!next) break;
@@ -643,7 +643,11 @@ int trie_load_persist(trie_t *trie, const char *filepath) {
         }
     }
 
-    fclose(f);
+    int fclose_err = fclose(f);
+    if (fclose_err != 0) {
+        fprintf(stderr, "[di-vrr] trie_load_persist: error during read of %s: %s\n", filepath, strerror(errno));
+        return -1;
+    }
     return 0;
 }
 
