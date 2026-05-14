@@ -383,6 +383,7 @@ impl App {
                         self.pending_messages.extend(s.save());
                         // Apply theme change immediately
                         self.theme = crate::theme::Theme::by_name(&s.all_settings.theme);
+                        self.line_cache = None;
                     }
                 }
             }
@@ -500,6 +501,7 @@ impl App {
                 self.active_tab = (self.active_tab + 1) % max;
                 self.scroll_offset = 0;
                 self.selected_block = 0;
+                self.line_cache = None;
                 None
             }
             KeyCode::BackTab => {
