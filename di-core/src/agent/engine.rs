@@ -1694,6 +1694,18 @@ impl AgentEngine {
                             self.trajectory.add_message(
                                 Role::User, json!(text), self.estimator.count_text(&text),
                             );
+                            // Treat UserResponse as implicit approval for safe tools
+                            // when the response matches common affirmations
+                            let affirmation = matches!(text.to_lowercase().trim(),
+                                "yes" | "y" | "ok" | "okay" | "go ahead" | "approve" | "approved" | "do it" | "run it"
+                            );
+                            if affirmation && (self.approval_manager.should_auto_approve(&tool_name)
+                                || (tool_name == "bash" && bash_command.as_deref().map_or(false, |c| {
+                                    crate::tools::approval::ApprovalManager::is_safe_bash_command(c)
+                                })))
+                            {
+                                break true;
+                            }
                             continue;
                         }
                         Some(FrontendMessage::Timeout { duration_ms }) => {
@@ -2588,21 +2600,34 @@ impl AgentEngine {
     }
 
     /// Pre-compute AST churn from the last edit for observer DCR.
+    /// Uses structured tool_calls instead of brittle regex on content (5.3).
     async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
         let last_assistant = self.trajectory.messages.iter()
             .filter(|m| matches!(m.role, Role::Assistant))
             .last();
         let msg = last_assistant?;
-        let content = msg.content.to_string();
 
-        let file_path = regex::Regex::new(r#"path":\s*"([^"]+)""#).ok()
-            .and_then(|re| re.captures(&content))
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string())?;
-        let new_content = regex::Regex::new(r#"new_content":\s*"([^"]{10,})""#).ok()
-            .and_then(|re| re.captures(&content))
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string())?;
+        // Try structured tool_calls first
+        let (file_path, new_content) = if let Some(tc) = msg.tool_calls.first() {
+            let args: serde_json::Value = serde_json::from_str(&tc.arguments).ok()?;
+            let path = args.get("path").and_then(|v| v.as_str())?.to_string();
+            let content = args.get("content")
+                .or_else(|| args.get("new_content"))
+                .and_then(|v| v.as_str())?;
+            (path, content.to_string())
+        } else {
+            // Fallback: regex on content
+            let content_str = msg.content.to_string();
+            let path = regex::Regex::new(r#"path":\s*"([^"]+)""#).ok()
+                .and_then(|re| re.captures(&content_str))
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())?;
+            let content = regex::Regex::new(r#"new_content":\s*"([^"]{10,})""#).ok()
+                .and_then(|re| re.captures(&content_str))
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())?;
+            (path, content)
+        };
 
         let lang = file_path.rsplit('.').next().unwrap_or("rs").to_string();
         let analyzer_req = crate::daemons::AnalyzerRequest {

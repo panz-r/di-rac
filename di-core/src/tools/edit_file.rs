@@ -882,6 +882,10 @@ fn parse_edits_array(obj: &serde_json::Value) -> Result<Vec<Edit>, String> {
     let edits_val = obj.get("edits").ok_or_else(|| "Missing edits array".to_string())?;
     let edits_arr = auto_parse_array(edits_val)?;
 
+    if edits_arr.is_empty() {
+        return Err("Edits array is empty — at least one edit is required".to_string());
+    }
+
     edits_arr
         .iter()
         .map(|edit| {
@@ -980,9 +984,10 @@ pub async fn edit_file(
         let (final_lines, applied_edits) = apply_edits(&lines, &resolved_edits, &mut index);
 
         // Write to disk (atomic: write to temp file, then rename)
+        // Use randomized name in same directory to avoid cross-device rename errors (4.2).
         if !dry_run {
             let final_content = final_lines.join("\n");
-            let tmp_path = format!("{}.tmp.{}", fe.path, std::process::id());
+            let tmp_path = format!("{}.tmp.{}", fe.path, uuid::Uuid::new_v4());
             if let Err(e) = std::fs::write(&tmp_path, &final_content) {
                 let _ = std::fs::remove_file(&tmp_path);
                 return ToolResponse::fail(
