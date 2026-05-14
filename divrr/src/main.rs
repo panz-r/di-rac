@@ -319,40 +319,52 @@ async fn main() -> color_eyre::Result<()> {
                                     ));
                                 }
                                 crate::settings::PendingAsyncOp::Save { all_settings } => {
-                                    let mut error = None;
-                                    for role in crate::settings::ROLES {
-                                        if let Some(rs) = all_settings.roles.get(*role) {
-                                            if rs.provider.is_empty() { continue; }
-                                            // Validate credentials before pushing
-                                            if let Err(e) = crate::settings::validate_parameters(
-                                                &mut gw, &rs.provider, &rs.api_key, &rs.model, &rs.base_url,
-                                            ) {
-                                                error = Some(format!("Validation failed for {}: {}", role, e));
-                                                break;
-                                            }
-                                            if let Err(e) = crate::settings::push_role_to_gateway(&mut gw, role, rs) {
-                                                error = Some(format!("Gateway push failed for {}: {}", role, e));
-                                                break;
+                                    let (save_tx, save_rx) = std::sync::mpsc::channel();
+                                    std::thread::spawn(move || {
+                                        let mut gw = crate::settings::GatewayConnection::new();
+                                        let _ = gw.ensure_connected();
+                                        let mut error = None;
+                                        for role in crate::settings::ROLES {
+                                            if let Some(rs) = all_settings.roles.get(*role) {
+                                                if rs.provider.is_empty() { continue; }
+                                                if let Err(e) = crate::settings::validate_parameters(
+                                                    &mut gw, &rs.provider, &rs.api_key, &rs.model, &rs.base_url,
+                                                ) {
+                                                    error = Some(format!("Validation failed for {}: {}", role, e));
+                                                    break;
+                                                }
+                                                if let Err(e) = crate::settings::push_role_to_gateway(&mut gw, role, rs) {
+                                                    error = Some(format!("Gateway push failed for {}: {}", role, e));
+                                                    break;
+                                                }
                                             }
                                         }
-                                    }
-                                    // Persist to disk only after validation and gateway push succeed
-                                    if error.is_none() {
-                                        if let Err(e) = crate::settings::save_all_settings_to_disk(&all_settings) {
-                                            error = Some(format!("Failed to save settings: {}", e));
+                                        if error.is_none() {
+                                            if let Err(e) = crate::settings::save_all_settings_to_disk(&all_settings) {
+                                                error = Some(format!("Failed to save settings: {}", e));
+                                            }
                                         }
-                                    }
-                                    // Build SetProviderConfig messages only on success
-                                    let messages = if error.is_none() {
-                                        crate::settings::build_provider_config_messages(&all_settings)
-                                    } else {
-                                        Vec::new()
+                                        let messages = if error.is_none() {
+                                            crate::settings::build_provider_config_messages(&all_settings)
+                                        } else {
+                                            Vec::new()
+                                        };
+                                        if let Some(ref e) = error {
+                                            crate::app::log_event(&format!("settings save failed: {}", e));
+                                        } else {
+                                            crate::app::log_event("settings saved successfully");
+                                        }
+                                        let _ = save_tx.send((error, messages));
+                                    });
+                                    // Enforce an overall 30-second timeout for the entire save
+                                    let timeout = std::time::Duration::from_secs(30);
+                                    let (error, messages) = match save_rx.recv_timeout(timeout) {
+                                        Ok(result) => result,
+                                        Err(_) => {
+                                            crate::app::log_event("settings save timed out after 30s");
+                                            (Some("Save timed out after 30s".to_string()), Vec::new())
+                                        }
                                     };
-                                    if let Some(ref e) = error {
-                                        crate::app::log_event(&format!("settings save failed: {}", e));
-                                    } else {
-                                        crate::app::log_event("settings saved successfully");
-                                    }
                                     let _ = tx.send(crate::AppEvent::SettingsLoaded(
                                         crate::settings::SettingsLoadResult::Saved {
                                             error,

@@ -21,9 +21,8 @@ impl GatewayChild {
             match child.try_wait() {
                 Ok(Some(_)) => {} // exited gracefully
                 _ => {
-                    // Still running — force kill
+                    // Still running — force kill; OS will reap the zombie on parent exit
                     let _ = child.kill();
-                    let _ = child.wait();
                 }
             }
         }
