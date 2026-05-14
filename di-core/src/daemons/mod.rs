@@ -224,6 +224,18 @@ impl GatewayStreamClient {
         Self { socket_path: socket_path.to_string() }
     }
 
+    /// Validate that the socket path exists.
+    /// Call at startup to fail early on misconfigured paths.
+    /// Note: the socket may not exist if the api-gateway hasn't started yet —
+    /// this is for early validation where the socket should already be present.
+    pub fn validate_socket(&self) -> Result<()> {
+        let path = std::path::Path::new(&self.socket_path);
+        if !path.exists() {
+            return Err(anyhow!("Gateway socket not found at '{}'. Check DIRAC_API_GATEWAY_SOCKET or ensure the api-gateway is running.", self.socket_path));
+        }
+        Ok(())
+    }
+
     /// Send a streaming request to the api-gateway. Returns a channel
     /// receiver that yields StreamChunk values as they arrive.
     pub async fn stream_chat(
@@ -238,7 +250,7 @@ impl GatewayStreamClient {
             let mut stream = match AsyncUnixStream::connect(&socket_path).await {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = tx.send(Err(anyhow!("Failed to connect to gateway: {}", e))).await;
+                    let _ = tx.send(Err(anyhow!("Failed to connect to gateway at '{}': {}", socket_path, e))).await;
                     return;
                 }
             };

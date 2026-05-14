@@ -394,6 +394,12 @@ impl AgentEngine {
         }
     }
 
+    /// Set the maximum consecutive mistakes before the task is aborted.
+    /// The default is 5. Set to 0 to disable the limit.
+    pub fn set_max_consecutive_mistakes(&mut self, max: usize) {
+        self.max_consecutive_mistakes = max;
+    }
+
     /// Receive from the frontend channel with the current timeout.
     /// Returns None on timeout or channel closure.
     /// Apply hash-anchored formatting to a raw read file result.
@@ -785,6 +791,8 @@ impl AgentEngine {
     }
 
     /// Pull latest config from shared state (written by orchestrator).
+    /// Config changes (provider, distiller, timeout) only take effect
+    /// at the start of the next turn — mid-turn updates are not applied.
     fn sync_shared_config(&mut self) {
         if let Ok(timeout) = self.shared_timeout_ms.lock() {
             if let Some(dur) = *timeout {

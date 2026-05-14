@@ -3,6 +3,21 @@ pub struct EnvironmentManager {
     pub details: Option<String>,
 }
 
+/// Sanitize a string for safe injection into system prompts.
+/// Replaces characters that could be used for prompt injection or
+/// formatting attacks (control chars, unusual whitespace, etc.).
+fn sanitize_for_prompt(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\n' | '\r' | '\t' => ' ',
+            c if c.is_control() => '?',
+            c => c,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 impl EnvironmentManager {
     pub fn new() -> Self {
         Self { details: None }
@@ -22,7 +37,10 @@ impl EnvironmentManager {
 
         self.details = Some(format!(
             "Environment:\n- OS: linux\n- CWD: {}\n- HOME: {}\n- SHELL: {}\n- USER: {}",
-            cwd, home, shell, user
+            sanitize_for_prompt(&cwd),
+            sanitize_for_prompt(&home),
+            sanitize_for_prompt(&shell),
+            sanitize_for_prompt(&user),
         ));
     }
 

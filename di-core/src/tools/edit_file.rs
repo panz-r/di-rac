@@ -124,37 +124,11 @@ fn parse_anchor_from_line(raw: &str) -> Option<(String, String)> {
 }
 
 fn strip_gutter(s: &str) -> Option<&str> {
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
-    // Match digits
-    while i < len && bytes[i].is_ascii_digit() {
-        i += 1;
-    }
-    if i == 0 {
-        return None;
-    }
-    // Match whitespace
-    while i < len && bytes[i] == b' ' {
-        i += 1;
-    }
-    // Match │ or |
-    if i < len && (bytes[i] == b'\xe2' || bytes[i] == b'|') {
-        // │ is UTF-8 0xe2 0x94 0x82 (3 bytes)
-        if bytes[i] == b'\xe2' && i + 2 < len && bytes[i + 1] == 0x94 && bytes[i + 2] == 0x82 {
-            i += 3;
-        } else if bytes[i] == b'|' {
-            i += 1;
-        } else {
-            return None;
-        }
-        // Skip trailing space after separator
-        while i < len && bytes[i] == b' ' {
-            i += 1;
-        }
-        return Some(&s[i..]);
-    }
-    None
+    static GUTTER_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"^\d+\s*[│|]\s*").unwrap()
+    });
+    let m = GUTTER_RE.find(s)?;
+    Some(&s[m.end()..])
 }
 
 fn is_valid_hash(s: &str) -> bool {
