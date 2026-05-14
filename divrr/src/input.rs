@@ -149,6 +149,9 @@ impl InputBuffer {
             self.history_index = Some(idx - 1);
             self.content = self.history[idx - 1].clone();
             self.cursor = self.content.len();
+            if self.content.contains('\n') {
+                self.multi_line = true;
+            }
         }
     }
 
@@ -158,6 +161,9 @@ impl InputBuffer {
                 self.history_index = Some(idx + 1);
                 self.content = self.history[idx + 1].clone();
                 self.cursor = self.content.len();
+                if self.content.contains('\n') {
+                    self.multi_line = true;
+                }
             } else {
                 self.history_index = None;
                 self.content.clear();

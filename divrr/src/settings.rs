@@ -1381,11 +1381,16 @@ fn provider_setting_to_field(ps: &ProviderSetting, current_value: Option<&String
             }
         }
         "select" => {
-            let options: Vec<String> = ps.options.iter().map(|o| o.value.clone()).collect();
-            let labels: Vec<String> = ps.options.iter()
+            let mut options: Vec<String> = ps.options.iter().map(|o| o.value.clone()).collect();
+            let mut labels: Vec<String> = ps.options.iter()
                 .map(|o| o.label.clone().unwrap_or_else(|| o.value.clone()))
                 .collect();
-            let index = options.iter().position(|o| o == &val).unwrap_or(0);
+            let index = options.iter().position(|o| o == &val).unwrap_or_else(|| {
+                // Default value not in options — append as (deprecated) so the user can see it
+                options.push(val.clone());
+                labels.push(format!("{} (deprecated)", val));
+                options.len() - 1
+            });
             SettingsField::Selector {
                 label: ps.label.clone(),
                 options,
