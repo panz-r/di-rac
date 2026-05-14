@@ -1186,11 +1186,16 @@ func isSafeBaseURL(rawURL string) error {
 	}
 
 	// Reject path traversal sequences in the URL.
-	// After cleaning, the path should not contain ".." — this prevents
-	// crafted URLs like https://api.openai.com/v1/../admin from reaching
-	// unintended endpoints after path concatenation.
+	// path.Clean resolves ".." and "." segments; if the result differs from
+	// the original path (ignoring trailing slashes), the URL contains traversal.
+	// This prevents crafted URLs like https://api.openai.com/v1/../admin from
+	// reaching unintended endpoints after concatenation with /chat/completions.
 	cleaned := path.Clean(u.Path)
-	if strings.Contains(cleaned, "..") {
+	original := strings.TrimRight(u.Path, "/")
+	if original == "" {
+		original = "/"
+	}
+	if cleaned != original {
 		return fmt.Errorf("base_url contains path traversal: %s", rawURL)
 	}
 	if host == "" {
