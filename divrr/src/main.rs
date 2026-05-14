@@ -6,6 +6,7 @@ mod commands;
 mod event;
 mod gateway;
 mod input;
+mod line_cache;
 mod logging;
 mod message;
 mod settings;

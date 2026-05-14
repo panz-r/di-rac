@@ -5,33 +5,13 @@ use crate::message::FrontendMessage;
 use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
 use ratatui::text::Line;
+use crate::line_cache::LineCache;
 use std::collections::HashSet;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-
-/// Cached per-block rendered lines and visual line counts.
-/// Invalidated when width, generation, expand state, or wrap state changes.
-struct VisualLineCache {
-    width: u16,
-    generation: u64,
-    expanded: HashSet<usize>,
-    wrapped: HashSet<usize>,
-    /// Per-block visual line count after wrapping.
-    per_block: Vec<usize>,
-    /// Total visual lines (blocks only, excluding streaming/pending).
-    blocks_total: usize,
-    /// Cached rendered `Line` objects for each block (without selection marker/highlight).
-    cached_block_lines: Vec<Vec<Line<'static>>>,
-}
-
-impl VisualLineCache {
-    fn is_valid(&self, width: u16, generation: u64, expanded: &HashSet<usize>, wrapped: &HashSet<usize>) -> bool {
-        self.width == width && self.generation == generation && self.expanded == *expanded && self.wrapped == *wrapped
-    }
-}
 
 pub struct App {
     pub theme: crate::theme::Theme,
@@ -66,7 +46,7 @@ pub struct App {
     pub save_dialog: Option<Box<SaveDialogState>>,
 
     /// Cached visual line counts per block (invalidated on width/content/expand change).
-    line_cache: Option<VisualLineCache>,
+    line_cache: Option<LineCache>,
 }
 
 impl App {
@@ -147,7 +127,7 @@ impl App {
             cached_block_lines.push(lines);
         }
 
-        self.line_cache = Some(VisualLineCache {
+        self.line_cache = Some(LineCache {
             width,
             generation,
             expanded,
