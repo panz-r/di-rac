@@ -214,6 +214,18 @@ func (h *openaiCompatHandler) setHeaders(httpReq *http.Request, apiKey string, r
 func (h *openaiCompatHandler) buildRequest(req *Request, stream bool) map[string]interface{} {
 	messages := openaiConvertMessages(req)
 
+	// Ensure assistant messages with tool_calls have non-nil content.
+	// Some providers (Groq, Together, etc.) reject nil content.
+	for _, m := range messages {
+		if m["role"] == "assistant" {
+			if _, hasToolCalls := m["tool_calls"]; hasToolCalls {
+				if m["content"] == nil {
+					m["content"] = ""
+				}
+			}
+		}
+	}
+
 	if h.config.ModifyMessages != nil {
 		messages = h.config.ModifyMessages(messages, req)
 	}
