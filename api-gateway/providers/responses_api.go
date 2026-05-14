@@ -110,7 +110,7 @@ func (h *responsesAPIHandler) Stream(ctx context.Context, req *Request, callback
 		return &ProviderAPIError{StatusCode: resp.StatusCode, Message: msg, Retriable: retriable}
 	}
 
-	return parseResponsesSSE(ctx, resp.Body, callback)
+	return parseResponsesSSE(ctx, &contextReader{ctx: ctx, r: resp.Body}, callback)
 }
 
 // --- Config helpers ---

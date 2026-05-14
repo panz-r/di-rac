@@ -316,11 +316,14 @@ func (h *ReplicateHandler) Stream(ctx context.Context, req *Request, callback fu
 	}
 
 	// Parse Replicate SSE: event:output/error/done with data:payload
-	scanner := bufio.NewScanner(streamResp.Body)
+	scanner := bufio.NewScanner(&contextReader{ctx: ctx, r: streamResp.Body})
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var eventType string
 	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		line := scanner.Text()
 
 		if strings.HasPrefix(line, "event:") {
