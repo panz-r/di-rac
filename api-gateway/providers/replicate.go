@@ -339,17 +339,44 @@ func (h *ReplicateHandler) Stream(ctx context.Context, req *Request, callback fu
 	scanner := bufio.NewScanner(&contextReader{ctx: ctx, r: streamResp.Body})
 	scanner.Buffer(make([]byte, 0, 32*1024), 256*1024)
 
-	var eventType string
-	for scanner.Scan() {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		line := scanner.Text()
+		var eventType string
+		var dataLines []string
+		for scanner.Scan() {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			line := scanner.Text()
 
-		if strings.HasPrefix(line, "event:") {
-			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		} else if strings.HasPrefix(line, "data:") {
-			data := strings.TrimPrefix(line, "data:")
+			// Blank line = event boundary. Process accumulated data.
+			if line == "" {
+				if len(dataLines) > 0 && eventType != "" {
+					data := strings.Join(dataLines, "\n")
+					switch eventType {
+					case "output":
+						if err := callback(StreamChunk{Type: "delta", TextDelta: data}); err != nil {
+							return err
+						}
+					case "error":
+						return fmt.Errorf("replicate: stream error: %s", data)
+					case "done":
+						return nil
+					}
+				}
+				eventType = ""
+				dataLines = nil
+				continue
+			}
+
+			if strings.HasPrefix(line, "event:") {
+				eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			} else if strings.HasPrefix(line, "data:") {
+				dataLines = append(dataLines, strings.TrimPrefix(line, "data:"))
+			}
+		}
+
+		// Process any final event not terminated by blank line.
+		if len(dataLines) > 0 && eventType != "" {
+			data := strings.Join(dataLines, "\n")
 			switch eventType {
 			case "output":
 				if err := callback(StreamChunk{Type: "delta", TextDelta: data}); err != nil {
@@ -360,11 +387,9 @@ func (h *ReplicateHandler) Stream(ctx context.Context, req *Request, callback fu
 			case "done":
 				return nil
 			}
-			eventType = ""
 		}
-	}
 
-	return scanner.Err()
+		return scanner.Err()
 }
 
 func (h *ReplicateHandler) Capabilities() *ProviderInfo {

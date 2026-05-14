@@ -772,9 +772,19 @@ func (s *Server) mergeProviderConfig(connID int64, req *Request) error {
 	// For codex provider, inject OAuth token if no API key is set
 	// This must run before the stored-config early return since openai_codex
 	// never has a stored config (it uses OAuth, not API keys).
-	if req.Provider.ID == "openai_codex" && req.Provider.APIKey == "" {
-		if token, err := codexTokens.GetValidToken(); err == nil {
-			req.Provider.APIKey = token
+	// Reject base_url overrides to prevent OAuth token exfiltration:
+	// an attacker could set base_url to their server and receive the token.
+	if req.Provider.ID == "openai_codex" {
+		if req.Provider.BaseURL != "" {
+			u, err := url.Parse(req.Provider.BaseURL)
+			if err != nil || (u.Host != "chatgpt.com" && u.Host != "api.openai.com") {
+				return fmt.Errorf("base_url override not allowed for openai_codex")
+			}
+		}
+		if req.Provider.APIKey == "" {
+			if token, err := codexTokens.GetValidToken(); err == nil {
+				req.Provider.APIKey = token
+			}
 		}
 	}
 
