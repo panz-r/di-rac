@@ -90,10 +90,13 @@ impl DiCoreBackend {
                         }
                     }
                     Err(e) => {
+                        // A single bad line (e.g. exceeding 10 MB line limit) should
+                        // not terminate the session. Log via CoreError and continue
+                        // reading the next line.
                         let _ = event_tx
                             .send(Err(color_eyre::eyre::eyre!("IO error: {}", e)))
                             .await;
-                        break;
+                        continue;
                     }
                 }
             }
