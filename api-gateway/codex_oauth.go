@@ -211,7 +211,11 @@ func codexStartOAuth(ctx context.Context) (*CodexAuthTokens, error) {
 	q.Set("scope", codexScope)
 	q.Set("code_challenge", challenge)
 	q.Set("code_challenge_method", "S256")
-	q.Set("state", randomState())
+	state, err := randomState()
+	if err != nil {
+		return nil, err
+	}
+	q.Set("state", state)
 	q.Set("codex_cli_simplified_flow", "true")
 	authURL.RawQuery = q.Encode()
 
@@ -543,12 +547,12 @@ func codexPollDeviceCode(ctx context.Context, dc *CodexDeviceCode) (*CodexAuthTo
 
 // --- Helpers ---
 
-func randomState() string {
+func randomState() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
+		return "", fmt.Errorf("crypto/rand.Read failed: %w", err)
 	}
-	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(b)
+	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(b), nil
 }
 
 func openBrowser(url string) error {

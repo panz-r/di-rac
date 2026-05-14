@@ -21,8 +21,8 @@ var SharedHTTPClient *http.Client
 
 func init() {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxIdleConns = 100
-	transport.MaxIdleConnsPerHost = 10
+	transport.MaxIdleConns = 20
+	transport.MaxIdleConnsPerHost = 5
 	transport.IdleConnTimeout = 90 * time.Second
 	transport.ResponseHeaderTimeout = 60 * time.Second
 	// Wrap DialContext to block connections to private/internal IPs at dial time.
@@ -68,7 +68,7 @@ func init() {
 	}
 }
 
-const maxModelsCacheSize = 64
+const maxModelsCacheSize = 32
 
 // Request represents a standardized API request
 type Request struct {
@@ -392,6 +392,7 @@ type modelsCacheEntry struct {
 type Registry struct {
 	handlers    map[string]Handler
 	meta        map[string]ProviderMeta
+	caps        map[string]*ProviderInfo
 	modelsCache map[string]modelsCacheEntry
 	modelsMu    sync.RWMutex
 	modelsSF    singleflight.Group
@@ -402,6 +403,7 @@ func NewRegistry() *Registry {
 	r := &Registry{
 		handlers:    make(map[string]Handler),
 		meta:        make(map[string]ProviderMeta),
+		caps:        make(map[string]*ProviderInfo),
 		modelsCache: make(map[string]modelsCacheEntry),
 	}
 	r.registerProviders()
@@ -417,17 +419,10 @@ func (r *Registry) GetHandler(providerID string) (Handler, error) {
 	return handler, nil
 }
 
-// GetCapabilities returns capability info for a provider, or nil if
-// the handler doesn't implement CapableHandler.
+// GetCapabilities returns pre-computed capability info for a provider,
+// or nil if the handler doesn't implement CapableHandler.
 func (r *Registry) GetCapabilities(providerID string) *ProviderInfo {
-	handler, ok := r.handlers[providerID]
-	if !ok {
-		return nil
-	}
-	if ch, ok := handler.(CapableHandler); ok {
-		return ch.Capabilities().WithMaxTokensSetting()
-	}
-	return nil
+	return r.caps[providerID]
 }
 
 // ValidateSettings validates the given settings for a provider, returning
@@ -563,10 +558,12 @@ func floatDefault(def interface{}, fallback float64) float64 {
 // Register registers a handler for a provider with metadata.
 func (r *Registry) Register(providerID string, handler Handler, meta ProviderMeta) {
 	r.handlers[providerID] = handler
-	// Fill DefaultModel from Capabilities if not set in meta
-	if meta.DefaultModel == "" {
-		if ch, ok := handler.(CapableHandler); ok {
-			if caps := ch.Capabilities(); caps != nil {
+	// Pre-compute capabilities once (including max_tokens setting) to avoid
+	// per-request allocation from WithMaxTokensSetting().
+	if ch, ok := handler.(CapableHandler); ok {
+		if caps := ch.Capabilities(); caps != nil {
+			r.caps[providerID] = caps.WithMaxTokensSetting()
+			if meta.DefaultModel == "" {
 				meta.DefaultModel = caps.DefaultModel
 			}
 		}

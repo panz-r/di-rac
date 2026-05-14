@@ -317,7 +317,7 @@ func (h *ReplicateHandler) Stream(ctx context.Context, req *Request, callback fu
 
 	// Parse Replicate SSE: event:output/error/done with data:payload
 	scanner := bufio.NewScanner(&contextReader{ctx: ctx, r: streamResp.Body})
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 32*1024), 256*1024)
 
 	var eventType string
 	for scanner.Scan() {
