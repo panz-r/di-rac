@@ -14,6 +14,10 @@ impl GatewayChild {
     pub fn kill(&mut self) {
         if let Some(ref mut child) = self.child {
             // Try graceful SIGTERM first
+            // SAFETY: `child.id()` returns a valid PID from a successfully spawned
+            // `std::process::Child`. `libc::kill` with SIGTERM is a standard signal
+            // syscall with no memory-safety implications. The PID is stable because
+            // the child is still alive (we haven't waited/reaped it yet).
             unsafe {
                 libc::kill(child.id() as i32, libc::SIGTERM);
             }

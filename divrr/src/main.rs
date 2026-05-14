@@ -1,6 +1,8 @@
 mod app;
 mod agent;
+mod app_types;
 mod backend;
+mod event;
 mod gateway;
 mod input;
 mod message;
@@ -386,7 +388,7 @@ async fn main() -> color_eyre::Result<()> {
                 break;
             }
             Some(AppEvent::CoreEvent(event)) => {
-                app.handle_core_event(event);
+                event::handle_core_event(&mut app, event);
                 // Drain pending messages (e.g. auto-approve responses)
                 for msg in app.pending_messages.drain(..) {
                     if let Err(e) = send_with_timeout(&mut di_core, &msg).await {

@@ -1,6 +1,7 @@
 use crate::agent::{AgentState, AgentStatus, PendingInput};
+use crate::app_types::{CommandEntry, COMMANDS, Mode, SaveDialogState};
 use crate::input::InputBuffer;
-use crate::message::{CoreEvent, FrontendMessage};
+use crate::message::FrontendMessage;
 use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
 use ratatui::text::Line;
@@ -15,13 +16,11 @@ pub fn log_event(msg: &str) {
     let _lock = LOG_MUTEX.lock().unwrap();
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let path = std::path::Path::new(&home).join(".dirac").join("divrr.log");
-    // Rotate: keep the tail when file exceeds 1MB
     if let Ok(meta) = std::fs::metadata(&path) {
         if meta.len() > 1_048_576 {
             if let Ok(data) = std::fs::read(&path) {
-                let keep = 262_144; // 256 KiB
+                let keep = 262_144;
                 let start = data.len().saturating_sub(keep);
-                // Align to next newline boundary
                 let start = data[start..].iter().position(|&b| b == b'\n')
                     .map_or(start, |p| start + p + 1);
                 let _ = std::fs::write(&path, &data[start..]);
@@ -36,43 +35,10 @@ pub fn log_event(msg: &str) {
         });
 }
 
-use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-
-#[derive(Debug, Clone)]
-pub struct CommandEntry {
-    pub name: &'static str,
-    pub description: &'static str,
-    pub prefix: &'static str,
-}
-
-const COMMANDS: &[CommandEntry] = &[
-    CommandEntry { name: "settings", description: "Open provider settings panel", prefix: "" },
-    CommandEntry { name: "quit", description: "Exit divrr", prefix: "q" },
-    CommandEntry { name: "interrupt", description: "Interrupt active agent", prefix: "" },
-    CommandEntry { name: "new", description: "Spawn a new agent with a task", prefix: "" },
-    CommandEntry { name: "close", description: "Close active agent tab", prefix: "" },
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    Normal,
-    Insert,
-    Command,
-    Settings,
-    Action,
-    SaveDialog,
-}
-
-pub struct SaveDialogState {
-    pub path: String,
-    pub cursor: usize,
-    pub exists_warned: bool,
-    pub block_text: String,
-}
 
 /// Cached per-block rendered lines and visual line counts.
 /// Invalidated when width, generation, expand state, or wrap state changes.
@@ -99,7 +65,7 @@ pub struct App {
     pub theme: crate::theme::Theme,
     pub agents: Vec<AgentState>,
     pub active_tab: usize,
-    pub mode: Mode,
+    pub mode: crate::app_types::Mode,
     pub input: InputBuffer,
     pub command_buffer: String,
     pub input_queue: Vec<(Uuid, PendingInput)>,
@@ -287,244 +253,6 @@ impl App {
     }
 
     /// Process a CoreEvent from di-core into state updates.
-    pub fn handle_core_event(&mut self, event: CoreEvent) {
-        let agent_id = match &event {
-            CoreEvent::TaskInitialized { agent_id, .. } => *agent_id,
-            CoreEvent::ThoughtDelta { agent_id, .. } => *agent_id,
-            CoreEvent::ThoughtFinished { agent_id } => *agent_id,
-            CoreEvent::ToolCallStarted { agent_id, .. } => *agent_id,
-            CoreEvent::ToolCallFinished { agent_id, .. } => *agent_id,
-            CoreEvent::ApprovalNeeded { agent_id, .. } => *agent_id,
-            CoreEvent::FollowupQuestion { agent_id, .. } => *agent_id,
-            CoreEvent::MetricsUpdate { agent_id, .. } => *agent_id,
-            CoreEvent::TaskFinished { agent_id, .. } => *agent_id,
-            CoreEvent::TaskPresented { agent_id, .. } => *agent_id,
-            CoreEvent::ContextCompacted { agent_id, .. } => *agent_id,
-            CoreEvent::BackgroundCommandStarted { agent_id, .. } => *agent_id,
-            CoreEvent::BackgroundCommandFinished { agent_id, .. } => *agent_id,
-            CoreEvent::ObserverSignal { agent_id, .. } => *agent_id,
-            CoreEvent::FrontendTimeout { agent_id, .. } => *agent_id,
-        };
-
-        match event {
-            CoreEvent::TaskInitialized { agent_id, .. } => {
-                if self.agents.iter().any(|a| a.id == agent_id) {
-                    log_event(&format!("Duplicate agent_id ignored: {}", agent_id));
-                    return;
-                }
-                let idx = self.agents.len() + 1;
-                let agent = AgentState::new(agent_id, format!("Agent-{}", idx));
-                self.agents.push(agent);
-                self.active_tab = self.active_tab.min(self.agents.len() - 1);
-                self.status_message = Some(format!("Agent-{} initialized", idx));
-            }
-            CoreEvent::ThoughtDelta { text, thinking, .. } => {
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    let is_thinking = thinking;
-                    let was_thinking = agent.log.streaming_is_thinking();
-                    let has_streaming = agent.log.streaming().is_some();
-
-                    if !has_streaming {
-                        agent.log.set_streaming(
-                            if is_thinking { format!("{} {}", crate::summarize::THINKING_PREFIX, text) } else { text.clone() },
-                            is_thinking,
-                        );
-                        agent.status = AgentStatus::Running;
-                    } else if was_thinking != is_thinking {
-                        agent.log.finalize_streaming();
-                        agent.log.set_streaming(
-                            if is_thinking { format!("{} {}", crate::summarize::THINKING_PREFIX, text) } else { text.clone() },
-                            is_thinking,
-                        );
-                    } else {
-                        agent.log.append_streaming(&text);
-                    }
-                    agent.last_activity = Utc::now();
-                }
-            }
-            CoreEvent::ThoughtFinished { .. } => {
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.log.finalize_streaming();
-                    agent.last_activity = Utc::now();
-                }
-            }
-            CoreEvent::ToolCallStarted { call_id, tool, args, .. } => {
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.log.finalize_streaming();
-                    let summary = crate::summarize::summarize_tool_args(&tool, &args);
-                    agent.log.push_tool_call(call_id, tool, summary);
-                    agent.status = AgentStatus::Running;
-                    agent.last_activity = Utc::now();
-                }
-            }
-            CoreEvent::ToolCallFinished { call_id, result, .. } => {
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.log.finalize_streaming();
-                    let status = result
-                        .get("status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("done");
-                    let msg = if status == "denied" {
-                        format!("Denied: {}", result.get("message").and_then(|v| v.as_str()).unwrap_or(""))
-                    } else if status == "compacted" {
-                        "Context compacted".to_string()
-                    } else if let Some(err) = result.get("error").and_then(|v| v.as_str()) {
-                        format!("Error: {}", err)
-                    } else {
-                        crate::summarize::format_result_summary(&result)
-                    };
-                    agent.log.set_tool_result(&call_id, msg);
-                    agent.last_activity = Utc::now();
-                }
-            }
-            CoreEvent::ApprovalNeeded {
-                tool, args, description, ..
-            } => {
-                if self.auto_approve {
-                    // Clear any stale queue entries from a previous approval cycle
-                    self.input_queue.retain(|(id, _)| *id != agent_id);
-                    if let Some(agent) = self.find_agent_mut(&agent_id) {
-                        agent.pending_input = None;
-                    }
-                    self.pending_messages.push(FrontendMessage::ApprovalResponse {
-                        agent_id,
-                        approved: true,
-                    });
-                } else {
-                    // Remove any existing pending input for this agent to prevent duplicates
-                    self.input_queue.retain(|(id, _)| *id != agent_id);
-                    let pending = PendingInput::Approval {
-                        tool,
-                        args,
-                        description,
-                    };
-                    if let Some(agent) = self.find_agent_mut(&agent_id) {
-                        agent.log.finalize_streaming();
-                        agent.pending_input = Some(pending.clone());
-                        agent.status = AgentStatus::Waiting;
-                        agent.last_activity = Utc::now();
-                    }
-                    self.input_queue.push((agent_id, pending));
-                }
-            }
-            CoreEvent::FollowupQuestion {
-                question, options, ..
-            } => {
-                // Remove any existing pending input for this agent to prevent duplicates
-                self.input_queue.retain(|(id, _)| *id != agent_id);
-                let pending = PendingInput::Followup {
-                    question: question.clone(),
-                    options: options.clone(),
-                };
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.log.finalize_streaming();
-                    agent.pending_input = Some(pending.clone());
-                    agent.status = AgentStatus::Waiting;
-                    agent.log.push_assistant(question);
-                    agent.last_activity = Utc::now();
-                }
-                self.input_queue.push((agent_id, pending));
-            }
-            CoreEvent::MetricsUpdate {
-                sqs,
-                token_usage,
-                latency_ms,
-                ..
-            } => {
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.metrics = Some(crate::agent::Metrics {
-                        sqs,
-                        token_usage,
-                        latency_ms,
-                    });
-                }
-            }
-            CoreEvent::TaskFinished {
-                success, message, ..
-            } => {
-                self.input_queue.retain(|(id, _)| *id != agent_id);
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    // Ignore duplicate TaskFinished if agent already finished
-                    if matches!(agent.status, AgentStatus::Finished | AgentStatus::Error) {
-                        log_event(&format!("Duplicate TaskFinished for {} ignored", agent_id));
-                        return;
-                    }
-                    agent.status = if success {
-                        AgentStatus::Finished
-                    } else {
-                        AgentStatus::Error
-                    };
-                    agent.log.clear_streaming();
-                    agent.pending_input = None;
-                    let msg = if success {
-                        format!("Task complete: {}", message)
-                    } else {
-                        format!("Task ended: {}", message)
-                    };
-                    agent.log.push_finish(msg, success);
-                    agent.last_activity = Utc::now();
-                }
-            }
-            CoreEvent::TaskPresented { message, .. } => {
-                self.input_queue.retain(|(id, _)| *id != agent_id);
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.log.finalize_streaming();
-                    agent.status = AgentStatus::Finished;
-                    agent.pending_input = None;
-                    agent.log.push_system(format!("Result: {}", message));
-                    agent.last_activity = Utc::now();
-                }
-            }
-            CoreEvent::ContextCompacted {
-                remaining_tokens, ..
-            } => {
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.log.finalize_streaming();
-                    agent.log.push_system(format!("Context compacted ({} tokens remaining)", remaining_tokens));
-                }
-            }
-            CoreEvent::BackgroundCommandStarted {
-                command_id,
-                command,
-                ..
-            } => {
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.log.push_system(format!("Background: {} ({})", command, command_id));
-                }
-            }
-            CoreEvent::BackgroundCommandFinished {
-                command_id,
-                exit_code,
-                ..
-            } => {
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.log.push_system(format!(
-                        "Background {} done (exit: {})",
-                        command_id,
-                        exit_code.map(|c| c.to_string()).unwrap_or("?".to_string())
-                    ));
-                }
-            }
-            CoreEvent::ObserverSignal { message, .. } => {
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.log.push_system(format!("[observer] {}", message));
-                }
-            }
-            CoreEvent::FrontendTimeout { tool, question, .. } => {
-                // Remove stale queue items for this agent
-                self.input_queue.retain(|(id, _)| *id != agent_id);
-                if let Some(agent) = self.find_agent_mut(&agent_id) {
-                    agent.pending_input = None;
-                    if agent.status == AgentStatus::Waiting {
-                        agent.status = AgentStatus::Running;
-                    }
-                    let detail = tool.as_deref().unwrap_or_else(|| question.as_deref().unwrap_or("unknown"));
-                    agent.log.push_system(format!("Timed out waiting for response: {}", detail));
-                }
-            }
-        }
-    }
-
     /// Handle a key event and optionally produce a message to send to di-core.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
         if key.kind != KeyEventKind::Press {
@@ -1383,19 +1111,15 @@ impl App {
             .find(|(id, _)| id == agent_id)
             .map(|(_, p)| p.clone());
         if let Some(next) = next_pending {
-            if let Some(agent) = self.find_agent_mut(agent_id) {
+            if let Some(agent) = self.agents.iter_mut().find(|a| a.id == *agent_id) {
                 agent.pending_input = Some(next);
             }
-        } else if let Some(agent) = self.find_agent_mut(agent_id) {
+        } else if let Some(agent) = self.agents.iter_mut().find(|a| a.id == *agent_id) {
             agent.pending_input = None;
             if agent.status == AgentStatus::Waiting {
                 agent.status = AgentStatus::Running;
             }
         }
-    }
-
-    fn find_agent_mut(&mut self, id: &Uuid) -> Option<&mut AgentState> {
-        self.agents.iter_mut().find(|a| a.id == *id)
     }
 
     /// Close the active agent tab. Sends Interrupt if still running,

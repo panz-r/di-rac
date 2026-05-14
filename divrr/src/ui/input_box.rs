@@ -1,4 +1,5 @@
-use crate::app::{App, Mode};
+use crate::app::App;
+use crate::app_types::Mode;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
