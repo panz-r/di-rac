@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -139,7 +140,18 @@ type Server struct {
 	configMu         sync.RWMutex
 	rateLimiter      *RateLimiter
 	conns            map[net.Conn]struct{}
+	nextConnID       atomic.Int64
 	connMu           sync.Mutex
+}
+
+// connLogf logs with a connection correlation prefix.
+func (s *Server) connLogf(connID int64, format string, args ...interface{}) {
+	log.Printf("[conn=%d] "+format, append([]interface{}{connID}, args...)...)
+}
+
+// reqLogf logs with connection + request correlation prefix.
+func (s *Server) reqLogf(connID, reqID int64, format string, args ...interface{}) {
+	log.Printf("[conn=%d req=%d] "+format, append([]interface{}{connID, reqID}, args...)...)
 }
 
 // RateLimiter controls outbound request rate and concurrency.
@@ -307,9 +319,10 @@ func (s *Server) acceptLoop() {
 
 func (s *Server) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
+	connID := s.nextConnID.Add(1)
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("PANIC in handleConnection: %v\n%s", r, debug.Stack())
+			s.connLogf(connID, "PANIC in handleConnection: %v\n%s", r, debug.Stack())
 		}
 	}()
 	defer func() {
@@ -338,7 +351,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		// Refresh read deadline for each message
 		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Minute)); err != nil {
-			log.Printf("SetReadDeadline error: %v", err)
+			s.connLogf(connID, "SetReadDeadline error: %v", err)
 			return
 		}
 
@@ -369,7 +382,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 			s.configMu.Lock()
 			s.providerConfigs[setProviderReq.Provider] = setProviderReq.Config
-			log.Printf("Stored configuration for provider: %s", setProviderReq.Provider)
+			s.connLogf(connID, "Stored configuration for provider: %s", setProviderReq.Provider)
 			s.configMu.Unlock()
 
 			w.write(&Response{ID: 0, Status: 200})
@@ -620,7 +633,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				continue
 			}
 			if err := codexTokens.Save(tokens); err != nil {
-				log.Printf("Warning: failed to save codex device tokens: %v", err)
+				s.connLogf(connID, "Warning: failed to save codex device tokens: %v", err)
 			}
 			body, _ = json.Marshal(map[string]interface{}{
 				"type":       "codex-login-status",
@@ -669,7 +682,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Merge stored provider config (set-provider) into request
-		if err := s.mergeProviderConfig(&req); err != nil {
+		if err := s.mergeProviderConfig(connID, &req); err != nil {
 			w.write(&Response{
 				ID:     req.ID,
 				Status: 400,
@@ -708,10 +721,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 			if req.Stream {
 				// For streaming: send ack, then stream, then continue loop
 				w.write(&Response{ID: req.ID, Status: 200})
-				s.handleStreaming(ctx, req.ID, &req, w)
+				s.handleStreaming(ctx, connID, req.ID, &req, w)
 			} else {
 				// For non-streaming: process and send response
-				resp := s.processRequest(ctx, &req)
+				resp := s.processRequest(ctx, connID, &req)
 				w.write(resp)
 			}
 		}()
@@ -720,7 +733,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 // mergeProviderConfig fills in missing fields from the stored set-provider config.
 // Precedence: request fields > stored config > handler defaults (resolved by the handler itself).
-func (s *Server) mergeProviderConfig(req *Request) error {
+func (s *Server) mergeProviderConfig(connID int64, req *Request) error {
 	if req.Provider.ID == "" {
 		return nil
 	}
@@ -778,7 +791,7 @@ func (s *Server) mergeProviderConfig(req *Request) error {
 	// Validate the final base_url against SSRF, whether from request or stored config.
 	if req.Provider.BaseURL != "" {
 		if err := isSafeBaseURL(req.Provider.BaseURL); err != nil {
-			log.Printf("[SSRF] rejected base_url %q: %v", req.Provider.BaseURL, err)
+			s.connLogf(connID, "[SSRF] rejected base_url %q: %v", req.Provider.BaseURL, err)
 			return fmt.Errorf("base_url rejected: %v", err)
 		}
 	}
@@ -814,7 +827,7 @@ func enrichModelCapabilities(models []providers.ModelEntry, info *providers.Prov
 	}
 }
 
-func (s *Server) processRequest(ctx context.Context, req *Request) *Response {
+func (s *Server) processRequest(ctx context.Context, connID int64, req *Request) *Response {
 	handler, err := s.providerRegistry.GetHandler(req.Provider.ID)
 	if err != nil {
 		return &Response{
@@ -825,7 +838,7 @@ func (s *Server) processRequest(ctx context.Context, req *Request) *Response {
 	}
 
 	providerReq := s.buildProviderRequest(req)
-	return s.handleNonStreaming(ctx, req.ID, handler, providerReq)
+	return s.handleNonStreaming(ctx, connID, req.ID, handler, providerReq)
 }
 
 func (s *Server) buildProviderRequest(req *Request) *providers.Request {
@@ -863,7 +876,7 @@ func (s *Server) buildProviderRequest(req *Request) *providers.Request {
 	}
 }
 
-func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w *responseWriter) {
+func (s *Server) handleStreaming(ctx context.Context, connID, id int64, req *Request, w *responseWriter) {
 	handler, err := s.providerRegistry.GetHandler(req.Provider.ID)
 	if err != nil {
 		w.write(&Response{
@@ -908,7 +921,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 	for {
 		select {
 		case streamErr := <-errChan:
-			log.Printf("[streaming] request %d: provider error: %v", id, streamErr)
+			s.reqLogf(connID, id, "streaming provider error: %v", streamErr)
 			w.write(&Response{
 				ID:     id,
 				Status: 500,
@@ -954,7 +967,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 			// Check for error that arrived simultaneously with done signal
 			select {
 			case streamErr := <-errChan:
-				log.Printf("[streaming] request %d: provider error: %v", id, streamErr)
+				s.reqLogf(connID, id, "streaming provider error: %v", streamErr)
 				w.write(&Response{
 					ID:     id,
 					Status: 500,
@@ -989,7 +1002,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 					// Final check: an error may have arrived between the first check and now
 					select {
 					case streamErr := <-errChan:
-						log.Printf("[streaming] request %d: provider error: %v", id, streamErr)
+						s.reqLogf(connID, id, "streaming provider error: %v", streamErr)
 						w.write(&Response{
 							ID:     id,
 							Status: 500,
@@ -1013,7 +1026,7 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 	}
 }
 
-func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler providers.Handler, req *providers.Request) *Response {
+func (s *Server) handleNonStreaming(ctx context.Context, connID, id int64, handler providers.Handler, req *providers.Request) *Response {
 	const maxAttempts = 9 // 1 initial + 8 retries
 	var lastErr error
 	var lastRetriable bool
@@ -1024,7 +1037,7 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 			if backoff > 60*time.Second {
 				backoff = 60 * time.Second
 			}
-			log.Printf("Retry attempt %d/%d after %v", attempt, maxAttempts-1, backoff)
+			s.reqLogf(connID, id, "retry attempt %d/%d after %v", attempt, maxAttempts-1, backoff)
 
 			timer := time.NewTimer(backoff)
 			select {
@@ -1044,7 +1057,7 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 			// Check if the response itself signals context exceeded
 			// (e.g., Groq/Together return 200 with finish_reason "context_length_exceeded")
 			if providers.IsContextExceededFinishReason(result.StopReason) {
-				log.Printf("[non-streaming] request %d: context exceeded (stop_reason=%s)", id, result.StopReason)
+				s.reqLogf(connID, id, "non-streaming context exceeded (stop_reason=%s)", result.StopReason)
 				return &Response{
 					ID:     id,
 					Status: 200,
@@ -1070,7 +1083,7 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 		lastRetriable = providers.IsRetriable(err)
 
 		if !lastRetriable {
-			log.Printf("Non-retriable error, giving up: %v", err)
+			s.reqLogf(connID, id, "non-retriable error, giving up: %v", err)
 			break
 		}
 	}
