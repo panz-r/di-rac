@@ -3,6 +3,7 @@ use crate::input::InputBuffer;
 use crate::message::{CoreEvent, FrontendMessage};
 use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
+use ratatui::text::Line;
 use std::collections::HashSet;
 use std::sync::Mutex;
 
@@ -75,8 +76,8 @@ pub struct SaveDialogState {
     pub block_text: String,
 }
 
-/// Cached per-block visual line counts. Invalidated when width, generation,
-/// expand state, or wrap state changes.
+/// Cached per-block rendered lines and visual line counts.
+/// Invalidated when width, generation, expand state, or wrap state changes.
 struct VisualLineCache {
     width: u16,
     generation: u64,
@@ -86,6 +87,8 @@ struct VisualLineCache {
     per_block: Vec<usize>,
     /// Total visual lines (blocks only, excluding streaming/pending).
     blocks_total: usize,
+    /// Cached rendered `Line` objects for each block (without selection marker/highlight).
+    cached_block_lines: Vec<Vec<Line<'static>>>,
 }
 
 impl VisualLineCache {
@@ -180,7 +183,7 @@ impl App {
             return;
         }
 
-        // Recompute per-block visual line counts
+        // Recompute per-block rendered lines and visual line counts
         let agent = match self.active_agent() {
             Some(a) => a,
             None => {
@@ -191,12 +194,21 @@ impl App {
 
         let mut per_block = Vec::with_capacity(agent.log.blocks().len());
         let mut blocks_total = 0usize;
+        let mut cached_block_lines = Vec::with_capacity(agent.log.blocks().len());
         for (i, block) in agent.log.blocks().iter().enumerate() {
             let is_expanded = agent.expanded.contains(&i);
             let is_wrapped = agent.wrapped.contains(&i);
-            let count = crate::ui::conversation::count_block_visual_lines(block, width, is_expanded, is_wrapped, &self.theme);
+            let mut lines = Vec::new();
+            crate::ui::conversation::build_block_lines(
+                &mut lines, block, width as usize, is_expanded, is_wrapped,
+                false, false, &self.theme,
+            );
+            let count = ratatui::widgets::Paragraph::new(lines.clone())
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .line_count(width);
             per_block.push(count);
             blocks_total += count;
+            cached_block_lines.push(lines);
         }
 
         self.line_cache = Some(VisualLineCache {
@@ -206,6 +218,7 @@ impl App {
             wrapped,
             per_block,
             blocks_total,
+            cached_block_lines,
         });
     }
 
@@ -1444,6 +1457,11 @@ impl App {
     }
 
     /// Render the full UI.
+    /// Borrow the cached per-block lines (for fast-path rendering).
+    pub fn line_cache_blocks(&self) -> Option<&[Vec<Line<'static>>]> {
+        self.line_cache.as_ref().map(|c| c.cached_block_lines.as_slice())
+    }
+
     pub fn view(&self, frame: &mut Frame) {
         ui::render(frame, self);
     }

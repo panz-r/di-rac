@@ -18,7 +18,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
     };
 
-    let lines = build_all_lines(agent, area.width as usize, app.selected_block, app.mode, &app.theme);
+    let cached = app.line_cache_blocks();
+    let lines = build_all_lines(agent, area.width as usize, app.selected_block, app.mode, &app.theme, cached);
 
     let widget = WidgetBlock::default();
     let paragraph = Paragraph::new(lines)
@@ -29,17 +30,53 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-/// Build all Lines for the conversation view (blocks + streaming + pending).
-pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usize, mode: crate::app::Mode, theme: &Theme) -> Vec<Line<'static>> {
+/// Build all Line for the conversation view (blocks + streaming + pending).
+/// When `cached_block_lines` is available and valid, reuses cached line objects
+/// for non-selected blocks to avoid per-frame rebuild cost.
+pub fn build_all_lines(
+    agent: &AgentState, max_width: usize, selected_block: usize,
+    mode: crate::app::Mode, theme: &Theme,
+    cached_block_lines: Option<&[Vec<Line<'static>>]>,
+) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::with_capacity(agent.log.blocks().len() + 2);
     let highlight_active = mode == crate::app::Mode::Action;
 
-    for (i, block) in agent.log.blocks().iter().enumerate() {
-        let is_expanded = agent.expanded.contains(&i);
-        let is_wrapped = agent.wrapped.contains(&i);
-        let is_selected = i == selected_block;
-        let is_highlighted = highlight_active && is_selected;
-        build_block_lines(&mut lines, block, max_width, is_expanded, is_wrapped, is_selected, is_highlighted, theme);
+    if let Some(cached) = cached_block_lines {
+        if cached.len() == agent.log.blocks().len() {
+            // Fast path: clone cached lines, rebuild only the selected block
+            for (i, block_lines) in cached.iter().enumerate() {
+                let is_selected = i == selected_block;
+                let is_highlighted = highlight_active && is_selected;
+                if is_selected || is_highlighted {
+                    let block = &agent.log.blocks()[i];
+                    let is_expanded = agent.expanded.contains(&i);
+                    let is_wrapped = agent.wrapped.contains(&i);
+                    build_block_lines(&mut lines, block, max_width, is_expanded, is_wrapped,
+                        true, is_highlighted, theme);
+                } else {
+                    lines.extend(block_lines.iter().cloned());
+                }
+            }
+        } else {
+            // Cache size mismatch — rebuild all
+            for (i, block) in agent.log.blocks().iter().enumerate() {
+                let is_expanded = agent.expanded.contains(&i);
+                let is_wrapped = agent.wrapped.contains(&i);
+                let is_selected = i == selected_block;
+                let is_highlighted = highlight_active && is_selected;
+                build_block_lines(&mut lines, block, max_width, is_expanded, is_wrapped,
+                    is_selected, is_highlighted, theme);
+            }
+        }
+    } else {
+        for (i, block) in agent.log.blocks().iter().enumerate() {
+            let is_expanded = agent.expanded.contains(&i);
+            let is_wrapped = agent.wrapped.contains(&i);
+            let is_selected = i == selected_block;
+            let is_highlighted = highlight_active && is_selected;
+            build_block_lines(&mut lines, block, max_width, is_expanded, is_wrapped,
+                is_selected, is_highlighted, theme);
+        }
     }
 
     // Streaming text (active thinking/response)
@@ -80,18 +117,6 @@ pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usi
     }
 
     lines
-}
-
-/// Count the visual lines a single block will occupy after wrapping.
-pub fn count_block_visual_lines(block: &Block, width: u16, is_expanded: bool, is_wrapped: bool, theme: &Theme) -> usize {
-    let mut lines: Vec<Line> = Vec::with_capacity(16);
-    build_block_lines(&mut lines, block, width as usize, is_expanded, is_wrapped, false, false, theme);
-    if lines.is_empty() {
-        return 0;
-    }
-    Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .line_count(width)
 }
 
 /// Build Lines for a single block. Shared between rendering and line counting.
