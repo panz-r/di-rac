@@ -556,6 +556,7 @@ impl SettingsState {
             self.model_entries = model_entries;
             self.provider_info = provider_info;
             self.gateway_available = gateway_available;
+            self.cursor = self.cursor.min(self.fields.len());
             if let Some(err) = gateway_error {
                 self.error = Some(err);
             } else if !gateway_available {
@@ -573,6 +574,7 @@ impl SettingsState {
                 self.model_entries = model_entries;
                 self.provider_info = provider_info;
                 self.error = gateway_error;
+                self.cursor = self.cursor.min(self.fields.len());
                 self.flush_fields_to_settings();
             }
             self.loading = false;
@@ -587,6 +589,7 @@ impl SettingsState {
                 self.model_entries = model_entries;
                 self.provider_info = provider_info;
                 self.error = gateway_error;
+                self.cursor = self.cursor.min(self.fields.len());
                 self.flush_fields_to_settings();
             }
             self.loading = false;
@@ -886,7 +889,7 @@ impl SettingsState {
     }
 
     pub fn confirm_selector(&mut self) {
-        if !self.selector_open { return; }
+        if !self.selector_open || self.selector_filtered_indices.is_empty() { return; }
         let fo = self.field_offset();
         let is_provider = fo == F_PROVIDER && self.active_panel == SettingsPanel::Provider;
         // Map filtered cursor back to real index

@@ -1304,6 +1304,11 @@ impl App {
             }
             Some(FrontendMessage::UserResponse { agent_id, text })
         } else {
+            let len = text.len();
+            self.input.content = text;
+            self.input.cursor = len;
+            self.input.history.pop();
+            self.status_message = Some("No agent running. Use :new <task> to start.".to_string());
             None
         }
     }
