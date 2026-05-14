@@ -1,4 +1,6 @@
 use super::schemas::*;
+use regex::Regex;
+use std::sync::LazyLock;
 
 /// Validation errors — these cause fallback, never propagation.
 #[derive(Debug)]
@@ -64,22 +66,32 @@ fn check_no_absolute_paths(paths: &[String]) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Regex patterns for common secret formats.
-const SECRET_PATTERNS: &[&str] = &[
-    r"sk-[a-zA-Z0-9]{20,}",           // OpenAI-style keys
-    r"AKIA[0-9A-Z]{16}",              // AWS access keys
-    r"ghp_[a-zA-Z0-9]{36}",           // GitHub PATs
-    r"xox[bpaors]-[a-zA-Z0-9\-]+",    // Slack tokens
-    r#"api[_\-]?key\s*[:=]\s*["']?[a-zA-Z0-9]{20,}"#, // generic api_key=
-];
+/// Precompiled secret patterns — avoids recompilation on every call.
+static SECRET_RE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    let patterns = vec![
+        r"sk-[a-zA-Z0-9]{20,}",           // OpenAI-style keys
+        r"AKIA[0-9A-Z]{16}",              // AWS access keys
+        r"ghp_[a-zA-Z0-9]{36}",           // GitHub PATs
+        r"xox[bpaors]-[a-zA-Z0-9\-]+",    // Slack tokens
+        r#"api[_\-]?key\s*[:=]\s*["']?[a-zA-Z0-9]{20,}"#, // generic api_key=
+    ];
+    patterns.into_iter().map(|p| Regex::new(p).expect("invalid secret regex")).collect()
+});
+
+/// Precompiled stack trace patterns.
+static STACKTRACE_RE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    let patterns = vec![
+        r"at\s+\S+\s+\(.*:\d+:\d+\)",        // JS/TS: at func (file:line:col)
+        r#"File\s+"[^"]+",\s*line\s+\d+"#,    // Python: File "path", line N
+        r"^\s+at\s+\S+",                       // Java/C#: at com.example.Method
+    ];
+    patterns.into_iter().map(|p| Regex::new(p).expect("invalid stacktrace regex")).collect()
+});
 
 fn scan_for_secrets(text: &str) -> Result<(), ValidationError> {
-    for pattern in SECRET_PATTERNS {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if re.is_match(text) {
-                // Redact the match for the error message
-                return Err(ValidationError::SecretDetected);
-            }
+    for re in SECRET_RE.iter() {
+        if re.is_match(text) {
+            return Err(ValidationError::SecretDetected);
         }
     }
     Ok(())
@@ -87,17 +99,9 @@ fn scan_for_secrets(text: &str) -> Result<(), ValidationError> {
 
 /// Detect stack trace patterns in text.
 fn scan_for_stack_traces(text: &str) -> Result<(), ValidationError> {
-    // Check for common stack trace patterns
-    let trace_patterns: &[&str] = &[
-        r"at\s+\S+\s+\(.*:\d+:\d+\)",        // JS/TS: at func (file:line:col)
-        r#"File\s+"[^"]+",\s*line\s+\d+"#,    // Python: File "path", line N
-        r"^\s+at\s+\S+",                       // Java/C#: at com.example.Method
-    ];
-    for pattern in trace_patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if re.is_match(text) {
-                return Err(ValidationError::StackTraceDetected);
-            }
+    for re in STACKTRACE_RE.iter() {
+        if re.is_match(text) {
+            return Err(ValidationError::StackTraceDetected);
         }
     }
     Ok(())
@@ -126,7 +130,12 @@ pub fn validate_exact_evidence_faithfulness(result: &DistilledToolResult, origin
     let mut warnings = Vec::new();
     let lower_output = original_output.to_lowercase();
     for quote in &result.exact_evidence {
-        let snippet = if quote.len() > 30 { &quote[..30] } else { quote };
+        let snippet = if quote.len() > 30 {
+            let boundary = quote.floor_char_boundary(30);
+            &quote[..boundary]
+        } else {
+            quote
+        };
         if !lower_output.contains(&snippet.to_lowercase()) {
             let display = if quote.len() > 50 { format!("{}...", &quote[..50]) } else { quote.clone() };
             warnings.push(format!("exact_evidence '{}' not found in original output", display));

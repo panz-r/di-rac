@@ -51,8 +51,19 @@ impl ApprovalManager {
     }
 
     /// Check if a bash command is safe (read-only) and can skip approval.
+    /// Rejects commands containing newlines or chaining operators (`;`, `|`, `&&`, `||`)
+    /// to prevent command injection via newline/chain after a safe-looking prefix.
     pub fn is_safe_bash_command(command: &str) -> bool {
         let trimmed = command.trim();
+        // Reject multi-line or chained commands — must be a single safe command only
+        if trimmed.contains('\n')
+            || trimmed.contains(";")
+            || trimmed.contains("|")
+            || trimmed.contains("&&")
+            || trimmed.contains("||")
+        {
+            return false;
+        }
         Self::SAFE_BASH_COMMANDS.iter().any(|safe| {
             trimmed == *safe || trimmed.starts_with(&format!("{} ", safe))
         })
