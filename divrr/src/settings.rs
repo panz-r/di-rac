@@ -589,17 +589,47 @@ impl SettingsState {
 
     fn flush_behavior_fields(&mut self) {
         let role = &self.role_options[self.role_index];
-        if matches!(self.active_panel, SettingsPanel::Role) {
-            let enabled = match &self.fields[0] {
-                SettingsField::Selector { index, .. } => *index == 1,
-                _ => false,
-            };
-            let beh = RoleBehaviorSettings {
-                enabled: Some(enabled),
-                ..Default::default()
-            };
-            self.all_settings.behaviors.insert(role.to_string(), beh);
+        if !matches!(self.active_panel, SettingsPanel::Role) { return; }
+        let f = |i: usize| self.fields.get(i);
+
+        fn bool_val(field: Option<&SettingsField>) -> Option<bool> {
+            match field {
+                Some(SettingsField::Selector { index, .. }) => Some(*index == 1),
+                _ => None,
+            }
         }
+        fn num_val(field: Option<&SettingsField>) -> Option<u32> {
+            match field {
+                Some(SettingsField::Text { value, .. }) => value.parse().ok(),
+                _ => None,
+            }
+        }
+        fn dec_val(field: Option<&SettingsField>) -> Option<f64> {
+            match field {
+                Some(SettingsField::Text { value, .. }) => value.parse().ok(),
+                _ => None,
+            }
+        }
+
+        let beh = match role.as_str() {
+            "observer" => RoleBehaviorSettings {
+                enabled: bool_val(f(0)),
+                observer_turns: num_val(f(1)),
+                observer_critic_frequency: num_val(f(2)),
+                observer_verbose: bool_val(f(3)),
+                observer_token_threshold: num_val(f(4)),
+                observer_buffer_activation: dec_val(f(5)),
+                observer_block_after: dec_val(f(6)),
+                observer_reflection_enabled: bool_val(f(7)),
+                observer_reflection_token_threshold: num_val(f(8)),
+            },
+            "distiller" => RoleBehaviorSettings {
+                enabled: bool_val(f(0)),
+                ..Default::default()
+            },
+            _ => RoleBehaviorSettings::default(),
+        };
+        self.all_settings.behaviors.insert(role.to_string(), beh);
     }
 
     fn flush_theme_fields(&mut self) {
