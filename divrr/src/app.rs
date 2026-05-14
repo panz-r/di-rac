@@ -459,7 +459,7 @@ impl App {
                 self.input_queue.retain(|(id, _)| *id != agent_id);
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
                     agent.log.finalize_streaming();
-                    agent.status = AgentStatus::Waiting;
+                    agent.status = AgentStatus::Finished;
                     agent.pending_input = None;
                     agent.log.push_system(format!("Result: {}", message));
                     agent.last_activity = Utc::now();

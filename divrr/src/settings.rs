@@ -103,6 +103,9 @@ impl GatewayConnection {
                     stream.flush()?;
                     line.clear();
                     reader.read_line(&mut line)?;
+                    if line.len() > 10 * 1024 * 1024 {
+                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "gateway response exceeds 10 MB"));
+                    }
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "empty response after reconnect"));
@@ -710,6 +713,7 @@ impl SettingsState {
     }
 
     pub fn select_left(&mut self) {
+        self.error = None;
         if self.selector_open { return; }
         if self.cursor == 0 {
             if self.role_index > 0 {
@@ -737,6 +741,7 @@ impl SettingsState {
     }
 
     pub fn select_right(&mut self) {
+        self.error = None;
         if self.selector_open { return; }
         if self.cursor == 0 {
             if self.role_index < self.role_options.len() - 1 {
@@ -935,6 +940,7 @@ impl SettingsState {
     }
 
     pub fn type_char(&mut self, c: char) {
+        self.error = None;
         if self.selector_open {
             self.selector_filter.push(c);
             self.rebuild_filtered_indices();
@@ -953,6 +959,7 @@ impl SettingsState {
     }
 
     pub fn backspace(&mut self) {
+        self.error = None;
         if self.selector_open {
             self.selector_filter.pop();
             self.rebuild_filtered_indices();
