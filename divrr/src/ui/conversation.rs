@@ -288,10 +288,10 @@ fn maybe_truncate(s: &str, max_len: usize, is_wrapped: bool) -> String {
 }
 
 fn truncate_single(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated)
+    // Fast path: if byte length fits, char count definitely fits (each char >= 1 byte)
+    if s.len() <= max_len {
+        return s.to_string();
     }
+    let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
+    format!("{}...", truncated)
 }
