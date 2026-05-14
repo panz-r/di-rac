@@ -106,7 +106,7 @@ fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
     let count = actions.len() as u16;
     let w = 36u16;
     let h = count + 2;
-    let y = input_area.y.saturating_sub(h);
+    let y = input_area.y.saturating_sub(h).max(1);
     let x = input_area.x + 4;
 
     let area = Rect::new(x, y, w, h);
@@ -141,7 +141,7 @@ fn render_save_dialog(frame: &mut Frame, input_area: Rect, app: &App) {
 
     let w = 50u16;
     let h = 3u16;
-    let y = input_area.y.saturating_sub(h);
+    let y = input_area.y.saturating_sub(h).max(1);
     let x = input_area.x + 4;
 
     let area = Rect::new(x, y, w, h);

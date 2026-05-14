@@ -43,7 +43,7 @@ pub struct App {
     /// Channel to send async results back to the event loop.
     pub event_tx: Option<mpsc::UnboundedSender<crate::AppEvent>>,
     /// Active save dialog state.
-    pub save_dialog: Option<Box<SaveDialogState>>,
+    pub save_dialog: Option<SaveDialogState>,
 
     /// Cached visual line counts per block (invalidated on width/content/expand change).
     line_cache: Option<LineCache>,
@@ -665,12 +665,12 @@ impl App {
                 let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
                 let default_path = format!("~/block-{}.md", ts);
                 self.mode = Mode::SaveDialog;
-                self.save_dialog = Some(Box::new(SaveDialogState {
+                self.save_dialog = Some(SaveDialogState {
                     cursor: default_path.chars().count(),
                     path: default_path,
                     exists_warned: false,
                     block_text,
-                }));
+                });
             }
             2 => {
                 // Copy to clipboard

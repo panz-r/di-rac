@@ -14,7 +14,7 @@ pub fn render(frame: &mut Frame, input_area: Rect, app: &App) {
     let count = app.command_palette.len().min(8) as u16;
     let w = 44u16;
     let h = count + 2; // border
-    let y = input_area.y.saturating_sub(h);
+    let y = input_area.y.saturating_sub(h).max(1);
     let x = input_area.x + 4; // past ">>> "
 
     let area = Rect::new(x, y, w, h);
