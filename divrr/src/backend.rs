@@ -105,28 +105,39 @@ impl DiCoreBackend {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
                 let log_path = std::path::Path::new(&home).join(".dirac").join("di-core.log");
 
-                // Rotate: keep the tail when file exceeds 10 MB
-                if let Ok(meta) = std::fs::metadata(&log_path) {
-                    if meta.len() > 10_485_760 {
-                        if let Ok(data) = std::fs::read(&log_path) {
-                            let keep = 1_048_576; // 1 MiB
-                            let start = data.len().saturating_sub(keep);
-                            let start = data[start..].iter().position(|&b| b == b'\n')
-                                .map(|p| start + p + 1)
-                                .unwrap_or(start);
-                            let _ = std::fs::write(&log_path, &data[start..]);
+                let rotate = || {
+                    if let Ok(meta) = std::fs::metadata(&log_path) {
+                        if meta.len() > 10_485_760 {
+                            if let Ok(data) = std::fs::read(&log_path) {
+                                let keep = 1_048_576; // 1 MiB
+                                let start = data.len().saturating_sub(keep);
+                                let start = data[start..].iter().position(|&b| b == b'\n')
+                                    .map(|p| start + p + 1)
+                                    .unwrap_or(start);
+                                let _ = std::fs::write(&log_path, &data[start..]);
+                            }
                         }
                     }
-                }
+                };
+
+                // Initial rotation check
+                rotate();
 
                 let framed = FramedRead::new(stderr, LinesCodec::new_with_max_length(1_048_576));
                 let mut stream = framed;
                 if let Ok(file) = std::fs::OpenOptions::new().append(true).create(true).open(&log_path) {
                     use std::io::{BufWriter, Write};
                     let mut writer = BufWriter::new(file);
+                    let mut line_count = 0u64;
                     while let Some(Ok(line)) = stream.next().await {
                         let ts = chrono::Local::now().format("%H:%M:%S%.3f");
                         let _ = writeln!(writer, "[{}] {}", ts, line);
+                        line_count += 1;
+                        // Recheck file size every 1000 lines so large bursts are trimmed
+                        if line_count % 1000 == 0 {
+                            writer.flush().ok();
+                            rotate();
+                        }
                     }
                 }
             });
