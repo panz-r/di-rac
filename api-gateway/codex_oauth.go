@@ -219,7 +219,11 @@ func codexStartOAuth(ctx context.Context) (*CodexAuthTokens, error) {
 	errChan := make(chan error, 1)
 
 	// Start HTTP server for callback (shutdown via defer ensures cleanup on all paths).
-	srv := &http.Server{}
+	srv := &http.Server{
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  15 * time.Second,
+	}
 	defer srv.Shutdown(context.Background())
 	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[codex-oauth] Callback request: %s %s", r.Method, r.URL.String())

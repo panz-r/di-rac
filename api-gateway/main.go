@@ -290,12 +290,19 @@ func (s *Server) Start() error {
 	s.cancel()
 	s.rateLimiter.Stop()
 	ln.Close()
-	// Force-close idle connections so wg.Wait does not block for 5 min
-	s.connMu.Lock()
-	for conn := range s.conns {
-		conn.SetDeadline(time.Now())
+	// Force-close idle connections so wg.Wait does not block for 5 min.
+	// Two passes: once before, then after a short pause to catch any
+	// connection accepted between cancel() and ln.Close().
+	for i := 0; i < 2; i++ {
+		s.connMu.Lock()
+		for conn := range s.conns {
+			conn.SetDeadline(time.Now())
+		}
+		s.connMu.Unlock()
+		if i == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
-	s.connMu.Unlock()
 	s.wg.Wait()
 	return nil
 }
@@ -933,6 +940,12 @@ func (s *Server) handleStreaming(ctx context.Context, connID, id int64, req *Req
 			select {
 			case <-doneChan:
 			case <-time.After(2 * time.Second):
+			}
+			// Drain any provider error that arrived during cancellation.
+			select {
+			case streamErr := <-errChan:
+				s.reqLogf(connID, id, "streaming provider error (lost on cancel): %v", streamErr)
+			default:
 			}
 			w.write(&Response{
 				ID:     id,

@@ -526,7 +526,10 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg Provid
 	}
 	r.modelsMu.Unlock()
 
-	return models, nil
+	// Return a copy so callers cannot mutate the cached slice.
+	cp := make([]ModelEntry, len(models))
+	copy(cp, models)
+	return cp, nil
 }
 
 // toFloat converts an interface{} to float64.
