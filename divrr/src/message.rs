@@ -21,11 +21,13 @@ pub enum CoreEvent {
     },
     ToolCallStarted {
         agent_id: Uuid,
+        call_id: String,
         tool: String,
         args: Value,
     },
     ToolCallFinished {
         agent_id: Uuid,
+        call_id: String,
         result: Value,
     },
     BackgroundCommandStarted {

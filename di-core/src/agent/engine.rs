@@ -1257,6 +1257,8 @@ impl AgentEngine {
                 arguments: tc.args.to_string(),
             }
         }).collect();
+        // Extract call IDs before tool_call_entries is moved into the Message.
+        let tool_call_ids: Vec<String> = tool_call_entries.iter().map(|e| e.id.clone()).collect();
 
         self.trajectory.messages.push(Message {
             id: Uuid::new_v4(),
@@ -1279,12 +1281,15 @@ impl AgentEngine {
                 break;
             }
 
+            let call_id = tool_call_ids.get(ti).cloned().unwrap_or_default();
+
             // Mode gate: Plan mode restricts to read-only tools
             if self.mode == AgentMode::Plan && !PLAN_MODE_TOOLS.contains(&tool.name.as_str()) {
                 let skip_msg = json!({ "status": "blocked", "message": format!("Tool '{}' not allowed in Plan mode", tool.name) });
                 self.trajectory.add_tool_result(skip_msg.clone(), 50, ti, ToolMessageMeta::default());
                 self.emit_event(CoreEvent::ToolCallFinished {
                     agent_id: self.id,
+                    call_id: call_id.clone(),
                     result: skip_msg,
                 }).await?;
                 continue;
@@ -1306,6 +1311,7 @@ impl AgentEngine {
                 // Emit tool call details FIRST so the user sees what they're approving
                 self.emit_event(CoreEvent::ToolCallStarted {
                     agent_id: self.id,
+                    call_id: call_id.clone(),
                     tool: tool.name.clone(),
                     args: tool.args.clone(),
                 }).await?;
@@ -1373,6 +1379,7 @@ impl AgentEngine {
                     self.trajectory.add_tool_result(skip_msg.clone(), 50, ti, ToolMessageMeta::default());
                     self.emit_event(CoreEvent::ToolCallFinished {
                         agent_id: self.id,
+                        call_id: call_id.clone(),
                         result: skip_msg,
                     }).await?;
                     continue;
@@ -1381,6 +1388,7 @@ impl AgentEngine {
                 // Auto-approved: emit tool call started normally
                 self.emit_event(CoreEvent::ToolCallStarted {
                     agent_id: self.id,
+                    call_id: call_id.clone(),
                     tool: tool.name.clone(),
                     args: tool.args.clone(),
                 }).await?;
@@ -1468,6 +1476,7 @@ impl AgentEngine {
                             self.trajectory.add_tool_result(plan_json.clone(), 50, ti, ToolMessageMeta::default());
                             self.emit_event(CoreEvent::ToolCallFinished {
                                 agent_id: self.id,
+                                call_id: call_id.clone(),
                                 result: plan_json,
                             }).await?;
                         } else {
@@ -1475,6 +1484,7 @@ impl AgentEngine {
                         self.trajectory.add_tool_result(json!({ "status": "completed", "message": &message }), self.estimator.count_text(&message), ti, ToolMessageMeta::default());
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
+                            call_id: call_id.clone(),
                             result: json!({ "status": "completed", "message": &message }),
                         }).await?;
                         // Emit TaskPresented instead of TaskFinished — agent signals done
@@ -1564,6 +1574,7 @@ impl AgentEngine {
                         self.trajectory.add_tool_result(answer_json.clone(), 50, ti, ToolMessageMeta::default());
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
+                            call_id: call_id.clone(),
                             result: answer_json,
                         }).await?;
                     } else if action == Some("new_task") {
@@ -1619,6 +1630,7 @@ impl AgentEngine {
                         }
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
+                            call_id: call_id.clone(),
                             result: json!({ "status": if advisory.allowed { "compact_advisory" } else { "compact_rejected" } }),
                         }).await?;
                     } else {
@@ -1793,6 +1805,7 @@ impl AgentEngine {
                         self.trajectory.add_tool_result(safe_result, estimated_tokens, ti, meta);
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
+                            call_id: call_id.clone(),
                             result,
                         }).await?;
                     }
@@ -1804,6 +1817,7 @@ impl AgentEngine {
                     self.trajectory.add_tool_result(error_msg.clone(), 50, ti, ToolMessageMeta::default());
                     self.emit_event(CoreEvent::ToolCallFinished {
                         agent_id: self.id,
+                        call_id: call_id.clone(),
                         result: error_msg,
                     }).await?;
                 }

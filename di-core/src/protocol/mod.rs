@@ -19,11 +19,13 @@ pub enum CoreEvent {
     },
     ToolCallStarted {
         agent_id: Uuid,
+        call_id: String,
         tool: String,
         args: serde_json::Value,
     },
     ToolCallFinished {
         agent_id: Uuid,
+        call_id: String,
         result: serde_json::Value,
     },
     BackgroundCommandStarted {

@@ -34,6 +34,7 @@ pub enum AgentStatus {
 
 #[derive(Debug, Clone)]
 pub struct ToolCallInfo {
+    pub call_id: String,
     pub tool: String,
     pub args_summary: String,
 }
@@ -117,20 +118,20 @@ impl ConversationLog {
         self.generation += 1;
     }
 
-    pub fn push_tool_call(&mut self, tool: String, args_summary: String) {
+    pub fn push_tool_call(&mut self, call_id: String, tool: String, args_summary: String) {
         self.blocks.push(Block::Tool {
-            call: ToolCallInfo { tool, args_summary },
+            call: ToolCallInfo { call_id, tool, args_summary },
             result: None,
         });
         self.generation += 1;
     }
 
-    /// Set the result on the last Tool block that has no result yet.
-    pub fn set_tool_result(&mut self, content: String) {
+    /// Set the result on the Tool block matching the given call_id.
+    pub fn set_tool_result(&mut self, call_id: &str, content: String) {
         let content = truncate_content(content);
         for block in self.blocks.iter_mut().rev() {
-            if let Block::Tool { result, .. } = block {
-                if result.is_none() {
+            if let Block::Tool { call, result } = block {
+                if result.is_none() && call.call_id == call_id {
                     *result = Some(ToolResultInfo { content });
                     self.generation += 1;
                     return;

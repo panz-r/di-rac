@@ -458,6 +458,8 @@ pub enum SettingsLoadResult {
     },
     Saved {
         error: Option<String>,
+        /// SetProviderConfig messages to forward to di-core (only on success).
+        messages: Vec<crate::message::FrontendMessage>,
     },
 }
 
@@ -576,16 +578,18 @@ impl SettingsState {
         }
     }
 
-    /// Apply a save result. Messages are sent synchronously by save(); this only applies the error/status.
-    pub fn apply_saved(&mut self, result: SettingsLoadResult) {
+    /// Apply a save result. Returns SetProviderConfig messages to forward to di-core on success.
+    pub fn apply_saved(&mut self, result: SettingsLoadResult) -> Vec<crate::message::FrontendMessage> {
         self.saving = false;
-        if let SettingsLoadResult::Saved { error } = result {
+        if let SettingsLoadResult::Saved { error, messages } = result {
             let ok = error.is_none();
             self.error = error;
             if ok {
                 self.saved = true;
+                return messages;
             }
         }
+        Vec::new()
     }
 
     // -- Panel & behavior fields --
@@ -1067,32 +1071,37 @@ impl SettingsState {
             return Vec::new();
         }
 
-        // Build SetProviderConfig messages for all configured roles
-        let mut messages = Vec::new();
-        for role in ROLES {
-            if let Some(rs) = self.all_settings.roles.get(*role) {
-                if !rs.provider.is_empty() && !rs.model.is_empty() {
-                    let params = rs.provider_params.iter().map(|(k, v)| {
-                        (k.clone(), string_to_json_value(v))
-                    }).collect();
-                    messages.push(crate::message::FrontendMessage::SetProviderConfig {
-                        role: role.to_string(),
-                        provider: rs.provider.clone(),
-                        model: rs.model.clone(),
-                        api_key: if rs.api_key.is_empty() { None } else { Some(rs.api_key.clone()) },
-                        base_url: if rs.base_url.is_empty() { None } else { Some(rs.base_url.clone()) },
-                        params,
-                    });
-                }
-            }
-        }
-
-        // Defer gateway push + validation to background
+        // SetProviderConfig messages are built inside the async save path and
+        // only forwarded to di-core after validation succeeds — preventing
+        // di-core from receiving invalid config.
         self.saving = true;
         self.pending_async = Some(PendingAsyncOp::Save { all_settings: self.all_settings.clone() });
 
-        messages
+        Vec::new()
     }
+}
+
+/// Build SetProviderConfig messages from current settings for all configured roles.
+pub fn build_provider_config_messages(all: &AllSettings) -> Vec<crate::message::FrontendMessage> {
+    let mut messages = Vec::new();
+    for role in ROLES {
+        if let Some(rs) = all.roles.get(*role) {
+            if !rs.provider.is_empty() && !rs.model.is_empty() {
+                let params = rs.provider_params.iter().map(|(k, v)| {
+                    (k.clone(), string_to_json_value(v))
+                }).collect();
+                messages.push(crate::message::FrontendMessage::SetProviderConfig {
+                    role: role.to_string(),
+                    provider: rs.provider.clone(),
+                    model: rs.model.clone(),
+                    api_key: if rs.api_key.is_empty() { None } else { Some(rs.api_key.clone()) },
+                    base_url: if rs.base_url.is_empty() { None } else { Some(rs.base_url.clone()) },
+                    params,
+                });
+            }
+        }
+    }
+    messages
 }
 
 // ---------------------------------------------------------------------------

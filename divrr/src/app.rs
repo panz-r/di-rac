@@ -342,16 +342,16 @@ impl App {
                     agent.last_activity = Utc::now();
                 }
             }
-            CoreEvent::ToolCallStarted { tool, args, .. } => {
+            CoreEvent::ToolCallStarted { call_id, tool, args, .. } => {
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
                     agent.log.finalize_streaming();
                     let summary = summarize_tool_args(&tool, &args);
-                    agent.log.push_tool_call(tool, summary);
+                    agent.log.push_tool_call(call_id, tool, summary);
                     agent.status = AgentStatus::Running;
                     agent.last_activity = Utc::now();
                 }
             }
-            CoreEvent::ToolCallFinished { result, .. } => {
+            CoreEvent::ToolCallFinished { call_id, result, .. } => {
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
                     agent.log.finalize_streaming();
                     let status = result
@@ -367,7 +367,7 @@ impl App {
                     } else {
                         format_result_summary(&result)
                     };
-                    agent.log.set_tool_result(msg);
+                    agent.log.set_tool_result(&call_id, msg);
                     agent.last_activity = Utc::now();
                 }
             }
@@ -457,6 +457,7 @@ impl App {
             CoreEvent::TaskPresented { message, .. } => {
                 self.input_queue.retain(|(id, _)| *id != agent_id);
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
+                    agent.log.finalize_streaming();
                     agent.status = AgentStatus::Waiting;
                     agent.pending_input = None;
                     agent.log.push_system(format!("Result: {}", message));
@@ -467,6 +468,7 @@ impl App {
                 remaining_tokens, ..
             } => {
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
+                    agent.log.finalize_streaming();
                     agent.log.push_system(format!("Context compacted ({} tokens remaining)", remaining_tokens));
                 }
             }
@@ -578,9 +580,9 @@ impl App {
     }
 
     fn handle_settings_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
-        // While loading, only allow Esc to close
+        // While loading or saving, only allow Esc to close
         if let Some(s) = &self.settings {
-            if s.loading {
+            if s.loading || s.saving {
                 if key.code == KeyCode::Esc {
                     self.settings = None;
                     self.mode = Mode::Normal;
@@ -1430,7 +1432,8 @@ impl App {
                 SettingsLoadResult::ProviderChanged { .. } => s.apply_provider_changed(result),
                 SettingsLoadResult::RoleSwitched { .. } => s.apply_role_switched(result),
                 SettingsLoadResult::Saved { .. } => {
-                    s.apply_saved(result);
+                    let messages = s.apply_saved(result);
+                    self.pending_messages.extend(messages);
                 }
             }
         }

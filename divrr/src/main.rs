@@ -85,6 +85,7 @@ struct Args {
 pub enum AppEvent {
     Key(crossterm::event::KeyEvent),
     Paste(String),
+    Resize,
     CoreEvent(message::CoreEvent),
     CoreError(String),
     SettingsLoaded(settings::SettingsLoadResult),
@@ -133,8 +134,9 @@ async fn main() -> color_eyre::Result<()> {
                     }
                 }
                 Some(Ok(CrosstermEvent::Resize(..))) => {
-                    // Resize is handled on next render pass — no action needed here.
-                    // The event breaks the recv() await so we redraw immediately.
+                    if key_tx.send(AppEvent::Resize).is_err() {
+                        break;
+                    }
                 }
                 _ => {}
             }
@@ -320,6 +322,12 @@ async fn main() -> color_eyre::Result<()> {
                                             error = Some(format!("Failed to save settings: {}", e));
                                         }
                                     }
+                                    // Build SetProviderConfig messages only on success
+                                    let messages = if error.is_none() {
+                                        crate::settings::build_provider_config_messages(&all_settings)
+                                    } else {
+                                        Vec::new()
+                                    };
                                     if let Some(ref e) = error {
                                         crate::app::log_event(&format!("settings save failed: {}", e));
                                     } else {
@@ -328,6 +336,7 @@ async fn main() -> color_eyre::Result<()> {
                                     let _ = tx.send(crate::AppEvent::SettingsLoaded(
                                         crate::settings::SettingsLoadResult::Saved {
                                             error,
+                                            messages,
                                         }
                                     ));
                                 }
@@ -341,6 +350,9 @@ async fn main() -> color_eyre::Result<()> {
             }
             Some(AppEvent::Paste(text)) => {
                 app.handle_paste(&text);
+            }
+            Some(AppEvent::Resize) => {
+                // Redraw happens at top of loop — this just breaks the recv() await.
             }
             Some(AppEvent::CoreEvent(event)) => {
                 app.handle_core_event(event);
@@ -358,6 +370,13 @@ async fn main() -> color_eyre::Result<()> {
             }
             Some(AppEvent::SettingsLoaded(result)) => {
                 app.apply_settings_load(result);
+                // Drain SetProviderConfig messages produced by successful save
+                for msg in app.pending_messages.drain(..) {
+                    if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
+                        crate::app::log_event(&format!("send error (settings): {}", e));
+                        app.status_message = Some(format!("Send error: {}", e));
+                    }
+                }
             }
             None => {
                 crate::app::log_event("di-core process exited");

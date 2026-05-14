@@ -125,7 +125,7 @@ impl DiCoreBackend {
                     }
                 }
 
-                let framed = FramedRead::new(stderr, LinesCodec::new());
+                let framed = FramedRead::new(stderr, LinesCodec::new_with_max_length(1_048_576));
                 let mut stream = framed;
                 if let Ok(file) = std::fs::OpenOptions::new().append(true).create(true).open(&log_path) {
                     use std::io::{BufWriter, Write};
@@ -164,17 +164,10 @@ impl DiCoreBackend {
 
 impl Drop for DiCoreBackend {
     fn drop(&mut self) {
-        // Kill and reap the child process
+        // Kill the child process. Avoid blocking sleeps in drop — the OS
+        // will reap the zombie when our process exits, and try_wait is a
+        // non-blocking best-effort check.
         let _ = self.child.start_kill();
-        // Block briefly to reap the zombie
-        match self.child.try_wait() {
-            Ok(Some(_)) => {} // already exited
-            Ok(None) => {
-                // Still running — give it a moment then reap
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                let _ = self.child.try_wait();
-            }
-            Err(_) => {}
-        }
+        let _ = self.child.try_wait();
     }
 }
