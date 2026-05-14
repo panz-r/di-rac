@@ -229,13 +229,6 @@ impl App {
             let max_scroll = self.content_lines.saturating_sub(self.visible_lines);
             if self.auto_scroll {
                 self.scroll_offset = max_scroll;
-                // Keep selected_block on the last block when auto-scrolling
-                if let Some(agent) = self.active_agent() {
-                    let count = agent.log.blocks().len();
-                    if count > 0 {
-                        self.selected_block = count - 1;
-                    }
-                }
             } else {
                 self.scroll_offset = self.scroll_offset.min(max_scroll);
             }
@@ -1211,6 +1204,9 @@ impl App {
                 let task = cmd[4..].trim().to_string();
                 if task.is_empty() {
                     self.status_message = Some("Task cannot be empty".to_string());
+                    None
+                } else if task.len() > 10_000 {
+                    self.status_message = Some("Task too long (max 10,000 chars)".to_string());
                     None
                 } else if task.chars().any(|c| c.is_control()) {
                     self.status_message = Some("Task contains control characters".to_string());
