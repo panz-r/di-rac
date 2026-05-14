@@ -78,6 +78,8 @@ pub struct DynamicContext<'a> {
     pub distilled_context: &'a Option<String>,
     pub task_state_summary: &'a Option<String>,
     pub tail_reminder: &'a Option<String>,
+    /// Observer monitoring block (SQS-based insights, watcher/critic observations).
+    pub observer_block: &'a Option<String>,
     /// Progress summary from the last compaction checkpoint, if any.
     pub compaction_summary: &'a Option<String>,
 }
@@ -122,6 +124,12 @@ impl<'a> DynamicContext<'a> {
         if let Some(summary) = self.compaction_summary {
             if !summary.is_empty() {
                 parts.push(format!("# Compaction Summary\n\n{}", summary));
+            }
+        }
+
+        if let Some(block) = self.observer_block {
+            if !block.is_empty() {
+                parts.push(block.clone());
             }
         }
 

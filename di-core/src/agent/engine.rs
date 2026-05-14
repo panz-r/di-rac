@@ -347,7 +347,7 @@ impl AgentEngine {
         Self {
             id,
             trajectory: Trajectory::new(),
-            observer: Observer::new(),
+            observer: Observer::new(crate::observer::ObserverConfig::default()),
             context_manager: ContextManager::new(32000, 24000),
             gateway_client,
             tool_executor: ToolExecutor::new(
@@ -1083,8 +1083,48 @@ impl AgentEngine {
                 self.context_compiler.as_ref().expect("context compiler initialized above").session_prefix_len());
         }
 
-        // 1. API extraction (stub — always empty until analyzer integration)
-        let current_apis: HashSet<String> = HashSet::new();
+        // 1. API extraction via observer + analyzer daemon
+        let mut current_apis: HashSet<String> = HashSet::new();
+        let mut api_filter_response: Option<crate::observer::ExtractApisResponse> = None;
+        if self.observer.config.enabled {
+            if let Some(req) = self.observer.build_extract_apis_request(&self.trajectory) {
+                let analyzer_req = crate::daemons::AnalyzerRequest {
+                    command: "extract-apis".to_string(),
+                    file: None,
+                    content: Some(req.content.clone()),
+                    language: req.language.clone(),
+                    query: None,
+                };
+                match self.tool_executor.analyzer_daemon().lock().await.send_request::<_, crate::daemons::AnalyzerResponse>(analyzer_req).await {
+                    Ok(resp) if resp.ok => {
+                        if let Some(arr) = resp.data.get("calls").and_then(|v| v.as_array()) {
+                            for call in arr {
+                                if let Some(name) = call.as_str() {
+                                    current_apis.insert(name.to_string());
+                                }
+                            }
+                        }
+                        if let Some(arr) = resp.data.get("definitions").and_then(|v| v.as_array()) {
+                            for def in arr {
+                                if let Some(name) = def.as_str() {
+                                    current_apis.insert(name.to_string());
+                                }
+                            }
+                        }
+                        let calls = resp.data.get("calls")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .unwrap_or_default();
+                        let definitions = resp.data.get("definitions")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .unwrap_or_default();
+                        api_filter_response = Some(crate::observer::ExtractApisResponse { calls, definitions });
+                    }
+                    Ok(_) | Err(_) => {} // Analyzer unavailable — keep empty apis
+                }
+            }
+        }
 
         // 2. Lifecycle-aware compaction: evaluate state, compact if due
         let current_tokens = self.trajectory.get_total_tokens();
@@ -1156,6 +1196,49 @@ impl AgentEngine {
         let compaction_summary = self.trajectory.last_checkpoint.as_ref()
             .map(|cp| cp.progress_summary.clone());
 
+        // Pre-compute AST churn for observer DCR signal
+        if self.observer.config.enabled {
+            let ast_churn = self.compute_ast_churn().await;
+            self.observer.set_ast_churn(ast_churn);
+        }
+
+        // Observer: trigger turn lifecycle (SQS, loop classification, watcher/critic/reflection)
+        let prev_filter_fired = self.observer.metrics.filter_fired;
+        let interrupt = if self.observer.config.enabled {
+            Some(self.observer.on_turn_complete(&self.trajectory))
+        } else {
+            None
+        };
+        let filter_just_fired = self.observer.metrics.filter_fired > prev_filter_fired;
+
+        // LLM-driven observations: build prompts and call gateway
+        if self.observer.config.enabled && self.observer.config.use_llm_observations {
+            self.run_llm_observations(&interrupt, filter_just_fired).await;
+        }
+
+        let observer_block = if self.observer.config.enabled {
+            let mut parts = Vec::new();
+            // Interrupt directive takes priority
+            if let Some(ref intr) = interrupt {
+                if let Some(directive) = self.observer.build_interrupt_directive(&intr.action, &intr.reason) {
+                    parts.push(directive);
+                }
+            }
+            let mut block = self.observer.build_observation_block();
+            // Apply API filter to reduce observation noise when APIs are tracked
+            if !block.is_empty() {
+                if let Some(ref apis) = api_filter_response {
+                    block = self.observer.apply_api_filter(&block, apis);
+                }
+                if !block.is_empty() {
+                    parts.push(block);
+                }
+            }
+            if parts.is_empty() { None } else { Some(parts.join("\n\n---\n\n")) }
+        } else {
+            None
+        };
+
         let dynamic = DynamicContext {
             file_context: &self.file_context,
             observations: &self.context_manager.vault,
@@ -1164,6 +1247,7 @@ impl AgentEngine {
             distilled_context: &None,
             task_state_summary: &task_summary,
             tail_reminder: &tail_reminder,
+            observer_block: &observer_block,
             compaction_summary: &compaction_summary,
         };
 
@@ -1199,9 +1283,6 @@ impl AgentEngine {
                 history_budget,
             )
         };
-
-        // 4. Observer — compute SQS but don't emit metrics yet (wait for actual usage)
-        let _sqs = self.observer.compute_sqs(&self.trajectory).score;
 
         // 5. Build gateway messages (only user/assistant/tool — no system)
         let mut gateway_msgs: Vec<GatewayMessage> = messages.iter()
@@ -2200,6 +2281,165 @@ impl AgentEngine {
             remaining_tokens: self.trajectory.get_total_tokens(),
         }).await?;
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // LLM-driven observer calls via gateway
+    // -----------------------------------------------------------------------
+
+    /// Run LLM-driven observations: build prompts, call gateway, parse responses.
+    /// This runs after the heuristic observer cycle to potentially upgrade observations.
+    async fn run_llm_observations(&mut self, interrupt: &Option<crate::observer::InterruptResult>, filter_just_fired: bool) {
+        use crate::observer::{ObservationType, parse_llm_observation};
+        use std::time::Instant;
+
+        // Determine which observation types should fire this turn
+        let mut pending: Vec<crate::observer::ObserverLlmRequest> = Vec::new();
+
+        // Watcher: if the heuristic watcher just fired
+        if self.observer.watcher_just_fired() && self.observer.pending_llm_count < 3 {
+            pending.push(self.observer.build_watcher_llm_prompt(&self.trajectory));
+        }
+
+        // Critic: if SQS is below threshold
+        if let Some(ref intr) = interrupt {
+            if intr.action != crate::observer::CriticAction::Continue && self.observer.pending_llm_count < 3 {
+                pending.push(self.observer.build_critic_llm_prompt(&self.trajectory));
+            }
+        }
+
+        // Skeleton: every 4 turns when there's data
+        if self.observer.metrics.turns_observed % 4 == 0
+            && self.observer.has_skeleton_data()
+            && self.observer.pending_llm_count < 3
+        {
+            pending.push(self.observer.build_skeleton_llm_prompt());
+        }
+
+        // Filter: when heuristic filter just fired this turn
+        if filter_just_fired && self.observer.pending_llm_count < 3 {
+            pending.push(self.observer.build_filter_llm_prompt(&self.trajectory));
+        }
+
+        // Reflector: when reflection threshold met
+        if self.observer.should_reflect_llm() && self.observer.pending_llm_count < 2 {
+            pending.push(self.observer.build_reflector_llm_prompt());
+        }
+
+        // Summarizer: when buffer_activation turns pass without summary
+        if self.observer.should_summarize() && self.observer.pending_llm_count < 3 {
+            pending.push(self.observer.build_summarizer_llm_prompt(&self.trajectory));
+        }
+
+        // Execute each prompt through the gateway with latency tracking
+        for req in pending {
+            let obs_type = req.obs_type.clone();
+            self.observer.pending_llm_count += 1;
+            let start = Instant::now();
+            match self.call_observer_gateway(&req.system_prompt, &req.user_message).await {
+                Some(response_text) => {
+                    let latency_ms = start.elapsed().as_millis() as u64;
+                    self.observer.health.failing = false;
+                    self.observer.health.last_error = None;
+                    if let Some(parsed) = parse_llm_observation(&response_text, obs_type.clone()) {
+                        self.observer.cost_tracker.record(obs_type.clone(), 60, latency_ms, self.observer.metrics.turns_observed);
+                        self.observer.process_llm_observation(parsed, obs_type);
+                    }
+                }
+                None => {
+                    self.observer.health.failing = true;
+                    self.observer.health.last_error = Some(format!("LLM observation failed for {:?}", obs_type));
+                    debug_log!("[di-core] observer LLM call failed for {:?}, using heuristic", obs_type);
+                }
+            }
+            self.observer.pending_llm_count -= 1;
+        }
+    }
+
+    /// Pre-compute AST churn from the last edit for observer DCR.
+    async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
+        let last_assistant = self.trajectory.messages.iter()
+            .filter(|m| matches!(m.role, Role::Assistant))
+            .last();
+        let msg = last_assistant?;
+        let content = msg.content.to_string();
+
+        let file_path = regex::Regex::new(r#"path":\s*"([^"]+)""#).ok()
+            .and_then(|re| re.captures(&content))
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().to_string())?;
+        let new_content = regex::Regex::new(r#"new_content":\s*"([^"]{10,})""#).ok()
+            .and_then(|re| re.captures(&content))
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().to_string())?;
+
+        let lang = file_path.rsplit('.').next().unwrap_or("rs").to_string();
+        let analyzer_req = crate::daemons::AnalyzerRequest {
+            command: "ast-churn".to_string(),
+            file: Some(file_path),
+            content: Some(new_content),
+            language: Some(lang),
+            query: None,
+        };
+        match self.tool_executor.analyzer_daemon().lock().await.send_request::<_, crate::daemons::AnalyzerResponse>(analyzer_req).await {
+            Ok(resp) if resp.ok => {
+                let added = resp.data.get("added").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let removed = resp.data.get("removed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let total = added + removed;
+                Some((added, removed, total))
+            }
+            _ => None,
+        }
+    }
+
+    /// Call the gateway for an observer LLM request. Returns the full text response or None.
+    async fn call_observer_gateway(&self, system: &str, user_message: &str) -> Option<String> {
+        use crate::daemons::{GatewayRequest, GatewayMessage};
+
+        let request_id = self.request_id_counter + 10_000_000; // Offset to avoid collision
+
+        let messages = vec![
+            GatewayMessage::simple("user", serde_json::Value::String(user_message.to_string())),
+        ];
+
+        let request = GatewayRequest {
+            id: request_id,
+            stream: false,
+            timeout: Some(30), // 30s timeout for observer calls
+            provider: None,
+            messages,
+            system: Some(system.to_string()),
+            tools: None,
+            max_tokens: Some(300), // Observer responses are short
+            temperature: Some(0.3), // Low creativity for structured output
+            thinking: None,
+        };
+
+        let mut rx = match self.gateway_client.stream_chat(request).await {
+            Ok(rx) => rx,
+            Err(_) => return None,
+        };
+
+        let mut full_text = String::new();
+        while let Some(chunk_result) = rx.recv().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    if let Some(delta) = &chunk.text_delta {
+                        full_text.push_str(delta);
+                    }
+                    if chunk.chunk_type == "complete" {
+                        break;
+                    }
+                }
+                Err(_) => return None,
+            }
+        }
+
+        if full_text.is_empty() {
+            None
+        } else {
+            Some(full_text)
+        }
     }
 
     /// Runtime-owned compaction — builds a deterministic summary and truncates

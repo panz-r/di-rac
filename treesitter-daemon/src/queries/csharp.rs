@@ -11,3 +11,9 @@ pub const SYMBOL_QUERY: &str = r#"
 pub const IMPORT_QUERY: &str = r#"
 (using_directive (identifier) @module) @import
 "#;
+
+/// C# invocation extraction.
+pub const CALL_QUERY: &str = r#"
+(invocation_expression
+  function: (identifier) @call.name) @call
+"#;

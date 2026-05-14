@@ -33,3 +33,13 @@ pub const IMPORT_QUERY: &str = r#"
       (identifier) @name))
   (string) @module) @import
 "#;
+
+/// Tree-sitter query for TypeScript/JavaScript call extraction.
+pub const CALL_QUERY: &str = r#"
+(call_expression
+  function: (identifier) @call.name) @call
+
+(call_expression
+  function: (member_expression
+    property: (property_identifier) @call.name)) @call
+"#;

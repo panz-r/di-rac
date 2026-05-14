@@ -11,3 +11,9 @@ pub const SYMBOL_QUERY: &str = r#"
 pub const IMPORT_QUERY: &str = r#"
 (call method: (identifier) @import)
 "#;
+
+/// Ruby call extraction.
+pub const CALL_QUERY: &str = r#"
+(call
+  method: (identifier) @call.name) @call
+"#;

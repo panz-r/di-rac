@@ -26,3 +26,12 @@ pub const IMPORT_QUERY: &str = r#"
 (preproc_include
   (string) @module) @import
 "#;
+
+/// C++ call extraction via query — matches function calls.
+pub const CALL_QUERY: &str = r#"
+(call_expression
+  function: (identifier) @call.name) @call
+
+(call_expression
+  function: (field_identifier) @call.name) @call
+"#;

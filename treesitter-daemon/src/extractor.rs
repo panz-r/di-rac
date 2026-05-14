@@ -605,3 +605,81 @@ fn node_signature(node: Node, source: &str, language: Language) -> String {
         }
     }
 }
+
+/// Extract function/method call names from parsed source.
+pub fn extract_calls(
+    source: &str,
+    tree: &Tree,
+    language: Language,
+) -> Vec<String> {
+    let queries = get_queries(language);
+    if queries.call_query.is_empty() {
+        return extract_calls_procedural(source, tree);
+    }
+
+    let lang = language.tree_sitter_language();
+    let query = match Query::new(&lang, queries.call_query) {
+        Ok(q) => q,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut cursor = QueryCursor::new();
+    let root = tree.root_node();
+    let source_bytes = source.as_bytes();
+
+    let mut calls: Vec<String> = Vec::new();
+    let call_name_idx = query.capture_index_for_name("call.name");
+
+    if let Some(name_idx) = call_name_idx {
+        for match_ in cursor.matches(&query, root, source_bytes) {
+            for capture in match_.captures {
+                if capture.index == name_idx {
+                    let text = capture.node.utf8_text(source_bytes).unwrap_or("").to_string();
+                    if !text.is_empty() && !calls.contains(&text) {
+                        calls.push(text);
+                    }
+                }
+            }
+        }
+    }
+
+    calls
+}
+
+/// Fallback: walk the AST for call_expression nodes when no query is available.
+fn extract_calls_procedural(source: &str, tree: &Tree) -> Vec<String> {
+    let root = tree.root_node();
+    let source_bytes = source.as_bytes();
+    let mut calls: Vec<String> = Vec::new();
+    let mut stack = vec![root];
+
+    while let Some(node) = stack.pop() {
+        let kind = node.kind();
+        if kind == "call_expression" || kind == "call" || kind == "method_invocation"
+            || kind == "invocation_expression" || kind == "function_call_expression"
+            || kind == "method_call_expression"
+        {
+            for i in 0..node.child_count() {
+                let child = node.child(i).unwrap();
+                if child.is_named() {
+                    let text = child.utf8_text(source_bytes).unwrap_or("").to_string();
+                    let name = text.rsplit(|c: char| c == '.' || c == ':').next().unwrap_or(&text);
+                    let trimmed = name.trim().to_string();
+                    if !trimmed.is_empty() && !calls.contains(&trimmed) {
+                        calls.push(trimmed);
+                    }
+                    break;
+                }
+            }
+        }
+
+        for i in 0..node.child_count() {
+            let child = node.child(i).unwrap();
+            if child.is_named() {
+                stack.push(child);
+            }
+        }
+    }
+
+    calls
+}

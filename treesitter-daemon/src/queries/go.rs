@@ -28,3 +28,13 @@ pub const IMPORT_QUERY: &str = r#"
   (import_spec
     path: (interpreted_string_literal) @module)) @import
 "#;
+
+/// Tree-sitter query for Go call extraction.
+pub const CALL_QUERY: &str = r#"
+(call_expression
+  function: (identifier) @call.name) @call
+
+(call_expression
+  function: (selector_expression
+    field: (field_identifier) @call.name)) @call
+"#;

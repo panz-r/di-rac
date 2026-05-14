@@ -13,3 +13,9 @@ pub const IMPORT_QUERY: &str = r#"
 (import_declaration
   (scoped_identifier) @module) @import
 "#;
+
+/// Java method invocation extraction.
+pub const CALL_QUERY: &str = r#"
+(method_invocation
+  name: (identifier) @call.name) @call
+"#;

@@ -44,6 +44,16 @@ pub struct CommandOutput {
     // --- generic data for new commands ---
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+    // --- extract-apis fields ---
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calls: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub definitions: Option<Vec<String>>,
+    // --- ast-churn fields ---
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removed: Option<usize>,
 }
 
 impl CommandOutput {
@@ -64,7 +74,7 @@ fn make_output(
         ok: true, id, symbols, imports, skeleton,
         body: None, start_line: None, end_line: None,
         results: None, files: None, status: None,
-        truncated: None, total_count: None, data: None,
+        truncated: None, total_count: None, data: None, calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -168,7 +178,7 @@ pub fn expand_symbol_cmd(
                 status: None,
                 truncated: None,
                 total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
             }
         }
         None => error_output(id, "SYMBOL_NOT_FOUND", format!("Symbol not found: {}", handle)),
@@ -236,6 +246,7 @@ pub fn symbol_range_cmd(
                     "name_text": sym.name,
                     "handle": sym.handle,
                 })),
+            calls: None, definitions: None, added: None, removed: None,
             };
         }
     };
@@ -266,6 +277,7 @@ pub fn symbol_range_cmd(
             "name_text": name_text,
             "handle": handle_out,
         })),
+    calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -295,6 +307,7 @@ pub fn symbol_context_cmd(
                 "class_head": result.class_head,
                 "properties": result.properties,
             })),
+        calls: None, definitions: None, added: None, removed: None,
         },
         Err(msg) => error_output(id, "CONTEXT_ERROR", msg),
     }
@@ -326,6 +339,7 @@ pub fn index_file_cmd(
             "symbols": symbols,
             "imports": imports,
         })),
+    calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -395,7 +409,7 @@ pub fn batch_cmd(
         status: None,
         truncated: None,
         total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -449,7 +463,7 @@ pub fn search_symbols_cmd(
         status: None,
         truncated: None,
         total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -487,7 +501,7 @@ pub fn repo_map_cmd(
         status: None,
         truncated: None,
         total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -587,7 +601,7 @@ pub fn warm_cache_cmd(
         })),
         truncated: None,
         total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -624,7 +638,7 @@ pub fn reparse_cmd(
                 status: Some(serde_json::json!({"cached": true, "total_entries": cache.len()})),
                 truncated: None,
                 total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
             }
         }
         Err(e) => error_output(id, e.code.to_string().as_str(), e.message),
@@ -648,7 +662,7 @@ pub fn clear_cache_cmd(cache: &mut crate::cache::ParseCache, id: Option<serde_js
         status: Some(serde_json::json!({"entries": 0})),
         truncated: None,
         total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -669,7 +683,7 @@ pub fn status_cmd(cache: &crate::cache::ParseCache, id: Option<serde_json::Value
         status: Some(serde_json::to_value(&s).unwrap_or(serde_json::Value::Null)),
         truncated: None,
         total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -692,7 +706,7 @@ fn error_output(
         status: Some(serde_json::json!({"error": {"code": code, "message": message}})),
         truncated: None,
         total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -728,7 +742,7 @@ pub fn file_changed_cmd(
         status: Some(serde_json::json!({"removed": existed, "path": key.display().to_string()})),
         truncated: None,
         total_count: None,
-        data: None,
+        data: None, calls: None, definitions: None, added: None, removed: None,
     }
 }
 
@@ -775,6 +789,7 @@ pub fn index_file_persist_cmd(
                 "symbol_count": count,
                 "import_count": imports.len(),
             })),
+        calls: None, definitions: None, added: None, removed: None,
         },
         Err(e) => error_output(id, "INDEX_ERROR", format!("Failed to index file: {}", e)),
     }
@@ -802,6 +817,7 @@ pub fn invalidate_file_cmd(
             truncated: None,
             total_count: None,
             data: Some(serde_json::json!({"ok": true, "file": file_path})),
+        calls: None, definitions: None, added: None, removed: None,
         },
         Err(e) => error_output(id, "INDEX_ERROR", format!("Failed to invalidate file: {}", e)),
     }
@@ -847,7 +863,7 @@ pub fn search_index_cmd(
                 status: None,
                 truncated: None,
                 total_count: None,
-                data: None,
+                data: None, calls: None, definitions: None, added: None, removed: None,
             }
         }
         Err(e) => error_output(id, "INDEX_ERROR", format!("Search failed: {}", e)),
@@ -875,7 +891,7 @@ pub fn index_status_cmd(db: &IndexDatabase, id: Option<serde_json::Value>) -> Co
             })),
             truncated: None,
             total_count: None,
-            data: None,
+            data: None, calls: None, definitions: None, added: None, removed: None,
         },
         Err(e) => error_output(id, "INDEX_ERROR", format!("Status failed: {}", e)),
     }
@@ -898,7 +914,7 @@ pub fn clear_index_cmd(db: &IndexDatabase, id: Option<serde_json::Value>) -> Com
             status: Some(serde_json::json!({"ok": true, "message": "Index cleared"})),
             truncated: None,
             total_count: None,
-            data: None,
+            data: None, calls: None, definitions: None, added: None, removed: None,
         },
         Err(e) => error_output(id, "INDEX_ERROR", format!("Clear failed: {}", e)),
     }
@@ -917,7 +933,70 @@ pub fn dispatch(
         "skeleton" => Ok(skeleton_cmd(parsed, id, max_results)),
         "check-syntax" => Ok(check_syntax_cmd(parsed, id)),
         "index-file" => Ok(index_file_cmd(parsed, id)),
+        "extract-apis" => Ok(extract_apis_cmd(parsed, id)),
         other => Err(AnalyzerError::invalid_command(other)),
+    }
+}
+
+// ── extract-apis ──────────────────────────────────────────────────
+
+/// Extract API calls and definitions from parsed source.
+pub fn extract_apis_cmd(parsed: &ParsedSource, id: Option<serde_json::Value>) -> CommandOutput {
+    let symbols = extractor::extract_symbols(&parsed.source, &parsed.tree, parsed.language);
+    let calls = extractor::extract_calls(&parsed.source, &parsed.tree, parsed.language);
+
+    let definitions: Vec<String> = symbols.iter()
+        .map(|s| s.name.clone())
+        .collect();
+
+    CommandOutput {
+        ok: true, id,
+        symbols: None, imports: None, skeleton: None,
+        body: None, start_line: None, end_line: None,
+        results: None, files: None, status: None,
+        truncated: None, total_count: None,
+        data: None,
+        calls: Some(calls),
+        definitions: Some(definitions),
+        added: None, removed: None,
+    }
+}
+
+// ── ast-churn ─────────────────────────────────────────────────────
+
+/// Compare two versions of a source file and count AST node changes.
+/// `old_parsed` is the disk version, `new_parsed` is the in-memory version.
+pub fn ast_churn_cmd(
+    old_parsed: &ParsedSource,
+    new_parsed: &ParsedSource,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    let old_symbols = extractor::extract_symbols(&old_parsed.source, &old_parsed.tree, old_parsed.language);
+    let new_symbols = extractor::extract_symbols(&new_parsed.source, &new_parsed.tree, new_parsed.language);
+
+    // Build sets keyed by (name, kind, handle) for stable identification
+    use std::collections::HashSet;
+    let old_set: HashSet<(String, String, String)> = old_symbols.iter()
+        .map(|s| (s.name.clone(), format!("{}", s.kind), s.handle.clone()))
+        .collect();
+    let new_set: HashSet<(String, String, String)> = new_symbols.iter()
+        .map(|s| (s.name.clone(), format!("{}", s.kind), s.handle.clone()))
+        .collect();
+
+    let added = new_set.difference(&old_set).count();
+    let removed = old_set.difference(&new_set).count();
+    let total = new_set.len();
+
+    CommandOutput {
+        ok: true, id,
+        symbols: None, imports: None, skeleton: None,
+        body: None, start_line: None, end_line: None,
+        results: None, files: None, status: None,
+        truncated: None, total_count: None,
+        data: None,
+        calls: None, definitions: None,
+        added: Some(added),
+        removed: Some(removed),
     }
 }
 
@@ -953,6 +1032,7 @@ pub fn check_syntax_cmd(
             "has_errors": has_errors,
             "errors": errors,
         })),
+    calls: None, definitions: None, added: None, removed: None,
     }
 }
 

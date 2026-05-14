@@ -12,3 +12,12 @@ pub const SYMBOL_QUERY: &str = r#"
 pub const IMPORT_QUERY: &str = r#"
 (use_declaration (name) @module) @import
 "#;
+
+/// PHP function call extraction.
+pub const CALL_QUERY: &str = r#"
+(function_call_expression
+  function: (name) @call.name) @call
+
+(method_call_expression
+  method: (name) @call.name) @call
+"#;

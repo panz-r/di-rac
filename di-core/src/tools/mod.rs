@@ -259,6 +259,10 @@ impl ToolExecutor {
         }
     }
 
+    pub fn analyzer_daemon(&self) -> &Arc<tokio::sync::Mutex<ResilientDaemon>> {
+        &self.analyzer_daemon
+    }
+
     pub async fn execute(&self, call: &ToolCall, coordinator: &mut ToolCoordinator) -> Result<serde_json::Value> {
         coordinator.execute_with_coordination(call, self).await
     }
@@ -586,8 +590,12 @@ impl ToolExecutor {
     async fn write_file(&self, call: &ToolCall) -> Result<serde_json::Value> {
         let path = call.args.get("path").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing path argument"))?;
-        let content = call.args.get("content").and_then(|v| v.as_str())
+        let raw_content = call.args.get("content").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing content argument"))?;
+
+        // Strip wrapping markdown code fences (```lang\n...\n```)
+        let content_stripped = strip_code_fences(raw_content);
+        let content: &str = &content_stripped;
 
         // Security scanning: detect dangerous patterns and sensitive paths
         let security_violations = scan_write_security(path, content);
@@ -719,6 +727,30 @@ struct SecurityViolation {
     path: &'static str,
     constraint: &'static str,
     detected_pattern: String,
+}
+
+/// Strip wrapping markdown code fences from content.
+/// Handles ```lang\n...\n``` patterns where the LLM wraps file content.
+fn strip_code_fences(content: &str) -> std::borrow::Cow<'_, str> {
+    let trimmed = content.trim();
+    if !trimmed.starts_with("```") {
+        return std::borrow::Cow::Borrowed(content);
+    }
+    // Find the end of the opening fence line
+    let after_open = trimmed.get(3..).unwrap_or("");
+    let newline_pos = after_open.find('\n').unwrap_or(after_open.len());
+    // Skip the opening ```lang\n
+    let inner_start = 3 + newline_pos + 1;
+    // Check for closing ```
+    if inner_start >= trimmed.len() {
+        return std::borrow::Cow::Borrowed(content);
+    }
+    let inner = &trimmed[inner_start..];
+    if let Some(rest) = inner.strip_suffix("```") {
+        let result = rest.trim_end();
+        return std::borrow::Cow::Owned(result.to_string());
+    }
+    std::borrow::Cow::Borrowed(content)
 }
 
 fn scan_write_security(file_path: &str, content: &str) -> Vec<serde_json::Value> {

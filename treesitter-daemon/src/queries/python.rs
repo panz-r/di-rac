@@ -29,3 +29,13 @@ pub const IMPORT_QUERY: &str = r#"
   module_name: (dotted_name) @module
   name: (aliased_import) @alias) @import_from
 "#;
+
+/// Tree-sitter query for Python call extraction.
+pub const CALL_QUERY: &str = r#"
+(call
+  function: (identifier) @call.name) @call
+
+(call
+  function: (attribute
+    attribute: (identifier) @call.name)) @call
+"#;

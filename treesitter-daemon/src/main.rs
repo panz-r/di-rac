@@ -458,6 +458,26 @@ fn process_request(
         }
     }
 
+    // ast-churn: compare disk version (parsed above from file) against content argument
+    if command == "ast-churn" {
+        // `parsed` is the disk version (parsed from `file` above).
+        // Parse the `content` argument as the new version.
+        if let Some(new_content) = content {
+            let new_parsed = match parser::parse_source(
+                None,
+                Some(new_content),
+                language_override,
+                workspace_root_ref,
+            ) {
+                Ok(p) => p,
+                Err(e) => return e.to_json_response(id.as_ref()),
+            };
+            return commands::ast_churn_cmd(&parsed, &new_parsed, id).to_json();
+        }
+        // If no content provided, return churn of 0
+        return commands::ast_churn_cmd(&parsed, &parsed, id).to_json();
+    }
+
     match commands::dispatch(&parsed, command, id.clone(), max_results) {
         Ok(output) => output.to_json(),
         Err(e) => e.to_json_response(id.as_ref()),
