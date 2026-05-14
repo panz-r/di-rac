@@ -929,16 +929,25 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 			// Provider emitted complete -- forward it and stop (no duplicate)
 			if chunk.Type == "complete" {
 				completeSent = true
-				w.write(&Response{ID: id, Status: 200, Body: mustMarshal(chunk)})
+					if body, err := mustMarshal(chunk); err != nil {
+						w.write(&Response{ID: id, Status: 500, Error: &ErrorDetail{Code: "INTERNAL_ERROR", Message: err.Error()}})
+					} else {
+						w.write(&Response{ID: id, Status: 200, Body: body})
+					}
 				return
 			}
-			if err := w.write(&Response{
-				ID:     id,
-				Status: 200,
-				Body:   mustMarshal(chunk),
-			}); err != nil {
-				return // client disconnected, cancel via deferred streamCancel
-			}
+				body, marshalErr := mustMarshal(chunk)
+				if marshalErr != nil {
+					w.write(&Response{ID: id, Status: 500, Error: &ErrorDetail{Code: "INTERNAL_ERROR", Message: marshalErr.Error()}})
+					return
+				}
+				if err := w.write(&Response{
+					ID:     id,
+					Status: 200,
+					Body:   body,
+				}); err != nil {
+					return // client disconnected, cancel via deferred streamCancel
+				}
 		case <-doneChan:
 			// Check for error that arrived simultaneously with done signal
 			select {
@@ -958,15 +967,23 @@ func (s *Server) handleStreaming(ctx context.Context, id int64, req *Request, w 
 				case chunk := <-chunks:
 					if chunk.Type == "complete" {
 						completeSent = true
-						w.write(&Response{ID: id, Status: 200, Body: mustMarshal(chunk)})
+						if body, err := mustMarshal(chunk); err != nil {
+							w.write(&Response{ID: id, Status: 500, Error: &ErrorDetail{Code: "INTERNAL_ERROR", Message: err.Error()}})
+						} else {
+							w.write(&Response{ID: id, Status: 200, Body: body})
+						}
 						return
 					}
-					w.write(&Response{
-						ID:     id,
-						Status: 200,
-						Body:   mustMarshal(chunk),
-					})
-				default:
+						if body, err := mustMarshal(chunk); err != nil {
+							w.write(&Response{ID: id, Status: 500, Error: &ErrorDetail{Code: "INTERNAL_ERROR", Message: err.Error()}})
+							return
+						} else {
+							w.write(&Response{
+								ID:     id,
+								Status: 200,
+								Body:   body,
+							})
+						}
 					// Final check: an error may have arrived between the first check and now
 					select {
 					case streamErr := <-errChan:
@@ -1156,13 +1173,13 @@ func extractType(raw json.RawMessage) string {
 	return ""
 }
 
-func mustMarshal(v interface{}) json.RawMessage {
+func mustMarshal(v interface{}) (json.RawMessage, error) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("mustMarshal error: %v", err)
-		return json.RawMessage(`{"type":"error","error":"internal marshal error"}`)
+		return nil, fmt.Errorf("internal marshal error: %w", err)
 	}
-	return data
+	return data, nil
 }
 
 func main() {

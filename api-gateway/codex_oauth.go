@@ -48,8 +48,10 @@ type CodexAuthTokens struct {
 
 // codexTokenStore manages Codex OAuth tokens with file-based persistence.
 type codexTokenStore struct {
-	mu   sync.RWMutex
-	path string
+	mu                sync.RWMutex
+	path              string
+	lastRefreshErr    error
+	lastRefreshAttempt time.Time
 }
 
 var codexTokens = &codexTokenStore{}
