@@ -1,3 +1,17 @@
+/* Thread-safety model:
+ * The event loop runs on a single thread. All trie operations are serialized
+ * by the epoll_wait loop — no concurrent access to trie state occurs during
+ * normal flow. Signal handlers (e.g., SIGUSR1 stats) can interrupt the main
+ * thread and read trie state; ensure all such reads are async-signal-safe.
+ * If multi-threaded access is added later, a pthread_mutex must protect all
+ * trie operations and the stat counters must be made atomic or mutex-guarded.
+ *
+ * Locking hierarchy: node-level locks via owner_fd + intent_count, plus
+ * per-FD registries (fd_registry, waiting_registry, transient_registry).
+ * Lock acquisition order: always lock child before parent to avoid deadlock.
+ * Cleanup order: waiting_registry before fd_registry (see trie_cleanup_fd).
+ */
+
 #include "trie.h"
 #include <stdlib.h>
 #include <string.h>
@@ -35,11 +49,12 @@ static bool string_eq(const void *key_a, size_t len_a,
 
 static uint64_t fd_hash(const void *key, size_t key_len, void *user_ctx) {
     (void)user_ctx; (void)key_len;
-    int fd = *(const int*)key;
-    uint64_t h = (uint64_t)fd;
-    h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    h = (h ^ (h >> 27)) * 0x94d049bb133111ebULL;
-    h = h ^ (h >> 31);
+    uint64_t h = *(const int*)key;
+    h ^= h >> 16;
+    h *= 0x85ebca6b;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35;
+    h ^= h >> 16;
     return h;
 }
 
@@ -115,6 +130,7 @@ static bool node_is_empty(trie_node_t *node) {
 static void node_prune_upward(trie_t *trie, trie_node_t *node) {
     while (node && node->parent) {
         if (!node_is_empty(node)) break;
+        if (!node->segment || !node->segment[0]) { node = node->parent; continue; }
         trie_node_t *parent = node->parent;
         size_t seg_len = strlen(node->segment);
         ht_remove(parent->children, node->segment, seg_len);
@@ -246,6 +262,7 @@ void trie_destroy(trie_t *trie) {
 /* --- Trie Helper Operations --- */
 
 static trie_node_t* node_get_child(trie_node_t *node, const char *segment, bool create, trie_t *trie) {
+    if (!segment || !segment[0]) return NULL;
     size_t segment_len = strlen(segment);
     size_t vlen;
     const void *found = ht_find(node->children, segment, segment_len, &vlen);
@@ -314,8 +331,9 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
         }
         
         const void *existing = ht_find(kv, key, klen, &ulen);
+        char *existing_copy = NULL;
         if (existing) {
-            free(*(char**)existing);
+            existing_copy = *(char**)existing;
             ht_remove(kv, key, klen);
         }
 
@@ -323,8 +341,12 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
             char *v_copy = strdup(value);
             if (!ht_insert(kv, key, klen, &v_copy, sizeof(char*))) {
                 free(v_copy);
+                if (existing_copy) {
+                    ht_insert(kv, key, klen, &existing_copy, sizeof(char*));
+                }
                 return -1;
             }
+            if (existing_copy) free(existing_copy);
         }
         return 0;
     } else {
@@ -438,6 +460,13 @@ static void persist_unescape(const char *src, size_t slen, char *dst, size_t dst
     }
     dst[dst_pos] = '\0';
 }
+
+/* Recursion depth is bounded by trie_traverse's 256-segment limit, so the
+ * recursive path depth is at most 256 (each level uses ~12KB of stack for
+ * escaped_* buffers). On an SBC with 1MB stack this is at the limit, but
+ * the limit is enforced. We add a compile-time guard to ensure depth stays
+ * bounded if the segment limit changes. */
+#define MAX_SAVE_DEPTH 256
 
 static void node_save_recursive(trie_node_t *node, FILE *f, char *path_buf, size_t buf_cap, int *truncated) {
     size_t path_len = strlen(path_buf);

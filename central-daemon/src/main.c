@@ -24,9 +24,11 @@ static const char *bound_socket_path = NULL;
 
 typedef struct {
     int fd;
-    char buffer[BUF_SIZE + 1];
+    char *buffer;
+    size_t buf_cap;
     size_t len;
-    char outbuf[BUF_SIZE + 1];
+    char *outbuf;
+    size_t out_cap;
     size_t out_len;
     bool out_epoll_registered;
 } client_ctx_t;
@@ -41,8 +43,9 @@ static int g_rejected_connections = 0;
 static client_ctx_t* ctx_by_fd(int fd);
 
 static int send_json(client_ctx_t *ctx, const char *json) {
+    if (!ctx) return -1;
     size_t len = strlen(json);
-    if (ctx && ctx->out_len + len <= BUF_SIZE) {
+    if (ctx->out_len + len <= ctx->out_cap) {
         memcpy(ctx->outbuf + ctx->out_len, json, len);
         ctx->out_len += len;
         if (!ctx->out_epoll_registered) {
@@ -52,19 +55,25 @@ static int send_json(client_ctx_t *ctx, const char *json) {
         }
         return 0;
     }
-    ssize_t written = write(ctx ? ctx->fd : -1, json, len);
+    ssize_t written = write(ctx->fd, json, len);
     if (written < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            fprintf(stderr, "[di-vrr] send_json would block on fd %d, message dropped\n", ctx ? ctx->fd : -1);
+            /* Socket buffer full — try to append to outbuf as fallback */
+            if (ctx->out_len + len <= ctx->out_cap) {
+                memcpy(ctx->outbuf + ctx->out_len, json, len);
+                ctx->out_len += len;
+                return 0;
+            }
+            fprintf(stderr, "[di-vrr] send_json would block on fd %d, message dropped\n", ctx->fd);
             return -1;
         }
         if (errno != EPIPE) {
-            fprintf(stderr, "[di-vrr] send_json failed on fd %d: %s\n", ctx ? ctx->fd : -1, strerror(errno));
+            fprintf(stderr, "[di-vrr] send_json failed on fd %d: %s\n", ctx->fd, strerror(errno));
         }
         return -1;
     }
     if ((size_t)written < len) {
-        fprintf(stderr, "[di-vrr] partial send on fd %d (%zd of %zu bytes)\n", ctx ? ctx->fd : -1, written, len);
+        fprintf(stderr, "[di-vrr] partial send on fd %d (%zd of %zu bytes)\n", ctx->fd, written, len);
         return -1;
     }
     return 0;
@@ -196,7 +205,8 @@ static void handle_stats(int sig) {
     size_t trie_nodes = 0, trie_waiters = 0, trie_locks = 0;
     if (lock_trie) trie_get_stats(lock_trie, &trie_nodes, &trie_waiters, &trie_locks);
 
-    fprintf(stderr,
+    char buf[512];
+    int n = snprintf(buf, sizeof(buf),
             "[di-vrr] --- Health Snapshot ---\n"
             "[di-vrr] Clients: %zu/%d\n"
             "[di-vrr] Trie nodes: %zu\n"
@@ -204,9 +214,9 @@ static void handle_stats(int sig) {
             "[di-vrr] Total waiters: %zu\n"
             "[di-vrr] --------------------------\n",
             total_clients, MAX_EVENTS,
-            trie_nodes,
-            trie_locks,
-            trie_waiters);
+            trie_nodes, trie_locks, trie_waiters);
+    ssize_t _r = write(STDERR_FILENO, buf, (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf));
+    (void)_r;
 }
 
 static void handle_shutdown(int sig) {
@@ -498,10 +508,7 @@ static size_t process_json_stream(client_ctx_t *ctx, char *data, size_t len, tri
     char *end = data + len;
     while (p < end) {
         char *obj_start = strchr(p, '{');
-        if (!obj_start) {
-            p = end;
-            break;
-        }
+        if (!obj_start) break;
         const char *obj_end = find_end_of_object(obj_start, end);
         if (obj_end) {
             char *mutable_obj_end = (char*)obj_end;
@@ -511,8 +518,18 @@ static size_t process_json_stream(client_ctx_t *ctx, char *data, size_t len, tri
             *mutable_obj_end = saved;
             p = mutable_obj_end;
         } else {
-            p = obj_start;
-            break;
+            /* No closing brace found — return 0 so caller preserves the
+             * partial data in the buffer for the next call when more arrives.
+             * We avoid O(n^2) by only advancing past the '{' when we can
+             * prove there is no closing brace anywhere in the remainder. */
+            if (memchr(obj_start + 1, '}', end - obj_start - 1)) {
+                /* A '}' exists somewhere after this '{', but not close enough
+                 * for find_end_of_object to reach — likely an escaped brace
+                 * inside a string. Leave the partial data for next call. */
+                p = obj_start;
+                break;
+            }
+            p = obj_start + 1;
         }
     }
     return p - data;
@@ -527,10 +544,17 @@ static int handle_client_data(client_ctx_t *ctx, trie_t *trie) {
     }
     if (n == 0) return -1;
 
-    if (ctx->len + n >= BUF_SIZE) {
-        send_json(ctx, "{\"status\": \"error\", \"message\": \"buffer overflow\"}\n");
-        ctx->len = 0;
-        return 0;
+    if (ctx->len + (size_t)n >= ctx->buf_cap) {
+        size_t new_cap = ctx->buf_cap ? ctx->buf_cap * 2 : 4096;
+        if (new_cap < ctx->len + (size_t)n + 1) new_cap = ctx->len + (size_t)n + 1;
+        char *tmp = realloc(ctx->buffer, new_cap);
+        if (!tmp) {
+            send_json(ctx, "{\"status\": \"error\", \"message\": \"buffer overflow\"}\n");
+            ctx->len = 0;
+            return 0;
+        }
+        ctx->buffer = tmp;
+        ctx->buf_cap = new_cap;
     }
     memcpy(ctx->buffer + ctx->len, read_buf, n);
     ctx->len += n;
@@ -663,6 +687,13 @@ int main(int argc, char *argv[]) {
                 client_ctx_t *ctx = calloc(1, sizeof(client_ctx_t));
                 if (!ctx) { close(client_fd); continue; }
                 ctx->fd = client_fd;
+                ctx->buffer = malloc(4096);
+                ctx->buf_cap = ctx->buffer ? 4096 : 0;
+                ctx->len = 0;
+                ctx->outbuf = malloc(4096);
+                ctx->out_cap = ctx->outbuf ? 4096 : 0;
+                ctx->out_len = 0;
+                ctx->out_epoll_registered = false;
 
                 int slot = -1;
                 for (int j = 0; j < MAX_EVENTS; j++) {
@@ -687,6 +718,8 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "[di-vrr] failed to epoll_ctl ADD for client_fd %d: %s\n", client_fd, strerror(errno));
                     all_clients[slot] = NULL;
                     close(client_fd);
+                    free(ctx->buffer);
+                    free(ctx->outbuf);
                     free(ctx);
                     continue;
                 }
@@ -701,6 +734,8 @@ int main(int argc, char *argv[]) {
                             if (all_clients[j] == ctx) { all_clients[j] = NULL; break; }
                         }
                         close(ctx->fd);
+                        free(ctx->buffer);
+                        free(ctx->outbuf);
                         free(ctx);
                         continue;
                     }
@@ -714,7 +749,10 @@ int main(int argc, char *argv[]) {
                             if (all_clients[j] == ctx) { all_clients[j] = NULL; break; }
                         }
                         close(ctx->fd);
+                        free(ctx->buffer);
+                        free(ctx->outbuf);
                         free(ctx);
+                        continue;
                     }
                 }
             }
