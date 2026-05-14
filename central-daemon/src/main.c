@@ -13,6 +13,7 @@
 #include <stdatomic.h>
 
 #include "trie.h"
+#include "json.h"
 
 #define MAX_EVENTS 128
 #define MAX_BUFFER_SIZE (1 << 20)  /* 1MB per client — prevents slowloris DoS */
@@ -381,61 +382,44 @@ static int json_unescape(const char *src, char *dst, size_t dst_len) {
     return (int)dst_pos;
 }
 
-static const char* find_string_val(const char *json, const char *key, char *out, size_t out_len) {
-    char pattern[128];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    const char *p = strstr(json, pattern);
-    if (!p) return NULL;
-    p = strchr(p + strlen(pattern), ':');
-    if (!p) return NULL;
-    while (*p == ' ' || *p == ':' || *p == '\t') p++;
-    if (*p != '"') return NULL;
-    const char *start = p + 1;
-    const char *end = start;
-    while (*end != '"' && *end != '\0') {
-        if (*end == '\\' && *(end + 1) != '\0') end++;
-        end++;
+static bool find_bool_val(const char *json, size_t json_len, const char *key, bool default_val) {
+    struct json j;
+    if (json_enter_object(&j, json, (int)json_len) < 0) return default_val;
+    char kbuf[128];
+    const char *val;
+    int vlen;
+    while ((vlen = json_next_key(&j, kbuf, (int)sizeof(kbuf), &val)) > 0) {
+        if (strcmp(kbuf, key) == 0) {
+            if (json_is_bool(val, vlen)) {
+                bool out;
+                json_get_bool(val, vlen, &out);
+                return out;
+            }
+            return default_val;
+        }
     }
-    if (*end != '"') return NULL;
-
-    /* Dynamically allocate raw buffer — no hard limit on token size */
-    size_t raw_len = (size_t)(end - start);
-    char *raw = malloc(raw_len + 1);
-    if (!raw) return NULL;
-    memcpy(raw, start, raw_len);
-    raw[raw_len] = '\0';
-
-    int res = json_unescape(raw, out, out_len);
-    free(raw);
-    if (res < 0) return NULL;
-    return end;
-}
-
-static bool find_bool_val(const char *json, const char *key, bool default_val) {
-    char pattern[128];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    const char *p = strstr(json, pattern);
-    if (!p) return default_val;
-    p = strchr(p + strlen(pattern), ':');
-    if (!p) return default_val;
-    while (*p == ' ' || *p == ':' || *p == '\t') p++;
-    if (strncmp(p, "true", 4) == 0) return true;
-    if (strncmp(p, "false", 5) == 0) return false;
     return default_val;
 }
 
-static void process_single_object(client_ctx_t *ctx, const char *json, trie_t *trie) {
+/* Single-pass JSON key lookup — no prefix collision, no strstr.
+ * Returns written length (>0) on success, -1 on not found / not a string. */
+static int find_string_val(const char *json, size_t json_len,
+                           const char *key, char *out, size_t out_len) {
+    return json_obj_find_str(json, (int)json_len, key, out, (int)out_len);
+}
+
+static void process_single_object(client_ctx_t *ctx, const char *json, size_t json_len, trie_t *trie) {
     int fd = ctx->fd;
     char method[64] = {0}, path[8192] = {0};
 
-    if (!find_string_val(json, "method", method, sizeof(method)) ||
-        !find_string_val(json, "path", path, sizeof(path))) {
+    if (json_obj_find_str(json, (int)json_len, "method", method, sizeof(method)) < 0 ||
+        json_obj_find_str(json, (int)json_len, "path", path, sizeof(path)) < 0) {
         send_json(ctx, "{\"status\": \"error\", \"message\": \"invalid protocol format\"}\n");
         return;
     }
 
     if (strcmp(method, "acquire") == 0) {
-        bool wait = find_bool_val(json, "wait", false);
+        bool wait = find_bool_val(json, json_len, "wait", false);
         int res = trie_acquire_lock(trie, path, fd, wait);
         if (res == 0) send_json(ctx, "{\"status\": \"ok\"}\n");
         else if (res == 1) send_json(ctx, "{\"status\": \"waiting\"}\n");
@@ -470,12 +454,12 @@ static void process_single_object(client_ctx_t *ctx, const char *json, trie_t *t
         }
     } else if (strcmp(method, "set_config") == 0) {
         char key[256] = {0}, value[4096] = {0}, *val_ptr = NULL;
-        if (!find_string_val(json, "key", key, sizeof(key))) {
+        if (find_string_val(json, json_len, "key", key, sizeof(key)) < 0) {
             send_json(ctx, "{\"status\": \"error\", \"message\": \"missing key\"}\n");
             return;
         }
-        if (find_string_val(json, "value", value, sizeof(value))) val_ptr = value;
-        bool transient = find_bool_val(json, "transient", false);
+        if (find_string_val(json, json_len, "value", value, sizeof(value)) >= 0) val_ptr = value;
+        bool transient = find_bool_val(json, json_len, "transient", false);
 
         int set_res = trie_set_config(trie, path, fd, key, val_ptr, transient);
         if (set_res < 0) {
@@ -496,7 +480,7 @@ static void process_single_object(client_ctx_t *ctx, const char *json, trie_t *t
         }
     } else if (strcmp(method, "get_config") == 0) {
         char key[256] = {0};
-        if (!find_string_val(json, "key", key, sizeof(key))) {
+        if (find_string_val(json, json_len, "key", key, sizeof(key)) < 0) {
             send_json(ctx, "{\"status\": \"error\", \"message\": \"missing key\"}\n");
             return;
         }
@@ -613,7 +597,7 @@ static size_t process_json_stream(client_ctx_t *ctx, char *data, size_t len, tri
             char *mutable_obj_end = (char*)obj_end;
             char saved = *mutable_obj_end;
             *mutable_obj_end = '\0';
-            process_single_object(ctx, obj_start, trie);
+            process_single_object(ctx, obj_start, (size_t)(obj_end - obj_start), trie);
             *mutable_obj_end = saved;
             p = mutable_obj_end;
         } else {
