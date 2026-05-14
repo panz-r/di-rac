@@ -31,6 +31,9 @@ impl OutputManager {
     /// For bash: extract stdout + stderr as plain text.
     /// For other tools: serialize the JSON.
     fn extract_content(result: &serde_json::Value) -> String {
+        if let Some(s) = result.as_str() {
+            return s.to_string();
+        }
         if let Some(stdout) = result.get("stdout").and_then(|v| v.as_str()) {
             // Bash-style result: combine stdout and stderr
             let mut content = stdout.to_string();

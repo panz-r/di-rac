@@ -1634,13 +1634,32 @@ impl AgentEngine {
                             result: json!({ "status": if advisory.allowed { "compact_advisory" } else { "compact_rejected" } }),
                         }).await?;
                     } else {
+                        let mut result = result;
+
+                        // Apply read file formatting FIRST: hash-anchored lines, unchanged detection.
+                        // Must run before OutputManager budget enforcement so that:
+                        // (a) the _read_raw marker is still present for detection, and
+                        // (b) OutputManager measures formatted text size, not raw JSON.
+                        if tool_name == "read" && result.get("_read_raw").is_some() {
+                            if let Some(p) = result.get("path").and_then(|v| v.as_str()) {
+                                self.file_context.pre_increment_read(p);
+                            }
+                            if let Some(results) = result.get("results").and_then(|v| v.as_array()) {
+                                for r in results {
+                                    if let Some(p) = r.get("path").and_then(|v| v.as_str()) {
+                                        self.file_context.pre_increment_read(p);
+                                    }
+                                }
+                            }
+                            result = self.format_read_result(&result);
+                        }
+
                         // Output budget enforcement: write large tool results to disk.
-                        let mut result = if tool_name == "bash" || tool_name == "read" {
+                        // Now runs on formatted text (for reads) or raw output (for bash).
+                        if tool_name == "bash" || tool_name == "read" {
                             let om = self.output_manager.lock().unwrap();
-                            om.enforce_budget(result, &tool_name)
-                        } else {
-                            result
-                        };
+                            result = om.enforce_budget(result, &tool_name);
+                        }
 
                         // Write-execute risk detection: warn when bash runs a script
                         // that was written/edited by the agent in this session.
@@ -1734,23 +1753,6 @@ impl AgentEngine {
                             } else if result.get("status").is_none() || result.get("status").and_then(|v| v.as_str()) != Some("error") {
                                 self.write_missing_content_count = 0;
                             }
-                        }
-
-                        // Apply read file formatting: hash-anchored lines, unchanged detection
-                        if tool_name == "read" && result.get("_read_raw").is_some() {
-                            // Pre-increment read count so auto-expand logic sees correct count
-                            if let Some(p) = result.get("path").and_then(|v| v.as_str()) {
-                                self.file_context.pre_increment_read(p);
-                            }
-                            // Also pre-increment for multi-file reads
-                            if let Some(results) = result.get("results").and_then(|v| v.as_array()) {
-                                for r in results {
-                                    if let Some(p) = r.get("path").and_then(|v| v.as_str()) {
-                                        self.file_context.pre_increment_read(p);
-                                    }
-                                }
-                            }
-                            result = self.format_read_result(&result);
                         }
 
                         let estimated_tokens = self.estimator.count_text(&result.to_string());

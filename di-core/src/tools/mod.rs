@@ -149,8 +149,11 @@ impl ToolCoordinator {
             value
         };
 
-        // 4. Cache store with bounded eviction (skip error results)
-        if is_cacheable && value.get("status").and_then(|v| v.as_str()) != Some("error") {
+        // 4. Cache store with bounded eviction (skip error results and pre-format read blobs)
+        if is_cacheable
+            && value.get("status").and_then(|v| v.as_str()) != Some("error")
+            && value.get("_read_raw").is_none()
+        {
             if self.cache.len() >= MAX_CACHE_ENTRIES {
                 // Remove oldest 25% to avoid unbounded growth
                 let evict_count = MAX_CACHE_ENTRIES / 4;
