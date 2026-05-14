@@ -652,6 +652,9 @@ func ValidateRequest(req *Request) error {
 	if req.MaxTokens > 1_000_000 {
 		return fmt.Errorf("max_tokens too large: %d (max 1,000,000)", req.MaxTokens)
 	}
+	if len(req.Settings) > 100 {
+		return fmt.Errorf("too many settings keys: %d (max 100)", len(req.Settings))
+	}
 
 	pendingToolCalls := make(map[string]string) // id -> name
 

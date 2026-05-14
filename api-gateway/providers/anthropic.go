@@ -632,6 +632,12 @@ func (h *AnthropicHandler) ValidateSettings(settings map[string]interface{}, thi
 						Message: "Only applies in thinking mode",
 					}
 				}
+				if n := toFloat(val); n > 0 && n < 1024 {
+					return &SettingValidation{
+						Error: "Anthropic requires budget_tokens >= 1024",
+						Value: 1024,
+					}
+				}
 			}
 			return nil
 		}),
