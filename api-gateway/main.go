@@ -462,7 +462,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			cfg.ID = modelsReq.Provider
 			s.configMu.RLock()
 			if stored, ok := s.providerConfigs[modelsReq.Provider]; ok {
-				if cfg.APIKey == "" && (cfg.BaseURL == "" || cfg.BaseURL == stored.BaseURL) {
+				if cfg.APIKey == "" && (cfg.BaseURL == "" || sameHostPort(cfg.BaseURL, stored.BaseURL)) {
 					cfg.APIKey = stored.APIKey
 				}
 				if cfg.BaseURL == "" {
@@ -518,7 +518,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			cfg.ID = modelInfoReq.Provider
 			s.configMu.RLock()
 			if stored, ok := s.providerConfigs[modelInfoReq.Provider]; ok {
-				if cfg.APIKey == "" && (cfg.BaseURL == "" || cfg.BaseURL == stored.BaseURL) {
+				if cfg.APIKey == "" && (cfg.BaseURL == "" || sameHostPort(cfg.BaseURL, stored.BaseURL)) {
 					cfg.APIKey = stored.APIKey
 				}
 				if cfg.BaseURL == "" {
@@ -742,7 +742,9 @@ func (s *Server) mergeProviderConfig(req *Request) error {
 	}
 	// Do not merge stored API key when the request overrides base_url to
 	// a different host. This prevents key exfiltration via base_url redirect.
-	overridesBaseURL := req.Provider.BaseURL != "" && req.Provider.BaseURL != stored.BaseURL
+	// Compare only host+port (not path) so changing /v1 → /v2 on the same
+	// host still merges the key (same destination), but a different host blocks it.
+	overridesBaseURL := req.Provider.BaseURL != "" && !sameHostPort(req.Provider.BaseURL, stored.BaseURL)
 	if req.Provider.APIKey == "" && !overridesBaseURL {
 		req.Provider.APIKey = stored.APIKey
 	}
@@ -1082,6 +1084,17 @@ func (s *Server) handleNonStreaming(ctx context.Context, id int64, handler provi
 			Retriable: lastRetriable,
 		},
 	}
+}
+
+// sameHostPort returns true if two URLs have the same host and port.
+// Used to detect base_url host changes without false positives on path differences.
+func sameHostPort(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return a == b // fallback to exact match on parse failure
+	}
+	return ua.Host == ub.Host
 }
 
 // isSafeBaseURL rejects URLs that point to private/internal networks (SSRF protection).
