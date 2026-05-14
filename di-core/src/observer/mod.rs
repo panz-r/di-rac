@@ -4,7 +4,44 @@ pub mod store;
 use crate::agent::trajectory::{Trajectory, Message, Role};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, HashMap};
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// ---------------------------------------------------------------------------
+// Precompiled regexes (Fixes #4: avoid recompilation on hot paths)
+// ---------------------------------------------------------------------------
+
+static RE_TOOL_CODE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#""tool_code":\s*"([a-zA-Z0-9_]+)""#).expect("invalid regex")
+});
+
+static RE_PATH: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#""path":\s*"([^"]+)""#).expect("invalid regex")
+});
+
+static RE_START_LINE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#""start_line":\s*([0-9]+)"#).expect("invalid regex")
+});
+
+static RE_INSTRUCTION: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#""instruction":\s*"([^"]+)""#).expect("invalid regex")
+});
+
+static RE_CONFIDENCE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"confidence:([0-9.]+)").expect("invalid regex")
+});
+
+static RE_CRITIC_ACTION: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"action:(CONTINUE|REFLECT|RESTART)").expect("invalid regex")
+});
+
+static RE_ENVELOPE_START: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^\[OBSERVER:\w+\s*\|[^]]*\]\s*").expect("invalid regex")
+});
+
+static RE_ENVELOPE_END: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\s*\[END_OBSERVER\]\s*$").expect("invalid regex")
+});
 
 // ---------------------------------------------------------------------------
 // SQS (Search Quality Score) types
@@ -219,18 +256,67 @@ pub struct ActionFeatures {
     pub instruction: Option<String>,
 }
 
-/// Extract structured action features from messages using regex matching TS patterns.
+/// Extract structured action features from messages.
+/// First looks at structured `msg.tool_calls`, then falls back to regex on content (Fixes #2).
 /// `ast_delta` is the net AST node change (added - removed) for the last action, if available.
 pub fn extract_action_features(msgs: &[&Message], ast_delta: Option<i32>) -> Vec<ActionFeatures> {
     msgs.iter().enumerate().map(|(i, msg)| {
         let content = msg.content.to_string();
-        let tool = regex_lazy_capture(&content, r#"tool_code":\s*"([a-zA-Z0-9_]+)"#)
-            .unwrap_or_else(|| "think".to_string());
-        let file = regex_lazy_capture(&content, r#"path":\s*"([^"]+)""#)
-            .unwrap_or_else(|| "global".to_string());
-        let line_range = regex_lazy_capture(&content, r#"start_line":\s*([0-9]+)"#)
-            .unwrap_or_else(|| "0".to_string());
-        let instruction = regex_lazy_capture(&content, r#"instruction":\s*"([^"]+)""#);
+
+        // Try structured tool_calls first
+        let (tool, file, line_range, instruction) = if let Some(tc) = msg.tool_calls.first() {
+            let tool_name = tc.name.clone();
+            let args: Option<serde_json::Value> = serde_json::from_str(&tc.arguments).ok();
+
+            let file_path = args.as_ref()
+                .and_then(|v| v.get("path").and_then(|v| v.as_str()))
+                .or_else(|| args.as_ref()
+                    .and_then(|v| v.get("paths").and_then(|v| {
+                        if let Some(arr) = v.as_array() {
+                            arr.first().and_then(|f| f.as_str())
+                        } else {
+                            v.as_str()
+                        }
+                    })))
+                .unwrap_or("global")
+                .to_string();
+
+            let lr = args.as_ref()
+                .and_then(|v| v.get("start_line").and_then(|v| v.as_i64()))
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "0".to_string());
+
+            let instr = args.as_ref()
+                .and_then(|v| v.get("content").and_then(|v| v.as_str()))
+                .or_else(|| args.as_ref()
+                    .and_then(|v| v.get("command").and_then(|v| v.as_str()))
+                    .or_else(|| args.as_ref()
+                        .and_then(|v| v.get("text").and_then(|v| v.as_str()))
+                        .or_else(|| args.as_ref()
+                            .and_then(|v| v.get("query").and_then(|v| v.as_str()))
+                            .or_else(|| args.as_ref()
+                                .and_then(|v| v.get("regex").and_then(|v| v.as_str()))))))
+                .map(|s| {
+                    if s.len() > 200 {
+                        format!("{}...", &s[..s.floor_char_boundary(200)])
+                    } else {
+                        s.to_string()
+                    }
+                });
+
+            (tool_name, file_path, lr, instr)
+        } else {
+            // Fallback: regex on content string
+            let t = regex_capture(&content, &RE_TOOL_CODE)
+                .unwrap_or_else(|| "think".to_string());
+            let f = regex_capture(&content, &RE_PATH)
+                .unwrap_or_else(|| "global".to_string());
+            let lr = regex_capture(&content, &RE_START_LINE)
+                .unwrap_or_else(|| "0".to_string());
+            let instr = regex_capture(&content, &RE_INSTRUCTION);
+            (t, f, lr, instr)
+        };
+
         let success = !content.contains("error");
         let ext = file.rsplit('.').next().unwrap_or("python").to_string();
 
@@ -264,9 +350,8 @@ pub fn extract_action_features(msgs: &[&Message], ast_delta: Option<i32>) -> Vec
     }).collect()
 }
 
-fn regex_lazy_capture(text: &str, pattern: &str) -> Option<String> {
-    regex::Regex::new(pattern).ok()
-        .and_then(|re| re.captures(text))
+fn regex_capture(text: &str, re: &regex::Regex) -> Option<String> {
+    re.captures(text)
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().to_string())
 }
@@ -321,24 +406,22 @@ pub fn parse_llm_observation(text: &str, obs_type: ObservationType) -> Option<Pa
         return None;
     }
 
-    // Extract confidence from pattern: confidence:0.XX
-    let confidence = regex::Regex::new(r"confidence:([0-9.]+)")
-        .ok()
-        .and_then(|re| re.captures(trimmed))
+    // Extract confidence from pattern: confidence:0.XX, validate in [0,1] (Fixes #9)
+    let confidence = RE_CONFIDENCE
+        .captures(trimmed)
         .and_then(|caps| caps.get(1))
         .and_then(|m| m.as_str().parse::<f32>().ok())
+        .map(|c| c.clamp(0.0, 1.0))
         .unwrap_or(0.5);
 
     // Extract action from pattern: action:ACTION (critic only)
     let critic_action = if obs_type == ObservationType::Critic {
-        regex::Regex::new(r"action:(CONTINUE|REFLECT|RESTART)")
-            .ok()
-            .and_then(|re| re.captures(trimmed))
-            .and_then(|caps| caps.get(1))
-            .map(|m| match m.as_str() {
-                "CONTINUE" => CriticAction::Continue,
-                "REFLECT" => CriticAction::Reflect,
-                "RESTART" => CriticAction::Restart,
+        RE_CRITIC_ACTION
+            .captures(trimmed)
+            .map(|caps| match caps.get(1).map(|m| m.as_str()) {
+                Some("CONTINUE") => CriticAction::Continue,
+                Some("REFLECT") => CriticAction::Reflect,
+                Some("RESTART") => CriticAction::Restart,
                 _ => CriticAction::Continue,
             })
     } else {
@@ -357,16 +440,8 @@ pub fn parse_llm_observation(text: &str, obs_type: ObservationType) -> Option<Pa
 
 /// Strip [OBSERVER:TYPE | ...] and [END_OBSERVER] envelope markers.
 fn strip_observation_envelope(text: &str) -> String {
-    let re_start = regex::Regex::new(r"^\[OBSERVER:\w+\s*\|[^]]*\]\s*").ok();
-    let re_end = regex::Regex::new(r"\s*\[END_OBSERVER\]\s*$").ok();
-
-    let mut result = text.to_string();
-    if let Some(re) = re_start {
-        result = re.replace(&result, "").to_string();
-    }
-    if let Some(re) = re_end {
-        result = re.replace(&result, "").to_string();
-    }
+    let mut result = RE_ENVELOPE_START.replace(text, "").to_string();
+    result = RE_ENVELOPE_END.replace(&result, "").to_string();
     // For critic: strip the "REASON: " prefix
     result = result.trim_start_matches("REASON: ").to_string();
     result.trim().to_string()
@@ -933,13 +1008,15 @@ impl Observer {
     }
 
     /// Adaptive critic cooldown: base frequency adjusted by file spread and error type.
+    /// Uses a sliding window of the last 5 edits (Fixes #8).
     fn critic_cooldown(&self) -> usize {
         let base = self.config.critic_frequency;
-        let spread = self.recent_edits.len();
+        // Only consider last 5 edits for spread
+        let recent_edit_count = self.recent_edits.iter().rev().take(5).count();
         let has_errors = !self.recent_errors.is_empty();
 
         // More files touched = shorter cooldown (more likely to need correction)
-        let spread_adj = if spread > 5 { 2 } else if spread > 2 { 1 } else { 0 };
+        let spread_adj = if recent_edit_count > 3 { 2 } else if recent_edit_count > 1 { 1 } else { 0 };
         // Recent errors = shorter cooldown
         let error_adj = if has_errors { 1 } else { 0 };
 
@@ -2167,6 +2244,10 @@ impl Observer {
         };
 
         self.store.archive_and_replace(obs);
+        // Clear skeleton tracking after reflection to prevent stale accumulation (Fixes #3)
+        self.recent_edits.clear();
+        self.recent_errors.clear();
+        self.recent_decisions.clear();
         self.turns_since_last_reflection = 0;
         self.metrics.reflect_actions += 1;
         self.metrics.reflections_fired += 1;

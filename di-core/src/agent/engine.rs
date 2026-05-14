@@ -344,7 +344,7 @@ impl AgentEngine {
         Self {
             id,
             trajectory: Trajectory::new(),
-            observer: Observer::new(crate::observer::ObserverConfig::default()),
+            observer: Observer::new_with_task(crate::observer::ObserverConfig::default(), &id.to_string()),
             context_manager: ContextManager::new(32000, 24000),
             gateway_client,
             tool_executor: ToolExecutor::new(
@@ -720,7 +720,7 @@ impl AgentEngine {
         let rest = &text[start + marker.len()..];
         let end = rest.chars().position(|c| c == ']' || c == ')')?;
         let hash = &rest[..end];
-        if !hash.is_empty() && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !hash.is_empty() && hash.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             Some(hash.to_string())
         } else {
             None
@@ -781,7 +781,9 @@ impl AgentEngine {
         }
         // Re-inject non-consumed messages back into the channel
         for msg in to_reinject {
-            let _ = self.frontend_tx.try_send(msg);
+            if let Err(e) = self.frontend_tx.try_send(msg) {
+                eprintln!("[di-core] drain_user_responses: failed to re-inject message: {}", e);
+            }
         }
         if should_abort {
             self.request_abort();
@@ -1227,7 +1229,7 @@ impl AgentEngine {
         }
 
         // Blocking summarizer: when unobserved token ratio exceeds blockAfter, compress synchronously
-        if self.observer.config.enabled && self.observer.config.use_llm_observations {
+        if self.observer.config.enabled {
             if let Some(ref intr) = interrupt {
                 if intr.needs_sync_summary {
                     self.run_sync_summarizer().await;
@@ -1439,7 +1441,7 @@ impl AgentEngine {
             max_tokens: None,
             temperature: None,
             thinking: None,
-            timeout: Some(240000),
+            timeout: Some(self.frontend_timeout_ms.unwrap_or(240000).max(60000) as i64),
         };
 
         // Debug: dump request to log
@@ -2032,8 +2034,8 @@ impl AgentEngine {
                                 let risky_paths: Vec<&str> = self.file_context.files_edited.iter()
                                     .filter(|p| {
                                         let path = p.as_str();
-                                        let has_script_ext = script_extensions.iter().any(|ext| path.ends_with(ext));
-                                        has_script_ext && cmd.contains(path)
+                                let has_script_ext = script_extensions.iter().any(|ext| path.ends_with(ext));
+                                has_script_ext && Self::path_in_command(cmd, path)
                                     })
                                     .map(|p| p.as_str())
                                     .collect();
@@ -2761,6 +2763,11 @@ impl AgentEngine {
             }
         }
         Ok(())
+    }
+
+    /// Check whether a bash command references a given file path.
+    fn path_in_command(cmd: &str, path: &str) -> bool {
+        cmd.contains(path) || cmd.split_whitespace().any(|tok| tok == path)
     }
 }
 
