@@ -303,8 +303,10 @@ trie_node_t* trie_traverse(trie_t *trie, const char *path, bool create, bool *an
         const char *seg_start = p;
         while (*p && *p != '/') p++;
         size_t seg_len = (size_t)(p - seg_start);
-        if (seg_len == 1 && seg_start[0] == '.') {}
-        else if (seg_len == 2 && seg_start[0] == '.' && seg_start[1] == '.') { if (seg_count > 0) seg_count--; }
+        /* Use content comparison (memcmp), not length-based heuristics,
+         * to avoid silent collision with method-name-length segments. */
+        if (seg_len == 1 && memcmp(seg_start, ".", 1) == 0) {}
+        else if (seg_len == 2 && memcmp(seg_start, "..", 2) == 0) { if (seg_count > 0) seg_count--; }
         else {
             if (seg_len > 127) seg_len = 127;  /* cap to fit in 128-byte slot */
             memcpy(seg_buf + seg_count * 128, seg_start, seg_len);
@@ -342,11 +344,14 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
             ht_config_t cfg = {.initial_capacity = 16, .max_load_factor = 0.75, .min_load_factor = 0.20, .tomb_threshold = 0.20, .zombie_window = 8};
             kv = ht_create(&cfg, string_hash, string_eq, NULL);
             if (!kv) return -1;
-            if (!ht_insert(trie->transient_registry, &fd, sizeof(int), &kv, sizeof(ht_table_t*))) {
+            ht_insert_result_t ins = ht_insert(trie->transient_registry, &fd, sizeof(int), &kv, sizeof(ht_table_t*));
+            if (ins == HT_INSERT_FAILED) {
                 ht_destroy(kv);
                 ht_remove(trie->transient_registry, &fd, sizeof(int));
                 return -1;
             }
+            /* HT_INSERT_UPDATE: key already existed, old entry untouched, kv is orphaned — discard it */
+            if (ins == HT_INSERT_UPDATE) ht_destroy(kv);
         }
         
         const void *existing = ht_find(kv, key, klen, &ulen);
@@ -360,13 +365,15 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
 
         if (value) {
             char *v_copy = strdup(value);
-            if (!ht_insert(kv, key, klen, &v_copy, sizeof(char*))) {
+            ht_insert_result_t ins_kv = ht_insert(kv, key, klen, &v_copy, sizeof(char*));
+            if (ins_kv == HT_INSERT_FAILED) {
                 free(v_copy);
                 if (existing_copy) {
                     ht_insert(kv, key, klen, &existing_copy, sizeof(char*));
                 }
                 return -1;
             }
+            /* HT_INSERT_UPDATE or HT_INSERT_OK: existing_copy is superseded */
             if (existing_copy) free(existing_copy);
         } else {
             free(existing_copy);
@@ -387,13 +394,15 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
 
         if (value) {
             char *v_copy = strdup(value);
-            if (!ht_insert(node->settings, key, klen, &v_copy, sizeof(char*))) {
+            ht_insert_result_t ins_settings = ht_insert(node->settings, key, klen, &v_copy, sizeof(char*));
+            if (ins_settings == HT_INSERT_FAILED) {
                 free(v_copy);
                 if (existing_copy) {
                     ht_insert(node->settings, key, klen, &existing_copy, sizeof(char*));
                 }
                 return -1;
             }
+            /* HT_INSERT_UPDATE or HT_INSERT_OK: existing_copy is superseded, free it */
             if (existing_copy) free(existing_copy);
         } else {
             free(existing_copy);
@@ -424,8 +433,10 @@ char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
         const char *seg_start = p;
         while (*p && *p != '/') p++;
         size_t seg_len = (size_t)(p - seg_start);
-        if (seg_len == 1 && seg_start[0] == '.') {}
-        else if (seg_len == 2 && seg_start[0] == '.' && seg_start[1] == '.') { if (seg_count > 0) seg_count--; }
+        /* Use content comparison (memcmp), not length-based heuristics,
+         * to avoid silent collision with method-name-length segments. */
+        if (seg_len == 1 && memcmp(seg_start, ".", 1) == 0) {}
+        else if (seg_len == 2 && memcmp(seg_start, "..", 2) == 0) { if (seg_count > 0) seg_count--; }
         else {
             if (seg_len > 127) seg_len = 127;  /* cap to fit in 128-byte slot */
             memcpy(seg_buf + seg_count * 128, seg_start, seg_len);
@@ -460,7 +471,7 @@ static void persist_escape(const char *src, size_t klen, char *dst, size_t dst_l
     size_t dst_pos = 0;
     for (size_t i = 0; i < klen && dst_pos + 1 < dst_len; i++) {
         char c = src[i];
-        if (c == '\\' || c == '|' || c == '=' || c == '\n') {
+        if (c == '\\' || c == '|' || c == '=' || c == '\n' || c == '\r') {
             if (dst_pos + 2 >= dst_len) break;
             dst[dst_pos++] = '\\';
             switch (c) {
@@ -468,6 +479,7 @@ static void persist_escape(const char *src, size_t klen, char *dst, size_t dst_l
                 case '|':  dst[dst_pos++] = 'c'; break;
                 case '=':  dst[dst_pos++] = 'e'; break;
                 case '\n': dst[dst_pos++] = 'n'; break;
+                case '\r': dst[dst_pos++] = 'r'; break;
             }
         } else {
             dst[dst_pos++] = c;
@@ -487,6 +499,7 @@ static void persist_unescape(const char *src, size_t slen, char *dst, size_t dst
                 case 'c':  dst[dst_pos++] = '|'; break;
                 case 'e':  dst[dst_pos++] = '='; break;
                 case 'n':  dst[dst_pos++] = '\n'; break;
+                case 'r':  dst[dst_pos++] = '\r'; break;
                 default:   dst[dst_pos++] = src[i]; break;
             }
         } else {
@@ -531,6 +544,8 @@ static void node_save_recursive_iterative(trie_node_t *root, FILE *f, char *path
         const void *key, *val;
         size_t klen, vlen;
         while (ht_iter_next(entry.node->settings, &it, &key, &klen, &val, &vlen)) {
+            /* parent_path_len is at most 8191 (buffer is 8192); guard anyway */
+            if (entry.parent_path_len >= 8192) { *truncated = 1; continue; }
             persist_escape(path_buf, entry.parent_path_len, escaped_path, 8192);
             persist_escape((const char*)key, klen, escaped_key, 1024);
             persist_escape(*(char**)val, strlen(*(char**)val), escaped_val, 8192);

@@ -237,6 +237,8 @@ static int broadcast_config_update(int sender_fd, const char *path, const char *
     return 0;
 }
 
+/* Async-signal-safe stats formatting — no snprintf (not async-signal-safe).
+ * Manual integer-to-string conversion and bounded memcpy only. */
 static void handle_stats(int sig) {
     (void)sig;
     size_t total_clients = 0;
@@ -246,16 +248,57 @@ static void handle_stats(int sig) {
     if (lock_trie) trie_get_stats(lock_trie, &trie_nodes, &trie_waiters, &trie_locks);
 
     char buf[512];
-    int n = snprintf(buf, sizeof(buf),
-            "[di-vrr] --- Health Snapshot ---\n"
-            "[di-vrr] Clients: %zu/%d\n"
-            "[di-vrr] Trie nodes: %zu\n"
-            "[di-vrr] Locked paths: %zu\n"
-            "[di-vrr] Total waiters: %zu\n"
-            "[di-vrr] --------------------------\n",
-            total_clients, MAX_EVENTS,
-            trie_nodes, trie_locks, trie_waiters);
-    ssize_t _r = write(STDERR_FILENO, buf, (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf));
+    size_t pos = 0;
+
+    /* write_str: copy NUL-terminated string fragment into buf */
+    const char *prefix = "[di-vrr] --- Health Snapshot ---\n";
+    size_t plen = strlen(prefix);
+    if (pos + plen < sizeof(buf)) { memcpy(buf + pos, prefix, plen); pos += plen; }
+
+    /* "Clients: " */
+    const char *clabel = "[di-vrr] Clients: ";
+    size_t llen = strlen(clabel);
+    if (pos + llen < sizeof(buf)) { memcpy(buf + pos, clabel, llen); pos += llen; }
+
+    /* integer: total_clients */
+    {
+        char tmp[32]; int off = 0;
+        size_t v = total_clients;
+        if (v == 0) tmp[off++] = '0';
+        else { char rev[32]; int r = 0; while (v > 0) { rev[r++] = '0' + (char)(v % 10); v /= 10; } while (r > 0) tmp[off++] = rev[--r]; }
+        if (pos + (size_t)off < sizeof(buf)) { memcpy(buf + pos, tmp, (size_t)off); pos += (size_t)off; }
+    }
+    /* "/" */
+    if (pos + 1 < sizeof(buf)) { buf[pos++] = '/'; }
+    /* MAX_EVENTS integer */
+    {
+        char tmp[32]; int off = 0;
+        size_t v = (size_t)MAX_EVENTS;
+        if (v == 0) tmp[off++] = '0';
+        else { char rev[32]; int r = 0; while (v > 0) { rev[r++] = '0' + (char)(v % 10); v /= 10; } while (r > 0) tmp[off++] = rev[--r]; }
+        if (pos + (size_t)off < sizeof(buf)) { memcpy(buf + pos, tmp, (size_t)off); pos += (size_t)off; }
+    }
+
+    const char *nl = "\n[di-vrr] Trie nodes: ";
+    plen = strlen(nl);
+    if (pos + plen < sizeof(buf)) { memcpy(buf + pos, nl, plen); pos += plen; }
+    { char tmp[32]; int off = 0; size_t v = trie_nodes; if (v == 0) tmp[off++] = '0'; else { char rev[32]; int r = 0; while (v > 0) { rev[r++] = '0' + (char)(v % 10); v /= 10; } while (r > 0) tmp[off++] = rev[--r]; } if (pos + (size_t)off < sizeof(buf)) { memcpy(buf + pos, tmp, (size_t)off); pos += (size_t)off; } }
+
+    nl = "\n[di-vrr] Locked paths: ";
+    plen = strlen(nl);
+    if (pos + plen < sizeof(buf)) { memcpy(buf + pos, nl, plen); pos += plen; }
+    { char tmp[32]; int off = 0; size_t v = trie_locks; if (v == 0) tmp[off++] = '0'; else { char rev[32]; int r = 0; while (v > 0) { rev[r++] = '0' + (char)(v % 10); v /= 10; } while (r > 0) tmp[off++] = rev[--r]; } if (pos + (size_t)off < sizeof(buf)) { memcpy(buf + pos, tmp, (size_t)off); pos += (size_t)off; } }
+
+    nl = "\n[di-vrr] Total waiters: ";
+    plen = strlen(nl);
+    if (pos + plen < sizeof(buf)) { memcpy(buf + pos, nl, plen); pos += plen; }
+    { char tmp[32]; int off = 0; size_t v = trie_waiters; if (v == 0) tmp[off++] = '0'; else { char rev[32]; int r = 0; while (v > 0) { rev[r++] = '0' + (char)(v % 10); v /= 10; } while (r > 0) tmp[off++] = rev[--r]; } if (pos + (size_t)off < sizeof(buf)) { memcpy(buf + pos, tmp, (size_t)off); pos += (size_t)off; } }
+
+    nl = "\n[di-vrr] --------------------------\n";
+    plen = strlen(nl);
+    if (pos + plen < sizeof(buf)) { memcpy(buf + pos, nl, plen); pos += plen; }
+
+    ssize_t _r = write(STDERR_FILENO, buf, pos < sizeof(buf) ? pos : sizeof(buf));
     (void)_r; /* async-signal-safe, nothing we can do on failure */
 }
 
@@ -316,10 +359,12 @@ static int json_unescape(const char *src, char *dst, size_t dst_len) {
                                    dst[dst_pos++] = (char)(0x80 | (cp & 0x3F));
                                }
                            } break;
-                default:   if (dst_pos + 2 >= dst_len) return -1;
+                default: {
+                           /* Invalid escape: copy both backslash and char literally */
+                           if (dst_pos + 2 >= dst_len) return -1;
                            dst[dst_pos++] = '\\';
                            dst[dst_pos++] = *p;
-                           break;
+                       } break;
             }
         }
     }
@@ -715,9 +760,14 @@ int main(int argc, char *argv[]) {
     if (fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK) < 0) { perror("fcntl F_SETFL"); exit(1); }
 
     g_epoll_fd = epoll_create1(0);
+    if (g_epoll_fd < 0) { perror("epoll_create1"); exit(1); }
     ev.events = EPOLLIN;
     ev.data.fd = listen_fd;
-    epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, listen_fd, &ev);
+    if (epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, listen_fd, &ev) < 0) {
+        perror("epoll_ctl ADD listen_fd");
+        close(listen_fd);
+        exit(1);
+    }
 
     printf("[di-vrr] Coordination Daemon ready on %s\n", bound_socket_path);
     if (persist_path[0]) printf("[di-vrr] Persistence enabled: %s\n", persist_path);
