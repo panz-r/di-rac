@@ -360,6 +360,22 @@ func IsRetriable(err error) bool {
 	return false
 }
 
+// wrapTransientError wraps a network/transport error as a retriable ProviderAPIError.
+// If the error is already a ProviderAPIError it is returned unchanged.
+func wrapTransientError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := err.(*ProviderAPIError); ok {
+		return err
+	}
+	return &ProviderAPIError{
+		StatusCode: 0,
+		Message:    err.Error(),
+		Retriable:  true,
+	}
+}
+
 // IsContextExceeded returns true if the error indicates the provider's context
 // window was exceeded. Each provider detects this from its own error format.
 func IsContextExceeded(err error) bool {

@@ -517,7 +517,7 @@ func (h *AnthropicHandler) ListModels(ctx context.Context, cfg ProviderConfig) (
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, wrapTransientError(err)
 	}
 	defer resp.Body.Close()
 

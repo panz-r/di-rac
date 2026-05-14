@@ -89,7 +89,7 @@ func (h *openaiCompatHandler) Send(ctx context.Context, req *Request) (*SendResu
 
 	resp, err := h.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, wrapTransientError(fmt.Errorf("request failed: %w", err))
 	}
 	defer resp.Body.Close()
 
@@ -132,7 +132,7 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 
 	resp, err := h.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return wrapTransientError(fmt.Errorf("request failed: %w", err))
 	}
 	defer resp.Body.Close()
 

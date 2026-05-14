@@ -54,7 +54,10 @@ func (h *GeminiHandler) Send(ctx context.Context, req *Request) (*SendResult, er
 	}
 
 	model := h.configureModel(client, req)
-	session, lastParts := h.buildSession(model, req)
+	session, lastParts, err := h.buildSession(model, req)
+	if err != nil {
+		return nil, err
+	}
 
 	iter := session.SendMessageStream(ctx, lastParts...)
 	var contentBlocks []ContentBlock
@@ -103,7 +106,10 @@ func (h *GeminiHandler) Stream(ctx context.Context, req *Request, callback func(
 	}
 
 	model := h.configureModel(client, req)
-	session, lastParts := h.buildSession(model, req)
+	session, lastParts, err := h.buildSession(model, req)
+	if err != nil {
+		return err
+	}
 
 	log.Printf("[Gemini:Stream] model=%s msgs=%d history=%d tools=%d", req.Provider.Model, len(req.Messages), len(session.History), len(req.Tools))
 
@@ -260,7 +266,7 @@ func (h *GeminiHandler) configureModel(client *genai.Client, req *Request) *gena
 // buildSession creates a ChatSession with history from all messages except the last one,
 // and returns the session along with the last user message's parts.
 // This enables proper multi-turn conversation with the Gemini SDK.
-func (h *GeminiHandler) buildSession(model *genai.GenerativeModel, req *Request) (*genai.ChatSession, []genai.Part) {
+func (h *GeminiHandler) buildSession(model *genai.GenerativeModel, req *Request) (*genai.ChatSession, []genai.Part, error) {
 	// Pre-scan to build tool_use_id → function name map
 	toolUseIDToName := map[string]string{}
 	for _, msg := range req.Messages {
@@ -319,12 +325,11 @@ func (h *GeminiHandler) buildSession(model *genai.GenerativeModel, req *Request)
 		}
 	}
 
-	// If no last user message was found, just use empty text
 	if len(lastParts) == 0 {
-		lastParts = []genai.Part{genai.Text("")}
+		return nil, nil, fmt.Errorf("gemini: conversation must end with a user message")
 	}
 
-	return session, lastParts
+	return session, lastParts, nil
 }
 
 // buildContents converts messages to Gemini Content objects with proper roles.

@@ -194,7 +194,7 @@ func (h *ReplicateHandler) Send(ctx context.Context, req *Request) (*SendResult,
 
 	resp, err := SharedHTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("replicate: request failed: %w", err)
+		return nil, wrapTransientError(fmt.Errorf("replicate: request failed: %w", err))
 	}
 	defer resp.Body.Close()
 
@@ -281,7 +281,7 @@ func (h *ReplicateHandler) Stream(ctx context.Context, req *Request, callback fu
 
 	resp, err := SharedHTTPClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("replicate: request failed: %w", err)
+		return wrapTransientError(fmt.Errorf("replicate: request failed: %w", err))
 	}
 	defer resp.Body.Close()
 

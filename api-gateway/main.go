@@ -277,7 +277,7 @@ func (s *Server) stopLimiters() {
 
 // Start begins listening on the socket
 func (s *Server) Start() error {
-	if st, err := os.Lstat(SocketPath); err == nil {
+	if st, err := os.Stat(SocketPath); err == nil {
 		if st.Mode()&os.ModeSocket == 0 {
 			return fmt.Errorf("refusing to remove non-socket path: %s", SocketPath)
 		}

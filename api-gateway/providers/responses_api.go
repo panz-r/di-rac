@@ -652,8 +652,8 @@ func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(Stream
 		}
 		line := scanner.Text()
 
-		// Empty line = event boundary: flush accumulated data
-		if line == "" {
+		// Empty line (or whitespace-only) = event boundary
+		if strings.TrimSpace(line) == "" {
 			processEvent()
 			if processErr != nil {
 				return processErr
