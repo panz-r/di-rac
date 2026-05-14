@@ -1150,7 +1150,7 @@ impl AgentEngine {
         let current_tokens = self.trajectory.get_total_tokens();
         let token_limit = self.context_compiler.as_ref()
             .map(|c| c.token_limit())
-            .unwrap_or(128_000);
+            .unwrap_or(32_000);
         self.lifecycle.evaluate(current_tokens, token_limit);
         if self.lifecycle.should_compact() {
             if let Some(summary) = self.pending_compact_summary.take() {
@@ -1978,7 +1978,7 @@ impl AgentEngine {
                         let current_tokens = self.trajectory.get_total_tokens();
                         let token_limit = self.context_compiler.as_ref()
                             .map(|c| c.token_limit())
-                            .unwrap_or(128_000);
+                            .unwrap_or(32_000);
                         let advisory = self.lifecycle.evaluate_compact_advisory(
                             &safe_summary, current_tokens, token_limit,
                         );

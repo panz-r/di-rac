@@ -760,9 +760,9 @@ impl Observer {
 
     /// Create observer with a specific task-scoped store path.
     pub fn new_with_task(config: ObserverConfig, task_id: &str) -> Self {
-        let path = format!(".dirac/observations_{}.jsonl", task_id);
+        let _ = task_id; // kept for interface compatibility
         Self {
-            store: store::ObservationStore::new(Some(&path)),
+            store: store::ObservationStore::new_in_memory(),
             config,
             resolved_subgoals: HashSet::new(),
             forgotten_subgoals: HashSet::new(),

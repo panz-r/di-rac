@@ -45,8 +45,17 @@ const CACHE_STRIP_KEYS: &[&str] = &["clarify", "retry", "command", "call_id", "a
 // Tool Coordinator (caching, retry, auto-correction)
 // ---------------------------------------------------------------------------
 
+/// Cached tool result with freshness metadata for staleness detection.
+struct CacheEntry {
+    result: String,
+    mtime: Option<std::time::SystemTime>,
+    size: Option<u64>,
+    /// blake3 hash of first+last 4KB of file content (when applicable).
+    hash_prefix: Option<u64>,
+}
+
 pub struct ToolCoordinator {
-    cache: HashMap<String, String>,
+    cache: HashMap<String, CacheEntry>,
     router: ErrorRouter,
 }
 
@@ -73,6 +82,34 @@ impl ToolCoordinator {
         self.router.reset();
     }
 
+    /// Compute freshness metadata for a file (mtime, size, partial hash).
+    /// Used to detect external modifications in the read cache.
+    fn file_metadata(path: &std::path::Path) -> Option<(std::time::SystemTime, u64, u64)> {
+        let meta = std::fs::metadata(path).ok()?;
+        let mtime = meta.modified().ok()?;
+        let size = meta.len();
+        // Quick partial hash of first and last 4KB
+        let mut buf = Vec::with_capacity(8192);
+        let mut file = std::fs::File::open(path).ok()?;
+        use std::io::Read;
+        let mut head = [0u8; 4096];
+        let head_len = file.read(&mut head).unwrap_or(0);
+        let tail_offset = size.saturating_sub(4096);
+        let mut tail = [0u8; 4096];
+        let tail_len = if tail_offset > 0 {
+            let _ = std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(tail_offset));
+            file.read(&mut tail).unwrap_or(0)
+        } else {
+            0
+        };
+        buf.extend_from_slice(&head[..head_len]);
+        buf.extend_from_slice(&tail[..tail_len]);
+        let hash = blake3::hash(&buf);
+        // Use the first 8 bytes as a u64 prefix
+        let prefix = u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap());
+        Some((mtime, size, prefix))
+    }
+
     pub async fn execute_with_coordination(
         &mut self,
         call: &ToolCall,
@@ -81,10 +118,21 @@ impl ToolCoordinator {
         let is_cacheable = CACHEABLE_TOOLS.contains(&call.name.as_str());
         let cache_key = self.make_cache_key(call);
 
-        // 1. Cache check
+        // 1. Cache check with freshness validation for file-based tools
         if is_cacheable {
-            if let Some(cached) = self.cache.get(&cache_key) {
-                return Ok(serde_json::Value::String(format!("[Cache Hit]{}", cached)));
+            if let Some(entry) = self.cache.get(&cache_key) {
+                let mut fresh = true;
+                if call.name == "read" {
+                    if let Some(path_str) = call.args.get("path").and_then(|v| v.as_str()) {
+                        if let Some((mtime, size, hash)) = Self::file_metadata(std::path::Path::new(path_str)) {
+                            fresh = entry.mtime == Some(mtime) && entry.size == Some(size)
+                                || entry.hash_prefix == Some(hash);
+                        }
+                    }
+                }
+                if fresh {
+                    return Ok(serde_json::Value::String(format!("[Cache Hit]{}", entry.result)));
+                }
             }
         }
 
@@ -166,8 +214,24 @@ impl ToolCoordinator {
                 let keys: Vec<_> = self.cache.keys().take(evict_count).cloned().collect();
                 for k in keys { self.cache.remove(&k); }
             }
-            let serialized = value.to_string();
-            self.cache.insert(cache_key, serialized);
+            let (mtime, size, hash_prefix) = if call.name == "read" {
+                if let Some(path_str) = call.args.get("path").and_then(|v| v.as_str()) {
+                    Self::file_metadata(std::path::Path::new(path_str))
+                        .map(|(mt, sz, hp)| (Some(mt), Some(sz), Some(hp)))
+                        .unwrap_or((None, None, None))
+                } else {
+                    (None, None, None)
+                }
+            } else {
+                (None, None, None)
+            };
+            let entry = CacheEntry {
+                result: value.to_string(),
+                mtime,
+                size,
+                hash_prefix,
+            };
+            self.cache.insert(cache_key, entry);
         }
 
         if retry_count > 0 {
@@ -192,7 +256,28 @@ impl ToolCoordinator {
                 }
             }
         }
-        format!("{}:{}", call.name, args)
+        // Canonicalize arguments by sorting object keys for deterministic cache keys
+        let canonical = Self::canonicalize_value(&args);
+        format!("{}:{}", call.name, canonical)
+    }
+
+    /// Recursively sort JSON object keys for deterministic serialization.
+    fn canonicalize_value(v: &serde_json::Value) -> serde_json::Value {
+        match v {
+            serde_json::Value::Object(map) => {
+                let mut sorted = serde_json::Map::new();
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                for k in keys {
+                    sorted.insert(k.clone(), Self::canonicalize_value(&map[k]));
+                }
+                serde_json::Value::Object(sorted)
+            }
+            serde_json::Value::Array(arr) => {
+                serde_json::Value::Array(arr.iter().map(Self::canonicalize_value).collect())
+            }
+            _ => v.clone(),
+        }
     }
 
     async fn auto_correct_truncated(

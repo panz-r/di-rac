@@ -384,6 +384,15 @@ fn resolve_anchor(
     static ECHO_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^[a-z0-9_]{1,32}\|").unwrap());
     let provided_content = ECHO_RE.replace(&provided_content_raw, "").to_string();
 
+    // Bare hash (no content after the delimiter): trust the hash exists, skip verification
+    if provided_content.is_empty() {
+        return AnchorResolution {
+            line_idx: line_idx as i64,
+            error: None,
+            warning: None,
+        };
+    }
+
     if provided_content.contains('\n') || provided_content.contains('\r') {
         return AnchorResolution {
             line_idx: -1,
