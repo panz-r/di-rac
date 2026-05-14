@@ -29,6 +29,8 @@ pub enum LoopPattern {
     Widening,
     Oscillating,
     StuckWithForgetting,
+    RepeatedFileOp,
+    SyntaxLoop,
     Unknown,
 }
 
@@ -719,7 +721,7 @@ impl Observer {
     }
 
     /// Get net AST node delta (added - removed) from the last churn data.
-    fn ast_delta(&self) -> Option<i32> {
+    pub fn ast_delta(&self) -> Option<i32> {
         self.last_ast_churn.map(|(a, r, _)| a as i32 - r as i32)
     }
 
@@ -746,6 +748,36 @@ impl Observer {
     /// Get the current turn number.
     pub fn current_turn(&self) -> usize {
         self.current_turn
+    }
+
+    /// Access recent error messages.
+    pub fn recent_errors(&self) -> &[String] {
+        &self.recent_errors
+    }
+
+    /// Access the observation store.
+    pub fn store(&self) -> &crate::observer::store::ObservationStore {
+        &self.store
+    }
+
+    /// Access observer metrics.
+    pub fn metrics(&self) -> &ObserverMetrics {
+        &self.metrics
+    }
+
+    /// Access the cost tracker.
+    pub fn cost_tracker(&self) -> &ObserverCostTracker {
+        &self.cost_tracker
+    }
+
+    /// Get the last loop pattern.
+    pub fn last_loop_pattern(&self) -> &LoopPattern {
+        &self.last_loop_pattern
+    }
+
+    /// Get the current task tier.
+    pub fn current_tier(&self) -> TaskTier {
+        self.current_tier
     }
 
     /// Update the last observed message index after a summarizer/skeleton covers the trajectory.
@@ -798,6 +830,8 @@ impl Observer {
         if self.turns_since_last_observation >= self.config.watcher_frequency
             || sqs.status == "STAGNATING"
             || self.last_loop_pattern == LoopPattern::StuckWithForgetting
+            || self.last_loop_pattern == LoopPattern::SyntaxLoop
+            || self.last_loop_pattern == LoopPattern::RepeatedFileOp
         {
             self.trigger_watcher_observation(trajectory);
             self.turns_since_last_observation = 0;
@@ -841,6 +875,11 @@ impl Observer {
         let observation_tokens = self.store.estimate_token_count() as f32;
         let cap = self.config.memory_cap_tokens.max(1) as f32;
         self.metrics.token_efficiency.layer1_compression_ratio = observation_tokens / cap;
+
+        // Memory cap compaction: when observation tokens exceed cap, compress via reflection
+        if observation_tokens > cap && self.store.len() > 5 {
+            self.trigger_reflection();
+        }
 
         // Determine interrupt action
         let (action, reason, confidence) = self.determine_interrupt(&sqs);
@@ -1224,7 +1263,7 @@ impl Observer {
 
         let ee_ratio = self.calculate_ee_ratio(&assistant_msgs);
         let mono = self.calculate_monotonicity();
-        let diffusion = 0.4_f32; // TS returns constant 0.4
+        let diffusion = self.calculate_diffusion(&assistant_msgs);
         let dcr = self.calculate_dcr(&assistant_msgs);
         let cps = self.calculate_cps(&assistant_msgs);
 
@@ -1365,6 +1404,30 @@ impl Observer {
         0.25 * s0 + 0.30 * s1 + 0.25 * s2 + 0.20 * s3
     }
 
+    /// Diffusion: file-spread metric. High when agent touches many files without depth.
+    /// Matches TS computeDiffusion — measures ratio of unique files to total actions,
+    /// inversely weighted by per-file edit depth.
+    fn calculate_diffusion(&self, msgs: &[&Message]) -> f32 {
+        let features = extract_action_features(msgs, self.ast_delta());
+        if features.is_empty() {
+            return 0.4;
+        }
+        let unique_files: HashSet<&str> = features.iter()
+            .filter(|f| f.file != "global")
+            .map(|f| f.file.as_str())
+            .collect();
+        if unique_files.is_empty() {
+            return 0.4;
+        }
+        let total = features.len() as f32;
+        let spread = unique_files.len() as f32 / total;
+        // High spread (>3 files) with low depth → high diffusion
+        // Low spread (1 file) with depth → low diffusion
+        let depth = total / unique_files.len() as f32;
+        let depth_factor = 1.0 / (1.0 + depth * 0.5);
+        (spread * depth_factor).min(1.0)
+    }
+
     // -----------------------------------------------------------------------
     // Loop pattern classification
     // -----------------------------------------------------------------------
@@ -1436,9 +1499,18 @@ impl Observer {
             .map(|e| e.len() / 50) // bucket by ~50 char chunks
             .collect();
 
+        // Syntax loop — consecutive syntax errors in same file (check before generic Stuck)
+        let syntax_errors: Vec<&str> = contents.iter()
+            .filter(|c| c.contains("syntax") || c.contains("parse error") || c.contains("unexpected token"))
+            .map(|c| c.as_str())
+            .collect();
+        let unique_files: HashSet<&str> = features.iter().map(|f| f.file.as_str()).collect();
+        if syntax_errors.len() >= 2 && unique_files.len() <= 1 {
+            return LoopPattern::SyntaxLoop;
+        }
+
         if unique_errors.len() == 1 {
             // TS: unique_errors == 1
-            let unique_files: HashSet<&str> = features.iter().map(|f| f.file.as_str()).collect();
             if unique_files.len() > 1 {
                 return LoopPattern::Widening;
             }
@@ -1454,6 +1526,12 @@ impl Observer {
             return LoopPattern::Stuck;
         }
 
+        // Repeated file:op — same file and operation repeated 3+ times
+        let max_file_op = file_op_counts.values().max().copied().unwrap_or(0);
+        if max_file_op >= 3 {
+            return LoopPattern::RepeatedFileOp;
+        }
+
         LoopPattern::Productive
     }
 
@@ -1466,11 +1544,27 @@ impl Observer {
     fn build_observation_key(&self) -> ObservationKey {
         let signature = self.recent_edits.first()
             .map(|(path, _)| path.clone());
+        let docstring_hash = self.recent_edits.first()
+            .and_then(|(_, content)| {
+                let hashable = content.lines()
+                    .filter(|l| l.trim().starts_with("///") || l.trim().starts_with("/**") || l.trim().starts_with("*"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if hashable.is_empty() {
+                    None
+                } else {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    hashable.hash(&mut hasher);
+                    Some(format!("{:016x}", hasher.finish()))
+                }
+            });
         ObservationKey {
             signature,
             apis_called: Vec::new(),
             apis_defined: Vec::new(),
-            docstring_hash: None,
+            docstring_hash,
         }
     }
 
@@ -1937,6 +2031,8 @@ impl Observer {
             LoopPattern::StuckWithForgetting => format!("Reverting own changes detected. Previous fix was overwritten. Re-read before editing. Context: {}", safe_truncate(&context, 200)),
             LoopPattern::Oscillating => format!("Alternating between approaches without progress. Pick one strategy and commit to it. Context: {}", safe_truncate(&context, 200)),
             LoopPattern::Widening => format!("Errors spreading across multiple files. Focus on the root cause first. Context: {}", safe_truncate(&context, 200)),
+            LoopPattern::RepeatedFileOp => format!("Repeatedly editing the same file with the same operation. Verify the change is correct and move on. Context: {}", safe_truncate(&context, 200)),
+            LoopPattern::SyntaxLoop => format!("Consecutive syntax errors detected. Re-read the file and check syntax carefully before editing. Context: {}", safe_truncate(&context, 200)),
             LoopPattern::Productive | LoopPattern::Unknown => return,
         };
 
@@ -1997,6 +2093,8 @@ impl Observer {
         // Determine action from heuristic (in TS this comes from LLM output)
         let action = if self.last_loop_pattern == LoopPattern::StuckWithForgetting
             || self.last_loop_pattern == LoopPattern::Oscillating
+            || self.last_loop_pattern == LoopPattern::RepeatedFileOp
+            || self.last_loop_pattern == LoopPattern::SyntaxLoop
         {
             if self.consecutive_reflects >= self.config.tier_thresholds.restart_after_reflects - 1 {
                 CriticAction::Restart
@@ -2070,6 +2168,7 @@ impl Observer {
 
         self.store.archive_and_replace(obs);
         self.turns_since_last_reflection = 0;
+        self.metrics.reflect_actions += 1;
         self.metrics.reflections_fired += 1;
         self.metrics.token_efficiency.retrieval_stage_used = 1;
     }
@@ -3104,5 +3203,158 @@ mod tests {
         let last = observer.store.get_all().last().unwrap();
         assert!(last.key.is_some());
         assert_eq!(last.key.as_ref().unwrap().signature.as_deref(), Some("lib.rs"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Gap closure: diffusion, loop patterns, docstring_hash, memory cap
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_real_diffusion_high_when_many_files_shallow() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-diffusion");
+        observer.current_turn = 5;
+        let msgs: Vec<Message> = (0..5).map(|i| Message {
+            id: uuid::Uuid::new_v4(), role: Role::Assistant,
+            content: serde_json::json!({"tool_code": "edit", "path": format!("file{}.rs", i)}),
+            timestamp: chrono::Utc::now(), tokens: 10, is_compressed: false,
+            tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+            thinking: None,
+        }).collect();
+        let refs: Vec<&Message> = msgs.iter().collect();
+        let diff = observer.calculate_diffusion(&refs);
+        // 5 unique files with 1 action each → high diffusion
+        assert!(diff > 0.5, "5 unique files should have high diffusion, got {}", diff);
+    }
+
+    #[test]
+    fn test_real_diffusion_low_when_one_file_deep() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-diffusion-low");
+        observer.current_turn = 5;
+        let msgs: Vec<Message> = (0..5).map(|_| Message {
+            id: uuid::Uuid::new_v4(), role: Role::Assistant,
+            content: serde_json::json!({"tool_code": "edit", "path": "main.rs"}),
+            timestamp: chrono::Utc::now(), tokens: 10, is_compressed: false,
+            tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+            thinking: None,
+        }).collect();
+        let refs: Vec<&Message> = msgs.iter().collect();
+        let diff = observer.calculate_diffusion(&refs);
+        // 1 file with 5 actions → low diffusion
+        assert!(diff < 0.5, "1 file with 5 actions should have low diffusion, got {}", diff);
+    }
+
+    #[test]
+    fn test_repeated_file_op_detected() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-repeated-fileop");
+        observer.current_turn = 10;
+        let msgs: Vec<Message> = (0..3).map(|_| Message {
+            id: uuid::Uuid::new_v4(), role: Role::Tool,
+            content: serde_json::json!("ok"),
+            timestamp: chrono::Utc::now(), tokens: 5, is_compressed: false,
+            tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+            thinking: None,
+        }).collect();
+        let assistant_msgs: Vec<Message> = (0..3).map(|_| Message {
+            id: uuid::Uuid::new_v4(), role: Role::Assistant,
+            content: serde_json::json!({"tool_code": "edit", "path": "main.rs"}),
+            timestamp: chrono::Utc::now(), tokens: 10, is_compressed: false,
+            tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+            thinking: None,
+        }).collect();
+        let mut traj = Trajectory::new();
+        for m in msgs { traj.messages.push(m); }
+        for m in assistant_msgs { traj.messages.push(m); }
+        let pattern = observer.classify_loop_pattern(&traj);
+        assert_eq!(pattern, LoopPattern::RepeatedFileOp);
+    }
+
+    #[test]
+    fn test_syntax_loop_detected() {
+        let observer = Observer::new_with_task(ObserverConfig::default(), "test-syntax-loop");
+        let mut traj = Trajectory::new();
+        for _ in 0..3 {
+            traj.messages.push(Message {
+                id: uuid::Uuid::new_v4(), role: Role::Tool,
+                content: serde_json::json!("syntax error: unexpected token"),
+                timestamp: chrono::Utc::now(), tokens: 5, is_compressed: false,
+                tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+                thinking: None,
+            });
+        }
+        let pattern = observer.classify_loop_pattern(&traj);
+        assert_eq!(pattern, LoopPattern::SyntaxLoop);
+    }
+
+    #[test]
+    fn test_docstring_hash_populated_from_edits() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-doc-hash");
+        observer.recent_edits.push(("lib.rs".to_string(), "/// This is a docstring\nfn main() {}".to_string()));
+        let key = observer.build_observation_key();
+        assert!(key.docstring_hash.is_some(), "docstring_hash should be populated when content has doc comments");
+    }
+
+    #[test]
+    fn test_docstring_hash_none_when_no_docstrings() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-doc-hash-none");
+        observer.recent_edits.push(("lib.rs".to_string(), "fn main() {}".to_string()));
+        let key = observer.build_observation_key();
+        assert!(key.docstring_hash.is_none(), "docstring_hash should be None when no doc comments");
+    }
+
+    #[test]
+    fn test_memory_cap_triggers_reflection() {
+        let mut observer = Observer::new_with_task(
+            ObserverConfig { memory_cap_tokens: 10, reflection_token_threshold: 1, ..Default::default() },
+            "test-mem-cap",
+        );
+        observer.current_turn = 5;
+        // Add observations until token estimate exceeds cap
+        for i in 0..10 {
+            observer.store.append(Observation {
+                obs_type: ObservationType::Watcher, text: format!("long observation text number {} with padding", i),
+                timestamp: 0, confidence: 0.7, token_estimate: 20,
+                compressed_range: Some([i, i]), critic_action: None, sqs: None,
+                fidelity: None, key: None,
+            });
+        }
+        let prev_reflections = observer.metrics.reflect_actions;
+        let mut traj = Trajectory::new();
+        traj.messages.push(Message {
+            id: uuid::Uuid::new_v4(), role: Role::Assistant,
+            content: serde_json::json!("test"), timestamp: chrono::Utc::now(),
+            tokens: 5, is_compressed: false, tool_meta: Default::default(),
+            tool_calls: Vec::new(), tool_call_id: None, thinking: None,
+        });
+        observer.on_turn_complete(&traj);
+        // Memory cap should have triggered a reflection
+        assert!(observer.metrics.reflect_actions > prev_reflections, "reflection should fire when tokens exceed cap");
+    }
+
+    #[test]
+    fn test_final_compression_triggers_reflection() {
+        let mut observer = Observer::new_with_task(
+            ObserverConfig { reflection_token_threshold: 1, ..Default::default() },
+            "test-final",
+        );
+        observer.store.append(Observation {
+            obs_type: ObservationType::Watcher, text: "test observation text".to_string(),
+            timestamp: 0, confidence: 0.7, token_estimate: 10,
+            compressed_range: None, critic_action: None, sqs: None,
+            fidelity: None, key: None,
+        });
+        let prev = observer.metrics.reflect_actions;
+        observer.final_compression();
+        assert!(observer.metrics.reflect_actions > prev, "final_compression should trigger reflection");
+    }
+
+    #[test]
+    fn test_compute_pause_weight_values() {
+        let observer = Observer::new_with_task(ObserverConfig::default(), "test-pause");
+        // Low duration, no error → base weight
+        let w = observer.compute_pause_weight(3.0, false, false, 0.3, false);
+        assert!(w > 0.0 && w < 0.05, "base weight should be small, got {}", w);
+        // High duration + error → amplified
+        let w2 = observer.compute_pause_weight(15.0, true, false, 0.3, false);
+        assert!(w2 > w, "high duration + error should amplify, got {} vs {}", w2, w);
     }
 }

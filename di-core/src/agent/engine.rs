@@ -862,7 +862,11 @@ impl AgentEngine {
             };
 
             match outcome {
-                TurnOutcome::Finished => return Ok(()),
+                TurnOutcome::Finished => {
+                    self.observer.final_compression();
+                    self.flush_observer_telemetry();
+                    return Ok(());
+                }
                 TurnOutcome::Continue { tools_used: 0 } => {
                     self.consecutive_mistake_count += 1;
                     if self.consecutive_mistake_count >= self.max_consecutive_mistakes {
@@ -1051,6 +1055,7 @@ impl AgentEngine {
 
         // Update activity timestamp
         self.last_activity = std::time::Instant::now();
+        let turn_start = std::time::Instant::now();
 
         // 0. Init context compiler once (stable prefix + session info)
         if self.context_compiler.is_none() {
@@ -1236,6 +1241,19 @@ impl AgentEngine {
         // Index latest observations to the analyzer daemon for semantic search
         if self.observer.config.enabled {
             self.index_observations_to_daemon().await;
+        }
+
+        // Compute pause weight and flush telemetry
+        if self.observer.config.enabled {
+            let duration_s = turn_start.elapsed().as_secs_f64();
+            let after_error = self.observer.recent_errors().last().is_some();
+            let after_watcher = self.observer.watcher_just_fired();
+            let entropy = self.observer.last_sqs().map(|s| 1.0 - s).unwrap_or(0.5);
+            let ast_contra = self.observer.ast_delta().map(|d| d < -5).unwrap_or(false);
+            let _pause_weight = self.observer.compute_pause_weight(
+                duration_s, after_error, after_watcher, entropy, ast_contra,
+            );
+            self.flush_observer_telemetry();
         }
 
         let observer_block = if self.observer.config.enabled {
@@ -2435,6 +2453,43 @@ impl AgentEngine {
                 self.observer.update_last_observed(msg_len);
                 debug_log!("[di-core] sync summarizer compressed {} unobserved tokens", token_est);
             }
+        }
+    }
+
+    /// Flush observer telemetry to .dirac-logs/observer-telemetry.jsonl.
+    fn flush_observer_telemetry(&self) {
+        use std::io::Write;
+        let dir = std::path::Path::new(".dirac-logs");
+        let _ = std::fs::create_dir_all(dir);
+        let path = dir.join("observer-telemetry.jsonl");
+        let entry = serde_json::json!({
+            "turn": self.observer.current_turn(),
+            "agent": self.id.to_string(),
+            "sqs": self.observer.last_sqs(),
+            "loop_pattern": format!("{:?}", self.observer.last_loop_pattern()),
+            "tier": format!("{:?}", self.observer.current_tier()),
+            "observations": self.observer.store().len(),
+            "observation_tokens": self.observer.store().estimate_token_count(),
+            "metrics": {
+                "turns_observed": self.observer.metrics().turns_observed,
+                "watcher_fired": self.observer.metrics().watcher_fired,
+                "critic_fired": self.observer.metrics().critic_fired,
+                "filter_fired": self.observer.metrics().filter_fired,
+                "reflect_actions": self.observer.metrics().reflect_actions,
+                "restart_actions": self.observer.metrics().restart_actions,
+                "sqs_samples": self.observer.metrics().sqs_samples,
+                "avg_sqs": if self.observer.metrics().sqs_samples > 0 {
+                    self.observer.metrics().avg_sqs / self.observer.metrics().sqs_samples as f32
+                } else { 0.0 },
+            },
+            "cost": {
+                "total_tokens": self.observer.cost_tracker().total_tokens(),
+                "total_latency_ms": self.observer.cost_tracker().total_latency_ms(),
+                "entries": self.observer.cost_tracker().entry_count(),
+            },
+        });
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{}", entry);
         }
     }
 
