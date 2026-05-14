@@ -9,10 +9,12 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <signal.h>
+#include <stdatomic.h>
 
 #include "trie.h"
 
 #define MAX_EVENTS 128
+#define MAX_BUFFER_SIZE (1 << 20)  /* 1MB per client — prevents slowloris DoS */
 
 __attribute__((constructor))
 static void ignore_sigpipe(void) {
@@ -34,11 +36,14 @@ typedef struct {
 } client_ctx_t;
 
 static client_ctx_t *all_clients[MAX_EVENTS];
+static int fd_to_slot[MAX_EVENTS];  /* O(1) inverse map: fd → slot index, -1 if not registered */
+static int free_slots[MAX_EVENTS];  /* free-list stack */
+static int free_slots_top = 0;     /* top of stack (0 = empty) */
 static char persist_path[4096] = {0};
 static trie_t *lock_trie = NULL;
 static volatile sig_atomic_t shutdown_requested = 0;
 static int g_epoll_fd = -1;
-static int g_rejected_connections = 0;
+static _Atomic int g_rejected_connections = 0;
 
 static client_ctx_t* ctx_by_fd(int fd);
 
@@ -73,15 +78,32 @@ static int send_json(client_ctx_t *ctx, const char *json) {
         return -1;
     }
     if ((size_t)written < len) {
-        fprintf(stderr, "[di-vrr] partial send on fd %d (%zd of %zu bytes)\n", ctx->fd, written, len);
-        return -1;
+        /* Partial write — append remainder to outbuf for drain_output to resume */
+        size_t remaining = len - (size_t)written;
+        if (ctx->out_len + remaining <= ctx->out_cap) {
+            memcpy(ctx->outbuf + ctx->out_len, json + written, remaining);
+            ctx->out_len += remaining;
+            if (!ctx->out_epoll_registered) {
+                ctx->out_epoll_registered = true;
+                struct epoll_event ev = { .events = EPOLLIN | EPOLLOUT, .data = { .ptr = ctx } };
+                if (epoll_ctl(g_epoll_fd, EPOLL_CTL_MOD, ctx->fd, &ev) < 0) {
+                    fprintf(stderr, "[di-vrr] epoll_ctl MOD failed in partial send: %s\n", strerror(errno));
+                }
+            }
+        } else {
+            fprintf(stderr, "[di-vrr] partial send overflow on fd %d (%zd of %zu bytes)\n", ctx->fd, written, len);
+        }
+        return 0;
     }
     return 0;
 }
 
 static int drain_output(client_ctx_t *ctx) {
     if (ctx->out_len == 0) return 0;
-    ssize_t sent = write(ctx->fd, ctx->outbuf, ctx->out_len);
+    ssize_t sent;
+    do {
+        sent = write(ctx->fd, ctx->outbuf, ctx->out_len);
+    } while (sent < 0 && errno == EINTR);
     if (sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
         return -1;
@@ -188,10 +210,18 @@ static int broadcast_config_update(int sender_fd, const char *path, const char *
 
     if (len < 0 || (size_t)len >= msg_size) { free(msg); return -1; }
 
+    /* Snapshot all_clients to avoid concurrent modification if trie_cleanup_fd
+     * fires on another fd while we're iterating (both run on the main event loop
+     * but interleave at arbitrary points). */
+    client_ctx_t *snap[MAX_EVENTS];
+    int snap_count = 0;
     for (int i = 0; i < MAX_EVENTS; i++) {
         if (all_clients[i] && all_clients[i]->fd != sender_fd) {
-            send_json(all_clients[i], msg);
+            snap[snap_count++] = all_clients[i];
         }
+    }
+    for (int i = 0; i < snap_count; i++) {
+        send_json(snap[i], msg);
     }
     free(msg);
     return 0;
@@ -547,6 +577,12 @@ static int handle_client_data(client_ctx_t *ctx, trie_t *trie) {
     if (ctx->len + (size_t)n >= ctx->buf_cap) {
         size_t new_cap = ctx->buf_cap ? ctx->buf_cap * 2 : 4096;
         if (new_cap < ctx->len + (size_t)n + 1) new_cap = ctx->len + (size_t)n + 1;
+        if (new_cap > MAX_BUFFER_SIZE) new_cap = MAX_BUFFER_SIZE;
+        if (ctx->len + (size_t)n + 1 > new_cap) {
+            send_json(ctx, "{\"status\": \"error\", \"message\": \"buffer overflow\"}\n");
+            ctx->len = 0;
+            return 0;
+        }
         char *tmp = realloc(ctx->buffer, new_cap);
         if (!tmp) {
             send_json(ctx, "{\"status\": \"error\", \"message\": \"buffer overflow\"}\n");
@@ -569,10 +605,10 @@ static int handle_client_data(client_ctx_t *ctx, trie_t *trie) {
 }
 
 static client_ctx_t* ctx_by_fd(int fd) {
-    for (int i = 0; i < MAX_EVENTS; i++) {
-        if (all_clients[i] && all_clients[i]->fd == fd) return all_clients[i];
-    }
-    return NULL;
+    if (fd < 0 || fd >= MAX_EVENTS) return NULL;
+    int slot = fd_to_slot[fd];
+    if (slot < 0) return NULL;
+    return all_clients[slot];
 }
 
 /* Callback for trie_cleanup_fd to immediately send granted notifications,
@@ -581,6 +617,7 @@ static void send_granted_cb(int fd, const char *path, void *ctx) {
     (void)ctx;
     if (!path || fd < 0) return;
     client_ctx_t *c = ctx_by_fd(fd);
+    if (!c) return;
     size_t esc_size = strlen(path) * 6 + 1;
     char *escaped = malloc(esc_size);
     if (!escaped) {
@@ -627,6 +664,7 @@ int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--persist") == 0 && i + 1 < argc) {
             strncpy(persist_path, argv[i + 1], sizeof(persist_path) - 1);
+            persist_path[sizeof(persist_path) - 1] = '\0';
             trie_load_persist(lock_trie, persist_path);
             i++;
         } else if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) {
@@ -637,6 +675,9 @@ int main(int argc, char *argv[]) {
     bound_socket_path = path_to_bind;
 
     memset(all_clients, 0, sizeof(all_clients));
+    for (int i = 0; i < MAX_EVENTS; i++) fd_to_slot[i] = -1;
+    for (int i = 0; i < MAX_EVENTS; i++) free_slots[i] = i;
+    free_slots_top = MAX_EVENTS;
     listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (listen_fd == -1) { perror("socket"); exit(1); }
 
@@ -651,7 +692,8 @@ int main(int argc, char *argv[]) {
     if (listen(listen_fd, 128) == -1) { perror("listen"); exit(1); }
 
     int flags = fcntl(listen_fd, F_GETFL, 0);
-    fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
+    if (flags < 0) { perror("fcntl F_GETFL"); exit(1); }
+    if (fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK) < 0) { perror("fcntl F_SETFL"); exit(1); }
 
     g_epoll_fd = epoll_create1(0);
     ev.events = EPOLLIN;
@@ -679,31 +721,36 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < nfds; i++) {
             if (events[i].data.fd == listen_fd) {
                 int client_fd = accept(listen_fd, NULL, NULL);
-                if (client_fd == -1) continue;
+                if (client_fd == -1) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                    perror("accept"); break;
+                }
                 
                 int cflags = fcntl(client_fd, F_GETFL, 0);
-                fcntl(client_fd, F_SETFL, cflags | O_NONBLOCK);
+                if (cflags < 0) { perror("fcntl F_GETFL"); close(client_fd); continue; }
+                if (fcntl(client_fd, F_SETFL, cflags | O_NONBLOCK) < 0) { perror("fcntl F_SETFL"); close(client_fd); continue; }
 
                 client_ctx_t *ctx = calloc(1, sizeof(client_ctx_t));
                 if (!ctx) { close(client_fd); continue; }
                 ctx->fd = client_fd;
                 ctx->buffer = malloc(4096);
-                ctx->buf_cap = ctx->buffer ? 4096 : 0;
+                if (!ctx->buffer) { free(ctx); close(client_fd); continue; }
+                ctx->buf_cap = 4096;
                 ctx->len = 0;
                 ctx->outbuf = malloc(4096);
-                ctx->out_cap = ctx->outbuf ? 4096 : 0;
+                if (!ctx->outbuf) { free(ctx->buffer); free(ctx); close(client_fd); continue; }
+                ctx->out_cap = 4096;
                 ctx->out_len = 0;
                 ctx->out_epoll_registered = false;
 
-                int slot = -1;
-                for (int j = 0; j < MAX_EVENTS; j++) {
-                    if (all_clients[j] == NULL) { slot = j; break; }
-                }
-                if (slot == -1) {
-                    /* Can't accept — try a non-blocking write of an error message first */
+                int slot = --free_slots_top;
+                if (slot < 0) {
+                    free_slots_top++; /* restore — we didn't use a slot */
                     static const char rej[] = "{\"status\": \"error\", \"message\": \"server busy\"}\n";
                     ssize_t _r = write(client_fd, rej, sizeof(rej) - 1);
-                    (void)_r;
+                    if (_r < 0) {
+                        fprintf(stderr, "[di-vrr] rejected write failed on fd %d: %s\n", client_fd, strerror(errno));
+                    }
                     close(client_fd);
                     free(ctx);
                     fprintf(stderr, "[di-vrr] rejected connection: client limit reached (%d)\n", MAX_EVENTS);
@@ -711,12 +758,15 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
                 all_clients[slot] = ctx;
+                fd_to_slot[client_fd] = slot;
 
                 ev.events = EPOLLIN;
                 ev.data.ptr = ctx;
                 if (epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) < 0) {
                     fprintf(stderr, "[di-vrr] failed to epoll_ctl ADD for client_fd %d: %s\n", client_fd, strerror(errno));
                     all_clients[slot] = NULL;
+                    fd_to_slot[client_fd] = -1;
+                    free_slots[free_slots_top++] = slot;
                     close(client_fd);
                     free(ctx->buffer);
                     free(ctx->outbuf);
@@ -729,10 +779,13 @@ int main(int argc, char *argv[]) {
                     if (drain_output(ctx) < 0) {
                         trie_cleanup_fd(lock_trie, ctx->fd, NULL, NULL, 0,
                                         send_granted_cb, NULL);
-                        epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
-                        for (int j = 0; j < MAX_EVENTS; j++) {
-                            if (all_clients[j] == ctx) { all_clients[j] = NULL; break; }
+                        int slot = fd_to_slot[ctx->fd];
+                        fd_to_slot[ctx->fd] = -1;
+                        if (slot >= 0) {
+                            all_clients[slot] = NULL;
+                            free_slots[free_slots_top++] = slot;
                         }
+                        epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
                         close(ctx->fd);
                         free(ctx->buffer);
                         free(ctx->outbuf);
@@ -744,10 +797,13 @@ int main(int argc, char *argv[]) {
                     if (handle_client_data(ctx, lock_trie) < 0) {
                         trie_cleanup_fd(lock_trie, ctx->fd, NULL, NULL, 0,
                                         send_granted_cb, NULL);
-                        epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
-                        for (int j = 0; j < MAX_EVENTS; j++) {
-                            if (all_clients[j] == ctx) { all_clients[j] = NULL; break; }
+                        int slot = fd_to_slot[ctx->fd];
+                        fd_to_slot[ctx->fd] = -1;
+                        if (slot >= 0) {
+                            all_clients[slot] = NULL;
+                            free_slots[free_slots_top++] = slot;
                         }
+                        epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
                         close(ctx->fd);
                         free(ctx->buffer);
                         free(ctx->outbuf);
