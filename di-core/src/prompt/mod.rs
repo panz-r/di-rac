@@ -155,7 +155,7 @@ pub struct ContextCompiler {
 }
 
 impl ContextCompiler {
-    pub fn new(session: &SessionContext) -> Self {
+    pub fn new(session: &SessionContext, token_limit: usize) -> Self {
         let stable = stable::stable_prefix();
         let session_static = session.build_static_info();
         let cached_static_prefix = format!("{}\n\n{}", stable, session_static);
@@ -163,7 +163,7 @@ impl ContextCompiler {
         Self {
             cached_static_prefix,
             estimator: ConservativeEstimator::default_conservative(),
-            token_limit: 128_000,
+            token_limit,
             cached_session: SessionContext {
                 os: session.os.clone(),
                 shell: session.shell.clone(),

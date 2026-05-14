@@ -185,7 +185,8 @@ impl TaskStateReducer {
 
         if let Some(failure) = latest_failure {
             let truncated = if failure.len() > 150 {
-                format!("{}...", &failure[..147])
+                let boundary = failure.floor_char_boundary(147);
+                format!("{}...", &failure[..boundary])
             } else {
                 failure.to_string()
             };

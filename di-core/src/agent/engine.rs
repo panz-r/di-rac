@@ -1104,7 +1104,7 @@ impl AgentEngine {
                 custom_instructions: None,
             };
 
-            self.context_compiler = Some(ContextCompiler::new(&session));
+            self.context_compiler = Some(ContextCompiler::new(&session, 32_000));
             debug_log!("[di-core] run_turn: context compiler initialized, session prefix {} chars",
                 self.context_compiler.as_ref().expect("context compiler initialized above").session_prefix_len());
         }
