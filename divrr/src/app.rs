@@ -124,6 +124,8 @@ pub struct App {
     pub save_dialog: Option<Box<SaveDialogState>>,
     /// Expand state saved before entering Action mode, restored on close.
     pub saved_expanded: Option<std::collections::HashSet<usize>>,
+    /// Wrap state saved before entering Action mode, restored on close.
+    saved_wrapped: Option<std::collections::HashSet<usize>>,
     /// Cached visual line counts per block (invalidated on width/content/expand change).
     line_cache: Option<VisualLineCache>,
 }
@@ -156,6 +158,7 @@ impl App {
             event_tx: None,
             save_dialog: None,
             saved_expanded: None,
+            saved_wrapped: None,
             line_cache: None,
         }
     }
@@ -375,6 +378,11 @@ impl App {
                 tool, args, description, ..
             } => {
                 if self.auto_approve {
+                    // Clear any stale queue entries from a previous approval cycle
+                    self.input_queue.retain(|(id, _)| *id != agent_id);
+                    if let Some(agent) = self.find_agent_mut(&agent_id) {
+                        agent.pending_input = None;
+                    }
                     self.pending_messages.push(FrontendMessage::ApprovalResponse {
                         agent_id,
                         approved: true,
@@ -532,9 +540,11 @@ impl App {
 
     /// Enter Action mode: save expand state, force-expand selected block.
     fn enter_action_mode(&mut self) {
-        if let Some(agent) = self.active_agent() {
-            self.saved_expanded = Some(agent.expanded.clone());
-        }
+        let (expanded, wrapped) = self.active_agent()
+            .map(|a| (a.expanded.clone(), a.wrapped.clone()))
+            .unwrap_or_default();
+        self.saved_expanded = Some(expanded);
+        self.saved_wrapped = Some(wrapped);
         let idx = self.selected_block;
         if let Some(agent) = self.active_agent_mut() {
             agent.expanded.insert(idx);
@@ -543,11 +553,16 @@ impl App {
         self.action_cursor = 0;
     }
 
-    /// Exit Action mode: restore saved expand state (unless user explicitly toggled).
+    /// Exit Action mode: restore saved expand/wrap state (unless user explicitly toggled).
     fn exit_action_mode(&mut self) {
         if let Some(saved) = self.saved_expanded.take() {
             if let Some(agent) = self.active_agent_mut() {
                 agent.expanded = saved;
+            }
+        }
+        if let Some(saved) = self.saved_wrapped.take() {
+            if let Some(agent) = self.active_agent_mut() {
+                agent.wrapped = saved;
             }
         }
         self.mode = Mode::Normal;
@@ -988,13 +1003,20 @@ impl App {
                 }
             }
             3 => {
-                // Wrap/Unwrap — toggle per-block wrapping, persists after close
+                // Wrap/Unwrap — toggle in saved state so it persists after close
                 let idx = self.selected_block;
                 if let Some(agent) = self.active_agent_mut() {
                     if agent.wrapped.contains(&idx) {
                         agent.wrapped.remove(&idx);
                     } else {
                         agent.wrapped.insert(idx);
+                    }
+                }
+                if let Some(saved) = &mut self.saved_wrapped {
+                    if saved.contains(&idx) {
+                        saved.remove(&idx);
+                    } else {
+                        saved.insert(idx);
                     }
                 }
                 self.exit_action_mode();

@@ -99,15 +99,14 @@ pub fn find_gateway() -> Option<String> {
 }
 
 fn which(name: &str) -> Option<String> {
-    std::process::Command::new("which")
-        .arg(name)
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).find_map(|dir| {
+            let full = dir.join(name);
+            if full.exists() {
+                Some(full.to_string_lossy().into_owned())
             } else {
                 None
             }
         })
+    })
 }

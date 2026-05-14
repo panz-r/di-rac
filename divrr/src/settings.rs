@@ -1512,6 +1512,11 @@ pub fn save_all_settings_to_disk(settings: &AllSettings) -> std::io::Result<()> 
     let json = serde_json::to_string_pretty(settings)?;
     let tmp_path = path.with_extension("tmp");
     std::fs::write(&tmp_path, &json)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
+    }
     std::fs::rename(&tmp_path, &path)?;
     Ok(())
 }
