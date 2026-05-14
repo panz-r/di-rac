@@ -99,10 +99,10 @@ impl GatewayConnection {
                     }
                 }
                 Err(e) => {
+                    self.reader = None;
                     if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock {
                         return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "gateway read timed out"));
                     }
-                    self.reader = None;
                     return Err(e);
                 }
             }
@@ -221,19 +221,6 @@ impl SettingsState {
             }
             self.loading = false;
         }
-    }
-
-    pub fn apply_saved(&mut self, result: SettingsLoadResult) -> Vec<crate::message::FrontendMessage> {
-        self.saving = false;
-        if let SettingsLoadResult::Saved { error, messages } = result {
-            let ok = error.is_none();
-            self.error = error;
-            if ok {
-                self.saved = true;
-                return messages;
-            }
-        }
-        Vec::new()
     }
 
     pub fn switch_panel(&mut self) {

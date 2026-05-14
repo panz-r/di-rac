@@ -1012,15 +1012,28 @@ impl App {
     }
 
     /// Apply a settings load result from a background gateway operation.
+    /// SetProviderConfig messages are forwarded even if the settings panel
+    /// was already closed (e.g., Esc during async save).
     pub fn apply_settings_load(&mut self, result: SettingsLoadResult) {
-        if let Some(s) = &mut self.settings {
-            match &result {
-                SettingsLoadResult::Initial { .. } => s.apply_initial_load(result),
-                SettingsLoadResult::ProviderChanged { .. } => s.apply_provider_changed(result),
-                SettingsLoadResult::RoleSwitched { .. } => s.apply_role_switched(result),
-                SettingsLoadResult::Saved { .. } => {
-                    let messages = s.apply_saved(result);
-                    self.pending_messages.extend(messages);
+        match result {
+            SettingsLoadResult::Saved { error, messages } => {
+                self.pending_messages.extend(messages);
+                if let Some(s) = &mut self.settings {
+                    s.saving = false;
+                    s.error = error;
+                    if s.error.is_none() {
+                        s.saved = true;
+                    }
+                }
+            }
+            other => {
+                if let Some(s) = &mut self.settings {
+                    match other {
+                        SettingsLoadResult::Initial { .. } => s.apply_initial_load(other),
+                        SettingsLoadResult::ProviderChanged { .. } => s.apply_provider_changed(other),
+                        SettingsLoadResult::RoleSwitched { .. } => s.apply_role_switched(other),
+                        _ => {}
+                    }
                 }
             }
         }
