@@ -135,13 +135,16 @@ impl StreamingToolAccumulator {
             });
         }
 
-        // Fallback: XML tool_code parsing from accumulated text
-        let xml_regex = Regex::new(r#"(?s)<tool_code\s+name="([^"]+)">\s*(.*?)\s*</tool_code>"#).unwrap();
-        for cap in xml_regex.captures_iter(fallback_text) {
-            let name = cap[1].to_string();
-            let args_json = &cap[2];
-            if let Ok(args) = serde_json::from_str(args_json) {
-                tools.push(ToolCall { name, args });
+        // Fallback: XML tool_code parsing — only if no native tool calls were found,
+        // to prevent duplicate execution when the model emits both formats.
+        if tools.is_empty() {
+            let xml_regex = Regex::new(r#"(?s)<tool_code\s+name="([^"]+)">\s*(.*?)\s*</tool_code>"#).unwrap();
+            for cap in xml_regex.captures_iter(fallback_text) {
+                let name = cap[1].to_string();
+                let args_json = &cap[2];
+                if let Ok(args) = serde_json::from_str(args_json) {
+                    tools.push(ToolCall { name, args });
+                }
             }
         }
 

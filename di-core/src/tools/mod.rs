@@ -343,7 +343,27 @@ impl ToolExecutor {
                             let om = self.output_manager.lock().unwrap();
                             om.output_dir().join(&filename)
                         };
-                        match tokio::fs::read_to_string(&path).await {
+                        // Canonicalize to prevent path traversal (e.g. "../../etc/passwd")
+                        let canonical = match path.canonicalize() {
+                            Ok(p) => p,
+                            Err(_) => return ToolResponse::fail(
+                                ToolErrorCode::IoFileNotFound,
+                                format!("File not found: {}", filename),
+                                "get_outputs",
+                            ),
+                        };
+                        let output_dir_canonical = {
+                            let om = self.output_manager.lock().unwrap();
+                            om.output_dir().canonicalize().unwrap_or_else(|_| om.output_dir().to_path_buf())
+                        };
+                        if !canonical.starts_with(&output_dir_canonical) {
+                            return ToolResponse::fail(
+                                ToolErrorCode::InvalidInput,
+                                "Access denied: path is outside the output directory".to_string(),
+                                "get_outputs",
+                            );
+                        }
+                        match tokio::fs::read_to_string(&canonical).await {
                             Ok(content) => ToolResponse::ok(json!({
                                 "file": filename,
                                 "content": content,

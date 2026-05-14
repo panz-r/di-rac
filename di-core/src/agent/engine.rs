@@ -2382,6 +2382,9 @@ impl AgentEngine {
 
         self.trajectory.truncate_with_continuation(continuation, checkpoint);
 
+        // Reset observer's last observed index to avoid stale comparisons (fixes 2.2)
+        self.observer.update_last_observed(self.trajectory.messages.len());
+
         self.emit_event(CoreEvent::ContextCompacted {
             agent_id: self.id,
             remaining_tokens: self.trajectory.get_total_tokens(),
@@ -2609,7 +2612,9 @@ impl AgentEngine {
         let (file_path, new_content) = if let Some(tc) = msg.tool_calls.first() {
             let args: serde_json::Value = serde_json::from_str(&tc.arguments).ok()?;
             let path = args.get("path").and_then(|v| v.as_str())?.to_string();
-            let content = args.get("content")
+            // edit tool uses "text", write tool uses "content"
+            let content = args.get("text")
+                .or_else(|| args.get("content"))
                 .or_else(|| args.get("new_content"))
                 .and_then(|v| v.as_str())?;
             (path, content.to_string())
@@ -2620,7 +2625,7 @@ impl AgentEngine {
                 .and_then(|re| re.captures(&content_str))
                 .and_then(|caps| caps.get(1))
                 .map(|m| m.as_str().to_string())?;
-            let content = regex::Regex::new(r#"new_content":\s*"([^"]{10,})""#).ok()
+            let content = regex::Regex::new(r#""(?:content|text|new_content)":\s*"([^"]+)""#).ok()
                 .and_then(|re| re.captures(&content_str))
                 .and_then(|caps| caps.get(1))
                 .map(|m| m.as_str().to_string())?;
@@ -2696,9 +2701,11 @@ impl AgentEngine {
         };
 
         let mut full_text = String::new();
-        while let Some(chunk_result) = rx.recv().await {
-            match chunk_result {
-                Ok(chunk) => {
+        let stream_timeout = std::time::Duration::from_secs(60);
+        loop {
+            let recv = tokio::time::timeout(stream_timeout, rx.recv()).await;
+            match recv {
+                Ok(Some(Ok(chunk))) => {
                     if let Some(delta) = &chunk.text_delta {
                         full_text.push_str(delta);
                     }
@@ -2706,7 +2713,12 @@ impl AgentEngine {
                         break;
                     }
                 }
-                Err(_) => return None,
+                Ok(Some(Err(_))) => return None,
+                Ok(None) => break, // stream ended
+                Err(_) => {
+                    eprintln!("[di-core] call_observer_gateway: stream timed out after 60s");
+                    return None;
+                }
             }
         }
 
