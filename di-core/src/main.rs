@@ -215,6 +215,10 @@ async fn main() -> Result<()> {
                                     }
                                 }
                             }
+                            msg @ FrontendMessage::SetObserverConfig { .. } => {
+                                log.log("SetObserverConfig: updating observer settings");
+                                orchestrator.set_observer_config(msg);
+                            }
                         }
                     }
                     Err(e) => {

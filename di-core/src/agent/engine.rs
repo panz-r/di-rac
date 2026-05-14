@@ -1094,6 +1094,7 @@ impl AgentEngine {
                     content: Some(req.content.clone()),
                     language: req.language.clone(),
                     query: None,
+                    subcommand: None,
                 };
                 match self.tool_executor.analyzer_daemon().lock().await.send_request::<_, crate::daemons::AnalyzerResponse>(analyzer_req).await {
                     Ok(resp) if resp.ok => {
@@ -1216,6 +1217,27 @@ impl AgentEngine {
             self.run_llm_observations(&interrupt, filter_just_fired).await;
         }
 
+        // Blocking summarizer: when unobserved token ratio exceeds blockAfter, compress synchronously
+        if self.observer.config.enabled && self.observer.config.use_llm_observations {
+            if let Some(ref intr) = interrupt {
+                if intr.needs_sync_summary {
+                    self.run_sync_summarizer().await;
+                }
+            }
+        }
+
+        // Enrich latest observation key with API data from analyzer
+        if self.observer.config.enabled {
+            if let Some(ref apis) = api_filter_response {
+                self.observer.enrich_latest_key(apis);
+            }
+        }
+
+        // Index latest observations to the analyzer daemon for semantic search
+        if self.observer.config.enabled {
+            self.index_observations_to_daemon().await;
+        }
+
         let observer_block = if self.observer.config.enabled {
             let mut parts = Vec::new();
             // Interrupt directive takes priority
@@ -1260,6 +1282,25 @@ impl AgentEngine {
             8000
         };
 
+        // Trajectory message compression: when observer has summarized messages,
+        // replace messages 2..last_observed with the observation block (matching TS prepareContext).
+        // This is a read-only view — the stored trajectory is never mutated.
+        let needs_compression = observer_block.is_some()
+            && self.observer.last_observed_message_index() > 2
+            && self.observer.last_observed_message_index() < self.trajectory.messages.len();
+
+        let mut compressed_trajectory;
+        let trajectory_ref: &Trajectory = if needs_compression {
+            let idx = self.observer.last_observed_message_index();
+            compressed_trajectory = Trajectory::new();
+            compressed_trajectory.messages.extend(self.trajectory.messages[..2].iter().cloned());
+            compressed_trajectory.messages.extend(self.trajectory.messages[idx..].iter().cloned());
+            compressed_trajectory.last_checkpoint = self.trajectory.last_checkpoint.clone();
+            &compressed_trajectory
+        } else {
+            &self.trajectory
+        };
+
         let messages = if self.use_reranking {
             let active_files: std::collections::HashSet<String> = self.file_context.files_read.keys().cloned()
                 .chain(self.file_context.files_edited.iter().cloned())
@@ -1268,7 +1309,7 @@ impl AgentEngine {
                 &self.task_reducer.state.current_goal,
             );
             self.context_manager.build_prompt_with_reranking(
-                &self.trajectory,
+                trajectory_ref,
                 &self.file_context.files_edited,
                 Some(&self.task_reducer),
                 history_budget,
@@ -1277,7 +1318,7 @@ impl AgentEngine {
             )
         } else {
             self.context_manager.build_prompt_with_stale_check(
-                &self.trajectory,
+                trajectory_ref,
                 &self.file_context.files_edited,
                 Some(&self.task_reducer),
                 history_budget,
@@ -1466,10 +1507,10 @@ impl AgentEngine {
         // Emit actual token usage from provider
         if let Some(usage) = &_usage_total {
             self.cumulative_tokens += usage.total_tokens as usize;
-            let sqs = self.observer.compute_sqs(&self.trajectory);
+            let sqs_score = self.observer.last_sqs().unwrap_or(0.5);
             self.emit_event(CoreEvent::MetricsUpdate {
                 agent_id: self.id,
-                sqs: sqs.score,
+                sqs: sqs_score,
                 token_usage: self.cumulative_tokens,
                 latency_ms: 0,
             }).await?;
@@ -2327,18 +2368,25 @@ impl AgentEngine {
         }
 
         // Summarizer: when buffer_activation turns pass without summary
-        if self.observer.should_summarize() && self.observer.pending_llm_count < 3 {
+        if self.observer.should_summarize(&self.trajectory) && self.observer.pending_llm_count < 3 {
             pending.push(self.observer.build_summarizer_llm_prompt(&self.trajectory));
         }
 
         // Execute each prompt through the gateway with latency tracking
+        let budget_ms = self.observer.config.latency_budget_ms;
+        let mut cumulative_latency: u64 = 0;
         for req in pending {
+            // Skip if latency budget exceeded (0 = no budget)
+            if budget_ms > 0 && cumulative_latency >= budget_ms {
+                break;
+            }
             let obs_type = req.obs_type.clone();
             self.observer.pending_llm_count += 1;
             let start = Instant::now();
             match self.call_observer_gateway(&req.system_prompt, &req.user_message).await {
                 Some(response_text) => {
                     let latency_ms = start.elapsed().as_millis() as u64;
+                    cumulative_latency += latency_ms;
                     self.observer.health.failing = false;
                     self.observer.health.last_error = None;
                     if let Some(parsed) = parse_llm_observation(&response_text, obs_type.clone()) {
@@ -2353,6 +2401,96 @@ impl AgentEngine {
                 }
             }
             self.observer.pending_llm_count -= 1;
+        }
+    }
+
+    /// Blocking summarizer: synchronously compresses unobserved messages via LLM.
+    /// Called when unobserved token ratio exceeds blockAfter (TS runSummarizerSync).
+    async fn run_sync_summarizer(&mut self) {
+        use crate::observer::{ObservationType, SkeletonFidelity, parse_llm_observation};
+
+        let req = self.observer.build_summarizer_llm_prompt(&self.trajectory);
+        let token_est = self.observer.get_unobserved_token_estimate(&self.trajectory);
+
+        if let Some(response_text) = self.call_observer_gateway(&req.system_prompt, &req.user_message).await {
+            if let Some(parsed) = parse_llm_observation(&response_text, ObservationType::Summary) {
+                let turn = self.observer.current_turn();
+                let msg_len = self.trajectory.messages.len();
+                let obs = crate::observer::Observation {
+                    obs_type: ObservationType::Summary,
+                    text: parsed.text,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0),
+                    confidence: parsed.confidence,
+                    token_estimate: token_est,
+                    compressed_range: Some([turn.saturating_sub(3), turn]),
+                    critic_action: None,
+                    sqs: self.observer.last_sqs(),
+                    fidelity: None,
+                    key: None,
+                };
+                self.observer.store.append(obs);
+                self.observer.update_last_observed(msg_len);
+                debug_log!("[di-core] sync summarizer compressed {} unobserved tokens", token_est);
+            }
+        }
+    }
+
+    /// Index the latest observation of each type to the analyzer daemon for semantic search.
+    async fn index_observations_to_daemon(&self) {
+        let latest = self.observer.latest_observables();
+        if latest.is_empty() {
+            return;
+        }
+        let daemon = self.tool_executor.analyzer_daemon();
+        let mut daemon = match daemon.try_lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        for (obs_type, text, ts, tokens) in latest {
+            let req = crate::daemons::AnalyzerRequest {
+                command: "index-observation".to_string(),
+                file: Some(ts.to_string()),
+                content: Some(obs_type),
+                language: None,
+                query: Some(text),
+                subcommand: Some(tokens.to_string()),
+            };
+            let _ = daemon.send_request::<_, crate::daemons::AnalyzerResponse>(req).await;
+        }
+    }
+
+    /// Search observations via the analyzer daemon, returning matching content strings.
+    pub async fn search_observations_via_daemon(&self, query: &str, limit: usize) -> Vec<String> {
+        let daemon = self.tool_executor.analyzer_daemon();
+        let mut daemon = match daemon.try_lock() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        let req = crate::daemons::AnalyzerRequest {
+            command: "search-observations".to_string(),
+            file: None,
+            content: None,
+            language: None,
+            query: Some(query.to_string()),
+            subcommand: None,
+        };
+        match daemon.send_request::<_, crate::daemons::AnalyzerResponse>(req).await {
+            Ok(resp) => {
+                resp.data.get("data")
+                    .and_then(|d| d.get("results"))
+                    .and_then(|r| r.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|e| e.get("content").and_then(|c| c.as_str()).map(String::from))
+                            .take(limit)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+            Err(_) => Vec::new(),
         }
     }
 
@@ -2380,6 +2518,7 @@ impl AgentEngine {
             content: Some(new_content),
             language: Some(lang),
             query: None,
+            subcommand: None,
         };
         match self.tool_executor.analyzer_daemon().lock().await.send_request::<_, crate::daemons::AnalyzerResponse>(analyzer_req).await {
             Ok(resp) if resp.ok => {
@@ -2402,11 +2541,31 @@ impl AgentEngine {
             GatewayMessage::simple("user", serde_json::Value::String(user_message.to_string())),
         ];
 
+        // Observer can override provider/model from config
+        let observer_provider = if self.observer.config.provider.is_some() || self.observer.config.model_id.is_some() {
+            let base = self.provider_config.as_ref();
+            Some(crate::daemons::ProviderConfig {
+                id: self.observer.config.provider.clone()
+                    .or_else(|| base.map(|b| b.id.clone()))
+                    .unwrap_or_default(),
+                model: self.observer.config.model_id.clone()
+                    .or_else(|| base.map(|b| b.model.clone()))
+                    .unwrap_or_default(),
+                api_key: base.and_then(|b| b.api_key.clone()),
+                base_url: base.and_then(|b| b.base_url.clone()),
+                region: base.and_then(|b| b.region.clone()),
+                project_id: base.and_then(|b| b.project_id.clone()),
+                params: base.map(|b| b.params.clone()).unwrap_or_default(),
+            })
+        } else {
+            None
+        };
+
         let request = GatewayRequest {
             id: request_id,
             stream: false,
             timeout: Some(30), // 30s timeout for observer calls
-            provider: None,
+            provider: observer_provider,
             messages,
             system: Some(system.to_string()),
             tools: None,
@@ -2666,6 +2825,50 @@ impl MultiAgentOrchestrator {
         for rc in self.runtime_configs.values() {
             if let Ok(mut guard) = rc.distiller.try_write() {
                 *guard = Some(distiller_arc.clone());
+            }
+        }
+    }
+
+    /// Update observer config on all agents from frontend settings.
+    pub fn set_observer_config(&mut self, msg: crate::protocol::FrontendMessage) {
+        if let crate::protocol::FrontendMessage::SetObserverConfig {
+            enabled,
+            use_llm_observations,
+            watcher_frequency,
+            critic_frequency,
+            verbose,
+            token_threshold,
+            buffer_activation,
+            block_after,
+            reflection_enabled,
+            reflection_token_threshold,
+            procedural_monotonicity_enabled,
+            ast_guided_memory_enabled,
+            adaptive_cooldown_enabled,
+            latency_budget_ms,
+            permissive_buffer_size,
+            observer_provider,
+            observer_model_id,
+        } = msg
+        {
+            for agent in self.agents.values_mut() {
+                agent.observer.config.enabled = enabled;
+                agent.observer.config.use_llm_observations = use_llm_observations;
+                agent.observer.config.watcher_frequency = watcher_frequency;
+                agent.observer.config.critic_frequency = critic_frequency;
+                agent.observer.config.verbose = verbose;
+                agent.observer.config.token_threshold = token_threshold;
+                agent.observer.config.buffer_activation = buffer_activation;
+                agent.observer.config.block_after = block_after;
+                agent.observer.config.reflection_enabled = reflection_enabled;
+                agent.observer.config.reflection_token_threshold = reflection_token_threshold;
+                agent.observer.config.procedural_monotonicity_enabled = procedural_monotonicity_enabled;
+                agent.observer.config.ast_guided_memory_enabled = ast_guided_memory_enabled;
+                agent.observer.config.adaptive_cooldown_enabled = adaptive_cooldown_enabled;
+                agent.observer.config.latency_budget_ms = latency_budget_ms;
+                agent.observer.config.permissive_buffer_size = permissive_buffer_size;
+                agent.observer.config.provider = observer_provider.clone();
+                agent.observer.config.model_id = observer_model_id.clone();
             }
         }
     }

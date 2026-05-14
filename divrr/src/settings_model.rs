@@ -725,6 +725,31 @@ pub fn build_provider_config_messages(all: &AllSettings) -> Vec<crate::message::
     messages
 }
 
+/// Build a SetObserverConfig message from the observer behavior settings.
+pub fn build_observer_config_message(all: &AllSettings) -> Option<crate::message::FrontendMessage> {
+    let beh = all.behaviors.get("observer")?;
+    let observer_role = all.roles.get("observer");
+    Some(crate::message::FrontendMessage::SetObserverConfig {
+        enabled: beh.enabled.unwrap_or(false),
+        use_llm_observations: beh.enabled.unwrap_or(false),
+        watcher_frequency: beh.observer_turns.unwrap_or(2) as usize,
+        critic_frequency: beh.observer_critic_frequency.unwrap_or(6) as usize,
+        verbose: beh.observer_verbose.unwrap_or(false),
+        token_threshold: beh.observer_token_threshold.unwrap_or(15000) as usize,
+        buffer_activation: beh.observer_buffer_activation.map(|v| v.round() as usize).unwrap_or(3),
+        block_after: beh.observer_block_after.unwrap_or(0.7) as f32,
+        reflection_enabled: beh.observer_reflection_enabled.unwrap_or(true),
+        reflection_token_threshold: beh.observer_reflection_token_threshold.unwrap_or(10000) as usize,
+        procedural_monotonicity_enabled: true,
+        ast_guided_memory_enabled: true,
+        adaptive_cooldown_enabled: true,
+        latency_budget_ms: 0,
+        permissive_buffer_size: 3,
+        observer_provider: observer_role.as_ref().map(|r| r.provider.clone()).filter(|p| !p.is_empty()),
+        observer_model_id: observer_role.as_ref().map(|r| r.model.clone()).filter(|m| !m.is_empty()),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // High-level field builders (need GatewayConnection for model queries)
 // ---------------------------------------------------------------------------

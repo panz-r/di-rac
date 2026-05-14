@@ -346,7 +346,11 @@ async fn main() -> color_eyre::Result<()> {
                                             }
                                         }
                                         let messages = if error.is_none() {
-                                            crate::settings::build_provider_config_messages(&all_settings)
+                                            let mut msgs = crate::settings::build_provider_config_messages(&all_settings);
+                                            if let Some(obs_msg) = crate::settings::build_observer_config_message(&all_settings) {
+                                                msgs.push(obs_msg);
+                                            }
+                                            msgs
                                         } else {
                                             Vec::new()
                                         };

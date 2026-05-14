@@ -18,6 +18,7 @@ use language::Language;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use crate::cache::ParseCache;
+use crate::commands::ObservationIndex;
 use crate::db::IndexDatabase;
 
 /// di Analyzer – persistent tree-sitter structural analysis daemon.
@@ -138,6 +139,8 @@ fn main() {
         }
     });
 
+    let mut obs_index = ObservationIndex::new();
+
     if cli.oneshot {
         let id: Option<serde_json::Value> = None;
         let command = match &cli.command {
@@ -165,10 +168,11 @@ fn main() {
             cli.root.as_deref(),
             cli.max_results,
             index_db.as_ref(),
+            &mut obs_index,
         );
         println!("{}", response);
     } else {
-        run_daemon(workspace_root.as_ref(), index_db);
+        run_daemon(workspace_root.as_ref(), index_db, &mut obs_index);
     }
 }
 
@@ -200,7 +204,7 @@ fn preload_grammars() {
 }
 
 /// Daemon loop: read newline-delimited JSON requests from stdin, write JSON responses to stdout.
-fn run_daemon(workspace_root: Option<&PathBuf>, index_db: Option<IndexDatabase>) {
+fn run_daemon(workspace_root: Option<&PathBuf>, index_db: Option<IndexDatabase>, obs_index: &mut ObservationIndex) {
     let mut cache = ParseCache::new();
     let stdin = io::stdin();
     let reader = stdin.lock();
@@ -251,6 +255,7 @@ fn run_daemon(workspace_root: Option<&PathBuf>, index_db: Option<IndexDatabase>)
             request.root.as_deref(),
             request.max_results,
             request_db,
+            obs_index,
         );
 
         writeln!(io::stdout(), "{}", response).ok();
@@ -282,6 +287,7 @@ fn process_request(
     root: Option<&str>,
     max_results: Option<usize>,
     index_db: Option<&IndexDatabase>,
+    obs_index: &mut ObservationIndex,
 ) -> String {
     // Commands that don't need file/content parsing first.
     match command {
@@ -360,6 +366,31 @@ fn process_request(
             }
             let err = AnalyzerError::invalid_command("search-index requires an open index database");
             return err.to_json_response(id.as_ref());
+        }
+        // Observation indexing commands
+        "index-observation" => {
+            let obs_type = content.unwrap_or("summary");
+            let text = query.unwrap_or("");
+            let ts: i64 = file.and_then(|s| s.parse().ok()).unwrap_or(0);
+            let toks: usize = subcommand.and_then(|s| s.parse().ok()).unwrap_or(0);
+            return commands::index_observation_cmd(obs_type, text, ts, toks, obs_index, id).to_json();
+        }
+        "index-critic-decision" => {
+            let text = content.unwrap_or("");
+            let turn: usize = file.and_then(|s| s.parse().ok()).unwrap_or(0);
+            let conf: f32 = subcommand.and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            return commands::index_critic_decision_cmd(text, turn, conf, obs_index, id).to_json();
+        }
+        "index-watcher-pattern" => {
+            let text = content.unwrap_or("");
+            let hash = query.unwrap_or("");
+            let turn: usize = file.and_then(|s| s.parse().ok()).unwrap_or(0);
+            return commands::index_watcher_pattern_cmd(text, hash, turn, obs_index, id).to_json();
+        }
+        "search-observations" => {
+            let q = query.unwrap_or("");
+            let limit = max_results.unwrap_or(10);
+            return commands::search_observations_cmd(q, limit, obs_index, id).to_json();
         }
         _ => {}
     }

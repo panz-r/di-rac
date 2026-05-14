@@ -9,7 +9,7 @@ pub use crate::settings_model::{
     RoleSettings, RoleBehaviorSettings, AllSettings, SettingsPanel,
     PendingAsyncOp, SettingsLoadResult,
     F_PROVIDER,
-    build_provider_config_messages, build_role_fields, build_role_behavior_fields,
+    build_provider_config_messages, build_observer_config_message, build_role_fields, build_role_behavior_fields,
     build_theme_fields, load_all_settings, save_all_settings_to_disk,
     push_role_to_gateway, push_all_to_gateway, validate_parameters,
     query_list_providers,

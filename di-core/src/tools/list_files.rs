@@ -39,6 +39,7 @@ pub async fn list_files(
             content: None,
             language: None,
             query: None,
+            subcommand: None,
         }).await {
             Ok(resp) if resp.ok => {
                 let section = format_repo_results(path, &resp.data);

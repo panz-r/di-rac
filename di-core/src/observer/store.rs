@@ -148,6 +148,11 @@ impl ObservationStore {
         &self.observations
     }
 
+    /// Access all observations mutably.
+    pub fn get_all_mut(&mut self) -> &mut [Observation] {
+        &mut self.observations
+    }
+
     fn load_from_disk(path: &PathBuf) -> Vec<Observation> {
         let file = match fs::File::open(path) {
             Ok(f) => f,

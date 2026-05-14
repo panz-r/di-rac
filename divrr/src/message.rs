@@ -116,4 +116,24 @@ pub enum FrontendMessage {
         /// Provider-specific parameters (temperature, top_p, max_tokens, etc.)
         params: std::collections::HashMap<String, serde_json::Value>,
     },
+    /// Frontend passes observer behavior settings to di-core.
+    SetObserverConfig {
+        enabled: bool,
+        use_llm_observations: bool,
+        watcher_frequency: usize,
+        critic_frequency: usize,
+        verbose: bool,
+        token_threshold: usize,
+        buffer_activation: usize,
+        block_after: f32,
+        reflection_enabled: bool,
+        reflection_token_threshold: usize,
+        procedural_monotonicity_enabled: bool,
+        ast_guided_memory_enabled: bool,
+        adaptive_cooldown_enabled: bool,
+        latency_budget_ms: u64,
+        permissive_buffer_size: usize,
+        observer_provider: Option<String>,
+        observer_model_id: Option<String>,
+    },
 }

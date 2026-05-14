@@ -1078,3 +1078,157 @@ fn collect_errors(
         }
     }
 }
+
+// ── Observation indexing ────────────────────────────────────────────
+
+/// In-memory observation index for keyword search.
+pub struct ObservationIndex {
+    entries: Vec<IndexedObservation>,
+}
+
+struct IndexedObservation {
+    obs_type: String,
+    content: String,
+    timestamp: i64,
+    tokens: usize,
+    turn: usize,
+    confidence: Option<f32>,
+}
+
+impl ObservationIndex {
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    pub fn append(&mut self, entry: IndexedObservation) {
+        if self.entries.len() >= 500 {
+            self.entries.remove(0);
+        }
+        self.entries.push(entry);
+    }
+
+    pub fn search(&self, query: &str, limit: usize) -> Vec<&IndexedObservation> {
+        let lowered = query.to_lowercase();
+        let terms: Vec<&str> = lowered.split_whitespace().collect();
+        if terms.is_empty() {
+            return Vec::new();
+        }
+        let limit = limit.max(1);
+        self.entries.iter().rev()
+            .filter(|e| {
+                let lower = e.content.to_lowercase();
+                terms.iter().all(|t| lower.contains(t))
+            })
+            .take(limit)
+            .collect()
+    }
+}
+
+pub fn index_observation_cmd(
+    obs_type: &str,
+    content: &str,
+    timestamp: i64,
+    tokens: usize,
+    index: &mut ObservationIndex,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    index.append(IndexedObservation {
+        obs_type: obs_type.to_string(),
+        content: content.to_string(),
+        timestamp,
+        tokens,
+        turn: 0,
+        confidence: None,
+    });
+    CommandOutput {
+        ok: true, id,
+        symbols: None, imports: None, skeleton: None,
+        body: None, start_line: None, end_line: None,
+        results: None, files: None,
+        status: Some(serde_json::json!({"indexed": true})),
+        truncated: None, total_count: None,
+        data: None, calls: None, definitions: None, added: None, removed: None,
+    }
+}
+
+pub fn index_critic_decision_cmd(
+    content: &str,
+    turn: usize,
+    confidence: f32,
+    index: &mut ObservationIndex,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    index.append(IndexedObservation {
+        obs_type: "critic".to_string(),
+        content: content.to_string(),
+        timestamp: 0,
+        tokens: 0,
+        turn,
+        confidence: Some(confidence),
+    });
+    CommandOutput {
+        ok: true, id,
+        symbols: None, imports: None, skeleton: None,
+        body: None, start_line: None, end_line: None,
+        results: None, files: None,
+        status: Some(serde_json::json!({"indexed": true})),
+        truncated: None, total_count: None,
+        data: None, calls: None, definitions: None, added: None, removed: None,
+    }
+}
+
+pub fn index_watcher_pattern_cmd(
+    content: &str,
+    file_hash: &str,
+    turn: usize,
+    index: &mut ObservationIndex,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    index.append(IndexedObservation {
+        obs_type: "watcher".to_string(),
+        content: content.to_string(),
+        timestamp: 0,
+        tokens: 0,
+        turn,
+        confidence: None,
+    });
+    CommandOutput {
+        ok: true, id,
+        symbols: None, imports: None, skeleton: None,
+        body: None, start_line: None, end_line: None,
+        results: None, files: None,
+        status: Some(serde_json::json!({"indexed": true, "file_hash": file_hash})),
+        truncated: None, total_count: None,
+        data: None, calls: None, definitions: None, added: None, removed: None,
+    }
+}
+
+pub fn search_observations_cmd(
+    query: &str,
+    limit: usize,
+    index: &ObservationIndex,
+    id: Option<serde_json::Value>,
+) -> CommandOutput {
+    let results: Vec<serde_json::Value> = index.search(query, limit)
+        .into_iter()
+        .map(|e| {
+            serde_json::json!({
+                "type": e.obs_type,
+                "content": e.content,
+                "timestamp": e.timestamp,
+                "tokens": e.tokens,
+            })
+        })
+        .collect();
+
+    CommandOutput {
+        ok: true, id,
+        symbols: None, imports: None, skeleton: None,
+        body: None, start_line: None, end_line: None,
+        results: None, files: None,
+        status: None,
+        truncated: None, total_count: None,
+        data: Some(serde_json::json!({ "results": results })),
+        calls: None, definitions: None, added: None, removed: None,
+    }
+}

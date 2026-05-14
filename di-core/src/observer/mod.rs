@@ -52,6 +52,8 @@ pub struct InterruptResult {
     pub reason: String,
     /// Decayed confidence of the interrupt signal (0.0–1.0).
     pub confidence: f32,
+    /// True when the blocking summarizer should fire synchronously (token ratio exceeded blockAfter).
+    pub needs_sync_summary: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +218,8 @@ pub struct ActionFeatures {
 }
 
 /// Extract structured action features from messages using regex matching TS patterns.
-pub fn extract_action_features(msgs: &[&Message]) -> Vec<ActionFeatures> {
+/// `ast_delta` is the net AST node change (added - removed) for the last action, if available.
+pub fn extract_action_features(msgs: &[&Message], ast_delta: Option<i32>) -> Vec<ActionFeatures> {
     msgs.iter().enumerate().map(|(i, msg)| {
         let content = msg.content.to_string();
         let tool = regex_lazy_capture(&content, r#"tool_code":\s*"([a-zA-Z0-9_]+)"#)
@@ -229,15 +232,31 @@ pub fn extract_action_features(msgs: &[&Message]) -> Vec<ActionFeatures> {
         let success = !content.contains("error");
         let ext = file.rsplit('.').next().unwrap_or("python").to_string();
 
+        // Extract error signature: first line containing "error", truncated
+        let error_sig = if content.contains("error") || content.contains("failed") {
+            content.lines()
+                .find(|l| l.contains("error") || l.contains("failed"))
+                .map(|l| {
+                    let sig = l.trim();
+                    if sig.len() > 120 { format!("{}...", &sig[..120]) } else { sig.to_string() }
+                })
+        } else {
+            None
+        };
+
+        // Last message gets the AST delta if available
+        let is_last = i == msgs.len() - 1;
+        let delta = if is_last { ast_delta } else { None };
+
         ActionFeatures {
             file,
             op: tool,
             line_range,
-            error_sig: None,
+            error_sig,
             success,
             turn: i,
             lang: ext,
-            ast_delta_nodes: None,
+            ast_delta_nodes: delta,
             instruction,
         }
     }).collect()
@@ -426,7 +445,6 @@ pub struct ObserverConfig {
     pub provider: Option<String>,
     pub model_id: Option<String>,
     pub buffer_activation: usize,
-    pub block_after: usize,
     pub verbose: bool,
     pub permissive_buffer_size: usize,
     pub procedural_monotonicity_enabled: bool,
@@ -436,6 +454,9 @@ pub struct ObserverConfig {
     pub latency_budget_ms: u64,
     pub memory_cap_tokens: usize,
     pub reflection_cooldown: usize,
+    /// Token ratio threshold for blocking summarizer (TS: blockAfter).
+    /// Sync summarizer fires when `unobserved_tokens / token_threshold >= block_after`.
+    pub block_after: f32,
 }
 
 impl Default for ObserverConfig {
@@ -455,7 +476,6 @@ impl Default for ObserverConfig {
             provider: None,
             model_id: None,
             buffer_activation: 3,
-            block_after: 10,
             verbose: false,
             permissive_buffer_size: 2,
             procedural_monotonicity_enabled: true,
@@ -465,6 +485,7 @@ impl Default for ObserverConfig {
             latency_budget_ms: 200,
             memory_cap_tokens: 15000,
             reflection_cooldown: 4,
+            block_after: 0.7,
         }
     }
 }
@@ -697,6 +718,16 @@ impl Observer {
         self.last_ast_churn = churn;
     }
 
+    /// Get net AST node delta (added - removed) from the last churn data.
+    fn ast_delta(&self) -> Option<i32> {
+        self.last_ast_churn.map(|(a, r, _)| a as i32 - r as i32)
+    }
+
+    /// Get the last computed SQS score (avoids redundant recomputation).
+    pub fn last_sqs(&self) -> Option<f32> {
+        self.last_sqs.as_ref().map(|s| s.score)
+    }
+
     /// Whether the heuristic watcher just fired this turn.
     pub fn watcher_just_fired(&self) -> bool {
         self.turns_since_last_observation == 0
@@ -710,6 +741,11 @@ impl Observer {
     /// Get the last observed message index for trajectory compression.
     pub fn last_observed_message_index(&self) -> usize {
         self.last_observed_message_index
+    }
+
+    /// Get the current turn number.
+    pub fn current_turn(&self) -> usize {
+        self.current_turn
     }
 
     /// Update the last observed message index after a summarizer/skeleton covers the trajectory.
@@ -730,6 +766,7 @@ impl Observer {
     // -----------------------------------------------------------------------
 
     pub fn on_turn_complete(&mut self, trajectory: &Trajectory) -> InterruptResult {
+        self.metrics.intervention_trigger = InterventionTrigger::default();
         self.turns_since_last_observation += 1;
         self.turns_since_last_reflection += 1;
         self.metrics.turns_observed += 1;
@@ -808,12 +845,16 @@ impl Observer {
         // Determine interrupt action
         let (action, reason, confidence) = self.determine_interrupt(&sqs);
 
+        // Check sync summarizer trigger (TS: token ratio >= blockAfter)
+        let needs_sync_summary = self.should_summarize(trajectory);
+
         InterruptResult {
             action,
             sqs,
             loop_pattern: self.last_loop_pattern.clone(),
             reason,
             confidence,
+            needs_sync_summary,
         }
     }
 
@@ -869,6 +910,9 @@ impl Observer {
     /// Adaptive reflection cooldown in turns.
     /// Adaptive reflection cooldown matching TS getAdaptiveCooldown (ObserverOrchestrator.ts:352-367).
     fn reflection_cooldown_turns(&self) -> usize {
+        if !self.config.adaptive_cooldown_enabled {
+            return self.config.reflection_cooldown;
+        }
         let mut cd = self.config.reflection_cooldown;
         let files_touched: HashSet<&str> = self.recent_edits.iter().map(|(p, _)| p.as_str()).collect();
         let file_count = files_touched.len();
@@ -1061,15 +1105,6 @@ impl Observer {
     /// Build the observation block to inject into the system prompt.
     pub fn build_observation_block(&self) -> String {
         let summary = self.store.build_observation_block(Some(ObservationType::Summary), None);
-        let watcher = self.store.build_observation_block(
-            Some(ObservationType::Watcher), Some(2),
-        );
-        let filter = self.store.build_observation_block(
-            Some(ObservationType::Filter), Some(2),
-        );
-        let critic = self.store.build_observation_block(
-            Some(ObservationType::Critic), Some(2),
-        );
         let skeleton = self.store.build_observation_block(Some(ObservationType::Skeleton), None);
 
         let mut parts = Vec::new();
@@ -1078,21 +1113,20 @@ impl Observer {
             parts.push(format!("# Conversation Observations\n\n{}", summary));
         }
 
-        // Apply confidence decay and filter by tier confidence threshold
-        let min_conf = self.tier_confidence_threshold();
+        // Apply per-observation confidence decay matching TS filterWithDecay
+        // When total observations are below permissive_buffer_size, skip decay filtering
+        let min_conf = if self.store.len() < self.config.permissive_buffer_size {
+            0.0
+        } else {
+            self.tier_confidence_threshold()
+        };
         let mut insights = Vec::new();
-        if !watcher.is_empty() {
-            let decayed = self.filter_by_confidence(&watcher, self.config.tau_watcher, min_conf);
-            if !decayed.is_empty() { insights.push(decayed); }
-        }
-        if !filter.is_empty() {
-            let decayed = self.filter_by_confidence(&filter, self.config.tau_watcher, min_conf);
-            if !decayed.is_empty() { insights.push(decayed); }
-        }
-        if !critic.is_empty() {
-            let decayed = self.filter_by_confidence(&critic, self.config.tau_critic, min_conf);
-            if !decayed.is_empty() { insights.push(decayed); }
-        }
+        let watcher = self.filter_observations_by_decay(ObservationType::Watcher, min_conf);
+        let filter = self.filter_observations_by_decay(ObservationType::Filter, min_conf);
+        let critic = self.filter_observations_by_decay(ObservationType::Critic, min_conf);
+        if !watcher.is_empty() { insights.push(watcher); }
+        if !filter.is_empty() { insights.push(filter); }
+        if !critic.is_empty() { insights.push(critic); }
         if !insights.is_empty() {
             parts.push(format!("# OBSERVER FEEDBACK (Background Monitoring)\n\n{}", insights.join("\n\n")));
         }
@@ -1106,6 +1140,11 @@ impl Observer {
 
     /// Recall observations matching a query.
     pub fn recall(&self, query: &str) -> String {
+        self.recall_with_daemon_results(query, &[])
+    }
+
+    /// Recall observations matching a query, with optional daemon search results prepended.
+    pub fn recall_with_daemon_results(&self, query: &str, daemon_results: &[String]) -> String {
         if query == "--stats" {
             let sqs_str = self.last_sqs.as_ref()
                 .map(|s| format!("score={:.2}, status={}, tier={}", s.score, s.status, self.current_tier.as_index()))
@@ -1121,6 +1160,14 @@ impl Observer {
             );
         }
 
+        let mut parts: Vec<String> = Vec::new();
+
+        // Daemon results first (semantic search from indexed observations)
+        for text in daemon_results {
+            parts.push(format!("[daemon] {}", text));
+        }
+
+        // Local keyword matching
         let query_lower = query.to_lowercase();
         let matches: Vec<&Observation> = self.store.get_all()
             .iter()
@@ -1128,14 +1175,32 @@ impl Observer {
             .take(5)
             .collect();
 
-        if matches.is_empty() {
+        for m in &matches {
+            parts.push(format!("[{}] {}", m.obs_type, m.text));
+        }
+
+        if parts.is_empty() {
             format!("No observations matching '{}'.", query)
         } else {
-            matches.iter()
-                .map(|m| format!("[{}] {}", m.obs_type, m.text))
-                .collect::<Vec<_>>()
-                .join("\n\n")
+            parts.join("\n\n")
         }
+    }
+
+    /// Return the latest observable per type for daemon indexing.
+    /// Returns (obs_type_str, text, timestamp, token_estimate) tuples.
+    pub fn latest_observables(&self) -> Vec<(String, String, i64, usize)> {
+        let mut result = Vec::new();
+        for obs_type in &[ObservationType::Watcher, ObservationType::Critic, ObservationType::Filter, ObservationType::Summary, ObservationType::Skeleton] {
+            if let Some(obs) = self.store.get_latest(obs_type.clone()) {
+                result.push((
+                    format!("{:?}", obs_type).to_lowercase(),
+                    obs.text.clone(),
+                    obs.timestamp,
+                    obs.token_estimate,
+                ));
+            }
+        }
+        result
     }
 
     // -----------------------------------------------------------------------
@@ -1195,7 +1260,7 @@ impl Observer {
 
     /// EE ratio using structured action features (matching TS extractActionFeatures).
     fn calculate_ee_ratio(&self, msgs: &[&Message]) -> f32 {
-        let features = extract_action_features(msgs);
+        let features = extract_action_features(msgs, self.ast_delta());
         if features.is_empty() {
             return 0.5;
         }
@@ -1219,6 +1284,9 @@ impl Observer {
     }
 
     fn calculate_monotonicity(&mut self) -> f32 {
+        if !self.config.procedural_monotonicity_enabled {
+            return 1.0;
+        }
         let total = self.resolved_subgoals.len();
         if total == 0 {
             return 1.0;
@@ -1231,7 +1299,7 @@ impl Observer {
     /// DCR using TS formula with language normalization (ObserverOrchestrator.ts:210-225).
     /// Falls back to heuristic when AST churn data is unavailable.
     fn calculate_dcr(&self, msgs: &[&Message]) -> f32 {
-        let features = extract_action_features(msgs);
+        let features = extract_action_features(msgs, self.ast_delta());
         let unique_files: HashSet<&str> = features.iter().map(|f| f.file.as_str()).collect();
         let coverage = (unique_files.len() as f32 / 5.0).min(1.0);
 
@@ -1258,7 +1326,7 @@ impl Observer {
 
     /// CPS using TS 4-signal model (ObserverOrchestrator.ts:184-208).
     fn calculate_cps(&self, msgs: &[&Message]) -> f32 {
-        let features = extract_action_features(msgs);
+        let features = extract_action_features(msgs, self.ast_delta());
 
         // s[0]: last action success
         let s0 = features.last().map(|f| if f.success { 1.0 } else { 0.0 }).unwrap_or(0.5);
@@ -1324,7 +1392,7 @@ impl Observer {
             .rev()
             .take(3)
             .collect();
-        let features = extract_action_features(&assistant_msgs);
+        let features = extract_action_features(&assistant_msgs, self.ast_delta());
 
         // Check for repeated file:op combinations
         let mut file_op_counts: HashMap<String, usize> = HashMap::new();
@@ -1393,7 +1461,35 @@ impl Observer {
     // filterMemoryByApi — build request and apply filter
     // -----------------------------------------------------------------------
 
-    /// Build an extract-apis request from the most recent tool output containing code.
+    /// Build an ObservationKey from current session data.
+    /// Populates signature from recent edits; API data is enriched by the engine.
+    fn build_observation_key(&self) -> ObservationKey {
+        let signature = self.recent_edits.first()
+            .map(|(path, _)| path.clone());
+        ObservationKey {
+            signature,
+            apis_called: Vec::new(),
+            apis_defined: Vec::new(),
+            docstring_hash: None,
+        }
+    }
+
+    /// Enrich the latest observation's key with API data from the analyzer.
+    pub fn enrich_latest_key(&mut self, apis: &ExtractApisResponse) {
+        if let Some(obs) = self.store.get_all_mut().last_mut() {
+            if obs.key.is_none() {
+                obs.key = Some(ObservationKey::default());
+            }
+            if let Some(ref mut key) = obs.key {
+                if !apis.calls.is_empty() {
+                    key.apis_called = apis.calls.clone();
+                }
+                if !apis.definitions.is_empty() {
+                    key.apis_defined = apis.definitions.clone();
+                }
+            }
+        }
+    }
     /// Returns None if no suitable code content is found in recent messages.
     pub fn build_extract_apis_request(&self, trajectory: &Trajectory) -> Option<ExtractApisRequest> {
         let tool_msgs: Vec<&Message> = trajectory.messages.iter()
@@ -1435,6 +1531,9 @@ impl Observer {
     /// Filter observation text to keep only lines relevant to the given APIs.
     /// Returns the filtered text (may be empty if nothing matches).
     pub fn apply_api_filter(&self, text: &str, apis: &ExtractApisResponse) -> String {
+        if !self.config.ast_guided_memory_enabled {
+            return text.to_string();
+        }
         if apis.calls.is_empty() && apis.definitions.is_empty() {
             return text.to_string();
         }
@@ -1603,22 +1702,31 @@ impl Observer {
         }
     }
 
-    /// Whether summarizer should fire: buffer_activation turns passed without summary.
-    pub fn should_summarize(&self) -> bool {
+    /// Estimate tokens for unobserved messages (those after last_observed_message_index).
+    pub fn get_unobserved_token_estimate(&self, trajectory: &Trajectory) -> usize {
+        if self.last_observed_message_index >= trajectory.messages.len() {
+            return 0;
+        }
+        let unobserved = &trajectory.messages[self.last_observed_message_index..];
+        unobserved.iter()
+            .map(|m| m.content.to_string().len())
+            .sum::<usize>()
+            / 4
+    }
+
+    /// Whether the blocking summarizer should fire based on token ratio (matches TS onTurnComplete).
+    /// TS computes: ratio = unobserved_tokens / tokenThreshold, fires when ratio >= blockAfter.
+    pub fn should_summarize(&self, trajectory: &Trajectory) -> bool {
         if self.current_turn < self.config.buffer_activation {
             return false;
         }
-        // No summary observation yet, or enough turns since last one
-        let last_summary = self.store.get_latest(ObservationType::Summary);
-        match last_summary {
-            None => self.current_turn >= self.config.buffer_activation,
-            Some(obs) => {
-                let turns_since = obs.compressed_range
-                    .map(|r| self.current_turn.saturating_sub(r[1]))
-                    .unwrap_or(self.current_turn);
-                turns_since >= self.config.block_after
-            }
+        let unobserved_count = trajectory.messages.len().saturating_sub(self.last_observed_message_index);
+        if unobserved_count < 4 {
+            return false;
         }
+        let token_estimate = self.get_unobserved_token_estimate(trajectory);
+        let ratio = token_estimate as f32 / self.config.token_threshold.max(1) as f32;
+        ratio >= self.config.block_after
     }
 
     /// Whether reflector should fire for LLM path.
@@ -1644,7 +1752,11 @@ impl Observer {
             } else {
                 None
             },
-            key: None,
+            key: if obs_type == ObservationType::Skeleton || obs_type == ObservationType::Summary {
+                Some(self.build_observation_key())
+            } else {
+                None
+            },
         };
         self.store.append(obs);
         match obs_type {
@@ -1682,18 +1794,32 @@ impl Observer {
         base_conf * (-(turns_since as f32) / adjusted_tau).exp()
     }
 
-    /// Filter observation text by per-observation confidence decay.
-    /// Uses the actual decayed value (not all-or-nothing).
-    fn filter_by_confidence(&self, text: &str, tau: f32, min_conf: f32) -> String {
-        let sqs_score = self.last_sqs.as_ref().map(|s| s.score).unwrap_or(0.5);
-        let adjusted_tau = if sqs_score > 0.5 { tau * 2.0 } else { tau / 2.0 };
-        let turns = self.turns_since_last_observation as f32;
-        let decay = (-turns / adjusted_tau).exp();
+    /// Filter observations by per-observation confidence decay, matching TS filterWithDecay.
+    /// Each observation's confidence is individually decayed based on its age (compressed_range).
+    /// Only the last 2 observations per type that pass the threshold are kept.
+    fn filter_observations_by_decay(&self, obs_type: ObservationType, min_conf: f32) -> String {
+        let tau_kind = if obs_type == ObservationType::Critic { "CRITIC" } else { "WATCHER" };
+        let passing: Vec<&Observation> = self.store.get_all().iter()
+            .filter(|obs| {
+                if obs.obs_type != obs_type { return false; }
+                let turns_since = self.current_turn
+                    - obs.compressed_range.map(|r| r[1]).unwrap_or(0);
+                let decayed = self.decayed_confidence(obs.confidence, tau_kind, turns_since);
+                decayed >= min_conf
+            })
+            .rev()
+            .take(2)
+            .collect();
 
-        if decay < min_conf {
+        if passing.is_empty() {
             return String::new();
         }
-        text.to_string()
+
+        passing.into_iter()
+            .rev() // restore chronological order
+            .map(|obs| obs.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     // -----------------------------------------------------------------------
@@ -1781,7 +1907,7 @@ impl Observer {
             critic_action: None,
             sqs: self.last_sqs.as_ref().map(|s| s.score),
             fidelity: Some(SkeletonFidelity::Structural),
-            key: None,
+            key: Some(self.build_observation_key()),
         };
         let tokens = obs.token_estimate;
         self.store.append(obs);
@@ -2622,5 +2748,361 @@ mod tests {
         tracker.record(ObservationType::Watcher, 50, 100, 1);
         tracker.record(ObservationType::Critic, 60, 200, 2);
         assert!((tracker.avg_latency_ms() - 150.0).abs() < 0.001);
+    }
+
+    // -----------------------------------------------------------------------
+    // Gap 1: Per-observation decay tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_per_observation_decay_filters_old_observations() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-per-decay");
+        // Add a watcher observation from 20 turns ago (high confidence but old)
+        observer.current_turn = 20;
+        let old_obs = Observation {
+            obs_type: ObservationType::Watcher,
+            text: "old watcher insight".to_string(),
+            timestamp: 0,
+            confidence: 0.7,
+            token_estimate: 20,
+            compressed_range: Some([0, 0]), // turn 0 → 20 turns ago
+            critic_action: None, sqs: None, fidelity: None, key: None,
+        };
+        // Add a recent watcher observation
+        let recent_obs = Observation {
+            obs_type: ObservationType::Watcher,
+            text: "recent watcher insight".to_string(),
+            timestamp: 0,
+            confidence: 0.7,
+            token_estimate: 20,
+            compressed_range: Some([18, 18]), // turn 18 → 2 turns ago
+            critic_action: None, sqs: None, fidelity: None, key: None,
+        };
+        observer.store.append(old_obs);
+        observer.store.append(recent_obs);
+
+        let min_conf = 0.3;
+        let filtered = observer.filter_observations_by_decay(ObservationType::Watcher, min_conf);
+        // The old observation (turn 0, 20 turns ago) should have very low decayed confidence
+        // The recent one (turn 18, 2 turns ago) should pass
+        assert!(!filtered.contains("old watcher insight"), "old obs should be filtered out");
+        assert!(filtered.contains("recent watcher insight"), "recent obs should pass");
+    }
+
+    #[test]
+    fn test_per_observation_decay_keeps_last_two() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-decay-2");
+        observer.current_turn = 5;
+        // Add 4 recent watcher observations (all should pass decay)
+        for i in 0..4 {
+            observer.store.append(Observation {
+                obs_type: ObservationType::Watcher,
+                text: format!("watcher insight {}", i),
+                timestamp: 0,
+                confidence: 0.9,
+                token_estimate: 10,
+                compressed_range: Some([i, i]),
+                critic_action: None, sqs: None, fidelity: None, key: None,
+            });
+        }
+        let filtered = observer.filter_observations_by_decay(ObservationType::Watcher, 0.1);
+        // Should only keep the last 2
+        assert!(!filtered.contains("watcher insight 0"));
+        assert!(!filtered.contains("watcher insight 1"));
+        assert!(filtered.contains("watcher insight 2"));
+        assert!(filtered.contains("watcher insight 3"));
+    }
+
+    #[test]
+    fn test_per_observation_decay_returns_empty_when_none_pass() {
+        let observer = Observer::new_with_task(ObserverConfig::default(), "test-decay-empty");
+        // No observations → empty
+        let filtered = observer.filter_observations_by_decay(ObservationType::Watcher, 0.5);
+        assert!(filtered.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Gap 2: Token ratio summarizer tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_should_summarize_token_ratio() {
+        let mut observer = Observer::new_with_task(
+            ObserverConfig {
+                buffer_activation: 2,
+                block_after: 0.8, // trigger when unobserved tokens >= 80% of threshold
+                token_threshold: 100, // 100 tokens threshold
+                ..Default::default()
+            },
+            "test-summarize-ratio",
+        );
+        observer.current_turn = 5;
+
+        // Create trajectory with enough unobserved messages to exceed ratio
+        let mut traj = Trajectory::new();
+        // Add 5 messages with ~25 chars each → ~31 tokens (25*5/4=31)
+        // ratio = 31/100 = 0.31, which is < 0.8 → should NOT summarize
+        for _ in 0..5 {
+            traj.messages.push(Message {
+                id: uuid::Uuid::new_v4(),
+                role: Role::Tool,
+                content: serde_json::json!("a".repeat(25)),
+                timestamp: chrono::Utc::now(),
+                tokens: 10,
+                is_compressed: false,
+                tool_meta: Default::default(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                thinking: None,
+            });
+        }
+        assert!(!observer.should_summarize(&traj), "ratio 0.31 < 0.8, should not summarize");
+
+        // Add many more messages to exceed ratio
+        // Need 80+ tokens → 320+ chars → need ~13 messages of 25 chars each
+        for _ in 0..15 {
+            traj.messages.push(Message {
+                id: uuid::Uuid::new_v4(),
+                role: Role::Tool,
+                content: serde_json::json!("a".repeat(25)),
+                timestamp: chrono::Utc::now(),
+                tokens: 10,
+                is_compressed: false,
+                tool_meta: Default::default(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                thinking: None,
+            });
+        }
+        // Now 20 messages * 25 chars / 4 = 125 tokens, ratio = 125/100 = 1.25 >= 0.8
+        assert!(observer.should_summarize(&traj), "ratio >= 0.8, should summarize");
+    }
+
+    #[test]
+    fn test_should_summarize_requires_min_unobserved() {
+        let mut observer = Observer::new_with_task(
+            ObserverConfig { buffer_activation: 1, block_after: 0.1, ..Default::default() },
+            "test-summarize-min",
+        );
+        observer.current_turn = 5;
+        let mut traj = Trajectory::new();
+        // Only 3 unobserved messages → less than 4 minimum
+        for _ in 0..3 {
+            traj.messages.push(Message {
+                id: uuid::Uuid::new_v4(),
+                role: Role::Tool,
+                content: serde_json::json!("a".repeat(100)),
+                timestamp: chrono::Utc::now(),
+                tokens: 10,
+                is_compressed: false,
+                tool_meta: Default::default(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                thinking: None,
+            });
+        }
+        assert!(!observer.should_summarize(&traj), "only 3 unobserved, need >= 4");
+    }
+
+    #[test]
+    fn test_get_unobserved_token_estimate() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-unobs-tok");
+        observer.last_observed_message_index = 2;
+        let mut traj = Trajectory::new();
+        // 5 messages, 20 chars each
+        for _ in 0..5 {
+            traj.messages.push(Message {
+                id: uuid::Uuid::new_v4(),
+                role: Role::Tool,
+                content: serde_json::json!("a".repeat(20)),
+                timestamp: chrono::Utc::now(),
+                tokens: 10,
+                is_compressed: false,
+                tool_meta: Default::default(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                thinking: None,
+            });
+        }
+        // Unobserved: messages 2,3,4 = 3 messages * 22 chars (JSON-wrapped) / 4 = 16 tokens
+        let tokens = observer.get_unobserved_token_estimate(&traj);
+        assert_eq!(tokens, 16);
+    }
+
+    #[test]
+    fn test_needs_sync_summary_set_on_turn_complete() {
+        let mut observer = Observer::new_with_task(
+            ObserverConfig {
+                buffer_activation: 1,
+                block_after: 0.1,
+                token_threshold: 50,
+                ..Default::default()
+            },
+            "test-sync-flag",
+        );
+        let mut traj = Trajectory::new();
+        // Add enough messages to trigger summarizer
+        for _ in 0..10 {
+            traj.messages.push(Message {
+                id: uuid::Uuid::new_v4(),
+                role: Role::Tool,
+                content: serde_json::json!("a".repeat(30)),
+                timestamp: chrono::Utc::now(),
+                tokens: 10,
+                is_compressed: false,
+                tool_meta: Default::default(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                thinking: None,
+            });
+        }
+        let result = observer.on_turn_complete(&traj);
+        // 10 messages * 30 chars / 4 = 75 tokens, ratio = 75/50 = 1.5 >= 0.1
+        assert!(result.needs_sync_summary, "should need sync summary");
+    }
+
+    #[test]
+    fn test_needs_sync_summary_false_when_below_ratio() {
+        let mut observer = Observer::new_with_task(
+            ObserverConfig {
+                buffer_activation: 1,
+                block_after: 10.0, // very high threshold
+                token_threshold: 15000,
+                ..Default::default()
+            },
+            "test-sync-no",
+        );
+        let mut traj = Trajectory::new();
+        // Just a few small messages — nowhere near ratio
+        for _ in 0..3 {
+            traj.messages.push(Message {
+                id: uuid::Uuid::new_v4(),
+                role: Role::Tool,
+                content: serde_json::json!("small"),
+                timestamp: chrono::Utc::now(),
+                tokens: 5,
+                is_compressed: false,
+                tool_meta: Default::default(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                thinking: None,
+            });
+        }
+        let result = observer.on_turn_complete(&traj);
+        assert!(!result.needs_sync_summary, "should not need sync summary");
+    }
+
+    #[test]
+    fn test_last_sqs_returns_cached() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-last-sqs");
+        assert!(observer.last_sqs().is_none());
+        let mut traj = Trajectory::new();
+        traj.messages.push(Message {
+            id: uuid::Uuid::new_v4(), role: Role::Assistant,
+            content: serde_json::json!("test"), timestamp: chrono::Utc::now(),
+            tokens: 5, is_compressed: false, tool_meta: Default::default(),
+            tool_calls: Vec::new(), tool_call_id: None, thinking: None,
+        });
+        observer.on_turn_complete(&traj);
+        assert!(observer.last_sqs().is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Gap: ast_delta_nodes, error_sig, ObservationKey
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_extract_action_features_error_sig() {
+        let msg = Message {
+            id: uuid::Uuid::new_v4(), role: Role::Tool,
+            content: serde_json::json!("error: cannot find symbol `foo` in scope"),
+            timestamp: chrono::Utc::now(), tokens: 10, is_compressed: false,
+            tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+            thinking: None,
+        };
+        let features = extract_action_features(&[&msg], None);
+        assert!(features[0].error_sig.is_some());
+        assert!(features[0].error_sig.as_ref().unwrap().contains("error"));
+        assert!(!features[0].success);
+    }
+
+    #[test]
+    fn test_extract_action_features_no_error() {
+        let msg = Message {
+            id: uuid::Uuid::new_v4(), role: Role::Tool,
+            content: serde_json::json!("file written successfully"),
+            timestamp: chrono::Utc::now(), tokens: 10, is_compressed: false,
+            tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+            thinking: None,
+        };
+        let features = extract_action_features(&[&msg], None);
+        assert!(features[0].error_sig.is_none());
+        assert!(features[0].success);
+    }
+
+    #[test]
+    fn test_extract_action_features_ast_delta_on_last() {
+        let msgs: Vec<Message> = (0..3).map(|_| Message {
+            id: uuid::Uuid::new_v4(), role: Role::Assistant,
+            content: serde_json::json!({"tool_code": "edit", "path": "main.rs"}),
+            timestamp: chrono::Utc::now(), tokens: 10, is_compressed: false,
+            tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+            thinking: None,
+        }).collect();
+        let refs: Vec<&Message> = msgs.iter().collect();
+        let features = extract_action_features(&refs, Some(7)); // net +7 AST nodes
+        assert_eq!(features[0].ast_delta_nodes, None); // not last
+        assert_eq!(features[1].ast_delta_nodes, None); // not last
+        assert_eq!(features[2].ast_delta_nodes, Some(7)); // last gets the delta
+    }
+
+    #[test]
+    fn test_ast_delta_helper() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-delta");
+        assert!(observer.ast_delta().is_none());
+        observer.set_ast_churn(Some((10, 3, 13)));
+        assert_eq!(observer.ast_delta(), Some(7));
+        observer.set_ast_churn(Some((2, 8, 10)));
+        assert_eq!(observer.ast_delta(), Some(-6));
+    }
+
+    #[test]
+    fn test_build_observation_key_populates_signature() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-key");
+        observer.recent_edits.push(("src/main.rs".to_string(), "edited".to_string()));
+        let key = observer.build_observation_key();
+        assert_eq!(key.signature.as_deref(), Some("src/main.rs"));
+        assert!(key.apis_called.is_empty());
+        assert!(key.apis_defined.is_empty());
+    }
+
+    #[test]
+    fn test_enrich_latest_key_adds_apis() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-enrich");
+        observer.store.append(Observation {
+            obs_type: ObservationType::Skeleton, text: "test".to_string(),
+            timestamp: 0, confidence: 0.5, token_estimate: 10,
+            compressed_range: None, critic_action: None, sqs: None,
+            fidelity: None, key: Some(ObservationKey::default()),
+        });
+        let apis = ExtractApisResponse {
+            calls: vec!["foo".to_string(), "bar".to_string()],
+            definitions: vec!["main".to_string()],
+        };
+        observer.enrich_latest_key(&apis);
+        let all = observer.store.get_all();
+        let key = all.last().unwrap().key.as_ref().unwrap();
+        assert_eq!(key.apis_called, vec!["foo", "bar"]);
+        assert_eq!(key.apis_defined, vec!["main"]);
+    }
+
+    #[test]
+    fn test_skeleton_observation_has_key() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-skel-key");
+        observer.recent_edits.push(("lib.rs".to_string(), "edit".to_string()));
+        observer.trigger_skeleton_observation();
+        let last = observer.store.get_all().last().unwrap();
+        assert!(last.key.is_some());
+        assert_eq!(last.key.as_ref().unwrap().signature.as_deref(), Some("lib.rs"));
     }
 }

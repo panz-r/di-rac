@@ -42,6 +42,8 @@ pub struct AnalyzerRequest {
     pub content: Option<String>,
     pub language: Option<String>,
     pub query: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subcommand: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

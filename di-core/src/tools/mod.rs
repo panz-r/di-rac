@@ -465,6 +465,7 @@ impl ToolExecutor {
                 content: None,
                 language: None,
                 query: None,
+                subcommand: None,
             }).await?;
             if resp.ok {
                 if let Some(symbols) = resp.data.get("symbols").and_then(|s| s.as_array()) {
@@ -506,6 +507,7 @@ impl ToolExecutor {
                     content: None,
                     language: None,
                     query: None,
+                    subcommand: None,
                 }).await?;
                 if resp.ok {
                     Ok(json!({ "_read_raw": true, "path": path, "detail": effective_detail, "analyzer_data": resp.data }))
@@ -520,6 +522,7 @@ impl ToolExecutor {
                     content: None,
                     language: None,
                     query: None,
+                    subcommand: None,
                 }).await?;
                 if resp.ok {
                     Ok(json!({ "_read_raw": true, "path": path, "detail": "skeleton", "analyzer_data": resp.data }))
@@ -538,6 +541,7 @@ impl ToolExecutor {
                     content: None,
                     language: None,
                     query: None,
+                    subcommand: None,
                 }).await {
                     Ok(resp) if resp.ok => Some(resp.data),
                     _ => None,
@@ -567,6 +571,7 @@ impl ToolExecutor {
                     content: None,
                     language: None,
                     query: None,
+                    subcommand: None,
                 }).await {
                     Ok(resp) if resp.ok => Some(resp.data),
                     _ => None,
