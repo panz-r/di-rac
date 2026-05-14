@@ -36,8 +36,6 @@ pub fn log_event(msg: &str) {
         });
 }
 
-/// Prefix prepended to thinking content in System blocks.
-pub const THINKING_PREFIX: char = '\u{00B7}';
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
@@ -328,14 +326,14 @@ impl App {
 
                     if !has_streaming {
                         agent.log.set_streaming(
-                            if is_thinking { format!("{} {}", THINKING_PREFIX, text) } else { text.clone() },
+                            if is_thinking { format!("{} {}", crate::summarize::THINKING_PREFIX, text) } else { text.clone() },
                             is_thinking,
                         );
                         agent.status = AgentStatus::Running;
                     } else if was_thinking != is_thinking {
                         agent.log.finalize_streaming();
                         agent.log.set_streaming(
-                            if is_thinking { format!("{} {}", THINKING_PREFIX, text) } else { text.clone() },
+                            if is_thinking { format!("{} {}", crate::summarize::THINKING_PREFIX, text) } else { text.clone() },
                             is_thinking,
                         );
                     } else {
@@ -353,7 +351,7 @@ impl App {
             CoreEvent::ToolCallStarted { call_id, tool, args, .. } => {
                 if let Some(agent) = self.find_agent_mut(&agent_id) {
                     agent.log.finalize_streaming();
-                    let summary = summarize_tool_args(&tool, &args);
+                    let summary = crate::summarize::summarize_tool_args(&tool, &args);
                     agent.log.push_tool_call(call_id, tool, summary);
                     agent.status = AgentStatus::Running;
                     agent.last_activity = Utc::now();
@@ -373,7 +371,7 @@ impl App {
                     } else if let Some(err) = result.get("error").and_then(|v| v.as_str()) {
                         format!("Error: {}", err)
                     } else {
-                        format_result_summary(&result)
+                        crate::summarize::format_result_summary(&result)
                     };
                     agent.log.set_tool_result(&call_id, msg);
                     agent.last_activity = Utc::now();
@@ -575,7 +573,7 @@ impl App {
             }
             Mode::SaveDialog => {
                 if let Some(d) = &mut self.save_dialog {
-                    let byte_pos = char_to_byte(&d.path, d.cursor);
+                    let byte_pos = crate::summarize::char_to_byte(&d.path, d.cursor);
                     d.path.insert_str(byte_pos, text);
                     d.cursor += text.chars().count();
                     d.exists_warned = false;
@@ -953,7 +951,7 @@ impl App {
     fn execute_block_action(&mut self) -> Option<FrontendMessage> {
         let block_text = self.active_agent()
             .and_then(|a| a.log.blocks().get(self.selected_block))
-            .map(block_full_text)
+            .map(crate::summarize::block_full_text)
             .unwrap_or_default();
 
         if block_text.is_empty() {
@@ -1065,7 +1063,7 @@ impl App {
             KeyCode::Backspace => {
                 if dialog.cursor > 0 {
                     dialog.cursor -= 1;
-                    let byte_pos = char_to_byte(&dialog.path, dialog.cursor);
+                    let byte_pos = crate::summarize::char_to_byte(&dialog.path, dialog.cursor);
                     dialog.path.remove(byte_pos);
                     dialog.exists_warned = false;
                 }
@@ -1073,7 +1071,7 @@ impl App {
             KeyCode::Delete => {
                 let char_count = dialog.path.chars().count();
                 if dialog.cursor < char_count {
-                    let byte_pos = char_to_byte(&dialog.path, dialog.cursor);
+                    let byte_pos = crate::summarize::char_to_byte(&dialog.path, dialog.cursor);
                     dialog.path.remove(byte_pos);
                     dialog.exists_warned = false;
                 }
@@ -1091,7 +1089,7 @@ impl App {
                 dialog.cursor = dialog.path.chars().count();
             }
             KeyCode::Char(c) => {
-                let byte_pos = char_to_byte(&dialog.path, dialog.cursor);
+                let byte_pos = crate::summarize::char_to_byte(&dialog.path, dialog.cursor);
                 dialog.path.insert(byte_pos, c);
                 dialog.cursor += 1;
                 dialog.exists_warned = false;
@@ -1467,274 +1465,4 @@ impl App {
     }
 }
 
-fn summarize_tool_args(tool: &str, args: &serde_json::Value) -> String {
-    match tool {
-        "read" => args.get("path").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
-        "write" => args.get("path").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
-        "edit" => args.get("path").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
-        "bash" => {
-            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("?");
-            if cmd.len() > 60 {
-                let mut end = 57;
-                while !cmd.is_char_boundary(end) {
-                    end -= 1;
-                }
-                format!("{}...", &cmd[..end])
-            } else {
-                cmd.to_string()
-            }
-        }
-        "search" => args.get("pattern").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
-        "get_outputs" => {
-            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
-            match action {
-                "list" => "list".to_string(),
-                "read" => {
-                    let file = args.get("file").and_then(|v| v.as_str()).unwrap_or("?");
-                    format!("read {}", file)
-                }
-                "clear" => "clear".to_string(),
-                _ => action.to_string(),
-            }
-        }
-        "symbols" => {
-            let sub = args.get("subcommand").and_then(|v| v.as_str()).unwrap_or("search");
-            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if name.is_empty() { sub.to_string() } else { format!("{} {}", sub, name) }
-        }
-        _ => args.to_string().chars().take(40).collect(),
-    }
-}
 
-fn format_result_summary(result: &serde_json::Value) -> String {
-    // If the result is a plain string value (e.g., OutputManager reference), use directly
-    if let Some(s) = result.as_str() {
-        let lines: Vec<&str> = s.lines().take(4).collect();
-        return lines.join("\n");
-    }
-    if let Some(s) = result.get("status").and_then(|v| v.as_str()) {
-        s.to_string()
-    } else if let Some(s) = result.get("stdout").and_then(|v| v.as_str()) {
-        let lines: Vec<&str> = s.lines().take(3).collect();
-        lines.join("\n")
-    } else {
-        let s = result.to_string();
-        if s.len() > 80 {
-            let mut end = 77;
-            while !s.is_char_boundary(end) {
-                end -= 1;
-            }
-            format!("{}...", &s[..end])
-        } else {
-            s
-        }
-    }
-}
-
-/// Convert a char index to a byte index in a string.
-fn char_to_byte(s: &str, char_idx: usize) -> usize {
-    s.char_indices()
-        .nth(char_idx)
-        .map(|(i, _)| i)
-        .unwrap_or(s.len())
-}
-
-fn block_full_text(block: &crate::agent::Block) -> String {
-    match block {
-        crate::agent::Block::User { content }
-        | crate::agent::Block::Assistant { content }
-        | crate::agent::Block::System { content } => content.clone(),
-        crate::agent::Block::Tool { call, result } => {
-            let mut s = format!("Tool: {} ({})\n", call.tool, call.args_summary);
-            if let Some(r) = result {
-                s.push_str(&r.content);
-            }
-            s
-        }
-        crate::agent::Block::Finish { message, .. } => message.clone(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // -----------------------------------------------------------------------
-    // summarize_tool_args
-    // -----------------------------------------------------------------------
-    #[test]
-    fn summarize_read() {
-        let args = serde_json::json!({ "path": "src/main.rs" });
-        assert_eq!(summarize_tool_args("read", &args), "src/main.rs");
-    }
-
-    #[test]
-    fn summarize_read_missing() {
-        let args = serde_json::json!({});
-        assert_eq!(summarize_tool_args("read", &args), "?");
-    }
-
-    #[test]
-    fn summarize_write() {
-        let args = serde_json::json!({ "path": "output.txt" });
-        assert_eq!(summarize_tool_args("write", &args), "output.txt");
-    }
-
-    #[test]
-    fn summarize_edit() {
-        let args = serde_json::json!({ "path": "src/lib.rs" });
-        assert_eq!(summarize_tool_args("edit", &args), "src/lib.rs");
-    }
-
-    #[test]
-    fn summarize_bash_short() {
-        let args = serde_json::json!({ "command": "ls -la" });
-        assert_eq!(summarize_tool_args("bash", &args), "ls -la");
-    }
-
-    #[test]
-    fn summarize_bash_long() {
-        let cmd = "a".repeat(100);
-        let args = serde_json::json!({ "command": cmd });
-        let result = summarize_tool_args("bash", &args);
-        assert_eq!(result.len(), 60); // 57 + "..."
-        assert!(result.ends_with("..."));
-    }
-
-    #[test]
-    fn summarize_bash_non_ascii_boundary() {
-        // 'é' is 2 bytes. Put one right at the truncation boundary.
-        let mut cmd = "a".repeat(56);
-        cmd.push('é'); // 56 + 2 = 58 bytes — still <= 60 so NOT truncated yet
-        cmd.push('a'); // 59 bytes — still <= 60
-        cmd.push('a'); // 60 bytes — still <= 60
-        cmd.push('a'); // 61 bytes — now > 60, will be truncated to 57-byte boundary
-        let args = serde_json::json!({ "command": cmd });
-        let result = summarize_tool_args("bash", &args);
-        // Should not panic — must cut at char boundary
-        assert!(result.ends_with("..."));
-        // 56 + 3 = 59, plus "..." = 62? No. 57 bytes truncated, 58 would be mid-char.
-        // Actually, 57 bytes, and the 'é' starts at byte 56-57. At byte 57 we're in the middle of é.
-        // The while loop steps back to byte 56, so result is 56 + "..." = 59 bytes.
-        assert_eq!(result.len(), 59); // 56 + "..." (3)
-    }
-
-    #[test]
-    fn summarize_bash_missing() {
-        let args = serde_json::json!({});
-        assert_eq!(summarize_tool_args("bash", &args), "?");
-    }
-
-    #[test]
-    fn summarize_search() {
-        let args = serde_json::json!({ "pattern": "fn main" });
-        assert_eq!(summarize_tool_args("search", &args), "fn main");
-    }
-
-    #[test]
-    fn summarize_search_missing() {
-        let args = serde_json::json!({});
-        assert_eq!(summarize_tool_args("search", &args), "?");
-    }
-
-    #[test]
-    fn summarize_get_outputs_list() {
-        let args = serde_json::json!({ "action": "list" });
-        assert_eq!(summarize_tool_args("get_outputs", &args), "list");
-    }
-
-    #[test]
-    fn summarize_get_outputs_read() {
-        let args = serde_json::json!({ "action": "read", "file": "out.txt" });
-        assert_eq!(summarize_tool_args("get_outputs", &args), "read out.txt");
-    }
-
-    #[test]
-    fn summarize_get_outputs_clear() {
-        let args = serde_json::json!({ "action": "clear" });
-        assert_eq!(summarize_tool_args("get_outputs", &args), "clear");
-    }
-
-    #[test]
-    fn summarize_get_outputs_default_list() {
-        let args = serde_json::json!({});
-        assert_eq!(summarize_tool_args("get_outputs", &args), "list");
-    }
-
-    #[test]
-    fn summarize_symbols_search() {
-        let args = serde_json::json!({ "subcommand": "search", "name": "foo" });
-        assert_eq!(summarize_tool_args("symbols", &args), "search foo");
-    }
-
-    #[test]
-    fn summarize_symbols_no_name() {
-        let args = serde_json::json!({ "subcommand": "search" });
-        assert_eq!(summarize_tool_args("symbols", &args), "search");
-    }
-
-    #[test]
-    fn summarize_symbols_default_subcommand() {
-        let args = serde_json::json!({ "name": "bar" });
-        assert_eq!(summarize_tool_args("symbols", &args), "search bar");
-    }
-
-    #[test]
-    fn summarize_unknown_tool() {
-        let args = serde_json::json!({ "foo": "bar" });
-        let result = summarize_tool_args("unknown", &args);
-        // Default arm: args.to_string().chars().take(40).collect()
-        assert_eq!(result, r#"{"foo":"bar"}"#);
-    }
-
-    // -----------------------------------------------------------------------
-    // format_result_summary
-    // -----------------------------------------------------------------------
-    #[test]
-    fn format_result_plain_string() {
-        let result = serde_json::json!("hello\nworld\nline3\nline4\nline5");
-        let s = format_result_summary(&result);
-        assert_eq!(s, "hello\nworld\nline3\nline4"); // only 4 lines
-    }
-
-    #[test]
-    fn format_result_status() {
-        let result = serde_json::json!({ "status": "done" });
-        assert_eq!(format_result_summary(&result), "done");
-    }
-
-    #[test]
-    fn format_result_stdout() {
-        let result = serde_json::json!({ "stdout": "a\nb\nc\nd\ne" });
-        assert_eq!(format_result_summary(&result), "a\nb\nc"); // only 3 lines
-    }
-
-    #[test]
-    fn format_result_fallback_short() {
-        let result = serde_json::json!({ "foo": 42 });
-        assert_eq!(format_result_summary(&result), r#"{"foo":42}"#);
-    }
-
-    #[test]
-    fn format_result_fallback_long_ascii() {
-        // Must NOT be a plain string and must NOT have status/stdout keys
-        let result = serde_json::json!({
-            "files": ["a".repeat(50), "b".repeat(50)]
-        });
-        let s = format_result_summary(&result);
-        assert!(s.len() <= 80);
-        assert!(s.ends_with("..."));
-    }
-
-    #[test]
-    fn format_result_fallback_long_unicode() {
-        // Must NOT be a plain string and must NOT have status/stdout keys.
-        // Inner content is long enough (>80 bytes JSON repr) to trigger truncation.
-        let result = serde_json::json!({
-            "data": ["é".repeat(50)] // 100 bytes UTF-8, JSON repr ~112 bytes > 80
-        });
-        let s = format_result_summary(&result);
-        // Should not panic on multi-byte boundary
-        assert!(s.ends_with("..."));
-    }
-}

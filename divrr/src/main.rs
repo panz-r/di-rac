@@ -5,6 +5,8 @@ mod gateway;
 mod input;
 mod message;
 mod settings;
+mod settings_model;
+mod summarize;
 mod theme;
 mod ui;
 

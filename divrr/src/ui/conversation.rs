@@ -239,7 +239,7 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
             }
         }
         Block::System { content } => {
-            let is_thinking = content.starts_with(crate::app::THINKING_PREFIX);
+            let is_thinking = content.starts_with(crate::summarize::THINKING_PREFIX);
             let style = if is_thinking {
                 theme.dim_italic()
             } else {
@@ -247,12 +247,12 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
             };
 
             if is_thinking {
-                let stripped = &content[crate::app::THINKING_PREFIX.len_utf8()..];
+                let stripped = &content[crate::summarize::THINKING_PREFIX.len_utf8()..];
                 if is_expanded {
                     for (i, line) in stripped.lines().enumerate() {
                         if i == 0 {
                             lines.push(Line::from(vec![
-                                if is_selected { marker.clone() } else { Span::styled(format!("{} ", crate::app::THINKING_PREFIX), style) },
+                                if is_selected { marker.clone() } else { Span::styled(format!("{} ", crate::summarize::THINKING_PREFIX), style) },
                                 Span::styled(maybe_truncate(line, max_width.saturating_sub(2), is_wrapped), style),
                             ]));
                         } else {
@@ -264,7 +264,7 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
                 } else {
                     let first_line = stripped.lines().next().unwrap_or("");
                     lines.push(Line::from(vec![
-                        if is_selected { marker.clone() } else { Span::styled(format!("{} ", crate::app::THINKING_PREFIX), style) },
+                        if is_selected { marker.clone() } else { Span::styled(format!("{} ", crate::summarize::THINKING_PREFIX), style) },
                         Span::styled(truncate_single(first_line, max_width.saturating_sub(2)), style),
                     ]));
                 }
