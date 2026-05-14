@@ -483,7 +483,8 @@ impl CommandDaemon {
         &mut self,
         request: &T,
     ) -> Result<R, UntimedError> {
-        self.request_id += 1;
+        self.request_id = self.request_id.wrapping_add(1);
+        if self.request_id == 0 { self.request_id = 1; }
         let id = self.request_id;
 
         let mut payload: serde_json::Map<String, serde_json::Value> = serde_json::to_value(request)

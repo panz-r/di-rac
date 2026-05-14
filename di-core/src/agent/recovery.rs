@@ -309,7 +309,6 @@ pub struct RecoveryTelemetry {
     pub escalated_count: AtomicU32,
     pub blocked_count: AtomicU32,
     pub recovered_count: AtomicU32,
-    pub turn_savings: AtomicU32,
 }
 
 impl RecoveryTelemetry {
@@ -319,7 +318,6 @@ impl RecoveryTelemetry {
             escalated_count: AtomicU32::new(0),
             blocked_count: AtomicU32::new(0),
             recovered_count: AtomicU32::new(0),
-            turn_savings: AtomicU32::new(0),
         }
     }
 
