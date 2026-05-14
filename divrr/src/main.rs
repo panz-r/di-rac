@@ -86,6 +86,7 @@ pub enum AppEvent {
     Key(crossterm::event::KeyEvent),
     Paste(String),
     Resize,
+    Quit,
     CoreEvent(message::CoreEvent),
     CoreError(String),
     SettingsLoaded(settings::SettingsLoadResult),
@@ -116,6 +117,18 @@ async fn main() -> color_eyre::Result<()> {
 
     // Event channels
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+
+    // SIGTERM → graceful shutdown (SIGINT/Ctrl+C is already handled by
+    // crossterm's raw-mode key event). Wakes the main loop so Drop guards
+    // restore the terminal cleanly.
+    let quit_tx = event_tx.clone();
+    tokio::spawn(async move {
+        let mut sigterm = tokio::signal::unix::signal(
+            tokio::signal::unix::SignalKind::terminate(),
+        ).expect("failed to install SIGTERM handler");
+        sigterm.recv().await;
+        let _ = quit_tx.send(AppEvent::Quit);
+    });
 
     // Spawn crossterm key event reader
     let key_tx = event_tx.clone();
@@ -353,6 +366,9 @@ async fn main() -> color_eyre::Result<()> {
             }
             Some(AppEvent::Resize) => {
                 // Redraw happens at top of loop — this just breaks the recv() await.
+            }
+            Some(AppEvent::Quit) => {
+                break;
             }
             Some(AppEvent::CoreEvent(event)) => {
                 app.handle_core_event(event);
