@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	mrand "math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -483,12 +484,17 @@ func codexStartDeviceCode(ctx context.Context) (*CodexDeviceCode, error) {
 func codexPollDeviceCode(ctx context.Context, dc *CodexDeviceCode) (*CodexAuthTokens, error) {
 	interval := time.Duration(dc.Interval) * time.Second
 	backoff := time.Duration(0)
+	// Add jitter to avoid thundering herd when multiple pollers share the same interval.
+	jitterMax := time.Second
+	if interval > 4*time.Second {
+		jitterMax = interval / 4
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(interval + backoff):
+		case <-time.After(interval + backoff + time.Duration(mrand.Int64N(int64(jitterMax)))):
 		}
 
 		if time.Now().Unix() > dc.ExpiresAt {
