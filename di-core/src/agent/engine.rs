@@ -20,8 +20,8 @@ use anyhow::Result;
 use serde_json::json;
 use std::collections::{HashSet, HashMap};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -332,6 +332,14 @@ pub struct AgentEngine {
     /// Shared observer config — orchestrator updates this, agent reads at turn start.
     shared_observer_config: Arc<tokio::sync::RwLock<crate::observer::ObserverConfig>>,
 }
+
+// Precompiled regexes for AST churn fallback (content-based, when tool_calls are empty).
+static RE_AST_PATH: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"path":\s*"([^"]+)""#).expect("invalid regex")
+});
+static RE_AST_CONTENT: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#""(?:content|text|new_content)":\s*"([^"]+)""#).expect("invalid regex")
+});
 
 impl AgentEngine {
     pub fn new(
@@ -2608,9 +2616,9 @@ impl AgentEngine {
         }
     }
 
-    /// Pre-compute AST churn from the last edit for observer DCR.
-    /// Uses structured tool_calls instead of brittle regex on content (5.3).
-    async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
+/// Pre-compute AST churn from the last edit for observer DCR.
+/// Uses structured tool_calls instead of brittle regex on content (5.3).
+async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
         let last_assistant = self.trajectory.messages.iter()
             .filter(|m| matches!(m.role, Role::Assistant))
             .last();
@@ -2629,12 +2637,10 @@ impl AgentEngine {
         } else {
             // Fallback: regex on content
             let content_str = msg.content.to_string();
-            let path = regex::Regex::new(r#"path":\s*"([^"]+)""#).ok()
-                .and_then(|re| re.captures(&content_str))
+            let path = RE_AST_PATH.captures(&content_str)
                 .and_then(|caps| caps.get(1))
                 .map(|m| m.as_str().to_string())?;
-            let content = regex::Regex::new(r#""(?:content|text|new_content)":\s*"([^"]+)""#).ok()
-                .and_then(|re| re.captures(&content_str))
+            let content = RE_AST_CONTENT.captures(&content_str)
                 .and_then(|caps| caps.get(1))
                 .map(|m| m.as_str().to_string())?;
             (path, content)

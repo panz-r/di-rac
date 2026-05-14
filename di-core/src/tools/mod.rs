@@ -18,9 +18,40 @@ use response::{ToolResponse, ToolErrorCode};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+const MAX_BACKGROUND_JOBS: usize = 128;
+
 /// Stores results of bash commands executed with --await for later retrieval.
-static BACKGROUND_JOBS: LazyLock<std::sync::Mutex<HashMap<String, ExecuteResult>>> =
-    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+/// Bounded at MAX_BACKGROUND_JOBS; oldest entry evicted on insert when full.
+static BACKGROUND_JOBS: LazyLock<std::sync::Mutex<BackgroundJobStore>> =
+    LazyLock::new(|| std::sync::Mutex::new(BackgroundJobStore::new()));
+
+struct BackgroundJobStore {
+    jobs: HashMap<String, ExecuteResult>,
+    order: Vec<String>,
+}
+
+impl BackgroundJobStore {
+    fn new() -> Self {
+        Self { jobs: HashMap::new(), order: Vec::new() }
+    }
+
+    fn get(&self, id: &str) -> Option<&ExecuteResult> {
+        self.jobs.get(id)
+    }
+
+    fn insert(&mut self, id: String, result: ExecuteResult) {
+        if self.jobs.len() >= MAX_BACKGROUND_JOBS {
+            if let Some(old) = self.order.first().cloned() {
+                self.order.remove(0);
+                self.jobs.remove(&old);
+            }
+        }
+        if !self.jobs.contains_key(&id) {
+            self.order.push(id.clone());
+        }
+        self.jobs.insert(id, result);
+    }
+}
 
 use routing::{ErrorRouter, RoutingContext, ToolErrorRoute};
 use format::{format_error_for_llm, format_error_for_log};
