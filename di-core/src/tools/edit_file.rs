@@ -3,8 +3,44 @@ use crate::tools::ToolCall;
 use crate::tools::response::{ToolResponse, ToolErrorCode, ToolError};
 use crate::util::FileAnchorIndex;
 use serde_json::json;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::LazyLock;
+
+// ---------------------------------------------------------------------------
+// Atomic-rename temp file — counter-based name next to the target.
+// ---------------------------------------------------------------------------
+/// Per-process counter for short temp names (base-36: 0, 1, ..., a, ..., z, 10, ...).
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+const BASE36: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// Atomically claim a unique temp path next to `target`.
+/// Uses `O_EXCL` so counter collision across processes is safe — retries on EEXIST.
+fn create_tmp_file(target: &str) -> std::io::Result<(std::fs::File, String)> {
+    for _ in 0..8 {
+        let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut buf = [0u8; 13];
+        let mut i = buf.len();
+        let mut rem = n;
+        loop {
+            i -= 1;
+            buf[i] = BASE36[(rem % 36) as usize];
+            rem /= 36;
+            if rem == 0 {
+                break;
+            }
+        }
+        let name = std::str::from_utf8(&buf[i..]).expect("valid base36");
+        let path = format!("{}.tmp.{}", target, name);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((file, path)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "temp file collision after 8 retries"))
+}
 
 // ---------------------------------------------------------------------------
 // Constants (matching TS EditExecutor + EditFormatter)
@@ -984,20 +1020,27 @@ pub async fn edit_file(
         let (final_lines, applied_edits) = apply_edits(&lines, &resolved_edits, &mut index);
 
         // Write to disk (atomic: write to temp file, then rename)
-        // Use randomized name in same directory to avoid cross-device rename errors (4.2).
         if !dry_run {
             let final_content = final_lines.join("\n");
-            let tmp_path = format!("{}.tmp.{}", fe.path, uuid::Uuid::new_v4());
-            if let Err(e) = std::fs::write(&tmp_path, &final_content) {
-                let _ = std::fs::remove_file(&tmp_path);
+            let (mut tmp_file, tmp_name) = match create_tmp_file(&fe.path) {
+                Ok(v) => v,
+                Err(e) => return ToolResponse::fail(
+                    ToolErrorCode::PatchApplyFailed,
+                    format!("Failed to create temp file for {}: {}", fe.path, e),
+                    "edit",
+                ),
+            };
+            use std::io::Write;
+            if let Err(e) = tmp_file.write_all(final_content.as_bytes()) {
+                let _ = std::fs::remove_file(&tmp_name);
                 return ToolResponse::fail(
                     ToolErrorCode::PatchApplyFailed,
                     format!("Failed to write {}: {}", fe.path, e),
                     "edit",
                 );
             }
-            if let Err(e) = std::fs::rename(&tmp_path, &fe.path) {
-                let _ = std::fs::remove_file(&tmp_path);
+            if let Err(e) = std::fs::rename(&tmp_name, &fe.path) {
+                let _ = std::fs::remove_file(&tmp_name);
                 return ToolResponse::fail(
                     ToolErrorCode::PatchApplyFailed,
                     format!("Failed to rename temp file for {}: {}", fe.path, e),

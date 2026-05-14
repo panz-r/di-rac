@@ -1813,17 +1813,15 @@ impl AgentEngine {
                 self.recovery_telemetry.escalated_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
 
-            // Stagnation detection
-            if let Ok(ref result_val) = exec_result {
-                let args_hash = crate::util::fast_hash(result_val.to_string().as_bytes());
-                if let Ok(mut det) = self.stagnation_detector.lock() {
-                    if let Some(warning) = det.record(&tool_name, &args_hash) {
-                        self.trajectory.add_message(
-                            Role::User,
-                            json!(format!("[SYSTEM: STAGNATION] {}", warning)),
-                            30,
-                        );
-                    }
+            // Stagnation detection — hash tool arguments, not results (fixes #2)
+            let args_hash = crate::util::fast_hash(tool.args.to_string().as_bytes());
+            if let Ok(mut det) = self.stagnation_detector.lock() {
+                if let Some(warning) = det.record(&tool_name, &args_hash) {
+                    self.trajectory.add_message(
+                        Role::User,
+                        json!(format!("[SYSTEM: STAGNATION] {}", warning)),
+                        30,
+                    );
                 }
             }
 
