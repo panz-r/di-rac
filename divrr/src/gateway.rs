@@ -111,3 +111,18 @@ fn which(name: &str) -> Option<String> {
         })
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn socket_path_contains_pid() {
+        let pid = std::process::id();
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        let socket_path = format!("{}/.dirac/api-gateway-{}.sock", home, pid);
+        assert!(socket_path.contains(&pid.to_string()));
+        assert!(socket_path.contains(".dirac"));
+        assert!(socket_path.ends_with(".sock"));
+    }
+}

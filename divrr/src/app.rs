@@ -718,7 +718,7 @@ impl App {
                 }
 
                 // Reject path traversal
-                if path.split(std::path::is_separator).any(|c| c == "..") {
+                if !crate::summarize::is_safe_save_path(&path) {
                     self.status_message = Some("Save failed: path must not contain '..'".to_string());
                     self.save_dialog = None;
                     self.mode = Mode::Normal;

@@ -91,6 +91,12 @@ pub fn char_to_byte(s: &str, char_idx: usize) -> usize {
         .unwrap_or(s.len())
 }
 
+/// Check that a file path does not contain `..` path traversal components.
+/// Runs on the raw user input before tilde expansion.
+pub fn is_safe_save_path(path: &str) -> bool {
+    !path.split(std::path::is_separator).any(|c| c == "..")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +262,69 @@ mod tests {
         });
         let s = format_result_summary(&result);
         assert!(s.ends_with("..."));
+    }
+
+    // -----------------------------------------------------------------------
+    // is_safe_save_path
+    // -----------------------------------------------------------------------
+    #[test]
+    fn safe_path_simple_filename() {
+        assert!(is_safe_save_path("block.md"));
+    }
+
+    #[test]
+    fn safe_path_with_tilde() {
+        assert!(is_safe_save_path("~/block.md"));
+    }
+
+    #[test]
+    fn safe_path_absolute() {
+        assert!(is_safe_save_path("/tmp/block.md"));
+    }
+
+    #[test]
+    fn safe_path_relative_dir() {
+        assert!(is_safe_save_path("./docs/block.md"));
+    }
+
+    #[test]
+    fn safe_path_no_extension() {
+        assert!(is_safe_save_path("~/myblock"));
+    }
+
+    #[test]
+    fn unsafe_path_double_dot() {
+        assert!(!is_safe_save_path(".."));
+    }
+
+    #[test]
+    fn unsafe_path_parent_traversal() {
+        assert!(!is_safe_save_path("../foo"));
+    }
+
+    #[test]
+    fn unsafe_path_deep_traversal() {
+        assert!(!is_safe_save_path("foo/../../bar"));
+    }
+
+    #[test]
+    fn unsafe_path_tilde_traversal() {
+        assert!(!is_safe_save_path("~/.."));
+    }
+
+    #[test]
+    fn unsafe_path_multi_dot() {
+        assert!(!is_safe_save_path("a/../b/../c"));
+    }
+
+    #[test]
+    fn safe_path_empty_segments() {
+        // "./foo" splits into ["", ".", "foo"] — ".." not present, safe
+        assert!(is_safe_save_path("./foo"));
+    }
+
+    #[test]
+    fn safe_path_triple_dot_is_not_double() {
+        assert!(is_safe_save_path("..."));
     }
 }
