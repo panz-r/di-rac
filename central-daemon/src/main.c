@@ -106,6 +106,7 @@ static int drain_output(client_ctx_t *ctx) {
     } while (sent < 0 && errno == EINTR);
     if (sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        fprintf(stderr, "[di-vrr] drain_output write failed on fd %d: %s\n", ctx->fd, strerror(errno));
         return -1;
     }
     size_t consumed = (size_t)sent;
@@ -221,7 +222,9 @@ static int broadcast_config_update(int sender_fd, const char *path, const char *
         }
     }
     for (int i = 0; i < snap_count; i++) {
-        send_json(snap[i], msg);
+        if (send_json(snap[i], msg) < 0) {
+            fprintf(stderr, "[di-vrr] broadcast: send_json failed to fd %d\n", snap[i]->fd);
+        }
     }
     free(msg);
     return 0;
@@ -379,34 +382,27 @@ static void process_single_object(client_ctx_t *ctx, const char *json, trie_t *t
         send_json(ctx, "{\"status\": \"ok\"}\n");
         if (next_fd != -1) {
             client_ctx_t *next_ctx = ctx_by_fd(next_fd);
+            char stack_esc[4096];
             size_t esc_size = strlen(path) * 6 + 1;
-            char *escaped_path = malloc(esc_size);
+            char *escaped_path = (esc_size <= sizeof(stack_esc)) ? stack_esc : malloc(esc_size);
             if (!escaped_path) {
                 send_json(next_ctx, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
             } else {
                 if (json_escape_string(path, escaped_path, esc_size) < 0) {
-                    free(escaped_path);
                     send_json(next_ctx, "{\"status\": \"granted\", \"path\": \"<overflow>\"}\n");
                 } else {
+                    char resp[8192];
                     int needed = snprintf(NULL, 0,
                             "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
-                    if (needed < 0) {
-                        free(escaped_path);
-                        send_json(next_ctx, "{\"status\": \"granted\", \"path\": \"<error>\"}\n");
+                    if (needed < 0 || needed >= (int)sizeof(resp)) {
+                        send_json(next_ctx, "{\"status\": \"granted\", \"path\": \"<overflow>\"}\n");
                     } else {
-                        char *resp = malloc((size_t)needed + 1);
-                        if (!resp) {
-                            free(escaped_path);
-                            send_json(next_ctx, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
-                        } else {
-                            snprintf(resp, (size_t)needed + 1,
-                                    "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
-                            send_json(next_ctx, resp);
-                            free(resp);
-                        }
+                        snprintf(resp, sizeof(resp),
+                                "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped_path);
+                        send_json(next_ctx, resp);
                     }
-                    free(escaped_path);
                 }
+                if (escaped_path != stack_esc) free(escaped_path);
             }
         }
     } else if (strcmp(method, "set_config") == 0) {
@@ -417,17 +413,23 @@ static void process_single_object(client_ctx_t *ctx, const char *json, trie_t *t
         }
         if (find_string_val(json, "value", value, sizeof(value))) val_ptr = value;
         bool transient = find_bool_val(json, "transient", false);
-        
-        trie_set_config(trie, path, fd, key, val_ptr, transient);
+
+        int set_res = trie_set_config(trie, path, fd, key, val_ptr, transient);
+        if (set_res < 0) {
+            send_json(ctx, "{\"status\": \"error\", \"message\": \"config set failed\"}\n");
+            return;
+        }
         send_json(ctx, "{\"status\": \"ok\"}\n");
-        
+
         if (!transient) {
             int br = broadcast_config_update(fd, path, key, val_ptr);
             if (br < 0) {
                 fprintf(stderr, "[di-vrr] broadcast_config_update failed for fd %d path=%s key=%s\n",
                         fd, path, key);
             }
-            if (persist_path[0]) trie_save_persist(trie, persist_path);
+            if (persist_path[0] && trie_save_persist(trie, persist_path) < 0) {
+                fprintf(stderr, "[di-vrr] trie_save_persist failed on set_config for path=%s key=%s\n", path, key);
+            }
         }
     } else if (strcmp(method, "get_config") == 0) {
         char key[256] = {0};
@@ -491,18 +493,17 @@ static void process_single_object(client_ctx_t *ctx, const char *json, trie_t *t
             send_json(ctx, "{\"status\": \"error\", \"message\": \"format error\"}\n");
             return;
         }
-        char *resp = malloc((size_t)needed + 1);
-        if (!resp) {
-            send_json(ctx, "{\"status\": \"error\", \"message\": \"out of memory\"}\n");
+        char resp[512];
+        if ((size_t)needed >= sizeof(resp)) {
+            send_json(ctx, "{\"status\": \"error\", \"message\": \"format error\"}\n");
             return;
         }
-        snprintf(resp, (size_t)needed + 1,
+        snprintf(resp, sizeof(resp),
                 "{\"status\": \"ok\", \"clients\": %zu, \"max_clients\": %zu, "
                 "\"trie_nodes\": %zu, \"locked_paths\": %zu, \"total_waiters\": %zu, \"rejected\": %d}\n",
                 total_clients, (size_t)MAX_EVENTS,
                 trie_nodes, trie_locks, trie_waiters, g_rejected_connections);
         send_json(ctx, resp);
-        free(resp);
     } else {
         send_json(ctx, "{\"status\": \"error\", \"message\": \"unknown method\"}\n");
     }
@@ -618,31 +619,27 @@ static void send_granted_cb(int fd, const char *path, void *ctx) {
     if (!path || fd < 0) return;
     client_ctx_t *c = ctx_by_fd(fd);
     if (!c) return;
+    char stack_esc[4096], resp[8192];
     size_t esc_size = strlen(path) * 6 + 1;
-    char *escaped = malloc(esc_size);
+    char *escaped = (esc_size <= sizeof(stack_esc)) ? stack_esc : malloc(esc_size);
     if (!escaped) {
         send_json(c, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
         return;
     }
     if (json_escape_string(path, escaped, esc_size) < 0) {
-        free(escaped);
         send_json(c, "{\"status\": \"granted\", \"path\": \"<overflow>\"}\n");
-        return;
+    } else {
+        int needed = snprintf(NULL, 0,
+                "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
+        if (needed < 0 || needed >= (int)sizeof(resp)) {
+            send_json(c, "{\"status\": \"granted\", \"path\": \"<overflow>\"}\n");
+        } else {
+            snprintf(resp, sizeof(resp),
+                    "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
+            send_json(c, resp);
+        }
     }
-    int needed = snprintf(NULL, 0,
-            "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
-    char *resp = NULL;
-    if (needed >= 0 && (size_t)needed <= SIZE_MAX / 2) resp = malloc((size_t)needed + 1);
-    if (!resp) {
-        free(escaped);
-        send_json(c, "{\"status\": \"granted\", \"path\": \"<nomem>\"}\n");
-        return;
-    }
-    snprintf(resp, (size_t)needed + 1,
-            "{\"status\": \"granted\", \"path\": \"%s\"}\n", escaped);
-    send_json(c, resp);
-    free(resp);
-    free(escaped);
+    if (escaped != stack_esc) free(escaped);
 }
 
 int main(int argc, char *argv[]) {
@@ -665,7 +662,10 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "--persist") == 0 && i + 1 < argc) {
             strncpy(persist_path, argv[i + 1], sizeof(persist_path) - 1);
             persist_path[sizeof(persist_path) - 1] = '\0';
-            trie_load_persist(lock_trie, persist_path);
+            if (trie_load_persist(lock_trie, persist_path) < 0) {
+                fprintf(stderr, "[di-vrr] Warning: failed to load persistence from %s: %s\n",
+                        persist_path, strerror(errno));
+            }
             i++;
         } else if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) {
             path_to_bind = argv[i + 1];
@@ -751,7 +751,9 @@ int main(int argc, char *argv[]) {
                     if (_r < 0) {
                         fprintf(stderr, "[di-vrr] rejected write failed on fd %d: %s\n", client_fd, strerror(errno));
                     }
-                    close(client_fd);
+                    if (close(client_fd) < 0) {
+                        fprintf(stderr, "[di-vrr] close failed on fd %d: %s\n", client_fd, strerror(errno));
+                    }
                     free(ctx);
                     fprintf(stderr, "[di-vrr] rejected connection: client limit reached (%d)\n", MAX_EVENTS);
                     g_rejected_connections++;
@@ -785,8 +787,12 @@ int main(int argc, char *argv[]) {
                             all_clients[slot] = NULL;
                             free_slots[free_slots_top++] = slot;
                         }
-                        epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
-                        close(ctx->fd);
+                        if (epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL) < 0 && errno != EBADF) {
+                            fprintf(stderr, "[di-vrr] epoll_ctl DEL failed on fd %d: %s\n", ctx->fd, strerror(errno));
+                        }
+                        if (close(ctx->fd) < 0) {
+                            fprintf(stderr, "[di-vrr] close failed on fd %d: %s\n", ctx->fd, strerror(errno));
+                        }
                         free(ctx->buffer);
                         free(ctx->outbuf);
                         free(ctx);
@@ -803,8 +809,12 @@ int main(int argc, char *argv[]) {
                             all_clients[slot] = NULL;
                             free_slots[free_slots_top++] = slot;
                         }
-                        epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
-                        close(ctx->fd);
+                        if (epoll_ctl(g_epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL) < 0 && errno != EBADF) {
+                            fprintf(stderr, "[di-vrr] epoll_ctl DEL failed on fd %d: %s\n", ctx->fd, strerror(errno));
+                        }
+                        if (close(ctx->fd) < 0) {
+                            fprintf(stderr, "[di-vrr] close failed on fd %d: %s\n", ctx->fd, strerror(errno));
+                        }
                         free(ctx->buffer);
                         free(ctx->outbuf);
                         free(ctx);

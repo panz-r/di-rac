@@ -244,7 +244,10 @@ void trie_destroy(trie_t *trie) {
             tables[count++] = *(ht_table_t**)val;
         }
         ht_destroy(trie->transient_registry);
-        for (size_t i = 0; i < count; i++) free_kv_table(tables[i]);
+        for (size_t i = 0; i < count; i++) {
+            free_kv_table(tables[i]);
+            free(tables[i]);
+        }
         free(tables);
     } else {
         ht_iter_t it = ht_iter_begin(trie->transient_registry);
@@ -252,6 +255,7 @@ void trie_destroy(trie_t *trie) {
         size_t klen, vlen;
         while (ht_iter_next(trie->transient_registry, &it, &key, &klen, &val, &vlen)) {
             free_kv_table(*(ht_table_t**)val);
+            free(*(ht_table_t**)val);
         }
         ht_destroy(trie->transient_registry);
     }
@@ -347,6 +351,8 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
                 return -1;
             }
             if (existing_copy) free(existing_copy);
+        } else {
+            free(existing_copy);
         }
         return 0;
     } else {
@@ -370,6 +376,8 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
                 return -1;
             }
             if (existing_copy) free(existing_copy);
+        } else {
+            free(existing_copy);
         }
         return 0;
     }
@@ -558,7 +566,10 @@ int trie_load_persist(trie_t *trie, const char *filepath) {
         persist_unescape(key, strlen(key), unescaped_key, sizeof(unescaped_key));
         persist_unescape(val, strlen(val), unescaped_val, sizeof(unescaped_val));
 
-        trie_set_config(trie, unescaped_path, -1, unescaped_key, unescaped_val, false);
+        if (trie_set_config(trie, unescaped_path, -1, unescaped_key, unescaped_val, false) < 0) {
+            fprintf(stderr, "[di-vrr] trie_load_persist: failed to set path=%s key=%s\n",
+                    unescaped_path, unescaped_key);
+        }
     }
 
     fclose(f);
