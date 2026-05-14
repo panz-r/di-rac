@@ -365,6 +365,12 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.conns[conn] = struct{}{}
 	s.connMu.Unlock()
 
+
+	// Per-connection context: cancels when the connection handler exits
+	// (client disconnect, decode error, or server shutdown). Used for
+	// OAuth flows so they don't outlive the client connection.
+	connCtx, connCancel := context.WithCancel(s.ctx)
+	defer connCancel()
 	// Cap request body at 10MB to prevent memory exhaustion from malicious clients.
 	const maxRequestSize = 10 << 20
 	decoder := json.NewDecoder(io.LimitReader(conn, maxRequestSize))
@@ -607,7 +613,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		// Handle codex-login (browser OAuth flow)
 		if msgType == "codex-login" {
-			tokens, err := codexStartOAuth(s.ctx)
+			tokens, err := codexStartOAuth(connCtx)
 				if err != nil {
 					body, _ := json.Marshal(map[string]interface{}{
 						"type":    "codex-login-status",
@@ -652,7 +658,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			w.write(&Response{ID: 0, Status: 200, Body: body})
 
 			// Poll synchronously to preserve JSON protocol ordering.
-			tokens, err := codexPollDeviceCode(s.ctx, dc)
+			tokens, err := codexPollDeviceCode(connCtx, dc)
 			if err != nil {
 				body, _ = json.Marshal(map[string]interface{}{
 					"type":    "codex-login-status",
