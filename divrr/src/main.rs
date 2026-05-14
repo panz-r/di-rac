@@ -1,8 +1,28 @@
+// Threading model:
+//   - Main (async) thread: owns terminal rendering + all App state.
+//     Receives events via a single mpsc channel (key events, di-core events,
+//     settings load results).
+//   - Crossterm reader: spawned task that forwards key/paste/resize events
+//     into the channel.
+//   - di-core backend: spawned child process with its own reader thread.
+//     NDJSON events are forwarded into the channel.
+//   - Settings gateway ops: spawn_blocking tasks for Unix socket I/O.
+//     Results come back as SettingsLoaded events.
+//
+// Shutdown:
+//   1. User presses Ctrl+C / SIGTERM → break main loop.
+//   2. `drop(di_core)` kills the child process.
+//   3. `_gateway_child` Drop kills the api-gateway process.
+//   4. `_guard` Drop restores terminal (raw mode off, LeaveAlternateScreen).
+//   5. The api-gateway daemon auto-shuts down after 2 minutes with no clients.
+
 mod app;
 mod agent;
 mod app_types;
 mod backend;
+mod clipboard;
 mod commands;
+mod errors;
 mod event;
 mod gateway;
 mod input;
@@ -247,6 +267,7 @@ async fn main() -> color_eyre::Result<()> {
         app.conv_width = term_size.width as usize;
         app.content_lines = app.count_rendered_lines(term_size.width);
         app.clamp_scroll();
+        app.check_stream_stall();
         terminal.draw(|f| app.view(f))?;
 
         // Wait for next event
@@ -420,7 +441,14 @@ async fn main() -> color_eyre::Result<()> {
             }
             None => {
                 crate::logging::log_event("di-core process exited");
-                app.status_message = Some("di-core process exited".to_string());
+                let msg = if app.agents.is_empty() {
+                    "di-core exited before creating any agents. Check ~/.dirac/di-core.log."
+                } else {
+                    "di-core process exited"
+                };
+                app.status_message = Some(msg.to_string());
+                // Print to stderr so the message is visible after TUI cleanup
+                eprintln!("{}", msg);
                 break;
             }
         }

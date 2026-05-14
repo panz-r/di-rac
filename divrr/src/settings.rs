@@ -1,6 +1,8 @@
 use std::io::{BufRead, Write};
 use std::os::unix::net::UnixStream;
 
+use crossterm::event::{KeyCode, KeyEvent};
+
 // Re-export all types and free functions from settings_model
 pub use crate::settings_model::{
     ROLES, role_label, string_to_json_value,
@@ -8,13 +10,22 @@ pub use crate::settings_model::{
     FieldKind, SettingsField,
     RoleSettings, RoleBehaviorSettings, AllSettings, SettingsPanel,
     PendingAsyncOp, SettingsLoadResult,
-    F_PROVIDER,
+    F_PROVIDER, F_MODEL, F_API_KEY,
     build_provider_config_messages, build_observer_config_message, build_role_fields, build_role_behavior_fields,
     build_theme_fields, load_all_settings, save_all_settings_to_disk,
     push_role_to_gateway, push_all_to_gateway, validate_parameters,
     query_list_providers,
     build_minimal_base_fields, gather_role_settings,
 };
+
+/// Actions returned by `SettingsState::handle_key()` for App to process.
+pub enum SettingsAction {
+    None,
+    /// Save triggered — caller should drain `s.save()`, apply theme, invalidate cache.
+    Save,
+    /// Settings dialog closed.
+    Close,
+}
 
 // ---------------------------------------------------------------------------
 // Persistent gateway connection — one connection for the whole settings dialog
@@ -46,7 +57,8 @@ impl GatewayConnection {
 
     pub fn request(&mut self, req: &serde_json::Value) -> std::io::Result<crate::settings_model::GatewayResponse> {
         self.ensure_connected()?;
-        let reader = self.reader.as_mut().unwrap();
+        let reader = self.reader.as_mut()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "no gateway connection"))?;
         let stream = reader.get_mut();
 
         let json = serde_json::to_string(req)?;
@@ -62,7 +74,8 @@ impl GatewayConnection {
                 Ok(0) => {
                     self.reader = None;
                     self.ensure_connected()?;
-                    let reader = self.reader.as_mut().unwrap();
+                    let reader = self.reader.as_mut()
+                        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "no gateway connection"))?;
                     let stream = reader.get_mut();
                     if let Err(e) = stream.write_all(json.as_bytes()).and_then(|_| stream.write_all(b"\n")).and_then(|_| stream.flush()) {
                         self.reader = None;
@@ -226,6 +239,8 @@ impl SettingsState {
     pub fn switch_panel(&mut self) {
         self.selector_open = false;
         self.secret_edit_open = false;
+        self.saved = false;
+        self.error = None;
         self.active_panel = match self.active_panel {
             SettingsPanel::Provider => SettingsPanel::Role,
             SettingsPanel::Role => SettingsPanel::Theme,
@@ -371,6 +386,7 @@ impl SettingsState {
         }
     }
 
+    #[allow(dead_code)]
     fn selector_value(&self) -> String {
         let fo = self.field_offset();
         match &self.fields[fo] {
@@ -379,6 +395,7 @@ impl SettingsState {
         }
     }
 
+    #[allow(dead_code)]
     fn selector_set_value(&mut self, value: String) {
         let fo = self.field_offset();
         if let SettingsField::Selector { options, index, .. } = &mut self.fields[fo] {
@@ -460,6 +477,10 @@ impl SettingsState {
             self.error = None;
         }
         self.secret_edit_open = false;
+        // If the edited field was API key, reload models for the current provider
+        if self.active_panel == SettingsPanel::Provider && fo == F_API_KEY && self.gateway_available {
+            self.on_provider_changed();
+        }
     }
 
     pub fn cancel_secret_edit(&mut self) {
@@ -566,6 +587,94 @@ impl SettingsState {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Unified key dispatch
+    // -----------------------------------------------------------------------
+
+    /// Handle a key event and return an action for the caller to process.
+    pub fn handle_key(&mut self, key: KeyEvent) -> SettingsAction {
+        if self.loading || self.saving {
+            if key.code == KeyCode::Esc {
+                return SettingsAction::Close;
+            }
+            return SettingsAction::None;
+        }
+
+        if self.secret_edit_open {
+            return self.handle_secret_key(key);
+        }
+        if self.selector_open {
+            return self.handle_selector_key(key);
+        }
+        self.handle_field_key(key)
+    }
+
+    fn handle_secret_key(&mut self, key: KeyEvent) -> SettingsAction {
+        match key.code {
+            KeyCode::Esc => self.cancel_secret_edit(),
+            KeyCode::Enter => self.confirm_secret_edit(),
+            KeyCode::Left => self.secret_edit_left(),
+            KeyCode::Right => self.secret_edit_right(),
+            KeyCode::Home => self.secret_edit_home(),
+            KeyCode::End => self.secret_edit_end(),
+            KeyCode::Delete => self.secret_edit_delete(),
+            KeyCode::Backspace => self.secret_edit_backspace(),
+            KeyCode::Char(c) => self.secret_edit_type_char(c),
+            _ => {}
+        }
+        SettingsAction::None
+    }
+
+    fn handle_selector_key(&mut self, key: KeyEvent) -> SettingsAction {
+        match key.code {
+            KeyCode::Esc => self.cancel_selector(),
+            KeyCode::Enter => self.confirm_selector(),
+            KeyCode::Up => { self.selector_cursor = self.selector_cursor.saturating_sub(1); }
+            KeyCode::Down => {
+                let count = self.selector_filtered_indices.len();
+                if self.selector_cursor < count.saturating_sub(1) {
+                    self.selector_cursor += 1;
+                }
+            }
+            KeyCode::Backspace => {
+                self.selector_filter.pop();
+                self.rebuild_filtered_indices();
+            }
+            KeyCode::Char(c) => {
+                self.selector_filter.push(c);
+                self.rebuild_filtered_indices();
+            }
+            _ => {}
+        }
+        SettingsAction::None
+    }
+
+    fn handle_field_key(&mut self, key: KeyEvent) -> SettingsAction {
+        match key.code {
+            KeyCode::Esc => return SettingsAction::Close,
+            KeyCode::BackTab => {
+                self.switch_panel();
+            }
+            KeyCode::Up => self.move_up(),
+            KeyCode::Down => self.move_down(),
+            KeyCode::Left => self.select_left(),
+            KeyCode::Right => self.select_right(),
+            KeyCode::Tab => {
+                let fo = self.field_offset();
+                if self.cursor > 0 && fo < self.fields.len() && self.fields[fo].kind() == FieldKind::Secret {
+                    self.open_secret_edit();
+                } else {
+                    self.open_selector();
+                }
+            }
+            KeyCode::Enter => return SettingsAction::Save,
+            KeyCode::Backspace => self.backspace(),
+            KeyCode::Char(c) => self.type_char(c),
+            _ => {}
+        }
+        SettingsAction::None
+    }
+
     pub fn flush_fields_to_settings(&mut self) {
         match self.active_panel {
             SettingsPanel::Provider => self.flush_provider_fields(),
@@ -643,6 +752,19 @@ impl SettingsState {
     }
 
     fn on_provider_changed(&mut self) {
+        // Clear model and API key when provider changes — they are provider-specific
+        if let Some(field) = self.fields.get_mut(F_MODEL) {
+            if let SettingsField::Selector { options, labels, index, .. } = field {
+                options.clear();
+                labels.clear();
+                *index = 0;
+            }
+        }
+        if let Some(field) = self.fields.get_mut(F_API_KEY) {
+            if let SettingsField::Secret { value, .. } = field {
+                value.clear();
+            }
+        }
         self.flush_fields_to_settings();
         self.error = None;
         self.loading = true;
@@ -708,14 +830,43 @@ impl SettingsState {
 mod tests {
     use super::*;
 
+    /// Create a SettingsState with predictable fields for testing.
+    /// Replaces the default fields with a known layout:
+    ///   fields[0] = Selector (Provider)
+    ///   fields[1] = Secret (API Key)
+    ///   fields[2] = Selector (Model)
+    fn make_test_state() -> SettingsState {
+        let mut s = SettingsState::new_empty();
+        s.fields = vec![
+            SettingsField::Selector {
+                label: "Provider".into(),
+                options: vec!["anthropic".into(), "openai".into()],
+                labels: vec!["Anthropic".into(), "OpenAI".into()],
+                index: 0,
+            },
+            SettingsField::Secret {
+                label: "API Key".into(),
+                value: String::new(),
+            },
+            SettingsField::Selector {
+                label: "Model".into(),
+                options: vec!["claude-3".into()],
+                labels: vec!["Claude 3".into()],
+                index: 0,
+            },
+        ];
+        s.gateway_available = false;
+        s.loading = false;
+        s
+    }
+
     // -----------------------------------------------------------------------
     // Secret edit modal
     // -----------------------------------------------------------------------
     #[test]
     fn secret_edit_cancel_does_not_modify_field() {
-        let mut s = SettingsState::new_empty();
-        // Cursor 2 = API Key field (Secret, index 1)
-        s.cursor = 2;
+        let mut s = make_test_state();
+        s.cursor = 2; // API Key field
         let original = match &s.fields[1] {
             SettingsField::Secret { value, .. } => value.clone(),
             _ => panic!("expected Secret field"),
@@ -730,7 +881,6 @@ mod tests {
         s.cancel_secret_edit();
         assert!(!s.secret_edit_open);
 
-        // Field unchanged
         match &s.fields[1] {
             SettingsField::Secret { value, .. } => assert_eq!(value, &original),
             _ => panic!("expected Secret field"),
@@ -739,7 +889,7 @@ mod tests {
 
     #[test]
     fn secret_edit_confirm_writes_to_field() {
-        let mut s = SettingsState::new_empty();
+        let mut s = make_test_state();
         s.cursor = 2;
 
         s.open_secret_edit();
@@ -759,7 +909,7 @@ mod tests {
 
     #[test]
     fn secret_edit_cursor_movement() {
-        let mut s = SettingsState::new_empty();
+        let mut s = make_test_state();
         s.cursor = 2;
         s.open_secret_edit();
         s.secret_edit_type_char('a');
@@ -785,7 +935,7 @@ mod tests {
 
     #[test]
     fn secret_edit_non_ascii_ignored() {
-        let mut s = SettingsState::new_empty();
+        let mut s = make_test_state();
         s.cursor = 2;
         s.open_secret_edit();
         s.secret_edit_type_char('a');
@@ -797,18 +947,16 @@ mod tests {
 
     #[test]
     fn secret_edit_open_on_non_secret_is_noop() {
-        let mut s = SettingsState::new_empty();
-        // Cursor 1 = Provider field (Selector, not Secret)
-        s.cursor = 1;
+        let mut s = make_test_state();
+        s.cursor = 1; // Provider field (Selector, not Secret)
         s.open_secret_edit();
         assert!(!s.secret_edit_open);
     }
 
     #[test]
     fn secret_edit_open_loads_existing_value() {
-        let mut s = SettingsState::new_empty();
+        let mut s = make_test_state();
         s.cursor = 2;
-        // Pre-set a value
         if let SettingsField::Secret { value, .. } = &mut s.fields[1] {
             value.push_str("pre-existing");
         }
@@ -820,9 +968,9 @@ mod tests {
 
     #[test]
     fn secret_edit_confirm_sets_saved_to_false() {
-        let mut s = SettingsState::new_empty();
+        let mut s = make_test_state();
         s.cursor = 2;
-        s.saved = true; // pretend something was saved
+        s.saved = true;
 
         s.open_secret_edit();
         s.secret_edit_type_char('x');

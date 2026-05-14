@@ -23,7 +23,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
         let (label, detail) = match pending {
             PendingInput::Approval { tool, description, .. } => {
-                (format!("Approve {}?", tool), description.clone())
+                let prompt = if app.queue_focused && i == 0 { " [Y/n]" } else { "" };
+                (format!("Approve {}?{}", tool, prompt), description.clone())
             }
             PendingInput::Followup { question, options, .. } => {
                 let opts = options
@@ -40,13 +41,67 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             theme.text_dim()
         };
 
-        lines.push(Line::from(vec![
-            Span::styled(format!("[{}] ", i + 1), Style::default().fg(theme.warning)),
-            Span::styled(format!("{}: ", agent_name), Style::default().fg(theme.accent)),
-            Span::styled(format!("{}{}", label, detail), style),
-        ]));
+        let line_spans = if detail.is_empty() {
+            vec![
+                Span::styled(format!("[{}] ", i + 1), Style::default().fg(theme.warning)),
+                Span::styled(format!("{}: ", agent_name), Style::default().fg(theme.accent)),
+                Span::styled(label, style),
+            ]
+        } else {
+            vec![
+                Span::styled(format!("[{}] ", i + 1), Style::default().fg(theme.warning)),
+                Span::styled(format!("{}: ", agent_name), Style::default().fg(theme.accent)),
+                Span::styled(label, style),
+                Span::raw(" "),
+                Span::styled(detail, theme.text_dim()),
+            ]
+        };
+
+        lines.push(Line::from(line_spans));
     }
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::agent::PendingInput;
+
+    fn make_pending_approval() -> PendingInput {
+        PendingInput::Approval {
+            tool: "bash".to_string(),
+            description: "run tests".to_string(),
+            args: serde_json::Value::Null,
+        }
+    }
+
+    fn make_pending_followup() -> PendingInput {
+        PendingInput::Followup {
+            question: "Which file?".to_string(),
+            options: Some(vec!["a.rs".to_string(), "b.rs".to_string()]),
+        }
+    }
+
+    #[test]
+    fn test_queue_entry_rendering() {
+        let approval = make_pending_approval();
+        let followup = make_pending_followup();
+
+        match &approval {
+            PendingInput::Approval { tool, description, .. } => {
+                assert_eq!(tool, "bash");
+                assert_eq!(description, "run tests");
+            }
+            _ => panic!("expected Approval"),
+        }
+
+        match &followup {
+            PendingInput::Followup { question, options, .. } => {
+                assert_eq!(question, "Which file?");
+                assert_eq!(options.as_ref().unwrap().len(), 2);
+            }
+            _ => panic!("expected Followup"),
+        }
+    }
 }

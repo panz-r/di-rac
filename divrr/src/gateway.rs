@@ -1,3 +1,11 @@
+// API Gateway communication:
+//   The api-gateway is a separate process that exposes an HTTP-like JSON interface
+//   over a Unix domain socket (per-PID path: ~/.dirac/api-gateway-<pid>.sock).
+//   The settings panel uses GatewayConnection for CRUD operations (list providers,
+//   list models, validate API keys). The gateway is launched alongside divrr and
+//   killed on drop via GatewayChild. The gateway daemon auto-shuts down after 2
+//   minutes with no connected clients.
+
 use std::io;
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command};
@@ -11,22 +19,33 @@ pub struct GatewayChild {
 
 impl GatewayChild {
     /// Send SIGTERM then SIGKILL. Clean up socket.
+    /// Checks if child is still alive before signaling to avoid killing a reused PID.
     pub fn kill(&mut self) {
         if let Some(ref mut child) = self.child {
-            // Try graceful SIGTERM first
-            // SAFETY: `child.id()` returns a valid PID from a successfully spawned
-            // `std::process::Child`. `libc::kill` with SIGTERM is a standard signal
-            // syscall with no memory-safety implications. The PID is stable because
-            // the child is still alive (we haven't waited/reaped it yet).
-            unsafe {
-                libc::kill(child.id() as i32, libc::SIGTERM);
-            }
-            // Non-blocking check — if already exited, skip SIGKILL
+            // First check if already exited — avoids signaling a stale PID
             match child.try_wait() {
-                Ok(Some(_)) => {} // exited gracefully
+                Ok(Some(_)) => {
+                    // Already dead — just clean up
+                }
                 _ => {
-                    // Still running — force kill; OS will reap the zombie on parent exit
-                    let _ = child.kill();
+                    // Still alive — send SIGTERM via kill command
+                    let pid = child.id();
+                    if let Err(e) = std::process::Command::new("kill")
+                        .arg("-TERM")
+                        .arg(pid.to_string())
+                        .output()
+                    {
+                        crate::logging::log_event(&format!("gateway SIGTERM failed: {}", e));
+                    }
+                    // Wait briefly, then force kill if still running
+                    match child.try_wait() {
+                        Ok(Some(_)) => {}
+                        _ => {
+                            if let Err(e) = child.kill() {
+                                crate::logging::log_event(&format!("gateway SIGKILL failed: {}", e));
+                            }
+                        }
+                    }
                 }
             }
         }

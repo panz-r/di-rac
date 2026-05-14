@@ -35,7 +35,7 @@ pub fn handle_core_event(app: &mut App, event: CoreEvent) {
             let agent = AgentState::new(agent_id, format!("Agent-{}", idx));
             app.agents.push(agent);
             app.active_tab = app.active_tab.min(app.agents.len() - 1);
-            app.status_message = Some(format!("Agent-{} initialized", idx));
+            app.active_agent_mut().map(|a| a.log.push_system(format!("Agent-{} initialized", idx)));
         }
         CoreEvent::ThoughtDelta { text, thinking, .. } => {
             if let Some(agent) = app.agents.iter_mut().find(|a| a.id == agent_id) {
@@ -50,15 +50,27 @@ pub fn handle_core_event(app: &mut App, event: CoreEvent) {
                     );
                     agent.status = AgentStatus::Running;
                 } else if was_thinking != is_thinking {
+                    // Capture tail of what's about to be finalized to deduplicate
+                    let prev_tail: String = match agent.log.streaming() {
+                        Some(s) => s.content.chars().rev().take(80).collect(),
+                        None => String::new(),
+                    };
                     agent.log.finalize_streaming();
+                    let prev_tail: String = prev_tail.chars().rev().collect();
+                    let initial_text = if !prev_tail.is_empty() && prev_tail.ends_with(text.trim_end()) {
+                        String::new()
+                    } else {
+                        text.clone()
+                    };
                     agent.log.set_streaming(
-                        if is_thinking { format!("{} {}", crate::summarize::THINKING_PREFIX, text) } else { text.clone() },
+                        if is_thinking { format!("{} {}", crate::summarize::THINKING_PREFIX, initial_text) } else { initial_text },
                         is_thinking,
                     );
                 } else {
                     agent.log.append_streaming(&text);
                 }
                 agent.last_activity = Utc::now();
+                app.stream_stall_warned = false;
             }
         }
         CoreEvent::ThoughtFinished { .. } => {
@@ -183,6 +195,10 @@ pub fn handle_core_event(app: &mut App, event: CoreEvent) {
         CoreEvent::TaskPresented { message, .. } => {
             app.input_queue.retain(|(id, _)| *id != agent_id);
             if let Some(agent) = app.agents.iter_mut().find(|a| a.id == agent_id) {
+                if matches!(agent.status, AgentStatus::Finished | AgentStatus::Error) {
+                    crate::logging::log_event(&format!("TaskPresented after finish for {} ignored", agent_id));
+                    return;
+                }
                 agent.log.finalize_streaming();
                 agent.status = AgentStatus::Finished;
                 agent.pending_input = None;

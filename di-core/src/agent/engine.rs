@@ -1407,9 +1407,17 @@ impl AgentEngine {
                     Role::System => "system",
                 };
                 // Gateway expects content as a string, not a JSON object.
+                // Always provide content to avoid gateway validation rejecting empty messages.
                 let content = match &m.content {
-                    serde_json::Value::Null => None,
-                    serde_json::Value::String(s) => Some(serde_json::Value::String(s.clone())),
+                    serde_json::Value::Null => Some(serde_json::Value::String("(empty)".to_string())),
+                    serde_json::Value::String(s) => {
+                        if s.is_empty() && !m.tool_calls.is_empty() {
+                            // Assistant with tool calls but no text: provide placeholder
+                            Some(serde_json::Value::String(".".to_string()))
+                        } else {
+                            Some(serde_json::Value::String(s.clone()))
+                        }
+                    }
                     other => Some(serde_json::Value::String(other.to_string())),
                 };
 
@@ -1508,8 +1516,17 @@ impl AgentEngine {
         let mut thinking_text = String::new();
         let mut tool_accumulator = StreamingToolAccumulator::new();
         let mut _usage_total: Option<crate::daemons::Usage> = None;
+        // Per-chunk idle timeout: if the stream goes silent for more than 120s
+        // between chunks, abort. The gateway has its own total timeout (240s)
+        // but this catches provider stalls mid-stream.
+        let chunk_timeout = std::time::Duration::from_secs(120);
 
-        while let Some(result) = chunk_rx.recv().await {
+        while let Some(result) = tokio::time::timeout(chunk_timeout, chunk_rx.recv()).await.unwrap_or_else(|_| {
+            // Timeout: stream went silent. Drain the channel to get any pending error.
+            // Return None to signal stream end after logging.
+            eprintln!("[di-core] stream idle timeout (120s no data) for agent {}", self.id);
+            None
+        }) {
             if self.is_aborted() {
                 full_text.push_str("\n[interrupted by user]");
                 break;
@@ -1524,13 +1541,14 @@ impl AgentEngine {
             };
 
             // Debug: dump every chunk to /tmp/di-core-stream.log
-            if std::env::var("DIRAC_DEBUG").is_ok() {
+            {
                 if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/di-core-stream.log") {
                     use std::io::Write;
-                    let _ = writeln!(f, "[chunk] type={} index={:?} tool_call_id={:?} tool_call_name={:?} json_delta={:?} text_delta={:?}",
-                        chunk.chunk_type, chunk.index, chunk.tool_call_id, chunk.tool_call_name,
-                        chunk.json_delta.as_ref().map(|s| format!("{}chars:{}", s.len(), safe_truncate(s, 60))),
-                        chunk.text_delta.as_ref().map(|s| format!("{}chars", s.len())));
+                    let _ = writeln!(f, "[chunk] type={} text_delta={:?} thinking={:?} tool_call_id={:?}",
+                        chunk.chunk_type,
+                        chunk.text_delta.as_ref().map(|s| format!("{}chars:{}", s.len(), safe_truncate(s, 80))),
+                        chunk.thinking.as_ref().map(|s| format!("{}chars:{}", s.len(), safe_truncate(s, 80))),
+                        chunk.tool_call_id);
                 }
             }
 

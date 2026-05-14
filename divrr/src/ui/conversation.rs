@@ -32,19 +32,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 /// Build all Line for the conversation view (blocks + streaming + pending).
 /// When `cached_block_lines` is available and valid, reuses cached line objects
-/// for non-selected blocks to avoid per-frame rebuild cost.
+/// for non-selected blocks that have been rendered; builds on-the-fly for uncached blocks.
 pub fn build_all_lines(
     agent: &AgentState, max_width: usize, selected_block: usize,
     mode: crate::app_types::Mode, theme: &Theme,
-    cached_block_lines: Option<&[Vec<Line<'static>>]>,
+    cached_block_lines: Option<&[Option<Vec<Line<'static>>>]>,
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::with_capacity(agent.log.blocks().len() + 2);
     let highlight_active = mode == crate::app_types::Mode::Action;
 
     if let Some(cached) = cached_block_lines {
         if cached.len() == agent.log.blocks().len() {
-            // Fast path: clone cached lines, rebuild only the selected block
-            for (i, block_lines) in cached.iter().enumerate() {
+            for (i, cached_lines) in cached.iter().enumerate() {
                 let is_selected = i == selected_block;
                 let is_highlighted = highlight_active && is_selected;
                 if is_selected || is_highlighted {
@@ -53,12 +52,17 @@ pub fn build_all_lines(
                     let is_wrapped = agent.wrapped.contains(&i);
                     build_block_lines(&mut lines, block, max_width, is_expanded, is_wrapped,
                         true, is_highlighted, theme);
-                } else {
+                } else if let Some(block_lines) = cached_lines {
                     lines.extend(block_lines.iter().cloned());
+                } else {
+                    let block = &agent.log.blocks()[i];
+                    let is_expanded = agent.expanded.contains(&i);
+                    let is_wrapped = agent.wrapped.contains(&i);
+                    build_block_lines(&mut lines, block, max_width, is_expanded, is_wrapped,
+                        false, false, theme);
                 }
             }
         } else {
-            // Cache size mismatch — rebuild all
             for (i, block) in agent.log.blocks().iter().enumerate() {
                 let is_expanded = agent.expanded.contains(&i);
                 let is_wrapped = agent.wrapped.contains(&i);

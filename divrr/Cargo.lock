@@ -574,12 +574,12 @@ name = "divrr"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64",
  "chrono",
  "clap",
  "color-eyre",
  "crossterm 0.28.1",
  "futures",
- "libc",
  "ratatui",
  "serde",
  "serde_json",

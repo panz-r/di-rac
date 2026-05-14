@@ -244,6 +244,12 @@ impl GatewayStreamClient {
     ) -> Result<mpsc::Receiver<Result<StreamChunk>>> {
         let (tx, rx) = mpsc::channel(16384);
         let socket_path = self.socket_path.clone();
+        // Client-side read timeout: 60s beyond the gateway timeout, to protect
+        // against the gateway hanging without responding.  The gateway enforces
+        // its own timeout (typically 240s) but this is a safety net.
+        let read_timeout = request.timeout
+            .map(|ms| std::time::Duration::from_millis(ms as u64 + 60_000))
+            .unwrap_or(std::time::Duration::from_secs(300));
 
         // Connect, write request, then read responses — fully async.
         tokio::spawn(async move {
@@ -281,9 +287,10 @@ impl GatewayStreamClient {
             let buf_reader = BufReader::new(stream);
             let mut lines = buf_reader.lines();
 
+            let timeout_ref = &read_timeout;
             loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => {
+                match tokio::time::timeout(*timeout_ref, lines.next_line()).await {
+                    Ok(Ok(Some(line))) => {
                         if line.trim().is_empty() {
                             continue;
                         }
@@ -319,9 +326,14 @@ impl GatewayStreamClient {
                             }
                         }
                     }
-                    Ok(None) => break, // stream ended
-                    Err(e) => {
+                    Ok(Ok(None)) => break, // stream ended
+                    Ok(Err(e)) => {
                         let _ = tx.send(Err(anyhow!("Read error: {}", e))).await;
+                        break;
+                    }
+                    Err(_) => {
+                        // Client-side timeout: gateway didn't respond within the deadline.
+                        let _ = tx.send(Err(anyhow!("CLIENT_TIMEOUT: gateway did not respond within read deadline"))).await;
                         break;
                     }
                 }

@@ -65,6 +65,7 @@ pub enum Block {
 pub struct StreamingBlock {
     pub content: String,
     pub is_thinking: bool,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -98,7 +99,7 @@ impl ConversationLog {
     }
 
     pub fn push_user(&mut self, content: String) {
-        if content.is_empty() {
+        if content.trim().is_empty() {
             return;
         }
         self.blocks.push(Block::User { content: truncate_content(content) });
@@ -106,14 +107,15 @@ impl ConversationLog {
     }
 
     pub fn push_assistant(&mut self, content: String) {
-        if !content.is_empty() {
-            self.blocks.push(Block::Assistant { content: truncate_content(content) });
-            self.generation += 1;
+        if content.trim().is_empty() {
+            return;
         }
+        self.blocks.push(Block::Assistant { content: truncate_content(content) });
+        self.generation += 1;
     }
 
     pub fn push_system(&mut self, content: String) {
-        if content.is_empty() {
+        if content.trim().is_empty() {
             return;
         }
         self.blocks.push(Block::System { content: truncate_content(content) });
@@ -149,7 +151,7 @@ impl ConversationLog {
     }
 
     pub fn set_streaming(&mut self, content: String, is_thinking: bool) {
-        self.streaming = Some(StreamingBlock { content, is_thinking });
+        self.streaming = Some(StreamingBlock { content, is_thinking, truncated: false });
         self.generation += 1;
     }
 
@@ -160,6 +162,7 @@ impl ConversationLog {
                 let to_push = if text.len() <= remaining {
                     text
                 } else {
+                    s.truncated = true;
                     let mut end = remaining;
                     while !text.is_char_boundary(end) {
                         end -= 1;
@@ -168,6 +171,8 @@ impl ConversationLog {
                 };
                 s.content.push_str(to_push);
                 self.generation += 1;
+            } else if !text.is_empty() {
+                s.truncated = true;
             }
         }
     }
@@ -184,8 +189,11 @@ impl ConversationLog {
     /// Finalize the streaming block into a permanent block.
     pub fn finalize_streaming(&mut self) {
         if let Some(s) = self.streaming.take() {
-            if !s.content.is_empty() {
-                let content = truncate_content(s.content);
+            let mut content = truncate_content(s.content);
+            if s.truncated && !content.ends_with("[truncated]") {
+                content.push_str("\n… [truncated]");
+            }
+            if !content.trim().is_empty() {
                 if s.is_thinking {
                     self.blocks.push(Block::System { content });
                 } else {

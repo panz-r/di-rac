@@ -220,6 +220,7 @@ pub struct RoleBehaviorSettings {
 }
 
 impl RoleBehaviorSettings {
+    #[allow(dead_code)]
     pub fn defaults_for(role: &str) -> Self {
         match role {
             "observer" => Self {
@@ -284,6 +285,7 @@ pub enum SettingsPanel {
 
 /// Describes an async gateway operation the app should spawn.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum PendingAsyncOp {
     ProviderChanged { seq: u64, rs: RoleSettings, providers: Vec<ProviderMeta>, gateway_available: bool },
     RoleSwitched { seq: u64, rs: RoleSettings, providers: Vec<ProviderMeta>, gateway_available: bool },
@@ -333,12 +335,23 @@ pub const NUM_BASE_FIELDS: usize = 4;
 // ---------------------------------------------------------------------------
 
 /// Build minimal provider fields without gateway data (used during loading/panel switch).
+/// Preserves the saved model name so it isn't lost when gateway is unavailable.
 pub fn build_minimal_base_fields(rs: &RoleSettings) -> Vec<SettingsField> {
+    let (model_options, model_labels) = if rs.model.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        (vec![rs.model.clone()], vec![rs.model.clone()])
+    };
+    let (provider_options, provider_labels) = if rs.provider.is_empty() {
+        (vec![String::new()], vec!["(none)".to_string()])
+    } else {
+        (vec![rs.provider.clone()], vec![rs.provider.clone()])
+    };
     vec![
         SettingsField::Selector {
             label: "Provider".to_string(),
-            options: Vec::new(),
-            labels: Vec::new(),
+            options: provider_options,
+            labels: provider_labels,
             index: 0,
         },
         SettingsField::Secret {
@@ -347,8 +360,8 @@ pub fn build_minimal_base_fields(rs: &RoleSettings) -> Vec<SettingsField> {
         },
         SettingsField::Selector {
             label: "Model".to_string(),
-            options: Vec::new(),
-            labels: Vec::new(),
+            options: model_options,
+            labels: model_labels,
             index: 0,
         },
         SettingsField::Text {
@@ -418,12 +431,25 @@ pub fn build_theme_fields(current: &str) -> Vec<SettingsField> {
 }
 
 /// Build minimal base fields when gateway queries fail.
+/// Preserves the saved model name so it isn't lost when models can't be fetched.
 pub fn build_minimal_fields(rs: &RoleSettings, providers: &[ProviderMeta]) -> Vec<SettingsField> {
-    let provider_index = providers.iter().position(|p| p.id == rs.provider).unwrap_or(0);
-    let provider_labels: Vec<String> = providers.iter()
-        .map(|p| format!("{} ({})", p.label, p.id))
-        .collect();
-    let provider_options: Vec<String> = providers.iter().map(|p| p.id.clone()).collect();
+    let (provider_index, provider_options, provider_labels) = if rs.provider.is_empty() {
+        let mut options = vec![String::new()];
+        let mut labels = vec!["(none)".to_string()];
+        options.extend(providers.iter().map(|p| p.id.clone()));
+        labels.extend(providers.iter().map(|p| format!("{} ({})", p.label, p.id)));
+        (0, options, labels)
+    } else {
+        let idx = providers.iter().position(|p| p.id == rs.provider).unwrap_or(0);
+        let labels: Vec<String> = providers.iter().map(|p| format!("{} ({})", p.label, p.id)).collect();
+        let options: Vec<String> = providers.iter().map(|p| p.id.clone()).collect();
+        (idx, options, labels)
+    };
+    let (model_options, model_labels) = if rs.model.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        (vec![rs.model.clone()], vec![rs.model.clone()])
+    };
 
     vec![
         SettingsField::Selector {
@@ -438,8 +464,8 @@ pub fn build_minimal_fields(rs: &RoleSettings, providers: &[ProviderMeta]) -> Ve
         },
         SettingsField::Selector {
             label: "Model".to_string(),
-            options: Vec::new(),
-            labels: Vec::new(),
+            options: model_options,
+            labels: model_labels,
             index: 0,
         },
         SettingsField::Text {
@@ -526,6 +552,9 @@ pub fn provider_setting_to_field(ps: &ProviderSetting, current_value: Option<&St
 }
 
 pub fn gather_role_settings(fields: &[SettingsField], provider_settings: &[ProviderSetting]) -> RoleSettings {
+    if fields.len() < NUM_BASE_FIELDS {
+        return RoleSettings::default();
+    }
     let provider = match &fields[F_PROVIDER] {
         SettingsField::Selector { options, index, .. } => options.get(*index).cloned().unwrap_or_default(),
         _ => String::new(),
@@ -635,16 +664,26 @@ pub fn validate_parameters(
 fn settings_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let dir = std::path::Path::new(&home).join(".dirac");
-    let _ = std::fs::create_dir_all(&dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        crate::logging::log_event(&format!("failed to create ~/.dirac: {}", e));
+    }
     dir.join("provider-settings.json")
 }
 
 pub fn load_all_settings() -> AllSettings {
     let path = settings_path();
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    match std::fs::read_to_string(&path) {
+        Ok(s) => {
+            match serde_json::from_str(&s) {
+                Ok(settings) => settings,
+                Err(e) => {
+                    crate::logging::log_event(&format!("corrupt settings file, using defaults: {}", e));
+                    AllSettings::default()
+                }
+            }
+        }
+        Err(_) => AllSettings::default(),
+    }
 }
 
 pub fn save_all_settings_to_disk(settings: &AllSettings) -> std::io::Result<()> {
@@ -692,11 +731,16 @@ pub fn push_role_to_gateway(gw: &mut crate::settings::GatewayConnection, role: &
 pub fn push_all_to_gateway() {
     let all = load_all_settings();
     let mut gw = crate::settings::GatewayConnection::new();
-    if gw.ensure_connected().is_err() { return; }
+    if let Err(e) = gw.ensure_connected() {
+        crate::logging::log_event(&format!("push_all_to_gateway: connect failed: {}", e));
+        return;
+    }
     for role in ROLES {
         if let Some(rs) = all.roles.get(*role) {
             if !rs.provider.is_empty() {
-                let _ = push_role_to_gateway(&mut gw, role, rs);
+                if let Err(e) = push_role_to_gateway(&mut gw, role, rs) {
+                    crate::logging::log_event(&format!("push_all_to_gateway: {} failed: {}", role, e));
+                }
             }
         }
     }
@@ -760,15 +804,19 @@ pub fn build_role_fields(
     gw: &mut crate::settings::GatewayConnection,
     gateway_ok: bool,
 ) -> (Vec<SettingsField>, Vec<ModelEntry>, Option<ProviderInfo>, Option<String>) {
-    let provider_index = providers.iter().position(|p| p.id == rs.provider).unwrap_or(0);
-    let provider_id = providers.get(provider_index)
-        .map(|p| p.id.clone())
-        .unwrap_or_else(|| rs.provider.clone());
-
-    let provider_labels: Vec<String> = providers.iter()
-        .map(|p| format!("{} ({})", p.label, p.id))
-        .collect();
-    let provider_options: Vec<String> = providers.iter().map(|p| p.id.clone()).collect();
+    let (provider_index, provider_id, provider_options, provider_labels) = if rs.provider.is_empty() {
+        let mut options = vec![String::new()];
+        let mut labels = vec!["(none)".to_string()];
+        options.extend(providers.iter().map(|p| p.id.clone()));
+        labels.extend(providers.iter().map(|p| format!("{} ({})", p.label, p.id)));
+        (0, String::new(), options, labels)
+    } else {
+        let idx = providers.iter().position(|p| p.id == rs.provider).unwrap_or(0);
+        let id = providers.get(idx).map(|p| p.id.clone()).unwrap_or_else(|| rs.provider.clone());
+        let labels: Vec<String> = providers.iter().map(|p| format!("{} ({})", p.label, p.id)).collect();
+        let options: Vec<String> = providers.iter().map(|p| p.id.clone()).collect();
+        (idx, id, options, labels)
+    };
 
     let (models, model_index) = if gateway_ok && !provider_id.is_empty() {
         match query_models(gw, &provider_id, &rs.api_key) {
@@ -785,8 +833,11 @@ pub fn build_role_fields(
                 );
             }
         }
-    } else {
+    } else if rs.model.is_empty() {
         (Vec::new(), 0)
+    } else {
+        let saved = rs.model.clone();
+        (vec![ModelEntry { id: saved.clone(), name: Some(saved), context_window: None, max_tokens: None, supports_thinking: None }], 0)
     };
 
     let model_options: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
@@ -836,4 +887,61 @@ pub fn build_role_fields(
     }
 
     (fields, models, provider_info, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_settings_default() {
+        let settings = AllSettings::default();
+        assert!(settings.roles.is_empty());
+        assert_eq!(settings.theme, "copper-cobalt-dimmed");
+    }
+
+    #[test]
+    fn test_role_settings_default() {
+        let rs = RoleSettings::default();
+        assert!(rs.provider.is_empty());
+        assert!(rs.model.is_empty());
+        assert!(rs.api_key.is_empty());
+    }
+
+    #[test]
+    fn test_load_save_roundtrip() {
+        let mut settings = AllSettings::default();
+        let mut rs = RoleSettings::default();
+        rs.provider = "test-provider".to_string();
+        rs.model = "test-model".to_string();
+        rs.api_key = "test-key".to_string();
+        settings.roles.insert("observer".to_string(), rs.clone());
+
+        // Serialize
+        let json = serde_json::to_string_pretty(&settings).unwrap();
+        let parsed: AllSettings = serde_json::from_str(&json).unwrap();
+
+        let loaded_rs = parsed.roles.get("observer").unwrap();
+        assert_eq!(loaded_rs.provider, "test-provider");
+        assert_eq!(loaded_rs.model, "test-model");
+        assert_eq!(loaded_rs.api_key, "test-key");
+    }
+
+    #[test]
+    fn test_load_corrupt_json_returns_default() {
+        let result: AllSettings = serde_json::from_str("{invalid json").unwrap_or_default();
+        assert!(result.roles.is_empty());
+    }
+
+    #[test]
+    fn test_build_provider_config_messages() {
+        let mut settings = AllSettings::default();
+        let mut rs = RoleSettings::default();
+        rs.provider = "anthropic".to_string();
+        rs.model = "claude-3".to_string();
+        settings.roles.insert("observer".to_string(), rs);
+
+        let msgs = build_provider_config_messages(&settings);
+        assert_eq!(msgs.len(), 1);
+    }
 }

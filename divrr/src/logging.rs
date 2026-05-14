@@ -5,7 +5,7 @@ static LOG_MUTEX: Mutex<()> = Mutex::new(());
 /// Append a timestamped line to ~/.dirac/divrr.log (best-effort, never fails).
 /// When the log exceeds 1MB, keeps the most recent 256KB.
 pub fn log_event(msg: &str) {
-    let _lock = LOG_MUTEX.lock().unwrap();
+    let _lock = LOG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let path = std::path::Path::new(&home).join(".dirac").join("divrr.log");
     if let Ok(meta) = std::fs::metadata(&path) {

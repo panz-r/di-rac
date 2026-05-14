@@ -22,24 +22,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 format!("State: {}", agent.display_status()),
                 status_color(theme, agent.display_status()),
             ));
-            if agent.is_waiting() {
-                if let Some(pending) = &agent.pending_input {
-                    let hint = match pending {
-                        crate::agent::PendingInput::Approval { tool, .. } => {
-                            format!("Input: Approve {}? [Y/n]", tool)
-                        }
-                        crate::agent::PendingInput::Followup { options, .. } => {
-                            if let Some(opts) = options {
-                                format!("Input: [{}]", opts.join("/"))
-                            } else {
-                                "Input: answer needed".to_string()
-                            }
-                        }
-                    };
-                    spans.push(Span::raw(" | "));
-                    spans.push(Span::styled(hint, Style::default().fg(theme.warning)));
-                }
-            }
             if let Some(metrics) = &agent.metrics {
                 spans.push(Span::raw(format!(
                     " | Tokens: {}",
@@ -74,6 +56,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 format!("Queue: {} inputs", app.input_queue.len()),
                 Style::default().fg(theme.warning),
             ));
+        }
+        if app.auto_approve {
+            spans.push(Span::raw(" | "));
+            spans.push(Span::styled("AUTO", theme.alert_bold()));
         }
     }
 

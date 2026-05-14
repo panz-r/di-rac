@@ -1,5 +1,6 @@
 use crate::agent::{AgentState, AgentStatus, PendingInput};
 use crate::app_types::{CommandEntry, Mode, SaveDialogState};
+use crate::clipboard::copy_to_clipboard;
 use crate::input::InputBuffer;
 use crate::message::FrontendMessage;
 use crate::settings::{SettingsLoadResult, SettingsState};
@@ -7,6 +8,13 @@ use crate::ui;
 use ratatui::text::Line;
 use crate::line_cache::LineCache;
 use std::collections::HashSet;
+
+// Async operation lifecycle:
+//   Settings operations that need gateway I/O are kicked off via `pending_async`
+//   on the SettingsState. The main loop detects this, spawns a blocking task,
+//   and the result comes back as a SettingsLoaded event. While `saving` is true,
+//   key events are ignored (except Esc to cancel). This avoids holding &mut App
+//   across an async boundary.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
@@ -32,6 +40,9 @@ pub struct App {
     /// Block-level cursor — index into the active agent's block list.
     pub selected_block: usize,
     pub action_cursor: usize,
+    /// Saved expanded/wrapped sets while in action mode (restored on cancel).
+    saved_expanded: Option<HashSet<usize>>,
+    saved_wrapped: Option<HashSet<usize>>,
     pub status_message: Option<String>,
     pub settings: Option<SettingsState>,
     pub command_palette: Vec<CommandEntry>,
@@ -47,6 +58,8 @@ pub struct App {
 
     /// Cached visual line counts per block (invalidated on width/content/expand change).
     line_cache: Option<LineCache>,
+    /// Whether we've already shown the stream stall warning this streaming session.
+    pub stream_stall_warned: bool,
 }
 
 impl App {
@@ -68,6 +81,8 @@ impl App {
             auto_scroll: true,
             selected_block: 0,
             action_cursor: 0,
+            saved_expanded: None,
+            saved_wrapped: None,
             status_message: None,
             settings: None,
             command_palette: Vec::new(),
@@ -78,6 +93,7 @@ impl App {
             save_dialog: None,
 
             line_cache: None,
+            stream_stall_warned: false,
         }
     }
 
@@ -90,16 +106,19 @@ impl App {
     }
 
     /// Ensure the visual line cache is populated and valid.
+    /// Builds per-block line counts for ALL blocks (needed for scroll math).
+    /// Only caches rendered `Line` objects for visible blocks ± buffer.
     fn ensure_line_cache(&mut self, width: u16) {
         let (generation, expanded, wrapped) = self.active_agent()
             .map(|a| (a.log.generation(), a.expanded.clone(), a.wrapped.clone()))
             .unwrap_or((0, HashSet::new(), HashSet::new()));
 
         if self.line_cache.as_ref().is_some_and(|c| c.is_valid(width, generation, &expanded, &wrapped)) {
+            // Cache is valid — ensure visible blocks are rendered
+            self.ensure_visible_blocks_cached(width);
             return;
         }
 
-        // Recompute per-block rendered lines and visual line counts
         let agent = match self.active_agent() {
             Some(a) => a,
             None => {
@@ -108,9 +127,11 @@ impl App {
             }
         };
 
+        // Build line counts for all blocks (lightweight — only counts, no styled Lines stored)
         let mut per_block = Vec::with_capacity(agent.log.blocks().len());
         let mut blocks_total = 0usize;
-        let mut cached_block_lines = Vec::with_capacity(agent.log.blocks().len());
+        let mut cached_block_lines: Vec<Option<Vec<Line<'static>>>> = vec![None; agent.log.blocks().len()];
+
         for (i, block) in agent.log.blocks().iter().enumerate() {
             let is_expanded = agent.expanded.contains(&i);
             let is_wrapped = agent.wrapped.contains(&i);
@@ -124,7 +145,10 @@ impl App {
                 .line_count(width);
             per_block.push(count);
             blocks_total += count;
-            cached_block_lines.push(lines);
+            // Cache only visible blocks
+            if self.is_block_visible(i) {
+                cached_block_lines[i] = Some(lines);
+            }
         }
 
         self.line_cache = Some(LineCache {
@@ -136,6 +160,116 @@ impl App {
             blocks_total,
             cached_block_lines,
         });
+    }
+
+    /// Check if a block index is within the visible viewport ± buffer.
+    fn is_block_visible(&self, block_idx: usize) -> bool {
+        let Some(cache) = &self.line_cache else { return true };
+        let mut cum = 0usize;
+        let scroll_start = self.scroll_offset;
+        let scroll_end = self.scroll_offset + self.visible_lines;
+        let buffer = self.visible_lines; // ± one full screen
+        for (i, &count) in cache.per_block.iter().enumerate() {
+            let block_start = cum;
+            let block_end = cum + count;
+            if block_end.saturating_sub(1) >= scroll_start.saturating_sub(buffer)
+                && block_start <= scroll_end + buffer
+            {
+                if i == block_idx {
+                    return true;
+                }
+            }
+            cum += count;
+            if cum > scroll_end + buffer + 1 && i > block_idx {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Render `Line` objects for blocks in the visible viewport that aren't cached yet.
+    fn ensure_visible_blocks_cached(&mut self, width: u16) {
+        // Collect indices that need rendering and expanded/wrapped state
+        let (to_render, expanded, wrapped) = {
+            let cache = match &self.line_cache {
+                Some(c) => c,
+                None => return,
+            };
+            let expanded = cache.expanded.clone();
+            let wrapped = cache.wrapped.clone();
+            let mut indices = Vec::new();
+            let mut cum = 0usize;
+            let scroll_start = self.scroll_offset;
+            let scroll_end = self.scroll_offset + self.visible_lines;
+            let buffer = self.visible_lines;
+            for (i, &count) in cache.per_block.iter().enumerate() {
+                let block_start = cum;
+                let block_end = cum + count;
+                if block_end.saturating_sub(1) >= scroll_start.saturating_sub(buffer)
+                    && block_start <= scroll_end + buffer
+                {
+                    if cache.cached_block_lines[i].is_none() {
+                        indices.push(i);
+                    }
+                }
+                cum += count;
+                if cum > scroll_end + buffer + 1 {
+                    break;
+                }
+            }
+            (indices, expanded, wrapped)
+        };
+
+        // Evict blocks far from viewport (cap at 3× visible area)
+        if let Some(cache) = &mut self.line_cache {
+            let total_cached = cache.cached_block_lines.iter().filter(|l| l.is_some()).count();
+            if total_cached > self.visible_lines * 3 {
+                let mut cum = 0usize;
+                let scroll_start = self.scroll_offset;
+                let scroll_end = self.scroll_offset + self.visible_lines;
+                let evict_buffer = self.visible_lines * 2;
+                for (i, &count) in cache.per_block.iter().enumerate() {
+                    let block_start = cum;
+                    let block_end = cum + count;
+                    let in_range = block_end.saturating_sub(1) >= scroll_start.saturating_sub(evict_buffer)
+                        && block_start <= scroll_end + evict_buffer;
+                    if !in_range && cache.cached_block_lines[i].is_some() {
+                        cache.cached_block_lines[i] = None;
+                    }
+                    cum += count;
+                }
+            }
+        }
+
+        if to_render.is_empty() { return; }
+
+        // Build rendered lines for missing blocks (read agent, then write cache)
+        let rendered: Vec<(usize, Vec<Line<'static>>)> = {
+            let agent = match self.active_agent() {
+                Some(a) => a,
+                None => return,
+            };
+            to_render.into_iter().filter_map(|i| {
+                let block = &agent.log.blocks()[i];
+                let is_expanded = expanded.contains(&i);
+                let is_wrapped = wrapped.contains(&i);
+                let mut lines = Vec::new();
+                crate::ui::conversation::build_block_lines(
+                    &mut lines, block, width as usize, is_expanded, is_wrapped,
+                    false, false, &self.theme,
+                );
+                Some((i, lines))
+            }).collect()
+        };
+
+        // Store into cache
+        let cache = match &mut self.line_cache {
+            Some(c) => c,
+            None => return,
+        };
+        for (i, lines) in rendered {
+            cache.cached_block_lines[i] = Some(lines);
+        }
     }
 
     /// Count total rendered lines (blocks + streaming + pending) with caching.
@@ -221,14 +355,38 @@ impl App {
         }
     }
 
-    /// Enter Action mode.
+    /// Enter Action mode — save expanded/wrapped state for restore on cancel.
+    /// Auto-expands the selected block for preview while the palette is open.
     fn enter_action_mode(&mut self) {
+        let (expanded, wrapped) = self.active_agent()
+            .map(|a| (a.expanded.clone(), a.wrapped.clone()))
+            .unwrap_or_default();
+        self.saved_expanded = Some(expanded);
+        self.saved_wrapped = Some(wrapped);
+        // Auto-expand selected block for preview
+        let block = self.selected_block;
+        if let Some(agent) = self.active_agent_mut() {
+            agent.expanded.insert(block);
+        }
         self.mode = Mode::Action;
         self.action_cursor = 0;
     }
 
-    /// Exit Action mode.
+    /// Exit Action mode — restore saved expanded/wrapped state.
     fn exit_action_mode(&mut self) {
+        if let (Some(expanded), Some(wrapped)) = (self.saved_expanded.take(), self.saved_wrapped.take()) {
+            if let Some(agent) = self.active_agent_mut() {
+                agent.expanded = expanded;
+                agent.wrapped = wrapped;
+            }
+        }
+        self.mode = Mode::Normal;
+    }
+
+    /// Exit Action mode keeping the current expanded/wrapped state (user applied a change).
+    fn exit_action_mode_keep_state(&mut self) {
+        self.saved_expanded = None;
+        self.saved_wrapped = None;
         self.mode = Mode::Normal;
     }
 
@@ -267,143 +425,23 @@ impl App {
     }
 
     fn handle_settings_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
-        // While loading or saving, only allow Esc to close
-        if let Some(s) = &self.settings {
-            if s.loading || s.saving {
-                if key.code == KeyCode::Esc {
-                    self.settings = None;
-                    self.mode = Mode::Normal;
-                }
-                return None;
+        let action = match &mut self.settings {
+            Some(s) => s.handle_key(key),
+            None => return None,
+        };
+        match action {
+            crate::settings::SettingsAction::Close => {
+                self.settings = None;
+                self.mode = Mode::Normal;
             }
-        }
-
-        match key.code {
-            KeyCode::Esc => {
-                if let Some(s) = &self.settings {
-                    if s.secret_edit_open {
-                        self.settings.as_mut().unwrap().cancel_secret_edit();
-                    } else if s.selector_open {
-                        self.settings.as_mut().unwrap().cancel_selector();
-                    } else {
-                        self.settings = None;
-                        self.mode = Mode::Normal;
-                    }
-                }
-            }
-            KeyCode::BackTab => {
+            crate::settings::SettingsAction::Save => {
                 if let Some(s) = &mut self.settings {
-                    if !s.selector_open && !s.secret_edit_open && !s.loading {
-                        s.switch_panel();
-                    }
+                    self.pending_messages.extend(s.save());
+                    self.theme = crate::theme::Theme::by_name(&s.all_settings.theme);
+                    self.line_cache = None;
                 }
             }
-            KeyCode::Up => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        // no-op
-                    } else if s.selector_open {
-                        s.move_up();
-                    } else {
-                        s.move_up();
-                    }
-                }
-            }
-            KeyCode::Down => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        // no-op
-                    } else if s.selector_open {
-                        s.move_down();
-                    } else {
-                        s.move_down();
-                    }
-                }
-            }
-            KeyCode::Left => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        s.secret_edit_left();
-                    } else if !s.selector_open {
-                        s.select_left();
-                    }
-                }
-            }
-            KeyCode::Right => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        s.secret_edit_right();
-                    } else if !s.selector_open {
-                        s.select_right();
-                    }
-                }
-            }
-            KeyCode::Home => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        s.secret_edit_home();
-                    }
-                }
-            }
-            KeyCode::End => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        s.secret_edit_end();
-                    }
-                }
-            }
-            KeyCode::Delete => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        s.secret_edit_delete();
-                    }
-                }
-            }
-            KeyCode::Tab => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        // no-op in secret edit
-                    } else {
-                        let fo = s.field_offset();
-                        if s.cursor > 0 && fo < s.fields.len() && s.fields[fo].kind() == crate::settings::FieldKind::Secret {
-                            s.open_secret_edit();
-                        } else {
-                            s.open_selector();
-                        }
-                    }
-                }
-            }
-            KeyCode::Enter => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        s.confirm_secret_edit();
-                    } else {
-                        self.pending_messages.extend(s.save());
-                        // Apply theme change immediately
-                        self.theme = crate::theme::Theme::by_name(&s.all_settings.theme);
-                        self.line_cache = None;
-                    }
-                }
-            }
-            KeyCode::Backspace => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        s.secret_edit_backspace();
-                    } else {
-                        s.backspace();
-                    }
-                }
-            }
-            KeyCode::Char(c) => {
-                if let Some(s) = &mut self.settings {
-                    if s.secret_edit_open {
-                        s.secret_edit_type_char(c);
-                    } else {
-                        s.type_char(c);
-                    }
-                }
-            }
-            _ => {}
+            crate::settings::SettingsAction::None => {}
         }
         None
     }
@@ -510,11 +548,14 @@ impl App {
             }
             KeyCode::BackTab => {
                 self.auto_approve = !self.auto_approve;
-                self.status_message = Some(if self.auto_approve {
+                let msg = if self.auto_approve {
                     "Auto-approve: ON (future approvals)".to_string()
                 } else {
                     "Auto-approve: OFF".to_string()
-                });
+                };
+                if let Some(agent) = self.active_agent_mut() {
+                    agent.log.push_system(msg);
+                }
                 None
             }
             KeyCode::Char(' ') => {
@@ -600,8 +641,6 @@ impl App {
     }
 
     fn handle_action_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
-        const ACTION_COUNT: usize = 4;
-
         match key.code {
             KeyCode::Esc => {
                 self.exit_action_mode();
@@ -616,7 +655,7 @@ impl App {
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.action_cursor = (self.action_cursor + 1).min(ACTION_COUNT - 1);
+                self.action_cursor = (self.action_cursor + 1).min(crate::app_types::BLOCK_ACTION_COUNT - 1);
                 None
             }
             KeyCode::Char('1') => { self.action_cursor = 0; self.execute_block_action() }
@@ -657,11 +696,13 @@ impl App {
                         agent.expanded.insert(idx);
                     }
                 }
-                self.exit_action_mode();
+                self.exit_action_mode_keep_state();
                 self.status_message = None;
             }
             1 => {
                 // Open save dialog with a timestamped default path
+                self.saved_expanded = None;
+                self.saved_wrapped = None;
                 let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
                 let default_path = format!("~/block-{}.md", ts);
                 self.mode = Mode::SaveDialog;
@@ -673,10 +714,10 @@ impl App {
                 });
             }
             2 => {
-                // Copy to clipboard
-                self.exit_action_mode();
-                match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(&block_text)) {
-                    Ok(_) => self.status_message = Some("Copied to clipboard".to_string()),
+                // Copy to clipboard — try multiple methods
+                self.exit_action_mode_keep_state();
+                match copy_to_clipboard(&block_text) {
+                    Ok(()) => self.status_message = Some("Copied to clipboard".to_string()),
                     Err(e) => self.status_message = Some(format!("Clipboard failed: {}", e)),
                 }
             }
@@ -690,7 +731,7 @@ impl App {
                         agent.wrapped.insert(idx);
                     }
                 }
-                self.exit_action_mode();
+                self.exit_action_mode_keep_state();
             }
             _ => { self.exit_action_mode(); }
         }
@@ -735,7 +776,12 @@ impl App {
                 }
 
                 if let Some(parent) = p.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        self.status_message = Some(format!("Save failed: could not create directory: {}", e));
+                        self.save_dialog = None;
+                        self.mode = Mode::Normal;
+                        return None;
+                    }
                 }
 
                 match std::fs::write(p, &text) {
@@ -1045,12 +1091,34 @@ impl App {
 
     /// Render the full UI.
     /// Borrow the cached per-block lines (for fast-path rendering).
-    pub fn line_cache_blocks(&self) -> Option<&[Vec<Line<'static>>]> {
+    pub fn line_cache_blocks(&self) -> Option<&[Option<Vec<Line<'static>>>]> {
         self.line_cache.as_ref().map(|c| c.cached_block_lines.as_slice())
     }
 
     pub fn view(&self, frame: &mut Frame) {
         ui::render(frame, self);
+    }
+
+    /// Check if the active agent's streaming has stalled (no delta for 30s).
+    /// Sets a transient status_message that clears once streaming resumes.
+    pub fn check_stream_stall(&mut self) {
+        if self.stream_stall_warned {
+            return;
+        }
+        let agent = match self.active_agent() {
+            Some(a) => a,
+            None => return,
+        };
+        if agent.log.streaming().is_none() {
+            return;
+        }
+        let elapsed = chrono::Utc::now()
+            .signed_duration_since(agent.last_activity)
+            .num_seconds();
+        if elapsed >= 30 {
+            self.status_message = Some(format!("No response for {}s — provider may be hung", elapsed));
+            self.stream_stall_warned = true;
+        }
     }
 }
 

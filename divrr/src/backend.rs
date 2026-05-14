@@ -135,10 +135,10 @@ impl DiCoreBackend {
                     while let Some(Ok(line)) = stream.next().await {
                         let ts = chrono::Local::now().format("%H:%M:%S%.3f");
                         let _ = writeln!(writer, "[{}] {}", ts, line);
+                        let _ = writer.flush(); // flush every line for real-time diagnostics
                         line_count += 1;
                         // Recheck file size every 1000 lines so large bursts are trimmed
                         if line_count.is_multiple_of(1000) {
-                            writer.flush().ok();
                             rotate();
                         }
                     }

@@ -244,6 +244,13 @@ export class ApiGatewayHandler implements ApiHandler {
 		for await (const response of stream) {
 			if (this.abortController?.signal.aborted) return
 
+			if (response.error) {
+				const err = new Error(response.error.message)
+				;(err as any).status = response.status
+				;(err as any).retriable = response.error.retriable
+				throw err
+			}
+
 			const chunk = response.body
 			if (!chunk) continue
 

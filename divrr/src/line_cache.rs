@@ -3,17 +3,18 @@ use std::collections::HashSet;
 
 /// Cached per-block rendered lines and visual line counts.
 /// Invalidated when width, generation, expand state, or wrap state changes.
+/// Only visible blocks ± buffer have cached `Line` objects; others have `None`.
 pub(crate) struct LineCache {
     pub(crate) width: u16,
     pub(crate) generation: u64,
     pub(crate) expanded: HashSet<usize>,
     pub(crate) wrapped: HashSet<usize>,
-    /// Per-block visual line count after wrapping.
+    /// Per-block visual line count after wrapping (always populated for all blocks).
     pub(crate) per_block: Vec<usize>,
     /// Total visual lines (blocks only, excluding streaming/pending).
     pub(crate) blocks_total: usize,
-    /// Cached rendered `Line` objects for each block (without selection marker/highlight).
-    pub(crate) cached_block_lines: Vec<Vec<Line<'static>>>,
+    /// Cached rendered `Line` objects for visible blocks. `None` = not rendered yet.
+    pub(crate) cached_block_lines: Vec<Option<Vec<Line<'static>>>>,
 }
 
 impl LineCache {
