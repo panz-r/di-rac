@@ -22,10 +22,6 @@ impl DiCoreBackend {
                 let candidates = [
                     // Next to di-core binary
                     std::path::Path::new(core_path).parent().map(|p| p.join("di-rvv-cmd")),
-                    // Project build directory
-                    Some(std::path::PathBuf::from("/w/di-rac/command-daemon/build/di-rvv-cmd")),
-                    // dist directory
-                    Some(std::path::PathBuf::from("/w/di-rac/dist/di-rvv-cmd")),
                 ];
                 candidates.iter()
                     .filter_map(|c| c.as_ref())
@@ -40,8 +36,6 @@ impl DiCoreBackend {
             .unwrap_or_else(|| {
                 let candidates = [
                     std::path::Path::new(core_path).parent().map(|p| p.join("di-rvv-analyzer")),
-                    Some(std::path::PathBuf::from("/w/di-rac/treesitter-daemon/build/di-rvv-analyzer")),
-                    Some(std::path::PathBuf::from("/w/di-rac/dist/di-rvv-analyzer")),
                 ];
                 candidates.iter()
                     .filter_map(|c| c.as_ref())

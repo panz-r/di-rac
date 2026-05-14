@@ -559,8 +559,8 @@ impl SettingsState {
                 self.provider_info = provider_info;
                 self.error = gateway_error;
                 self.flush_fields_to_settings();
-                self.loading = false;
             }
+            self.loading = false;
         }
     }
 
@@ -573,8 +573,8 @@ impl SettingsState {
                 self.provider_info = provider_info;
                 self.error = gateway_error;
                 self.flush_fields_to_settings();
-                self.loading = false;
             }
+            self.loading = false;
         }
     }
 

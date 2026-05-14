@@ -4,10 +4,14 @@ use crate::message::{CoreEvent, FrontendMessage};
 use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
 use std::collections::HashSet;
+use std::sync::Mutex;
+
+static LOG_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Append a timestamped line to ~/.dirac/divrr.log (best-effort, never fails).
 /// When the log exceeds 1MB, keeps the most recent 256KB.
 pub fn log_event(msg: &str) {
+    let _lock = LOG_MUTEX.lock().unwrap();
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let path = std::path::Path::new(&home).join(".dirac").join("divrr.log");
     // Rotate: keep the tail when file exceeds 1MB
@@ -122,10 +126,7 @@ pub struct App {
     pub event_tx: Option<mpsc::UnboundedSender<crate::AppEvent>>,
     /// Active save dialog state.
     pub save_dialog: Option<Box<SaveDialogState>>,
-    /// Expand state saved before entering Action mode, restored on close.
-    pub saved_expanded: Option<std::collections::HashSet<usize>>,
-    /// Wrap state saved before entering Action mode, restored on close.
-    saved_wrapped: Option<std::collections::HashSet<usize>>,
+
     /// Cached visual line counts per block (invalidated on width/content/expand change).
     line_cache: Option<VisualLineCache>,
 }
@@ -157,8 +158,7 @@ impl App {
             pending_messages: Vec::new(),
             event_tx: None,
             save_dialog: None,
-            saved_expanded: None,
-            saved_wrapped: None,
+
             line_cache: None,
         }
     }
@@ -263,7 +263,7 @@ impl App {
         self.selected_block = new;
 
         // Ensure cache is warm, then use cached per-block counts
-        let width = self.conv_width as u16;
+        let width = (self.conv_width as u16).max(1);
         self.ensure_line_cache(width);
 
         let (block_start, block_height) = self.line_cache.as_ref()
@@ -538,33 +538,14 @@ impl App {
         }
     }
 
-    /// Enter Action mode: save expand state, force-expand selected block.
+    /// Enter Action mode.
     fn enter_action_mode(&mut self) {
-        let (expanded, wrapped) = self.active_agent()
-            .map(|a| (a.expanded.clone(), a.wrapped.clone()))
-            .unwrap_or_default();
-        self.saved_expanded = Some(expanded);
-        self.saved_wrapped = Some(wrapped);
-        let idx = self.selected_block;
-        if let Some(agent) = self.active_agent_mut() {
-            agent.expanded.insert(idx);
-        }
         self.mode = Mode::Action;
         self.action_cursor = 0;
     }
 
-    /// Exit Action mode: restore saved expand/wrap state (unless user explicitly toggled).
+    /// Exit Action mode.
     fn exit_action_mode(&mut self) {
-        if let Some(saved) = self.saved_expanded.take() {
-            if let Some(agent) = self.active_agent_mut() {
-                agent.expanded = saved;
-            }
-        }
-        if let Some(saved) = self.saved_wrapped.take() {
-            if let Some(agent) = self.active_agent_mut() {
-                agent.wrapped = saved;
-            }
-        }
         self.mode = Mode::Normal;
     }
 
@@ -970,13 +951,13 @@ impl App {
 
         match self.action_cursor {
             0 => {
-                // Expand/Collapse — toggle in the saved state so it persists after close
+                // Expand/Collapse — toggle directly on live state
                 let idx = self.selected_block;
-                if let Some(saved) = &mut self.saved_expanded {
-                    if saved.contains(&idx) {
-                        saved.remove(&idx);
+                if let Some(agent) = self.active_agent_mut() {
+                    if agent.expanded.contains(&idx) {
+                        agent.expanded.remove(&idx);
                     } else {
-                        saved.insert(idx);
+                        agent.expanded.insert(idx);
                     }
                 }
                 self.exit_action_mode();
@@ -1003,20 +984,13 @@ impl App {
                 }
             }
             3 => {
-                // Wrap/Unwrap — toggle in saved state so it persists after close
+                // Wrap/Unwrap — toggle directly on live state
                 let idx = self.selected_block;
                 if let Some(agent) = self.active_agent_mut() {
                     if agent.wrapped.contains(&idx) {
                         agent.wrapped.remove(&idx);
                     } else {
                         agent.wrapped.insert(idx);
-                    }
-                }
-                if let Some(saved) = &mut self.saved_wrapped {
-                    if saved.contains(&idx) {
-                        saved.remove(&idx);
-                    } else {
-                        saved.insert(idx);
                     }
                 }
                 self.exit_action_mode();
@@ -1475,7 +1449,11 @@ fn summarize_tool_args(tool: &str, args: &serde_json::Value) -> String {
         "bash" => {
             let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("?");
             if cmd.len() > 60 {
-                format!("{}...", &cmd[..57])
+                let mut end = 57;
+                while !cmd.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}...", &cmd[..end])
             } else {
                 cmd.to_string()
             }
@@ -1516,7 +1494,11 @@ fn format_result_summary(result: &serde_json::Value) -> String {
     } else {
         let s = result.to_string();
         if s.len() > 80 {
-            format!("{}...", &s[..77])
+            let mut end = 77;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}...", &s[..end])
         } else {
             s
         }
@@ -1544,5 +1526,189 @@ fn block_full_text(block: &crate::agent::Block) -> String {
             s
         }
         crate::agent::Block::Finish { message, .. } => message.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // summarize_tool_args
+    // -----------------------------------------------------------------------
+    #[test]
+    fn summarize_read() {
+        let args = serde_json::json!({ "path": "src/main.rs" });
+        assert_eq!(summarize_tool_args("read", &args), "src/main.rs");
+    }
+
+    #[test]
+    fn summarize_read_missing() {
+        let args = serde_json::json!({});
+        assert_eq!(summarize_tool_args("read", &args), "?");
+    }
+
+    #[test]
+    fn summarize_write() {
+        let args = serde_json::json!({ "path": "output.txt" });
+        assert_eq!(summarize_tool_args("write", &args), "output.txt");
+    }
+
+    #[test]
+    fn summarize_edit() {
+        let args = serde_json::json!({ "path": "src/lib.rs" });
+        assert_eq!(summarize_tool_args("edit", &args), "src/lib.rs");
+    }
+
+    #[test]
+    fn summarize_bash_short() {
+        let args = serde_json::json!({ "command": "ls -la" });
+        assert_eq!(summarize_tool_args("bash", &args), "ls -la");
+    }
+
+    #[test]
+    fn summarize_bash_long() {
+        let cmd = "a".repeat(100);
+        let args = serde_json::json!({ "command": cmd });
+        let result = summarize_tool_args("bash", &args);
+        assert_eq!(result.len(), 60); // 57 + "..."
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn summarize_bash_non_ascii_boundary() {
+        // 'é' is 2 bytes. Put one right at the truncation boundary.
+        let mut cmd = "a".repeat(56);
+        cmd.push('é'); // 56 + 2 = 58 bytes — still <= 60 so NOT truncated yet
+        cmd.push('a'); // 59 bytes — still <= 60
+        cmd.push('a'); // 60 bytes — still <= 60
+        cmd.push('a'); // 61 bytes — now > 60, will be truncated to 57-byte boundary
+        let args = serde_json::json!({ "command": cmd });
+        let result = summarize_tool_args("bash", &args);
+        // Should not panic — must cut at char boundary
+        assert!(result.ends_with("..."));
+        // 56 + 3 = 59, plus "..." = 62? No. 57 bytes truncated, 58 would be mid-char.
+        // Actually, 57 bytes, and the 'é' starts at byte 56-57. At byte 57 we're in the middle of é.
+        // The while loop steps back to byte 56, so result is 56 + "..." = 59 bytes.
+        assert_eq!(result.len(), 59); // 56 + "..." (3)
+    }
+
+    #[test]
+    fn summarize_bash_missing() {
+        let args = serde_json::json!({});
+        assert_eq!(summarize_tool_args("bash", &args), "?");
+    }
+
+    #[test]
+    fn summarize_search() {
+        let args = serde_json::json!({ "pattern": "fn main" });
+        assert_eq!(summarize_tool_args("search", &args), "fn main");
+    }
+
+    #[test]
+    fn summarize_search_missing() {
+        let args = serde_json::json!({});
+        assert_eq!(summarize_tool_args("search", &args), "?");
+    }
+
+    #[test]
+    fn summarize_get_outputs_list() {
+        let args = serde_json::json!({ "action": "list" });
+        assert_eq!(summarize_tool_args("get_outputs", &args), "list");
+    }
+
+    #[test]
+    fn summarize_get_outputs_read() {
+        let args = serde_json::json!({ "action": "read", "file": "out.txt" });
+        assert_eq!(summarize_tool_args("get_outputs", &args), "read out.txt");
+    }
+
+    #[test]
+    fn summarize_get_outputs_clear() {
+        let args = serde_json::json!({ "action": "clear" });
+        assert_eq!(summarize_tool_args("get_outputs", &args), "clear");
+    }
+
+    #[test]
+    fn summarize_get_outputs_default_list() {
+        let args = serde_json::json!({});
+        assert_eq!(summarize_tool_args("get_outputs", &args), "list");
+    }
+
+    #[test]
+    fn summarize_symbols_search() {
+        let args = serde_json::json!({ "subcommand": "search", "name": "foo" });
+        assert_eq!(summarize_tool_args("symbols", &args), "search foo");
+    }
+
+    #[test]
+    fn summarize_symbols_no_name() {
+        let args = serde_json::json!({ "subcommand": "search" });
+        assert_eq!(summarize_tool_args("symbols", &args), "search");
+    }
+
+    #[test]
+    fn summarize_symbols_default_subcommand() {
+        let args = serde_json::json!({ "name": "bar" });
+        assert_eq!(summarize_tool_args("symbols", &args), "search bar");
+    }
+
+    #[test]
+    fn summarize_unknown_tool() {
+        let args = serde_json::json!({ "foo": "bar" });
+        let result = summarize_tool_args("unknown", &args);
+        // Default arm: args.to_string().chars().take(40).collect()
+        assert_eq!(result, r#"{"foo":"bar"}"#);
+    }
+
+    // -----------------------------------------------------------------------
+    // format_result_summary
+    // -----------------------------------------------------------------------
+    #[test]
+    fn format_result_plain_string() {
+        let result = serde_json::json!("hello\nworld\nline3\nline4\nline5");
+        let s = format_result_summary(&result);
+        assert_eq!(s, "hello\nworld\nline3\nline4"); // only 4 lines
+    }
+
+    #[test]
+    fn format_result_status() {
+        let result = serde_json::json!({ "status": "done" });
+        assert_eq!(format_result_summary(&result), "done");
+    }
+
+    #[test]
+    fn format_result_stdout() {
+        let result = serde_json::json!({ "stdout": "a\nb\nc\nd\ne" });
+        assert_eq!(format_result_summary(&result), "a\nb\nc"); // only 3 lines
+    }
+
+    #[test]
+    fn format_result_fallback_short() {
+        let result = serde_json::json!({ "foo": 42 });
+        assert_eq!(format_result_summary(&result), r#"{"foo":42}"#);
+    }
+
+    #[test]
+    fn format_result_fallback_long_ascii() {
+        // Must NOT be a plain string and must NOT have status/stdout keys
+        let result = serde_json::json!({
+            "files": ["a".repeat(50), "b".repeat(50)]
+        });
+        let s = format_result_summary(&result);
+        assert!(s.len() <= 80);
+        assert!(s.ends_with("..."));
+    }
+
+    #[test]
+    fn format_result_fallback_long_unicode() {
+        // Must NOT be a plain string and must NOT have status/stdout keys.
+        // Inner content is long enough (>80 bytes JSON repr) to trigger truncation.
+        let result = serde_json::json!({
+            "data": ["é".repeat(50)] // 100 bytes UTF-8, JSON repr ~112 bytes > 80
+        });
+        let s = format_result_summary(&result);
+        // Should not panic on multi-byte boundary
+        assert!(s.ends_with("..."));
     }
 }

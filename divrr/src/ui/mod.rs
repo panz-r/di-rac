@@ -87,10 +87,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 fn render_action_palette(frame: &mut Frame, input_area: Rect, app: &App) {
     let theme = &app.theme;
 
-    // Use pre-menu saved state for the expand/collapse label
-    let was_expanded = app.saved_expanded
-        .as_ref()
-        .map(|s| s.contains(&app.selected_block))
+    // Read expand/collapse from live agent state
+    let was_expanded = app.active_agent()
+        .map(|a| a.expanded.contains(&app.selected_block))
         .unwrap_or(false);
     let expand_label = if was_expanded { "1 Collapse" } else { "1 Expand" };
     let was_wrapped = app.active_agent()

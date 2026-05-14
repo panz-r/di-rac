@@ -263,8 +263,7 @@ async fn main() -> color_eyre::Result<()> {
                     break;
                 }
 
-                // Drain pending messages FIRST (e.g. SetProviderConfig from :new)
-                // to ensure config arrives before any direct return (e.g. SpawnAgent).
+                // Drain pending messages before handling key (e.g. stale SetProviderConfig)
                 for msg in app.pending_messages.drain(..) {
                     if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
                         crate::app::log_event(&format!("send error: {}", e));
@@ -273,6 +272,14 @@ async fn main() -> color_eyre::Result<()> {
                 }
 
                 if let Some(msg) = app.handle_key(key) {
+                    // Drain any new pending messages pushed during handle_key (e.g. SetProviderConfig from :new)
+                    // before sending the returned message (e.g. SpawnAgent) to ensure correct ordering.
+                    for pending in app.pending_messages.drain(..) {
+                        if let Err(e) = send_with_timeout(&mut di_core, &pending).await {
+                            crate::app::log_event(&format!("send error: {}", e));
+                            app.status_message = Some(format!("Send error: {}", e));
+                        }
+                    }
                     if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
                         crate::app::log_event(&format!("send error: {}", e));
                         app.status_message = Some(format!("Send error: {}", e));
