@@ -2304,12 +2304,14 @@ impl AgentEngine {
     ) -> (String, Vec<String>) {
         if let Some(distiller_arc) = &self.distiller {
             let distiller = distiller_arc.read().await;
-            let source_ids: Vec<Uuid> = self.trajectory.messages.iter().rev().take(20).map(|m| m.id).collect();
             let input = crate::context::distiller::TaskStateInput {
                 recent_assistant_summaries: recent_assistant,
                 file_context_summary: file_summary.to_string(),
                 key_observations: Vec::new(),
-                source_event_ids: source_ids,
+                // source_event_ids expects observation/checkpoint IDs, not raw message IDs.
+                // Passing message IDs breaks distiller correlation, causing deterministic fallback.
+                // Leave empty so the distiller uses recent messages directly. (fixes 1.1)
+                source_event_ids: Vec::new(),
             };
             let result = distiller.consolidate_task_state(input).await;
             match result.provenance.source {
@@ -2915,7 +2917,8 @@ impl MultiAgentOrchestrator {
     /// Clean up the frontend channel and abort handle for a finished agent.
     pub fn cleanup_agent(&mut self, agent_id: &Uuid) {
         self.frontend_channels.remove(agent_id);
-        self.abort_handles.remove(agent_id);
+        // Keep abort handle forever — the atomic bool is harmless to keep and ensures
+        // abort_agent can still signal even after cleanup (fixes 2.3).
         self.runtime_configs.remove(agent_id);
     }
 

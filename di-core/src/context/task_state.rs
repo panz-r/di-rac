@@ -75,8 +75,13 @@ impl TaskStateReducer {
         if is_casual(&lower, word_count) { return UserMessageKind::Casual; }
 
         // Never mark longer unknown messages as expendable — they may be non-English
-        // corrections or goal changes that the English keyword matcher missed.
-        UserMessageKind::Clarification
+        // corrections or constraints that the English keyword matcher missed (fixes 2.1).
+        // Constraint is additive and safer than GoalChange (which overwrites the goal).
+        if word_count > 5 {
+            UserMessageKind::Constraint
+        } else {
+            UserMessageKind::Clarification
+        }
     }
 
     /// Update task state based on a classified message.

@@ -880,7 +880,7 @@ fn parse_edits(call: &ToolCall) -> Result<Vec<FileEdit>, String> {
             .ok_or_else(|| "Missing content/text argument for edit".to_string())?
             .to_string();
 
-        let edit_type = parse_edit_type(args.get("edit_type").or_else(|| args.get("type")));
+        let edit_type = parse_edit_type(args.get("edit_type").or_else(|| args.get("type")))?;
 
         return Ok(vec![FileEdit {
             path: path.to_string(),
@@ -946,17 +946,19 @@ fn parse_edits_array(obj: &serde_json::Value) -> Result<Vec<Edit>, String> {
                 .to_string();
             let edit_type = parse_edit_type(
                 edit.get("edit_type").or_else(|| edit.get("type"))
-            );
+            )?;
             Ok(Edit { anchor, end_anchor, edit_type, text })
         })
         .collect()
 }
 
-fn parse_edit_type(val: Option<&serde_json::Value>) -> EditType {
-    match val.and_then(|v| v.as_str()).unwrap_or("replace") {
-        "insert_before" => EditType::InsertBefore,
-        "insert_after" => EditType::InsertAfter,
-        _ => EditType::Replace,
+fn parse_edit_type(val: Option<&serde_json::Value>) -> Result<EditType, String> {
+    match val.and_then(|v| v.as_str()) {
+        Some("insert_before") => Ok(EditType::InsertBefore),
+        Some("insert_after") => Ok(EditType::InsertAfter),
+        Some("replace") => Ok(EditType::Replace),
+        Some(other) => Err(format!("Unknown edit type '{}'. Must be 'replace', 'insert_before', or 'insert_after'.", other)),
+        None => Ok(EditType::Replace),
     }
 }
 
