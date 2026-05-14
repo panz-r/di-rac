@@ -189,7 +189,7 @@ func codexStartOAuth(ctx context.Context) (*CodexAuthTokens, error) {
 	port := codexCallbackPort
 	var listener net.Listener
 	for attempt := 0; attempt < 10; attempt++ {
-		listener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		listener, err = net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
 		if err == nil {
 			break
 		}

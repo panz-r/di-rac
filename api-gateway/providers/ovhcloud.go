@@ -151,14 +151,14 @@ func ovhcloudBaseURL(model string) (string, error) {
 		return "", fmt.Errorf("invalid OVHcloud model ID (length): %s", model)
 	}
 	for _, c := range model {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_') {
 			return "", fmt.Errorf("invalid OVHcloud model ID: %s", model)
 		}
 	}
 	if model[0] == '-' || model[len(model)-1] == '-' {
 		return "", fmt.Errorf("invalid OVHcloud model ID (hyphen): %s", model)
 	}
-	return "https://" + model + ".endpoints.kepler.ai.cloud.ovh.net/api/openai_compat/v1", nil
+	return "https://" + strings.ToLower(model) + ".endpoints.kepler.ai.cloud.ovh.net/api/openai_compat/v1", nil
 }
 
 func (h *OVHcloudHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {

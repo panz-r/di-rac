@@ -212,19 +212,13 @@ func (rl *RateLimiter) Wait(ctx context.Context) error {
 		return nil
 	default:
 	}
-	// Semaphore full — wait, but return token if context cancels.
+	// Semaphore full — wait or bail on cancellation.
+	// No need to return the token: the refill goroutine continuously
+	// adds new tokens, so a dropped one is quickly replaced.
 	select {
 	case rl.sem <- struct{}{}:
 		return nil
 	case <-ctx.Done():
-		// Return the rate-limit token. The non-blocking send handles the case
-		// where the refill goroutine has filled the channel back to capacity:
-		// losing one token from the bucket is acceptable since we're about to
-		// exit and the refill loop continuously produces new ones.
-		select {
-		case rl.tokens <- struct{}{}:
-		default:
-		}
 		return ctx.Err()
 	}
 }

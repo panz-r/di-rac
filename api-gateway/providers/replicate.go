@@ -163,6 +163,16 @@ func (h *ReplicateHandler) predictionURL(baseURL, model string, req *Request) (u
 }
 
 func (h *ReplicateHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
+	if len(req.Tools) > 0 {
+		return nil, fmt.Errorf("replicate: tools are not supported")
+	}
+	for _, msg := range req.Messages {
+		for _, block := range msg.ContentBlocks {
+			if block.Type == "image" {
+				return nil, fmt.Errorf("replicate: image inputs are not supported")
+			}
+		}
+	}
 	baseURL, apiKey := h.resolveAuth(req)
 	model := h.resolveModel(req)
 
@@ -239,6 +249,16 @@ func (h *ReplicateHandler) Send(ctx context.Context, req *Request) (*SendResult,
 }
 
 func (h *ReplicateHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
+	if len(req.Tools) > 0 {
+		return fmt.Errorf("replicate: tools are not supported")
+	}
+	for _, msg := range req.Messages {
+		for _, block := range msg.ContentBlocks {
+			if block.Type == "image" {
+				return fmt.Errorf("replicate: image inputs are not supported")
+			}
+		}
+	}
 	baseURL, apiKey := h.resolveAuth(req)
 	model := h.resolveModel(req)
 
