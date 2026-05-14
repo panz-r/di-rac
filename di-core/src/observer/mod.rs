@@ -940,6 +940,7 @@ impl Observer {
             && self.store.estimate_token_count() >= self.config.reflection_token_threshold
         {
             self.trigger_reflection();
+            self.last_observed_message_index = trajectory.messages.len();
         }
 
         // Update monotonicity tracking
@@ -954,6 +955,7 @@ impl Observer {
         // Memory cap compaction: when observation tokens exceed cap, compress via reflection
         if observation_tokens > cap && self.store.len() > 5 {
             self.trigger_reflection();
+            self.last_observed_message_index = trajectory.messages.len();
         }
 
         // Determine interrupt action

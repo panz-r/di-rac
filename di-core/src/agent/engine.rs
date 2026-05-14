@@ -905,9 +905,19 @@ impl AgentEngine {
                         20,
                     );
                 }
-                TurnOutcome::Continue { tools_used: _ } => {
-                    self.consecutive_mistake_count = 0;
-                }
+                TurnOutcome::Continue { tools_used: _ } => {}  // mistake count persists across turns
+            }
+
+            // General mistake limit: checks across all turns, including bash failures
+            // that accumulated from mixed-tool turns (the tools_used == 0 path above
+            // only catches empty turns).
+            if self.consecutive_mistake_count >= self.max_consecutive_mistakes {
+                self.emit_event(CoreEvent::TaskFinished {
+                    agent_id: self.id,
+                    success: false,
+                    message: "Too many consecutive mistakes. Consider a different approach.".to_string(),
+                }).await?;
+                return Ok(());
             }
 
             // Periodic cleanup: remove old output files every 10 turns
