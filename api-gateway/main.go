@@ -417,6 +417,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 
 			s.configMu.Lock()
+			if _, err := s.providerRegistry.GetHandler(setProviderReq.Provider); err != nil {
+				w.write(&Response{
+					ID:     0,
+					Status: 400,
+					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: err.Error()},
+				})
+				continue
+			}
+
 			s.providerConfigs[setProviderReq.Provider] = setProviderReq.Config
 			s.connLogf(connID, "Stored configuration for provider: %s", setProviderReq.Provider)
 			s.configMu.Unlock()
@@ -478,6 +487,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 				continue
 			}
 			result := s.providerRegistry.ValidateSettings(validateReq.Provider, validateReq.Settings, validateReq.Thinking)
+			if _, err := s.providerRegistry.GetHandler(validateReq.Provider); err != nil {
+				w.write(&Response{
+					ID:     0,
+					Status: 400,
+					Error:  &ErrorDetail{Code: "INVALID_REQUEST", Message: err.Error()},
+				})
+				continue
+			}
 			if result == nil {
 				w.write(&Response{
 					ID:     0,
@@ -535,7 +552,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				w.write(&Response{
 					ID:     0,
 					Status: 200,
-					Body:   json.RawMessage(`{"models":null}`),
+					Body:   json.RawMessage(`{"models":[]}`),
 				})
 				continue
 			}
