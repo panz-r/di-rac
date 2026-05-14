@@ -849,7 +849,7 @@ func enrichModelCapabilities(models []providers.ModelEntry, info *providers.Prov
 	// Applying provider-wide defaults would overwrite accurate per-model info
 	// (e.g. flipping text-only OpenRouter models to supports_images: true).
 	switch providerID {
-	case "openrouter":
+	case "openrouter", "together", "fireworks", "groq", "cerebras":
 		return
 	}
 	for i := range models {
