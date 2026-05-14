@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <time.h>
 #include <signal.h>
 #include <stdatomic.h>
 
@@ -105,8 +106,16 @@ static int send_json(client_ctx_t *ctx, const char *json) {
 static int drain_output(client_ctx_t *ctx) {
     if (ctx->out_len == 0) return 0;
     ssize_t sent;
+    int eintr_count = 0;
+    const int MAX_EINTR_RETRIES = 16;
     do {
         sent = write(ctx->fd, ctx->outbuf, ctx->out_len);
+        if (sent < 0 && errno == EINTR) {
+            if (++eintr_count >= MAX_EINTR_RETRIES) {
+                fprintf(stderr, "[di-vrr] drain_output: EINTR storm on fd %d, giving up\n", ctx->fd);
+                return -1;
+            }
+        }
     } while (sent < 0 && errno == EINTR);
     if (sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
@@ -564,25 +573,30 @@ static void process_single_object(client_ctx_t *ctx, const char *json, trie_t *t
 }
 
 static const char* find_end_of_object(const char *start, const char *end) {
+    /* Single-pass state machine — O(n) total, no backward scanning.
+     * Tracks in_string and escape_toggle (backslash consumed next char). */
     int depth = 0;
     bool in_string = false;
+    bool escape_toggle = false;
     for (const char *p = start; p < end; p++) {
-        if (*p == '"') {
-            if (!in_string) {
-                in_string = true;
-            } else {
-                // Check if this quote is escaped (odd number of backslashes before it)
-                int backslash_count = 0;
-                for (const char *q = p - 1; q >= start && *q == '\\'; q--) backslash_count++;
-                if (backslash_count % 2 == 0) in_string = false;
+        if (in_string) {
+            if (escape_toggle) {
+                escape_toggle = false;  /* backslash consumed this char */
+            } else if (*p == '\\') {
+                escape_toggle = true;   /* next char is escaped */
+            } else if (*p == '"') {
+                in_string = false;      /* unescaped closing quote */
             }
-            continue;
-        }
-        if (in_string) continue;
-        if (*p == '{') depth++;
-        else if (*p == '}') {
-            depth--;
-            if (depth == 0) return p + 1;
+        } else {
+            if (*p == '"') {
+                in_string = true;
+                escape_toggle = false;
+            } else if (*p == '{') {
+                depth++;
+            } else if (*p == '}') {
+                depth--;
+                if (depth == 0) return p + 1;
+            }
         }
     }
     return NULL;
@@ -618,22 +632,27 @@ static size_t process_json_stream(client_ctx_t *ctx, char *data, size_t len, tri
 }
 
 static int handle_client_data(client_ctx_t *ctx, trie_t *trie) {
-    char read_buf[8192];
+    char read_buf[65536];
     ssize_t n = read(ctx->fd, read_buf, sizeof(read_buf));
     if (n < 0) {
         if (errno == EINTR) {
             n = read(ctx->fd, read_buf, sizeof(read_buf));
             if (n < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+                fprintf(stderr, "[di-vrr] read failed on fd %d after EINTR retry: %s\n", ctx->fd, strerror(errno));
                 return -1;
             }
         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return 0;
         } else {
+            fprintf(stderr, "[di-vrr] read failed on fd %d: %s\n", ctx->fd, strerror(errno));
             return -1;
         }
     }
-    if (n == 0) return -1;
+    if (n == 0) {
+        fprintf(stderr, "[di-vrr] client fd %d disconnected (EOF)\n", ctx->fd);
+        return -1;
+    }
 
     if (ctx->len + (size_t)n >= ctx->buf_cap) {
         size_t new_cap = ctx->buf_cap ? ctx->buf_cap * 2 : 4096;
@@ -766,6 +785,8 @@ int main(int argc, char *argv[]) {
     if (epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, listen_fd, &ev) < 0) {
         perror("epoll_ctl ADD listen_fd");
         close(listen_fd);
+        close(g_epoll_fd);
+        g_epoll_fd = -1;
         exit(1);
     }
 
@@ -785,6 +806,11 @@ int main(int argc, char *argv[]) {
         int nfds = epoll_wait(g_epoll_fd, events, MAX_EVENTS, -1);
         if (nfds < 0) {
             if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                struct timespec req = { .tv_sec = 0, .tv_nsec = 10000000 };
+                nanosleep(&req, NULL);
+                continue;
+            }
             perror("epoll_wait"); break;
         }
         for (int i = 0; i < nfds; i++) {
@@ -901,5 +927,6 @@ int main(int argc, char *argv[]) {
         }
     }
     trie_destroy(lock_trie);
+    if (g_epoll_fd >= 0) close(g_epoll_fd);
     return 0;
 }

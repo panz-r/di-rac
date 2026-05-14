@@ -611,19 +611,34 @@ int trie_save_persist(trie_t *trie, const char *filepath) {
     node_save_recursive_iterative(trie->root, f, path_buf, sizeof(path_buf), &truncated);
 
     if (fclose(f) != 0) {
-        unlink(tmp_path);
-        fprintf(stderr, "[di-vrr] trie_save_persist: fclose failed: %s\n", strerror(errno));
+        int saved_errno = errno;
+        if (unlink(tmp_path) < 0) {
+            fprintf(stderr, "[di-vrr] trie_save_persist: fclose failed: %s, unlink(%s) also failed: %s\n",
+                    strerror(saved_errno), tmp_path, strerror(errno));
+        } else {
+            fprintf(stderr, "[di-vrr] trie_save_persist: fclose failed: %s, temp unlinked\n",
+                    strerror(saved_errno));
+        }
         return -1;
     }
     if (truncated) {
-        unlink(tmp_path);
+        if (unlink(tmp_path) < 0) {
+            fprintf(stderr, "[di-vrr] trie_save_persist: path overflow, unlink(%s) failed: %s\n",
+                    tmp_path, strerror(errno));
+        }
         fprintf(stderr, "[di-vrr] trie_save_persist: path overflow, skipping save\n");
         return -1;
     }
 
     if (rename(tmp_path, filepath) < 0) {
-        unlink(tmp_path);
-        fprintf(stderr, "[di-vrr] trie_save_persist: rename failed: %s\n", strerror(errno));
+        int saved_errno = errno;
+        if (unlink(tmp_path) < 0) {
+            fprintf(stderr, "[di-vrr] trie_save_persist: rename(%s, %s) failed: %s, unlink(%s) also failed: %s\n",
+                    tmp_path, filepath, strerror(saved_errno), tmp_path, strerror(errno));
+        } else {
+            fprintf(stderr, "[di-vrr] trie_save_persist: rename failed: %s, temp unlinked\n",
+                    strerror(saved_errno));
+        }
         return -1;
     }
     return 0;
@@ -631,7 +646,10 @@ int trie_save_persist(trie_t *trie, const char *filepath) {
 
 int trie_load_persist(trie_t *trie, const char *filepath) {
     FILE *f = fopen(filepath, "r");
-    if (!f) return -1;
+    if (!f) {
+        fprintf(stderr, "[di-vrr] trie_load_persist: fopen(%s) failed: %s\n", filepath, strerror(errno));
+        return -1;
+    }
 
     char line[8192];
     while (fgets(line, sizeof(line), f)) {
