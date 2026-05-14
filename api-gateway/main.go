@@ -977,7 +977,7 @@ func (s *Server) handleStreaming(ctx context.Context, connID, id int64, req *Req
 	for {
 		select {
 		case streamErr := <-errChan:
-			s.reqLogf(connID, id, "streaming provider error: %v", sanitizeProviderError(streamErr))
+			s.reqLogf(connID, id, "streaming provider error: %v", streamErr)
 			w.write(&Response{
 				ID:     id,
 				Status: 500,
@@ -993,7 +993,7 @@ func (s *Server) handleStreaming(ctx context.Context, connID, id int64, req *Req
 			// Drain any provider error that arrived during cancellation.
 			select {
 			case streamErr := <-errChan:
-				s.reqLogf(connID, id, "streaming provider error (lost on cancel): %v", sanitizeProviderError(streamErr))
+				s.reqLogf(connID, id, "streaming provider error (lost on cancel): %v", streamErr)
 			default:
 			}
 			w.write(&Response{
@@ -1029,7 +1029,7 @@ func (s *Server) handleStreaming(ctx context.Context, connID, id int64, req *Req
 			// Check for error that arrived simultaneously with done signal
 			select {
 			case streamErr := <-errChan:
-				s.reqLogf(connID, id, "streaming provider error: %v", sanitizeProviderError(streamErr))
+				s.reqLogf(connID, id, "streaming provider error: %v", streamErr)
 				w.write(&Response{
 					ID:     id,
 					Status: 500,
@@ -1064,7 +1064,7 @@ func (s *Server) handleStreaming(ctx context.Context, connID, id int64, req *Req
 					// Final check: an error may have arrived between the first check and now
 					select {
 					case streamErr := <-errChan:
-						s.reqLogf(connID, id, "streaming provider error: %v", sanitizeProviderError(streamErr))
+						s.reqLogf(connID, id, "streaming provider error: %v", streamErr)
 						w.write(&Response{
 							ID:     id,
 							Status: 500,
@@ -1152,7 +1152,7 @@ func (s *Server) handleNonStreaming(ctx context.Context, connID, id int64, handl
 		lastRetriable = providers.IsRetriable(err)
 
 		if !lastRetriable {
-			s.reqLogf(connID, id, "non-retriable error, giving up: %v", sanitizeProviderError(err))
+			s.reqLogf(connID, id, "non-retriable error, giving up: %v", err)
 			break
 		}
 	}
