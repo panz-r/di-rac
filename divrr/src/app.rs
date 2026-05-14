@@ -444,6 +444,7 @@ impl App {
             KeyCode::Char('k') => {
                 self.auto_scroll = false;
                 self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                self.clamp_scroll();
                 None
             }
             KeyCode::Down => {
@@ -493,8 +494,13 @@ impl App {
                 None
             }
             KeyCode::Enter => {
-                // If there's a pending input, respond to it
-                self.respond_to_pending()
+                // Respond to approval/question pending input, or enter insert mode when queue is focused
+                if self.queue_focused && !self.input_queue.is_empty() {
+                    self.mode = Mode::Insert;
+                    None
+                } else {
+                    self.respond_to_pending()
+                }
             }
             KeyCode::Tab => {
                 let max = self.agents.len().max(1);

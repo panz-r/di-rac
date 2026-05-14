@@ -113,6 +113,9 @@ impl ConversationLog {
     }
 
     pub fn push_system(&mut self, content: String) {
+        if content.is_empty() {
+            return;
+        }
         self.blocks.push(Block::System { content: truncate_content(content) });
         self.generation += 1;
     }
@@ -138,6 +141,7 @@ impl ConversationLog {
             }
         }
     }
+
 
     pub fn push_finish(&mut self, message: String, success: bool) {
         self.blocks.push(Block::Finish { message, success });
