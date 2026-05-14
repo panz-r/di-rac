@@ -39,10 +39,14 @@ typedef struct {
     ht_table_t *waiting_registry; /* Key: int fd, Value: node_list_t* (Nodes being waited on) */
     ht_table_t *transient_registry; /* Key: int fd, Value: ht_table_t* (Per-connection KV overrides) */
 
-    /* O(1) cumulative stats — updated at every mutation point */
-    size_t total_nodes;      /* total nodes in the trie */
-    size_t total_locks;      /* nodes with owner_fd != -1 */
-    size_t total_waiters;    /* sum of all waiters_count */
+    /* O(1) cumulative stats — updated at every mutation point.
+     * Thread-safety: the event loop is single-threaded (epoll serializes all
+     * trie operations). The signal handler (handle_stats/SIGUSR1) can read
+     * these values while the main thread mutates them — they are _Atomic to
+     * prevent torn reads. Do not add multi-threaded access without a mutex. */
+    _Atomic size_t total_nodes;      /* total nodes in the trie */
+    _Atomic size_t total_locks;      /* nodes with owner_fd != -1 */
+    _Atomic size_t total_waiters;    /* sum of all waiters_count */
 } trie_t;
 
 /* Core Trie Operations */

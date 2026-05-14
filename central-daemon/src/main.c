@@ -54,9 +54,12 @@ static int send_json(client_ctx_t *ctx, const char *json) {
         memcpy(ctx->outbuf + ctx->out_len, json, len);
         ctx->out_len += len;
         if (!ctx->out_epoll_registered) {
-            ctx->out_epoll_registered = true;
             struct epoll_event ev = { .events = EPOLLIN | EPOLLOUT, .data = { .ptr = ctx } };
-            epoll_ctl(g_epoll_fd, EPOLL_CTL_MOD, ctx->fd, &ev);
+            if (epoll_ctl(g_epoll_fd, EPOLL_CTL_MOD, ctx->fd, &ev) < 0) {
+                fprintf(stderr, "[di-vrr] epoll_ctl MOD failed to register EPOLLOUT on fd %d: %s\n", ctx->fd, strerror(errno));
+            } else {
+                ctx->out_epoll_registered = true;
+            }
         }
         return 0;
     }
@@ -84,10 +87,11 @@ static int send_json(client_ctx_t *ctx, const char *json) {
             memcpy(ctx->outbuf + ctx->out_len, json + written, remaining);
             ctx->out_len += remaining;
             if (!ctx->out_epoll_registered) {
-                ctx->out_epoll_registered = true;
                 struct epoll_event ev = { .events = EPOLLIN | EPOLLOUT, .data = { .ptr = ctx } };
                 if (epoll_ctl(g_epoll_fd, EPOLL_CTL_MOD, ctx->fd, &ev) < 0) {
                     fprintf(stderr, "[di-vrr] epoll_ctl MOD failed in partial send: %s\n", strerror(errno));
+                } else {
+                    ctx->out_epoll_registered = true;
                 }
             }
         } else {
@@ -116,9 +120,12 @@ static int drain_output(client_ctx_t *ctx) {
     ctx->out_len -= consumed;
     ctx->outbuf[ctx->out_len] = '\0';
     if (ctx->out_len == 0 && ctx->out_epoll_registered) {
-        ctx->out_epoll_registered = false;
         struct epoll_event ev = { .events = EPOLLIN, .data = { .ptr = ctx } };
-        epoll_ctl(g_epoll_fd, EPOLL_CTL_MOD, ctx->fd, &ev);
+        if (epoll_ctl(g_epoll_fd, EPOLL_CTL_MOD, ctx->fd, &ev) < 0) {
+            fprintf(stderr, "[di-vrr] epoll_ctl MOD to remove EPOLLOUT failed on fd %d: %s\n", ctx->fd, strerror(errno));
+        } else {
+            ctx->out_epoll_registered = false;
+        }
     }
     return 0;
 }
@@ -570,8 +577,17 @@ static int handle_client_data(client_ctx_t *ctx, trie_t *trie) {
     char read_buf[8192];
     ssize_t n = read(ctx->fd, read_buf, sizeof(read_buf));
     if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-        return -1;
+        if (errno == EINTR) {
+            n = read(ctx->fd, read_buf, sizeof(read_buf));
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+                return -1;
+            }
+        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;
+        } else {
+            return -1;
+        }
     }
     if (n == 0) return -1;
 
@@ -682,11 +698,15 @@ int main(int argc, char *argv[]) {
     if (listen_fd == -1) { perror("socket"); exit(1); }
 
     int reuse = 1;
-    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        fprintf(stderr, "[di-vrr] setsockopt SO_REUSEADDR failed: %s\n", strerror(errno));
+    }
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, path_to_bind, sizeof(addr.sun_path) - 1);
-    unlink(path_to_bind);
+    if (unlink(path_to_bind) < 0 && errno != ENOENT) {
+        fprintf(stderr, "[di-vrr] unlink(%s) failed: %s\n", path_to_bind, strerror(errno));
+    }
 
     if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) { perror("bind"); exit(1); }
     if (listen(listen_fd, 128) == -1) { perror("listen"); exit(1); }
@@ -760,6 +780,13 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
                 all_clients[slot] = ctx;
+                if (client_fd >= MAX_EVENTS) {
+                    fprintf(stderr, "[di-vrr] reject: client_fd %d >= MAX_EVENTS (%d)\n", client_fd, MAX_EVENTS);
+                    free(ctx->buffer); free(ctx->outbuf); free(ctx);
+                    close(client_fd);
+                    free_slots[free_slots_top++] = slot;
+                    continue;
+                }
                 fd_to_slot[client_fd] = slot;
 
                 ev.events = EPOLLIN;

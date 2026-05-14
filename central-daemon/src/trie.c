@@ -133,7 +133,10 @@ static void node_prune_upward(trie_t *trie, trie_node_t *node) {
         if (!node->segment || !node->segment[0]) { node = node->parent; continue; }
         trie_node_t *parent = node->parent;
         size_t seg_len = strlen(node->segment);
-        ht_remove(parent->children, node->segment, seg_len);
+        if (ht_remove(parent->children, node->segment, seg_len) == 0) {
+            fprintf(stderr, "[di-vrr] node_prune_upward: ht_remove failed for segment '%s'\n",
+                    node->segment ? node->segment : "(null)");
+        }
         node_destroy(node);
         trie->total_nodes--;
         node = parent;
@@ -287,28 +290,40 @@ static trie_node_t* node_get_child(trie_node_t *node, const char *segment, bool 
 
 trie_node_t* trie_traverse(trie_t *trie, const char *path, bool create, bool *ancestor_locked) {
     if (!path) return NULL;
-    const char *segments[256];
-    size_t n_segments = 0;
-    char *path_copy = strdup(path);
-    char *saveptr;
-    char *segment = strtok_r(path_copy, "/", &saveptr);
-    while (segment) {
-        if (strcmp(segment, ".") == 0) {}
-        else if (strcmp(segment, "..") == 0) { if (n_segments > 0) n_segments--; }
-        else { if (n_segments < 256) segments[n_segments++] = segment; }
-        segment = strtok_r(NULL, "/", &saveptr);
+    /* Parse segments into a fixed-size array without strdup.
+     * We use a small inline buffer to avoid malloc in the hot path.
+     * Max 256 segments × ~128 bytes each = ~32KB worst-case on stack.
+     * For normal paths (depth < 10) this is negligible. */
+    char seg_buf[8192];
+    size_t seg_count = 0;
+
+    const char *p = path;
+    while (*p == '/') p++;
+    while (*p && seg_count < 64) {  /* 64 segments × 128 bytes = 8192 bytes total */
+        const char *seg_start = p;
+        while (*p && *p != '/') p++;
+        size_t seg_len = (size_t)(p - seg_start);
+        if (seg_len == 1 && seg_start[0] == '.') {}
+        else if (seg_len == 2 && seg_start[0] == '.' && seg_start[1] == '.') { if (seg_count > 0) seg_count--; }
+        else {
+            if (seg_len > 127) seg_len = 127;  /* cap to fit in 128-byte slot */
+            memcpy(seg_buf + seg_count * 128, seg_start, seg_len);
+            seg_buf[seg_count * 128 + seg_len] = '\0';
+            seg_count++;
+        }
+        while (*p == '/') p++;
     }
+
     trie_node_t *current = trie->root;
-    for (size_t i = 0; i < n_segments; i++) {
+    for (size_t i = 0; i < seg_count; i++) {
         if (ancestor_locked && current->owner_fd != -1) {
             *ancestor_locked = true;
-            free(path_copy);
             return NULL;
         }
-        current = node_get_child(current, segments[i], create, trie);
-        if (!current) { free(path_copy); return NULL; }
+        const char *seg = seg_buf + i * 128;
+        current = node_get_child(current, seg, create, trie);
+        if (!current) return NULL;
     }
-    free(path_copy);
     return current;
 }
 
@@ -338,7 +353,9 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
         char *existing_copy = NULL;
         if (existing) {
             existing_copy = *(char**)existing;
-            ht_remove(kv, key, klen);
+            if (ht_remove(kv, key, klen) == 0) {
+                fprintf(stderr, "[di-vrr] trie_set_config: ht_remove failed for key '%s' (transient)\n", key);
+            }
         }
 
         if (value) {
@@ -363,7 +380,9 @@ int trie_set_config(trie_t *trie, const char *path, int fd, const char *key, con
         char *existing_copy = NULL;
         if (existing) {
             existing_copy = *(char**)existing;
-            ht_remove(node->settings, key, klen);
+            if (ht_remove(node->settings, key, klen) == 0) {
+                fprintf(stderr, "[di-vrr] trie_set_config: ht_remove failed for key '%s' (persistent)\n", key);
+            }
         }
 
         if (value) {
@@ -395,30 +414,38 @@ char* trie_get_config(trie_t *trie, const char *path, int fd, const char *key) {
         if (val) return strdup(*(char**)val);
     }
 
-    /* 2. Check Node and Parents */
-    const char *segments[256];
-    size_t n_segments = 0;
-    char *path_copy = strdup(path);
-    char *saveptr;
-    char *segment = strtok_r(path_copy, "/", &saveptr);
-    while (segment) {
-        if (strcmp(segment, ".") == 0) {}
-        else if (strcmp(segment, "..") == 0) { if (n_segments > 0) n_segments--; }
-        else { if (n_segments < 256) segments[n_segments++] = segment; }
-        segment = strtok_r(NULL, "/", &saveptr);
+    /* 2. Check Node and Parents — use same no-strdup segment parsing as trie_traverse */
+    char seg_buf[8192];
+    size_t seg_count = 0;
+
+    const char *p = path;
+    while (*p == '/') p++;
+    while (*p && seg_count < 64) {  /* 64 segments × 128 bytes = 8192 bytes total */
+        const char *seg_start = p;
+        while (*p && *p != '/') p++;
+        size_t seg_len = (size_t)(p - seg_start);
+        if (seg_len == 1 && seg_start[0] == '.') {}
+        else if (seg_len == 2 && seg_start[0] == '.' && seg_start[1] == '.') { if (seg_count > 0) seg_count--; }
+        else {
+            if (seg_len > 127) seg_len = 127;  /* cap to fit in 128-byte slot */
+            memcpy(seg_buf + seg_count * 128, seg_start, seg_len);
+            seg_buf[seg_count * 128 + seg_len] = '\0';
+            seg_count++;
+        }
+        while (*p == '/') p++;
     }
 
     trie_node_t *nodes[257];
     nodes[0] = trie->root;
     size_t depth = 1;
-    for (size_t i = 0; i < n_segments; i++) {
-        trie_node_t *next = node_get_child(nodes[depth - 1], segments[i], false, NULL);
+    for (size_t i = 0; i < seg_count; i++) {
+        const char *seg = seg_buf + i * 128;
+        trie_node_t *next = node_get_child(nodes[depth - 1], seg, false, NULL);
         if (!next) break;
         nodes[depth++] = next;
     }
-    free(path_copy);
 
-    /* Search from deepest found node upwards */
+    /* Search from deepest found node upward */
     for (int i = (int)depth - 1; i >= 0; i--) {
         const void *val = ht_find(nodes[i]->settings, key, klen, &vlen);
         if (val) return strdup(*(char**)val);
@@ -528,7 +555,11 @@ int trie_save_persist(trie_t *trie, const char *filepath) {
     int truncated = 0;
     node_save_recursive(trie->root, f, path_buf, sizeof(path_buf), &truncated);
 
-    fclose(f);
+    if (fclose(f) != 0) {
+        unlink(tmp_path);
+        fprintf(stderr, "[di-vrr] trie_save_persist: fclose failed: %s\n", strerror(errno));
+        return -1;
+    }
     if (truncated) {
         unlink(tmp_path);
         fprintf(stderr, "[di-vrr] trie_save_persist: path overflow, skipping save\n");
@@ -603,9 +634,16 @@ static int register_node_to_fd(ht_table_t *registry, trie_node_t *node, int fd) 
     }
 
     if (list->count == list->cap) {
-        list->cap *= 2;
-        void *tmp = realloc(list->nodes, sizeof(trie_node_t*) * list->cap);
-        if (!tmp) { list->cap /= 2; return -1; }
+        size_t new_cap = list->cap * 2;
+        void *tmp = realloc(list->nodes, sizeof(trie_node_t*) * new_cap);
+        if (!tmp) {
+            /* Do not halve cap — that corrupts the size tracking.
+             * Caller sees -1 and unwinds: waiters_count was incremented but
+             * fd was NOT added to the array, so state is consistent. */
+            fprintf(stderr, "[di-vrr] register_node_to_fd: realloc failed for fd %d\n", fd);
+            return -1;
+        }
+        list->cap = new_cap;
         list->nodes = tmp;
     }
     list->nodes[list->count++] = node;
@@ -804,7 +842,9 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
                     if (wakeup_count < wakeup_cap) {
                         wakeup[wakeup_count] = w;
                         paths[wakeup_count] = malloc(4096);
-                        if (node_get_path(p, paths[wakeup_count], 4096) < 0) {
+                        if (!paths[wakeup_count]) {
+                            /* allocation failed — skip this entry but still invoke callback */
+                        } else if (node_get_path(p, paths[wakeup_count], 4096) < 0) {
                             snprintf(paths[wakeup_count], 4096, "<truncated>");
                         }
                         wakeup_count++;
@@ -825,7 +865,9 @@ size_t trie_cleanup_fd(trie_t *trie, int fd, int *wakeup, char **paths, size_t w
                 if (wakeup_count < wakeup_cap) {
                     wakeup[wakeup_count] = w;
                     paths[wakeup_count] = malloc(4096);
-                    if (path_len > 0) {
+                    if (!paths[wakeup_count]) {
+                        /* allocation failed — skip entry but still invoke callback */
+                    } else if (path_len > 0) {
                         memcpy(paths[wakeup_count], path_buf, path_len + 1);
                     } else {
                         snprintf(paths[wakeup_count], 4096, "<truncated>");
