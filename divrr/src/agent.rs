@@ -5,19 +5,13 @@ use uuid::Uuid;
 /// Maximum byte size for any single block's content. Larger content is truncated.
 const MAX_BLOCK_BYTES: usize = 1_048_576; // 1 MiB
 
-fn truncate_content(s: String) -> String {
+fn truncate_content(mut s: String) -> String {
     if s.len() <= MAX_BLOCK_BYTES {
-        s
-    } else {
-        // Find a char boundary near the limit
-        let mut end = MAX_BLOCK_BYTES;
-        while !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        let mut truncated = String::from(&s[..end]);
-        truncated.push_str("\n… [truncated]");
-        truncated
+        return s;
     }
+    s.floor_char_boundary(MAX_BLOCK_BYTES);
+    s.push_str("\n… [truncated]");
+    s
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
