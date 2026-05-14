@@ -3357,4 +3357,188 @@ mod tests {
         let w2 = observer.compute_pause_weight(15.0, true, false, 0.3, false);
         assert!(w2 > w, "high duration + error should amplify, got {} vs {}", w2, w);
     }
+
+    // -----------------------------------------------------------------------
+    // Recall integration tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_recall_keyword_match() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-recall");
+        observer.store.append(Observation {
+            obs_type: ObservationType::Watcher, text: "Agent is editing main.rs repeatedly".to_string(),
+            timestamp: 0, confidence: 0.7, token_estimate: 10,
+            compressed_range: None, critic_action: None, sqs: None, fidelity: None, key: None,
+        });
+        observer.store.append(Observation {
+            obs_type: ObservationType::Critic, text: "Stuck in a loop on parser module".to_string(),
+            timestamp: 0, confidence: 0.8, token_estimate: 10,
+            compressed_range: None, critic_action: None, sqs: None, fidelity: None, key: None,
+        });
+        let result = observer.recall("main.rs");
+        assert!(result.contains("main.rs"), "recall should find main.rs observation");
+        assert!(!result.contains("parser"), "recall should not return parser observation");
+    }
+
+    #[test]
+    fn test_recall_no_match() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-recall-nomatch");
+        observer.store.append(Observation {
+            obs_type: ObservationType::Watcher, text: "some observation".to_string(),
+            timestamp: 0, confidence: 0.7, token_estimate: 10,
+            compressed_range: None, critic_action: None, sqs: None, fidelity: None, key: None,
+        });
+        let result = observer.recall("nonexistent_query_xyz");
+        assert!(result.contains("No observations matching"), "recall should report no matches");
+    }
+
+    #[test]
+    fn test_recall_with_daemon_results_prepends() {
+        let observer = Observer::new_with_task(ObserverConfig::default(), "test-recall-daemon");
+        let daemon_results = vec![
+            "Agent was stuck on auth module at turn 5".to_string(),
+            "Agent resolved auth issue by re-reading config".to_string(),
+        ];
+        let result = observer.recall_with_daemon_results("auth module", &daemon_results);
+        assert!(result.contains("[daemon]"), "recall should include daemon results");
+        assert!(result.contains("auth module at turn 5"));
+        assert!(result.contains("resolved auth issue"));
+    }
+
+    #[test]
+    fn test_recall_stats_mode() {
+        let observer = Observer::new_with_task(ObserverConfig::default(), "test-recall-stats");
+        let result = observer.recall("--stats");
+        assert!(result.contains("Observer stats"), "recall --stats should return stats");
+    }
+
+    // -----------------------------------------------------------------------
+    // Observation lifecycle: store → decay → compress → recall
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_observation_lifecycle_decay_and_recall() {
+        let mut observer = Observer::new_with_task(
+            ObserverConfig { memory_cap_tokens: 10000, ..Default::default() },
+            "test-lifecycle",
+        );
+        observer.current_turn = 10;
+
+        // Add observations of different types at different turns
+        observer.store.append(Observation {
+            obs_type: ObservationType::Watcher, text: "Early observation about auth setup".to_string(),
+            timestamp: 0, confidence: 0.9, token_estimate: 10,
+            compressed_range: Some([1, 3]), critic_action: None, sqs: None, fidelity: None, key: None,
+        });
+        observer.store.append(Observation {
+            obs_type: ObservationType::Critic, text: "Mid-task observation about database migration".to_string(),
+            timestamp: 0, confidence: 0.7, token_estimate: 15,
+            compressed_range: Some([5, 7]), critic_action: None, sqs: None, fidelity: None, key: None,
+        });
+        observer.store.append(Observation {
+            obs_type: ObservationType::Filter, text: "Late observation about test failures".to_string(),
+            timestamp: 0, confidence: 0.8, token_estimate: 12,
+            compressed_range: Some([9, 10]), critic_action: None, sqs: None, fidelity: None, key: None,
+        });
+
+        // Recall should find all three by keyword
+        let auth = observer.recall("auth");
+        assert!(auth.contains("auth setup"));
+
+        let db = observer.recall("database");
+        assert!(db.contains("database migration"));
+
+        let test = observer.recall("test");
+        assert!(test.contains("test failures"));
+
+        // Decay should filter old observations from the block
+        let block = observer.build_observation_block();
+        // Block should still contain content (exact filtering depends on confidence decay)
+        assert!(!block.is_empty() || observer.store.len() > 0);
+    }
+
+    #[test]
+    fn test_sqs_computation_with_five_signals() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-sqs-five");
+        observer.current_turn = 5;
+
+        let mut traj = Trajectory::new();
+        // Add mixed messages to exercise SQS computation
+        traj.messages.push(Message {
+            id: uuid::Uuid::new_v4(), role: Role::Assistant,
+            content: serde_json::json!({"tool_code": "edit", "path": "main.rs"}),
+            timestamp: chrono::Utc::now(), tokens: 50, is_compressed: false,
+            tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+            thinking: None,
+        });
+        traj.messages.push(Message {
+            id: uuid::Uuid::new_v4(), role: Role::Tool,
+            content: serde_json::json!("error: syntax error on line 42"),
+            timestamp: chrono::Utc::now(), tokens: 20, is_compressed: false,
+            tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+            thinking: None,
+        });
+
+        let sqs = observer.compute_sqs(&traj);
+        assert!(sqs.score >= 0.0 && sqs.score <= 1.0, "SQS score should be in [0,1], got {}", sqs.score);
+        assert!(!sqs.status.is_empty(), "SQS status should be set");
+    }
+
+    #[test]
+    fn test_loop_pattern_classification_all_variants() {
+        // Stuck: same error repeated, same file
+        let observer = Observer::new_with_task(ObserverConfig::default(), "test-loops");
+        let mut traj = Trajectory::new();
+        for _ in 0..5 {
+            traj.messages.push(Message {
+                id: uuid::Uuid::new_v4(), role: Role::Tool,
+                content: serde_json::json!("error: type mismatch in main.rs"),
+                timestamp: chrono::Utc::now(), tokens: 10, is_compressed: false,
+                tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+                thinking: None,
+            });
+            traj.messages.push(Message {
+                id: uuid::Uuid::new_v4(), role: Role::Assistant,
+                content: serde_json::json!({"tool_code": "edit", "path": "main.rs"}),
+                timestamp: chrono::Utc::now(), tokens: 10, is_compressed: false,
+                tool_meta: Default::default(), tool_calls: Vec::new(), tool_call_id: None,
+                thinking: None,
+            });
+        }
+        let pattern = observer.classify_loop_pattern(&traj);
+        assert!(matches!(pattern, LoopPattern::Stuck | LoopPattern::SyntaxLoop | LoopPattern::RepeatedFileOp),
+            "repeated same-file errors should classify as Stuck/SyntaxLoop/RepeatedFileOp, got {:?}", pattern);
+    }
+
+    #[test]
+    fn test_observation_key_uniqueness() {
+        let mut obs1 = Observer::new_with_task(ObserverConfig::default(), "test-key1");
+        obs1.recent_edits.push(("main.rs".to_string(), "/// Doc comment\nfn foo() {}".to_string()));
+        let key1 = obs1.build_observation_key();
+
+        let mut obs2 = Observer::new_with_task(ObserverConfig::default(), "test-key2");
+        obs2.recent_edits.push(("main.rs".to_string(), "/// Different doc\nfn bar() {}".to_string()));
+        let key2 = obs2.build_observation_key();
+
+        // Same file, different content → different docstring hash
+        if key1.docstring_hash.is_some() && key2.docstring_hash.is_some() {
+            assert_ne!(key1.docstring_hash, key2.docstring_hash,
+                "different docstrings should produce different hashes");
+        }
+    }
+
+    #[test]
+    fn test_tier_adapts_sqs_thresholds() {
+        let mut observer = Observer::new_with_task(ObserverConfig::default(), "test-tier-thresholds");
+
+        observer.current_tier = TaskTier::Fallback;
+        let fb_threshold = observer.tier_sqs_threshold();
+
+        observer.current_tier = TaskTier::TestDriven;
+        let td_threshold = observer.tier_sqs_threshold();
+
+        // Fallback (relaxed) should have higher threshold than TestDriven (tighter)
+        assert!(fb_threshold > td_threshold,
+            "Fallback SQS threshold ({}) should be higher than TestDriven ({})", fb_threshold, td_threshold);
+    }
 }

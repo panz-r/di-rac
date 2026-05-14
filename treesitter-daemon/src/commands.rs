@@ -1232,3 +1232,152 @@ pub fn search_observations_cmd(
         calls: None, definitions: None, added: None, removed: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_index_with(entries: Vec<(&str, &str)>) -> ObservationIndex {
+        let mut idx = ObservationIndex::new();
+        for (obs_type, content) in entries {
+            idx.append(IndexedObservation {
+                obs_type: obs_type.to_string(),
+                content: content.to_string(),
+                timestamp: 1000,
+                tokens: content.len() / 4,
+                turn: 0,
+                confidence: None,
+            });
+        }
+        idx
+    }
+
+    #[test]
+    fn test_index_append_and_search() {
+        let idx = make_index_with(vec![
+            ("watcher", "Agent is editing main.rs repeatedly"),
+            ("critic", "Agent stuck in a loop on parser"),
+            ("watcher", "Syntax error in lib.rs detected"),
+        ]);
+        let results = idx.search("main.rs", 5);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].obs_type, "watcher");
+        assert!(results[0].content.contains("main.rs"));
+    }
+
+    #[test]
+    fn test_search_returns_most_recent_first() {
+        let idx = make_index_with(vec![
+            ("watcher", "first observation about files"),
+            ("critic", "second observation about files"),
+            ("watcher", "third observation about files"),
+        ]);
+        let results = idx.search("files", 5);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].content.contains("third"));
+    }
+
+    #[test]
+    fn test_search_multi_term_requires_all() {
+        let idx = make_index_with(vec![
+            ("watcher", "editing main.rs with syntax error"),
+            ("critic", "editing lib.rs with runtime error"),
+            ("watcher", "editing main.rs with runtime error"),
+        ]);
+        let results = idx.search("main.rs syntax", 5);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("syntax"));
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let idx = make_index_with(vec![
+            ("watcher", "ERROR in Parser Module"),
+        ]);
+        let results = idx.search("error parser", 5);
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_search_empty_query_returns_nothing() {
+        let idx = make_index_with(vec![
+            ("watcher", "some content"),
+        ]);
+        let results = idx.search("", 5);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_limit_respected() {
+        let idx = make_index_with(vec![
+            ("watcher", "entry about rust"),
+            ("critic", "another entry about rust"),
+            ("watcher", "third entry about rust"),
+        ]);
+        let results = idx.search("rust", 2);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_index_evicts_at_cap() {
+        let mut idx = ObservationIndex::new();
+        for i in 0..502 {
+            idx.append(IndexedObservation {
+                obs_type: "watcher".to_string(),
+                content: format!("entry {}", i),
+                timestamp: i as i64,
+                tokens: 5,
+                turn: 0,
+                confidence: None,
+            });
+        }
+        assert_eq!(idx.entries.len(), 500);
+        assert!(idx.entries[0].content.contains("entry 2"));
+    }
+
+    #[test]
+    fn test_index_observation_cmd_appends() {
+        let mut idx = ObservationIndex::new();
+        let out = index_observation_cmd("watcher", "test content", 1234, 50, &mut idx, None);
+        assert!(out.ok);
+        assert_eq!(idx.entries.len(), 1);
+        assert_eq!(idx.entries[0].obs_type, "watcher");
+        assert_eq!(idx.entries[0].timestamp, 1234);
+        assert_eq!(idx.entries[0].tokens, 50);
+    }
+
+    #[test]
+    fn test_index_critic_decision_cmd_appends() {
+        let mut idx = ObservationIndex::new();
+        let out = index_critic_decision_cmd("stuck in loop", 5, 0.8, &mut idx, None);
+        assert!(out.ok);
+        assert_eq!(idx.entries.len(), 1);
+        assert_eq!(idx.entries[0].obs_type, "critic");
+        assert_eq!(idx.entries[0].turn, 5);
+        assert_eq!(idx.entries[0].confidence, Some(0.8));
+    }
+
+    #[test]
+    fn test_index_watcher_pattern_cmd_appends() {
+        let mut idx = ObservationIndex::new();
+        let out = index_watcher_pattern_cmd("repeated edit", "abc123", 7, &mut idx, None);
+        assert!(out.ok);
+        assert_eq!(idx.entries.len(), 1);
+        assert_eq!(idx.entries[0].obs_type, "watcher");
+        assert_eq!(idx.entries[0].turn, 7);
+    }
+
+    #[test]
+    fn test_search_observations_cmd_returns_json() {
+        let idx = make_index_with(vec![
+            ("watcher", "editing main.rs"),
+            ("critic", "stuck on main.rs error"),
+        ]);
+        let out = search_observations_cmd("main.rs", 5, &idx, None);
+        assert!(out.ok);
+        let data = out.data.unwrap();
+        let results = data.get("results").unwrap().as_array().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].get("type").unwrap().as_str().unwrap(), "critic");
+    }
+}

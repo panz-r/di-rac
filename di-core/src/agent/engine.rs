@@ -869,7 +869,7 @@ impl AgentEngine {
             match outcome {
                 TurnOutcome::Finished => {
                     self.observer.final_compression();
-                    self.flush_observer_telemetry();
+                    self.flush_observer_telemetry(None);
                     return Ok(());
                 }
                 TurnOutcome::Continue { tools_used: 0 } => {
@@ -1254,11 +1254,29 @@ impl AgentEngine {
             let after_watcher = self.observer.watcher_just_fired();
             let entropy = self.observer.last_sqs().map(|s| 1.0 - s).unwrap_or(0.5);
             let ast_contra = self.observer.ast_delta().map(|d| d < -5).unwrap_or(false);
-            let _pause_weight = self.observer.compute_pause_weight(
+            let pause_weight = self.observer.compute_pause_weight(
                 duration_s, after_error, after_watcher, entropy, ast_contra,
             );
-            self.flush_observer_telemetry();
+            self.flush_observer_telemetry(Some(pause_weight));
         }
+
+        let recall_block = if self.observer.config.enabled {
+            // Derive recall query from task goal + last error context
+            let mut recall_query = self.task_reducer.state.current_goal.clone();
+            if let Some(err) = self.observer.recent_errors().last() {
+                let truncated = if err.len() > 100 { &err[..err.floor_char_boundary(100)] } else { err };
+                recall_query = format!("{} {}", recall_query, truncated);
+            }
+            let daemon_results = self.search_observations_via_daemon(&recall_query, 3).await;
+            let recall_text = self.observer.recall_with_daemon_results(&recall_query, &daemon_results);
+            if recall_text.starts_with("No observations matching") {
+                None
+            } else {
+                Some(recall_text)
+            }
+        } else {
+            None
+        };
 
         let observer_block = if self.observer.config.enabled {
             let mut parts = Vec::new();
@@ -1277,6 +1295,10 @@ impl AgentEngine {
                 if !block.is_empty() {
                     parts.push(block);
                 }
+            }
+            // Inject recalled observations that fell out of context
+            if let Some(ref recall) = recall_block {
+                parts.push(format!("# Recalled Context\n\n{}", recall));
             }
             if parts.is_empty() { None } else { Some(parts.join("\n\n---\n\n")) }
         } else {
@@ -2462,7 +2484,7 @@ impl AgentEngine {
     }
 
     /// Flush observer telemetry to .dirac-logs/observer-telemetry.jsonl.
-    fn flush_observer_telemetry(&self) {
+    fn flush_observer_telemetry(&self, pause_weight: Option<f32>) {
         use std::io::Write;
         let dir = std::path::Path::new(".dirac-logs");
         let _ = std::fs::create_dir_all(dir);
@@ -2473,6 +2495,7 @@ impl AgentEngine {
             "sqs": self.observer.last_sqs(),
             "loop_pattern": format!("{:?}", self.observer.last_loop_pattern()),
             "tier": format!("{:?}", self.observer.current_tier()),
+            "pause_weight": pause_weight,
             "observations": self.observer.store().len(),
             "observation_tokens": self.observer.store().estimate_token_count(),
             "metrics": {
