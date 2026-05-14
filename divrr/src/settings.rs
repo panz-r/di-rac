@@ -84,9 +84,10 @@ impl GatewayConnection {
         let stream = reader.get_mut();
 
         let json = serde_json::to_string(req)?;
-        stream.write_all(json.as_bytes())?;
-        stream.write_all(b"\n")?;
-        stream.flush()?;
+        if let Err(e) = stream.write_all(json.as_bytes()).and_then(|_| stream.write_all(b"\n")).and_then(|_| stream.flush()) {
+            self.reader = None;
+            return Err(e);
+        }
 
         let mut line = String::new();
         loop {
@@ -98,11 +99,22 @@ impl GatewayConnection {
                     self.ensure_connected()?;
                     let reader = self.reader.as_mut().unwrap();
                     let stream = reader.get_mut();
-                    stream.write_all(json.as_bytes())?;
-                    stream.write_all(b"\n")?;
-                    stream.flush()?;
+                    if let Err(e) = stream.write_all(json.as_bytes()).and_then(|_| stream.write_all(b"\n")).and_then(|_| stream.flush()) {
+                        self.reader = None;
+                        return Err(e);
+                    }
                     line.clear();
-                    reader.read_line(&mut line)?;
+                    match reader.read_line(&mut line) {
+                        Ok(0) => {
+                            self.reader = None;
+                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "gateway closed again"));
+                        }
+                        Err(e) => {
+                            self.reader = None;
+                            return Err(e);
+                        }
+                        Ok(_) => {}
+                    }
                     if line.len() > 10 * 1024 * 1024 {
                         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "gateway response exceeds 10 MB"));
                     }

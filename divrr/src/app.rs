@@ -550,6 +550,14 @@ impl App {
                         let filtered: String = text.chars().filter(|c| !c.is_control()).collect();
                         s.secret_edit_buffer.insert_str(s.secret_edit_cursor, &filtered);
                         s.secret_edit_cursor += filtered.len();
+                    } else if !s.selector_open && !s.loading && s.cursor > 0 {
+                        let fo = s.field_offset();
+                        if let Some(crate::settings::SettingsField::Text { value, .. }) = s.fields.get_mut(fo) {
+                            let filtered: String = text.chars().filter(|c| !c.is_control()).collect();
+                            value.push_str(&filtered);
+                            s.saved = false;
+                            s.error = None;
+                        }
                     }
                 }
             }
