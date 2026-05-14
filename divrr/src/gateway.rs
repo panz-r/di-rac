@@ -114,8 +114,6 @@ fn which(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn socket_path_contains_pid() {
         let pid = std::process::id();
