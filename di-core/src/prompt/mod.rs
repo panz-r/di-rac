@@ -170,7 +170,6 @@ impl ContextCompiler {
                 cwd: session.cwd.clone(),
                 available_cores: session.available_cores,
                 mode: session.mode,
-                yolo_mode: session.yolo_mode,
                 skills: session.skills.clone(),
                 custom_instructions: session.custom_instructions.clone(),
             },

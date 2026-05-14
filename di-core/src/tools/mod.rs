@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use serde_json::json;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -761,15 +762,16 @@ fn strip_code_fences(content: &str) -> std::borrow::Cow<'_, str> {
 fn scan_write_security(file_path: &str, content: &str) -> Vec<serde_json::Value> {
     let mut violations: Vec<SecurityViolation> = Vec::new();
 
-    // Dangerous content patterns
-    let patterns: &[(&regex::Regex, &str)] = &[
-        (&regex::Regex::new(r"(?i)curl\s*\|.*(?:bash|sh)").unwrap(), "curl piped to shell"),
-        (&regex::Regex::new(r"(?i)wget\s*\|.*(?:bash|sh)").unwrap(), "wget piped to shell"),
-        (&regex::Regex::new(r"(?i)rm\s+-rf\s+/").unwrap(), "recursive root delete"),
-        (&regex::Regex::new(r"(?i)nc\s+-.*-e\s+/bin/(?:bash|sh)").unwrap(), "reverse shell"),
-    ];
+    static DANGEROUS_PATTERNS: LazyLock<Vec<(regex::Regex, &'static str)>> = LazyLock::new(|| {
+        vec![
+            (regex::Regex::new(r"(?i)curl\s*\|.*(?:bash|sh)").unwrap(), "curl piped to shell"),
+            (regex::Regex::new(r"(?i)wget\s*\|.*(?:bash|sh)").unwrap(), "wget piped to shell"),
+            (regex::Regex::new(r"(?i)rm\s+-rf\s+/").unwrap(), "recursive root delete"),
+            (regex::Regex::new(r"(?i)nc\s+-.*-e\s+/bin/(?:bash|sh)").unwrap(), "reverse shell"),
+        ]
+    });
 
-    for (re, label) in patterns {
+    for (re, label) in DANGEROUS_PATTERNS.iter() {
         if let Some(m) = re.find(content) {
             violations.push(SecurityViolation {
                 path: "$.content",

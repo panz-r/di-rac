@@ -29,7 +29,8 @@ const ANCHOR_ALPHABET: &[u8; 32] = b"0123456789abcdefghijklmnopqrstuv";
 pub fn anchor_hash(data: &[u8]) -> String {
     let hash = blake3::hash(data);
     // Take first 4 bytes as a u32 for base-32 encoding
-    let mut remaining = u32::from_be_bytes(hash.as_bytes()[..4].try_into().unwrap_or([0; 4]));
+    let bytes = hash.as_bytes();
+    let mut remaining = u32::from_be_bytes(bytes.get(..4).and_then(|s| s.try_into().ok()).unwrap_or([0; 4]));
     let mut result = [0u8; 3];
     for i in (0..3).rev() {
         result[i] = ANCHOR_ALPHABET[(remaining % 32) as usize];

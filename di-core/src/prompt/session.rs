@@ -11,7 +11,6 @@ pub struct SessionContext {
 
     // Policy: mode, instructions, skills — can change during a session
     pub mode: AgentMode,
-    pub yolo_mode: bool,
     pub skills: Option<String>,
     pub custom_instructions: Option<String>,
 }
@@ -20,7 +19,7 @@ impl SessionContext {
     /// Build the static portion (OS, shell, CWD, CPU, path rules).
     /// This is hashed separately and never invalidated.
     pub fn build_static_info(&self) -> String {
-        let mut sys_info = format!(
+        let sys_info = format!(
             "SYSTEM INFO\n\n\
 - Operating System: {}\n\
 - Default Shell: {}\n\
@@ -34,9 +33,6 @@ strictly forbidden and will be blocked by the system.\n\
 - Available CPU Cores: {} (Use this value for parallel jobs like 'make -j' instead of 'nproc')",
             self.os, self.shell, self.cwd, self.cwd, self.available_cores
         );
-        if self.yolo_mode {
-            sys_info.push_str("\n- You are running in fully autonomous mode.");
-        }
         sys_info
     }
 

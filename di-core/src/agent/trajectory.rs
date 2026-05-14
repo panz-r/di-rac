@@ -54,11 +54,12 @@ pub struct Message {
 pub struct Trajectory {
     pub messages: Vec<Message>,
     pub last_checkpoint: Option<Checkpoint>,
+    total_tokens: usize,
 }
 
 impl Trajectory {
     pub fn new() -> Self {
-        Self { messages: Vec::new(), last_checkpoint: None }
+        Self { messages: Vec::new(), last_checkpoint: None, total_tokens: 0 }
     }
 
     pub fn add_message(&mut self, role: Role, content: serde_json::Value, tokens: usize) -> Uuid {
@@ -75,6 +76,7 @@ impl Trajectory {
             thinking: None,
         };
         let id = msg.id;
+        self.total_tokens += tokens;
         self.messages.push(msg);
         id
     }
@@ -97,18 +99,20 @@ impl Trajectory {
             thinking: None,
         };
         let id = msg.id;
+        self.total_tokens += tokens;
         self.messages.push(msg);
         id
     }
 
     pub fn get_total_tokens(&self) -> usize {
-        self.messages.iter().map(|m| m.tokens).sum()
+        self.total_tokens
     }
 
     /// Truncate the entire trajectory, injecting the continuation summary as
     /// a User message so the model retains context about prior work.
     pub fn truncate_with_continuation(&mut self, continuation: String, checkpoint: Option<Checkpoint>) {
         self.last_checkpoint = checkpoint;
+        self.total_tokens = 0;
         self.messages.clear();
 
         // Inject the continuation as a User message so the model sees what happened before

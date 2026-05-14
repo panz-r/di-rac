@@ -21,6 +21,7 @@ use serde_json::json;
 use std::collections::{HashSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::LazyLock;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -38,11 +39,7 @@ fn safe_truncate(s: &str, max_len: usize) -> std::borrow::Cow<'_, str> {
     if s.len() <= max_len {
         std::borrow::Cow::Borrowed(s)
     } else {
-        let boundary = s.char_indices()
-            .take_while(|(i, _)| *i <= max_len)
-            .last()
-            .map(|(i, c)| i + c.len_utf8())
-            .unwrap_or(0);
+        let boundary = s.floor_char_boundary(max_len);
         std::borrow::Cow::Owned(format!("{}...", &s[..boundary]))
     }
 }
@@ -83,9 +80,9 @@ fn wrap_in_envelope(content: &str, tool_name: &str, is_cached: bool, cumulative_
 
     if is_error {
         // Extract message from <tool_error> tag
+        static SEVERITY_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#"severity="[^"]*""#).unwrap());
         let body = trimmed.replace("<tool_error>", "").replace("</tool_error>", "");
-        let severity_re = regex::Regex::new(r#"severity="[^"]*""#).unwrap();
-        let clean = severity_re.replace(&body, "").trim().to_string();
+        let clean = SEVERITY_RE.replace(&body, "").trim().to_string();
         let code = if clean.contains("not found") || clean.contains("could not be found") { "ENOENT" }
             else if clean.contains("permission") || clean.contains("blocked") { "EPERM" }
             else if clean.contains("locked") { "ELOCK" }
@@ -1078,7 +1075,6 @@ impl AgentEngine {
                 cwd,
                 available_cores: cores,
                 mode: self.mode,
-                yolo_mode: false,
                 skills: None,
                 custom_instructions: None,
             };
@@ -1616,7 +1612,8 @@ impl AgentEngine {
 
             // Pre-execution approval gate: destructive tools (write/edit/bash)
             // require user approval BEFORE execution. Read-only tools auto-approve.
-            if !self.approval_manager.should_auto_approve(&tool.name) {
+            let is_safe_bash = tool.name == "bash" && bash_command.as_deref().map(|c| crate::tools::approval::ApprovalManager::is_safe_bash_command(c)).unwrap_or(false);
+            if !self.approval_manager.should_auto_approve(&tool.name) && !is_safe_bash {
                 // Emit tool call details FIRST so the user sees what they're approving
                 self.emit_event(CoreEvent::ToolCallStarted {
                     agent_id: self.id,

@@ -4,6 +4,7 @@ use crate::tools::response::{ToolResponse, ToolErrorCode};
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tokio::sync::OnceCell;
 
 const MAX_RESULTS: usize = 30;
@@ -347,46 +348,28 @@ fn context_lines_estimate() -> usize {
 
 /// Parse a single grep output line into (filepath, linenum, content, is_match).
 fn parse_grep_line(line: &str) -> Option<(String, usize, &str, bool)> {
-    // Match lines use ':' after line number; context lines use '-'
-    // We need to find the line number separator. The filepath may contain
-    // colons (rare) but the linenum is always a number.
-    // Strategy: find the first ':' or '-' that is followed by digits then
-    // ':' or '-' then content.
+    static GREP_MATCH_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        // Match: filepath:linenum:content (match line)
+        regex::Regex::new(r"^(.+?):(\d+):(.*)$").unwrap()
+    });
+    static GREP_CONTEXT_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        // Match: filepath-linenum-content (context line)
+        regex::Regex::new(r"^(.+?)-(\d+)-(.*)$").unwrap()
+    });
 
-    let bytes = line.as_bytes();
-    let len = bytes.len();
-
-    // Try all positions for the first separator
-    for i in 1..len.saturating_sub(3) {
-        let c = bytes[i];
-        if c != b':' && c != b'-' {
-            continue;
-        }
-
-        // Scan forward for digits (line number)
-        let mut j = i + 1;
-        while j < len && bytes[j].is_ascii_digit() {
-            j += 1;
-        }
-        if j == i + 1 || j >= len {
-            continue; // No digits found
-        }
-
-        // The character after the digits must match the first separator
-        if bytes[j] != c {
-            continue;
-        }
-
-        let filepath = &line[..i];
-        let linenum_str = &line[i + 1..j];
-        let content = &line[j + 1..];
-
-        if let Ok(linenum) = linenum_str.parse::<usize>() {
-            let is_match = c == b':';
-            return Some((filepath.to_string(), linenum, content, is_match));
-        }
+    if let Some(caps) = GREP_MATCH_RE.captures(line) {
+        let filepath = caps.get(1)?.as_str().to_string();
+        let linenum: usize = caps.get(2)?.as_str().parse().ok()?;
+        let content = caps.get(3)?.as_str();
+        Some((filepath, linenum, content, true))
+    } else if let Some(caps) = GREP_CONTEXT_RE.captures(line) {
+        let filepath = caps.get(1)?.as_str().to_string();
+        let linenum: usize = caps.get(2)?.as_str().parse().ok()?;
+        let content = caps.get(3)?.as_str();
+        Some((filepath, linenum, content, false))
+    } else {
+        None
     }
-    None
 }
 
 // ---------------------------------------------------------------------------

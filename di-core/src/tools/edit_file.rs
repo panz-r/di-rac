@@ -4,6 +4,7 @@ use crate::tools::response::{ToolResponse, ToolErrorCode, ToolError};
 use crate::util::FileAnchorIndex;
 use serde_json::json;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 // ---------------------------------------------------------------------------
 // Constants (matching TS EditExecutor + EditFormatter)
@@ -370,8 +371,8 @@ fn resolve_anchor(
     };
 
     // Strip echo prefix (LLM sometimes echoes a hash prefix in content)
-    let echo_re = regex::Regex::new(r"^[a-z0-9_]{1,32}\|").unwrap();
-    let provided_content = echo_re.replace(&provided_content_raw, "").to_string();
+    static ECHO_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^[a-z0-9_]{1,32}\|").unwrap());
+    let provided_content = ECHO_RE.replace(&provided_content_raw, "").to_string();
 
     if provided_content.contains('\n') || provided_content.contains('\r') {
         return AnchorResolution {

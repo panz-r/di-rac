@@ -29,8 +29,12 @@ impl FileLogger {
             .append(true)
             .open(&path)
             .unwrap_or_else(|e| {
-                eprintln!("di-core: cannot open {}: {}", path.display(), e);
-                std::process::exit(1);
+                eprintln!("di-core: cannot open {}: {}, falling back to stderr logging", path.display(), e);
+                // Use stderr by creating a write-only handle to /dev/stderr
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open("/dev/stderr")
+                    .expect("stderr should always be available")
             });
         Self { file }
     }

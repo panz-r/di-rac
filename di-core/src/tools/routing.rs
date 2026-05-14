@@ -1,5 +1,6 @@
 use super::response::{Recoverability, ToolError, ToolErrorCode};
 use std::collections::HashMap;
+use std::time::Instant;
 
 // ---------------------------------------------------------------------------
 // Routing decision — what the agent loop should do with an error
@@ -39,13 +40,16 @@ pub struct RoutingContext {
 
 pub struct ErrorRouter {
     /// Tracks retry count per (tool_name, error_code) to prevent infinite loops.
-    retry_counters: HashMap<String, usize>,
+    retry_counters: HashMap<String, (usize, Instant)>,
+    /// Entries older than this (in seconds) are considered stale and reset.
+    decay_secs: u64,
 }
 
 impl ErrorRouter {
     pub fn new() -> Self {
         Self {
             retry_counters: HashMap::new(),
+            decay_secs: 60,
         }
     }
 
@@ -55,13 +59,22 @@ impl ErrorRouter {
         self.retry_counters.clear();
     }
 
+    /// Remove stale entries (older than decay_secs) to prevent permanent blocking.
+    fn expire_stale(&mut self) {
+        let now = Instant::now();
+        self.retry_counters.retain(|_, (_, time)| now.duration_since(*time).as_secs() < self.decay_secs);
+    }
+
     /// Route a tool error to a decision.
     pub fn route(&mut self, error: &ToolError, ctx: &RoutingContext) -> ToolErrorRoute {
         let input_hash = error.metadata.input_hash.as_deref().unwrap_or("");
         let key = format!("{}:{}:{}", error.metadata.tool_name, error.code.as_str(), input_hash);
 
+        // Expire stale entries so tools don't get permanently blocked
+        self.expire_stale();
+
         // Same-input guard: if same error + same tool hit ≥2 times, route by recoverability
-        let total_retries = *self.retry_counters.get(&key).unwrap_or(&0) + ctx.retry_count_for_error;
+        let total_retries = self.retry_counters.get(&key).map(|(count, _)| *count).unwrap_or(0) + ctx.retry_count_for_error;
         if total_retries >= 2 {
             self.retry_counters.remove(&key);
             return match error.recoverability {
@@ -81,7 +94,11 @@ impl ErrorRouter {
 
         // Track retry decisions
         if matches!(route, ToolErrorRoute::Retry { .. }) {
-            *self.retry_counters.entry(key.clone()).or_insert(0) += 1;
+            let now = Instant::now();
+            self.retry_counters.entry(key.clone()).and_modify(|(count, time)| {
+                *count += 1;
+                *time = now;
+            }).or_insert((1, now));
         } else {
             self.retry_counters.remove(&key);
         }
