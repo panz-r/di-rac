@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
@@ -778,6 +779,15 @@ func (s *Server) mergeProviderConfig(connID int64, req *Request) error {
 
 	s.configMu.RLock()
 	stored, ok := s.providerConfigs[req.Provider.ID]
+	// Deep-copy Extra map while holding the lock to prevent concurrent
+	// set-provider mutations from causing map-iteration panics.
+	var storedExtra map[string]interface{}
+	if ok && stored.Extra != nil {
+		storedExtra = make(map[string]interface{}, len(stored.Extra))
+		for k, v := range stored.Extra {
+			storedExtra[k] = v
+		}
+	}
 	s.configMu.RUnlock()
 	if !ok {
 		return nil
@@ -802,14 +812,14 @@ func (s *Server) mergeProviderConfig(connID int64, req *Request) error {
 	if req.Provider.ProjectID == "" {
 		req.Provider.ProjectID = stored.ProjectID
 	}
-	if stored.Extra != nil {
+	if storedExtra != nil {
 		if req.Provider.Extra == nil {
-			req.Provider.Extra = make(map[string]interface{}, len(stored.Extra))
-			for k, v := range stored.Extra {
+			req.Provider.Extra = make(map[string]interface{}, len(storedExtra))
+			for k, v := range storedExtra {
 				req.Provider.Extra[k] = v
 			}
 		} else {
-			for k, v := range stored.Extra {
+			for k, v := range storedExtra {
 				if _, exists := req.Provider.Extra[k]; !exists {
 					req.Provider.Extra[k] = v
 				}
@@ -1153,6 +1163,18 @@ func isSafeBaseURL(rawURL string) error {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 	host := u.Hostname()
+	if host == "" {
+		return nil // relative URL, no host
+	}
+
+	// Reject path traversal sequences in the URL.
+	// After cleaning, the path should not contain ".." — this prevents
+	// crafted URLs like https://api.openai.com/v1/../admin from reaching
+	// unintended endpoints after path concatenation.
+	cleaned := path.Clean(u.Path)
+	if strings.Contains(cleaned, "..") {
+		return fmt.Errorf("base_url contains path traversal: %s", rawURL)
+	}
 	if host == "" {
 		return nil // relative URL, no host
 	}
