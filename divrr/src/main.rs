@@ -2,9 +2,11 @@ mod app;
 mod agent;
 mod app_types;
 mod backend;
+mod commands;
 mod event;
 mod gateway;
 mod input;
+mod logging;
 mod message;
 mod settings;
 mod settings_model;
@@ -108,7 +110,7 @@ async fn main() -> color_eyre::Result<()> {
             Some(path) => Some(gateway::launch(&path)?),
             None => {
                 eprintln!("Warning: api-gateway binary not found. Settings panel will be limited.");
-                crate::app::log_event("gateway binary not found, settings panel limited");
+                crate::logging::log_event("gateway binary not found, settings panel limited");
                 None
             }
         },
@@ -191,7 +193,7 @@ async fn main() -> color_eyre::Result<()> {
         }) {
             Ok(()) => {}
             Err(_) => {
-                crate::app::log_event("push_all_to_gateway panicked");
+                crate::logging::log_event("push_all_to_gateway panicked");
             }
         }
     });
@@ -264,7 +266,7 @@ async fn main() -> color_eyre::Result<()> {
                 // Drain pending messages before handling key (e.g. stale SetProviderConfig)
                 for msg in app.pending_messages.drain(..) {
                     if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
-                        crate::app::log_event(&format!("send error: {}", e));
+                        crate::logging::log_event(&format!("send error: {}", e));
                         app.status_message = Some(format!("Send error: {}", e));
                     }
                 }
@@ -274,12 +276,12 @@ async fn main() -> color_eyre::Result<()> {
                     // before sending the returned message (e.g. SpawnAgent) to ensure correct ordering.
                     for pending in app.pending_messages.drain(..) {
                         if let Err(e) = send_with_timeout(&mut di_core, &pending).await {
-                            crate::app::log_event(&format!("send error: {}", e));
+                            crate::logging::log_event(&format!("send error: {}", e));
                             app.status_message = Some(format!("Send error: {}", e));
                         }
                     }
                     if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
-                        crate::app::log_event(&format!("send error: {}", e));
+                        crate::logging::log_event(&format!("send error: {}", e));
                         app.status_message = Some(format!("Send error: {}", e));
                     }
                 }
@@ -348,9 +350,9 @@ async fn main() -> color_eyre::Result<()> {
                                             Vec::new()
                                         };
                                         if let Some(ref e) = error {
-                                            crate::app::log_event(&format!("settings save failed: {}", e));
+                                            crate::logging::log_event(&format!("settings save failed: {}", e));
                                         } else {
-                                            crate::app::log_event("settings saved successfully");
+                                            crate::logging::log_event("settings saved successfully");
                                         }
                                         let _ = save_tx.send((error, messages));
                                     });
@@ -359,7 +361,7 @@ async fn main() -> color_eyre::Result<()> {
                                     let (error, messages) = match save_rx.recv_timeout(timeout) {
                                         Ok(result) => result,
                                         Err(_) => {
-                                            crate::app::log_event("settings save timed out after 30s");
+                                            crate::logging::log_event("settings save timed out after 30s");
                                             (Some("Save timed out after 30s".to_string()), Vec::new())
                                         }
                                     };
@@ -373,7 +375,7 @@ async fn main() -> color_eyre::Result<()> {
                             }
                         }));
                         if result.is_err() {
-                            crate::app::log_event("settings async operation panicked");
+                            crate::logging::log_event("settings async operation panicked");
                         }
                     });
                 }
@@ -392,13 +394,13 @@ async fn main() -> color_eyre::Result<()> {
                 // Drain pending messages (e.g. auto-approve responses)
                 for msg in app.pending_messages.drain(..) {
                     if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
-                        crate::app::log_event(&format!("send error (core drain): {}", e));
+                        crate::logging::log_event(&format!("send error (core drain): {}", e));
                         app.status_message = Some(format!("Send error: {}", e));
                     }
                 }
             }
             Some(AppEvent::CoreError(e)) => {
-                crate::app::log_event(&format!("di-core error: {}", e));
+                crate::logging::log_event(&format!("di-core error: {}", e));
                 app.status_message = Some(format!("di-core: {}", e));
             }
             Some(AppEvent::SettingsLoaded(result)) => {
@@ -406,13 +408,13 @@ async fn main() -> color_eyre::Result<()> {
                 // Drain SetProviderConfig messages produced by successful save
                 for msg in app.pending_messages.drain(..) {
                     if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
-                        crate::app::log_event(&format!("send error (settings): {}", e));
+                        crate::logging::log_event(&format!("send error (settings): {}", e));
                         app.status_message = Some(format!("Send error: {}", e));
                     }
                 }
             }
             None => {
-                crate::app::log_event("di-core process exited");
+                crate::logging::log_event("di-core process exited");
                 app.status_message = Some("di-core process exited".to_string());
                 break;
             }

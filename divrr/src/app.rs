@@ -1,39 +1,11 @@
 use crate::agent::{AgentState, AgentStatus, PendingInput};
-use crate::app_types::{CommandEntry, COMMANDS, Mode, SaveDialogState};
+use crate::app_types::{CommandEntry, Mode, SaveDialogState};
 use crate::input::InputBuffer;
 use crate::message::FrontendMessage;
 use crate::settings::{SettingsLoadResult, SettingsState};
 use crate::ui;
 use ratatui::text::Line;
 use std::collections::HashSet;
-use std::sync::Mutex;
-
-static LOG_MUTEX: Mutex<()> = Mutex::new(());
-
-/// Append a timestamped line to ~/.dirac/divrr.log (best-effort, never fails).
-/// When the log exceeds 1MB, keeps the most recent 256KB.
-pub fn log_event(msg: &str) {
-    let _lock = LOG_MUTEX.lock().unwrap();
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let path = std::path::Path::new(&home).join(".dirac").join("divrr.log");
-    if let Ok(meta) = std::fs::metadata(&path) {
-        if meta.len() > 1_048_576 {
-            if let Ok(data) = std::fs::read(&path) {
-                let keep = 262_144;
-                let start = data.len().saturating_sub(keep);
-                let start = data[start..].iter().position(|&b| b == b'\n')
-                    .map_or(start, |p| start + p + 1);
-                let _ = std::fs::write(&path, &data[start..]);
-            }
-        }
-    }
-    let _ = std::fs::OpenOptions::new().append(true).create(true).open(&path)
-        .map(|mut f| {
-            use std::io::Write;
-            let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-            let _ = writeln!(f, "[{}] {}", ts, msg);
-        });
-}
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
@@ -466,7 +438,7 @@ impl App {
             KeyCode::Char(':') => {
                 self.mode = Mode::Command;
                 self.command_buffer.clear();
-                self.refresh_palette();
+                crate::commands::refresh_palette(self);
                 None
             }
             KeyCode::Char('q') => {
@@ -845,13 +817,12 @@ impl App {
                 self.mode = Mode::Normal;
                 self.command_buffer.clear();
                 self.command_palette.clear();
-                self.execute_command(&cmd)
+                crate::commands::execute_command(self, &cmd)
             }
             KeyCode::Tab => {
-                // Complete to the first matching command
                 if let Some(entry) = self.command_palette.first() {
                     self.command_buffer = entry.name.to_string();
-                    self.refresh_palette();
+                    crate::commands::refresh_palette(self);
                 }
                 None
             }
@@ -869,7 +840,7 @@ impl App {
             }
             KeyCode::Char(c) => {
                 self.command_buffer.push(c);
-                self.refresh_palette();
+                crate::commands::refresh_palette(self);
                 None
             }
             KeyCode::Backspace => {
@@ -878,7 +849,7 @@ impl App {
                     self.mode = Mode::Normal;
                     self.command_palette.clear();
                 } else {
-                    self.refresh_palette();
+                    crate::commands::refresh_palette(self);
                 }
                 None
             }
@@ -886,111 +857,6 @@ impl App {
         }
     }
 
-    fn refresh_palette(&mut self) {
-        let prefix = self.command_buffer.trim();
-        self.command_palette = COMMANDS.iter()
-            .filter(|cmd| {
-                if prefix.is_empty() { return true; }
-                cmd.name.starts_with(prefix) || cmd.prefix == prefix
-            })
-            .cloned()
-            .collect();
-        self.palette_cursor = 0;
-    }
-
-    fn execute_command(&mut self, cmd: &str) -> Option<FrontendMessage> {
-        match cmd {
-            "q" | "quit" => {
-                self.should_quit = true;
-                None
-            }
-            "settings" => {
-                self.settings = Some(SettingsState::new_empty());
-                self.mode = Mode::Settings;
-                // Spawn background load of gateway data
-                if let Some(tx) = &self.event_tx {
-                    let tx = tx.clone();
-                    tokio::task::spawn_blocking(move || {
-                        let mut gw = crate::settings::GatewayConnection::new();
-                        let gateway_ok = gw.ensure_connected().is_ok();
-                        let providers = if gateway_ok {
-                            crate::settings::query_list_providers(&mut gw).unwrap_or_default()
-                        } else {
-                            Vec::new()
-                        };
-                        let all = crate::settings::load_all_settings();
-                        let rs = all.roles.get("act").cloned().unwrap_or_default();
-                        let (fields, models, provider_info, gateway_error) = crate::settings::build_role_fields(&rs, &providers, &mut gw, gateway_ok);
-                        let _ = tx.send(crate::AppEvent::SettingsLoaded(
-                            SettingsLoadResult::Initial {
-                                providers,
-                                fields,
-                                model_entries: models,
-                                provider_info,
-                                gateway_available: gateway_ok,
-                                gateway_error,
-                            }
-                        ));
-                    });
-                }
-                None
-            }
-            "interrupt" => {
-                if let Some(agent) = self.active_agent() {
-                    let id = agent.id;
-                    Some(FrontendMessage::Interrupt { agent_id: id })
-                } else {
-                    None
-                }
-            }
-            "close" => {
-                self.close_active_tab()
-            }
-            _ if cmd.starts_with("new ") => {
-                let task = cmd[4..].trim().to_string();
-                if task.is_empty() {
-                    self.status_message = Some("Task cannot be empty".to_string());
-                    None
-                } else if task.len() > 10_000 {
-                    self.status_message = Some("Task too long (max 10,000 chars)".to_string());
-                    None
-                } else if task.chars().any(|c| c.is_control()) {
-                    self.status_message = Some("Task contains control characters".to_string());
-                    None
-                } else {
-                    // Queue SetProviderConfig before SpawnAgent
-                    self.queue_provider_config();
-                    Some(FrontendMessage::SpawnAgent { task })
-                }
-            }
-            _ => {
-                self.status_message = Some(format!("Unknown command: :{}", cmd));
-                None
-            }
-        }
-    }
-
-    /// Queue SetProviderConfig messages for all configured roles into pending_messages.
-    fn queue_provider_config(&mut self) {
-        let all = crate::settings::load_all_settings();
-        for role in crate::settings::ROLES {
-            if let Some(rs) = all.roles.get(*role) {
-                if !rs.provider.is_empty() && !rs.model.is_empty() {
-                    let params: std::collections::HashMap<String, serde_json::Value> = rs.provider_params.iter().map(|(k, v)| {
-                        (k.clone(), crate::settings::string_to_json_value(v))
-                    }).collect();
-                    self.pending_messages.push(FrontendMessage::SetProviderConfig {
-                        role: role.to_string(),
-                        provider: rs.provider.clone(),
-                        model: rs.model.clone(),
-                        api_key: if rs.api_key.is_empty() { None } else { Some(rs.api_key.clone()) },
-                        base_url: if rs.base_url.is_empty() { None } else { Some(rs.base_url.clone()) },
-                        params,
-                    });
-                }
-            }
-        }
-    }
 
     fn submit_input(&mut self) -> Option<FrontendMessage> {
         let text = self.input.submit();
@@ -1124,7 +990,7 @@ impl App {
 
     /// Close the active agent tab. Sends Interrupt if still running,
     /// removes queue items, and adjusts tab/scroll state.
-    fn close_active_tab(&mut self) -> Option<FrontendMessage> {
+    pub fn close_active_tab(&mut self) -> Option<FrontendMessage> {
         let agent = match self.agents.get(self.active_tab) {
             Some(a) => a,
             None => {

@@ -28,7 +28,7 @@ pub fn handle_core_event(app: &mut App, event: CoreEvent) {
     match event {
         CoreEvent::TaskInitialized { agent_id, .. } => {
             if app.agents.iter().any(|a| a.id == agent_id) {
-                crate::app::log_event(&format!("Duplicate agent_id ignored: {}", agent_id));
+                crate::logging::log_event(&format!("Duplicate agent_id ignored: {}", agent_id));
                 return;
             }
             let idx = app.agents.len() + 1;
@@ -161,7 +161,7 @@ pub fn handle_core_event(app: &mut App, event: CoreEvent) {
             app.input_queue.retain(|(id, _)| *id != agent_id);
             if let Some(agent) = app.agents.iter_mut().find(|a| a.id == agent_id) {
                 if matches!(agent.status, AgentStatus::Finished | AgentStatus::Error) {
-                    crate::app::log_event(&format!("Duplicate TaskFinished for {} ignored", agent_id));
+                    crate::logging::log_event(&format!("Duplicate TaskFinished for {} ignored", agent_id));
                     return;
                 }
                 agent.status = if success {
