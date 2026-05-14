@@ -49,14 +49,18 @@ fn safe_truncate(s: &str, max_len: usize) -> std::borrow::Cow<'_, str> {
 ///
 /// Format: `OK | tokens:N | lines:N | cached:yes/no` header followed by content.
 /// Also handles ERROR, TRUNCATED, and EMPTY variants.
-fn wrap_in_envelope(content: &str, tool_name: &str, is_cached: bool, cumulative_tokens: usize, read_count: usize) -> String {
-    // Skip if already wrapped (trim whitespace fully to catch "\nOK |" etc.)
+fn wrap_in_envelope(
+    content: &str,
+    tool_name: &str,
+    is_cached: bool,
+    cumulative_tokens: usize,
+    read_count: usize,
+    extra_header: &str,
+) -> String {
     let trimmed = content.trim();
     if trimmed.starts_with("OK |") || trimmed.starts_with("ERROR |") || trimmed.starts_with("TRUNCATED |") || trimmed.starts_with("EMPTY |") {
         return content.to_string();
     }
-
-    // Skip structured JSON with status/ok fields
     if trimmed.starts_with('{') {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) {
             if parsed.get("status").is_some() || parsed.get("ok").is_some() {
@@ -66,7 +70,7 @@ fn wrap_in_envelope(content: &str, tool_name: &str, is_cached: bool, cumulative_
     }
 
     let lines = content.lines().count();
-    let tokens = (content.len() + 3) / 4; // ~4 chars per token
+    let tokens = (content.len() + 3) / 4;
     let is_truncated = content.contains("[truncated]") || content.contains("[Content reduced");
     let is_error = trimmed.starts_with("<tool_error");
     let is_empty = trimmed.is_empty()
@@ -78,7 +82,6 @@ fn wrap_in_envelope(content: &str, tool_name: &str, is_cached: bool, cumulative_
     let cached_field = if is_cached { " | cached:yes" } else { "" };
 
     if is_error {
-        // Extract message from <tool_error> tag
         static SEVERITY_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#"severity="[^"]*""#).unwrap());
         let body = trimmed.replace("<tool_error>", "").replace("</tool_error>", "");
         let clean = SEVERITY_RE.replace(&body, "").trim().to_string();
@@ -97,25 +100,22 @@ fn wrap_in_envelope(content: &str, tool_name: &str, is_cached: bool, cumulative_
     let cumulative_field = format!(" | cumulative:{}", cumulative_tokens);
 
     if is_truncated {
-        let hint = "Output truncated. Use --range or --detail for targeted reads.";
-        return format!("TRUNCATED | lines:{} | hint:{} | tokens:{}{}{}\n{}", lines, hint, tokens, cached_field, cumulative_field, content);
+        return format!("TRUNCATED | lines:{} | hint:{} | tokens:{}{}{}\n{}", lines, "Output truncated. Use --range or --detail for targeted reads.", tokens, cached_field, cumulative_field, content);
     }
 
     if is_empty {
-        let hint = match tool_name {
+        return format!("EMPTY | hint:{} | tokens:{}{}{}", match tool_name {
             "read" => "No definitions found. File may be empty or unsupported type.",
             "search" => "No matches. Try broader pattern, different path, or --context for surrounding lines.",
             "symbols" => "No symbol matches. Try different pattern, --kind function, or use search for text patterns.",
             "repo" => "No results. Try different path or --detail files.",
             _ => "No results found. Try different parameters.",
-        };
-        return format!("EMPTY | hint:{} | tokens:{}{}{}", hint, tokens, cached_field, cumulative_field);
+        }, tokens, cached_field, cumulative_field);
     }
 
-    // Normal success
     let lines_field = if lines > 1 { format!(" | lines:{}", lines) } else { String::new() };
     let reads_field = if read_count > 0 { format!(" | reads:{}", read_count) } else { String::new() };
-    format!("OK | tokens:{}{}{}{}{}\n{}", tokens, lines_field, cached_field, cumulative_field, reads_field, content)
+    format!("OK | tokens:{}{}{}{}{}{}\n{}", tokens, lines_field, cached_field, cumulative_field, reads_field, extra_header, content)
 }
 
 /// Error-specific hints matching TS ToolHints.getErrorHint.
@@ -2180,7 +2180,16 @@ impl AgentEngine {
                         }
 
                         // Apply read file formatting: hash-anchored lines, unchanged detection
+                        let mut read_detail: Option<String> = None;
+                        let mut read_handles: Option<usize> = None;
                         if tool_name == "read" && result.get("_read_raw").is_some() {
+                            // Save metadata before formatting for envelope header
+                            read_detail = result.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            if let Some(adata) = result.get("analyzer_data") {
+                                if let Some(symbols) = adata.get("symbols").and_then(|v| v.as_array()) {
+                                    read_handles = Some(symbols.len());
+                                }
+                            }
                             // Pre-increment read count so auto-expand logic sees correct count
                             if let Some(p) = result.get("path").and_then(|v| v.as_str()) {
                                 self.file_context.pre_increment_read(p);
@@ -2223,6 +2232,43 @@ impl AgentEngine {
                         } else {
                             result_str.clone()
                         };
+                        // Build tool-specific envelope header fields matching tool description specs
+                        let extra_header = match tool_name.as_str() {
+                            "read" => {
+                                // OK | detail:<level> | handles:N | lines:N | tokens:N
+                                let mut parts = Vec::new();
+                                if let Some(ref d) = read_detail { parts.push(format!(" detail:{}", d)); }
+                                if let Some(h) = read_handles { parts.push(format!(" handles:{}", h)); }
+                                parts.concat()
+                            }
+                            "search" => {
+                                // OK | matches:N | files:N | hint:refinements | tokens:N
+                                let matches = result.get("matches").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let files = result.get("files").and_then(|v| v.as_i64()).unwrap_or(0);
+                                format!(" | matches:{} | files:{}", matches, files)
+                            }
+                            "repo" => {
+                                // OK | files:N | lines:N | symbols:N | detail:<level> | tokens:N
+                                let files = result.get("files").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let symbols = result.get("symbols").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let detail = result.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+                                format!(" | files:{} | symbols:{} | detail:{}", files, symbols, detail)
+                            }
+                            "bash" => {
+                                // OK | tokens:N | lines:N | exit:N
+                                if let Some(exit_code) = result.get("exit_code").and_then(|v| v.as_i64()) {
+                                    format!(" | exit:{}", exit_code)
+                                } else {
+                                    String::new()
+                                }
+                            }
+                            "edit" => {
+                                // OK | edits:N | tokens:N
+                                let edits = result.get("edits").and_then(|v| v.as_i64()).unwrap_or(0);
+                                format!(" | edits:{}", edits)
+                            }
+                            _ => String::new(),
+                        };
                         // Prefix with tool description matching TS format
                         let desc = tool_description(&tool_name);
                         let mut content_for_envelope = format!("{} Result:\n{}", desc, inner);
@@ -2241,7 +2287,7 @@ impl AgentEngine {
                             }
                         }
                         let read_count = self.file_context.files_read.len();
-                        let enveloped = wrap_in_envelope(&content_for_envelope, &tool_name, is_cached, self.cumulative_tokens, read_count);
+                        let enveloped = wrap_in_envelope(&content_for_envelope, &tool_name, is_cached, self.cumulative_tokens, read_count, &extra_header);
                         let safe_result_str = crate::util::secrets::redact_secrets(&enveloped);
                         let safe_result: serde_json::Value = serde_json::from_str(&safe_result_str).unwrap_or_else(|_| json!(safe_result_str));
                         if safe_result_str != result_str { self.metrics.inc_redaction(); }

@@ -1,6 +1,6 @@
 /// Manages large tool outputs by writing them to disk.
 /// When a tool result exceeds the budget, the output content is saved to
-/// .dirac/outputs/ and replaced with a reference + preview.
+/// .di/out/ and replaced with a reference + preview.
 pub struct OutputManager {
     output_dir: std::path::PathBuf,
     budget_bytes: usize,
@@ -15,7 +15,7 @@ impl OutputManager {
     }
 
     pub fn with_root(workspace_root: &std::path::Path) -> Self {
-        let output_dir = workspace_root.join(".dirac").join("outputs");
+        let output_dir = workspace_root.join(".di").join("out");
         if let Err(e) = std::fs::create_dir_all(&output_dir) {
             eprintln!("[di-core] OutputManager: failed to create output dir: {}", e);
         }
@@ -81,7 +81,7 @@ impl OutputManager {
         let preview = self.truncate_preview(content);
 
         let output = format!(
-            "[Output saved to .dirac/outputs/{} ({}KB)]\n{}\n\n--- [Output truncated. Use bash to view: bash \"cat .dirac/outputs/{}\"] ---",
+            "[Output saved to .di/out/{} ({}KB)]\n{}\n\n--- [Output truncated. Use bash to view: bash \"cat .di/out/{}\"] ---",
             filename, size_kb, preview, filename,
         );
 
