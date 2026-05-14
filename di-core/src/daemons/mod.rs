@@ -340,7 +340,7 @@ impl GatewayStreamClient {
 
 /// Result from the command daemon's execute endpoint.
 /// Wire format: {"type":"result","id":"1","stdout":"...","stderr":"","exit_code":0,"meta":{...}}
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ExecuteResult {
     #[allow(dead_code)]
     pub id: String,
@@ -351,7 +351,7 @@ pub struct ExecuteResult {
     pub meta: ExecuteMeta,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct ExecuteMeta {
     pub mode_used: String,

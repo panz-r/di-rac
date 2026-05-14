@@ -13,15 +13,20 @@ pub mod format;
 pub mod output_manager;
 pub mod read_file;
 
-use crate::daemons::{AnalyzerRequest, AnalyzerResponse, ResilientDaemon};
+use crate::daemons::{AnalyzerRequest, AnalyzerResponse, ExecuteResult, ResilientDaemon};
 use response::{ToolResponse, ToolErrorCode};
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+/// Stores results of bash commands executed with --await for later retrieval.
+static BACKGROUND_JOBS: LazyLock<std::sync::Mutex<HashMap<String, ExecuteResult>>> =
+    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
 use routing::{ErrorRouter, RoutingContext, ToolErrorRoute};
 use format::{format_error_for_llm, format_error_for_log};
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use serde_json::json;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -667,16 +672,30 @@ impl ToolExecutor {
     /// Output is formatted as text matching TS BashToolHandler format:
     /// exit:N\nstdout\n[stderr]\nstderr\n[truncated]\n[timed out]\n[blocked: reason]
     async fn bash(&self, call: &ToolCall) -> Result<serde_json::Value> {
-        // Handle --await <id>: retrieve result of a background command
-        if let Some(await_id) = call.args.get("await").and_then(|v| v.as_str()) {
-            return Ok(json!({
-                "status": "error",
-                "error": format!("Background command await is not yet supported. ID: {}", await_id)
-            }));
-        }
+        // Handle --await <id>: retrieve result of a previously-started background command.
+        // The await argument is passed as a separate flag by the CLI parser.
+        let await_id = call.args.get("await").and_then(|v| v.as_str());
 
         let command = call.args.get("command").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing command argument"))?;
+
+        // If the command is ONLY `--await <id>` (retrieve mode), look up stored result.
+        // In the CLI-parsed path, --await and command are separate args, so this
+        // branch fires when --await is given without a meaningful command string.
+        // We check if command starts with "--await" as a secondary indicator.
+        if let Some(aid) = await_id {
+            if command.trim().starts_with("--await") || command.trim().is_empty() {
+                // Retrieve mode: try to get stored result, or return informative error
+                let store = BACKGROUND_JOBS.lock().unwrap();
+                if let Some(stored) = store.get(aid) {
+                    return Ok(Self::format_bash_result(stored));
+                }
+                return Ok(json!({
+                    "status": "error",
+                    "error": format!("No background command found for ID '{}'. Use a regular bash command first.", aid)
+                }));
+            }
+        }
 
         let timeout_ms: i64 = call.args.get("timeout")
             .and_then(|v| v.as_i64())
@@ -689,7 +708,16 @@ impl ToolExecutor {
         });
         let resp: crate::daemons::ExecuteResult = self.command_daemon.lock().await.send_request(request).await?;
 
-        // Format as text matching TS BashToolHandler output
+        // If --await was provided with this command, store the result for later retrieval
+        if let Some(aid) = await_id {
+            let mut store = BACKGROUND_JOBS.lock().unwrap();
+            store.insert(aid.to_string(), resp.clone());
+        }
+
+        Ok(Self::format_bash_result(&resp))
+    }
+
+    fn format_bash_result(resp: &crate::daemons::ExecuteResult) -> serde_json::Value {
         let mut output = format!("exit:{}", resp.exit_code);
         if !resp.stdout.is_empty() {
             output.push_str(&format!("\n{}", resp.stdout));
@@ -713,7 +741,7 @@ impl ToolExecutor {
             output.push_str(&format!("\n[hint: {}]", hint));
         }
 
-        Ok(json!(output))
+        json!(output)
     }
 
     async fn compact(&self, call: &ToolCall) -> Result<serde_json::Value> {
