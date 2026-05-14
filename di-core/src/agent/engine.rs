@@ -330,6 +330,8 @@ pub struct AgentEngine {
     shared_distiller: Arc<tokio::sync::RwLock<Option<std::sync::Arc<tokio::sync::RwLock<Box<dyn ContextDistiller>>>>>>,
     /// Shared timeout — orchestrator updates this, agent reads at turn start.
     shared_timeout_ms: Arc<std::sync::Mutex<Option<u64>>>,
+    /// Shared observer config — orchestrator updates this, agent reads at turn start.
+    shared_observer_config: Arc<tokio::sync::RwLock<crate::observer::ObserverConfig>>,
 }
 
 impl AgentEngine {
@@ -391,6 +393,9 @@ impl AgentEngine {
             shared_provider_config: Arc::new(tokio::sync::RwLock::new(None)),
             shared_distiller: Arc::new(tokio::sync::RwLock::new(None)),
             shared_timeout_ms: Arc::new(std::sync::Mutex::new(None)),
+            shared_observer_config: Arc::new(tokio::sync::RwLock::new(
+                crate::observer::ObserverConfig::default(),
+            )),
         }
     }
 
@@ -810,6 +815,9 @@ impl AgentEngine {
             if let Some(ref dist) = *guard {
                 self.distiller = Some(dist.clone());
             }
+        }
+        if let Ok(guard) = self.shared_observer_config.try_read() {
+            self.observer.config = guard.clone();
         }
     }
 
@@ -2796,6 +2804,7 @@ struct RuntimeConfig {
     provider_config: Arc<tokio::sync::RwLock<Option<crate::daemons::ProviderConfig>>>,
     distiller: Arc<tokio::sync::RwLock<Option<std::sync::Arc<tokio::sync::RwLock<Box<dyn ContextDistiller>>>>>>,
     timeout_ms: Arc<std::sync::Mutex<Option<u64>>>,
+    observer_config: Arc<tokio::sync::RwLock<crate::observer::ObserverConfig>>,
 }
 
 impl MultiAgentOrchestrator {
@@ -2831,6 +2840,7 @@ impl MultiAgentOrchestrator {
             provider_config: agent.shared_provider_config.clone(),
             distiller: agent.shared_distiller.clone(),
             timeout_ms: agent.shared_timeout_ms.clone(),
+            observer_config: agent.shared_observer_config.clone(),
         };
         self.runtime_configs.insert(id, rc);
 
@@ -2941,24 +2951,36 @@ impl MultiAgentOrchestrator {
             observer_model_id,
         } = msg
         {
+            // Helper closure to apply field updates to any ObserverConfig
+            let apply = |cfg: &mut crate::observer::ObserverConfig| {
+                cfg.enabled = enabled;
+                cfg.use_llm_observations = use_llm_observations;
+                cfg.watcher_frequency = watcher_frequency;
+                cfg.critic_frequency = critic_frequency;
+                cfg.verbose = verbose;
+                cfg.token_threshold = token_threshold;
+                cfg.buffer_activation = buffer_activation;
+                cfg.block_after = block_after;
+                cfg.reflection_enabled = reflection_enabled;
+                cfg.reflection_token_threshold = reflection_token_threshold;
+                cfg.procedural_monotonicity_enabled = procedural_monotonicity_enabled;
+                cfg.ast_guided_memory_enabled = ast_guided_memory_enabled;
+                cfg.adaptive_cooldown_enabled = adaptive_cooldown_enabled;
+                cfg.latency_budget_ms = latency_budget_ms;
+                cfg.permissive_buffer_size = permissive_buffer_size;
+                cfg.provider = observer_provider.clone();
+                cfg.model_id = observer_model_id.clone();
+            };
+
             for agent in self.agents.values_mut() {
-                agent.observer.config.enabled = enabled;
-                agent.observer.config.use_llm_observations = use_llm_observations;
-                agent.observer.config.watcher_frequency = watcher_frequency;
-                agent.observer.config.critic_frequency = critic_frequency;
-                agent.observer.config.verbose = verbose;
-                agent.observer.config.token_threshold = token_threshold;
-                agent.observer.config.buffer_activation = buffer_activation;
-                agent.observer.config.block_after = block_after;
-                agent.observer.config.reflection_enabled = reflection_enabled;
-                agent.observer.config.reflection_token_threshold = reflection_token_threshold;
-                agent.observer.config.procedural_monotonicity_enabled = procedural_monotonicity_enabled;
-                agent.observer.config.ast_guided_memory_enabled = ast_guided_memory_enabled;
-                agent.observer.config.adaptive_cooldown_enabled = adaptive_cooldown_enabled;
-                agent.observer.config.latency_budget_ms = latency_budget_ms;
-                agent.observer.config.permissive_buffer_size = permissive_buffer_size;
-                agent.observer.config.provider = observer_provider.clone();
-                agent.observer.config.model_id = observer_model_id.clone();
+                apply(&mut agent.observer.config);
+            }
+
+            // Also update running agents via shared config
+            for rc in self.runtime_configs.values() {
+                if let Ok(mut guard) = rc.observer_config.try_write() {
+                    apply(&mut guard);
+                }
             }
         }
     }
@@ -2984,7 +3006,10 @@ impl MultiAgentOrchestrator {
     }
 
     pub async fn handle_user_response(&self, agent_id: Uuid, text: String) -> Result<()> {
-        self.send_to_agent(agent_id, FrontendMessage::UserResponse { agent_id, text });
+        let ok = self.send_to_agent(agent_id, FrontendMessage::UserResponse { agent_id, text });
+        if !ok {
+            anyhow::bail!("Failed to send user response to agent {}: channel full or agent not found", agent_id);
+        }
         Ok(())
     }
 

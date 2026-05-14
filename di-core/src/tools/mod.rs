@@ -566,7 +566,7 @@ impl ToolExecutor {
                 let page = call.args.get("page").and_then(|v| v.as_str()).map(String::from);
 
                 // Fetch analyzer data for budget degradation cascade (full→skeleton/outline/hint)
-                let analyzer_data: Option<serde_json::Value> = match self.analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
+                let mut analyzer_data: Option<serde_json::Value> = match self.analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
                     command: "outline".to_string(),
                     file: Some(path.to_string()),
                     content: None,
@@ -577,6 +577,26 @@ impl ToolExecutor {
                     Ok(resp) if resp.ok => Some(resp.data),
                     _ => None,
                 };
+
+                // Also fetch skeleton data so budget degradation to "skeleton" level works correctly
+                if let Some(ref mut data) = analyzer_data {
+                    if data.get("skeleton").is_none() {
+                        if let Ok(skel_resp) = self.analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
+                            command: "skeleton".to_string(),
+                            file: Some(path.to_string()),
+                            content: None,
+                            language: None,
+                            query: None,
+                            subcommand: None,
+                        }).await {
+                            if let Some(skel) = skel_resp.data.get("skeleton").and_then(|v| v.as_str()) {
+                                if let Some(obj) = data.as_object_mut() {
+                                    obj.insert("skeleton".to_string(), serde_json::json!(skel));
+                                }
+                            }
+                        }
+                    }
+                }
 
                 Ok(json!({
                     "_read_raw": true,

@@ -477,8 +477,8 @@ impl CommandDaemon {
 
     /// No-timeout variant of send_request for the analyzer daemon.
     /// Returns `UntimedError::Dead` when the process has exited (EOF/broken pipe)
-    /// or `UntimedError::App` for application-level errors. No timeout wrapper —
-    /// reads block indefinitely until the daemon responds or dies.
+    /// or `UntimedError::App` for application-level errors. Has a 60s internal timeout
+    /// to prevent indefinite blocking on unresponsive daemons.
     pub async fn send_request_untimed<T: Serialize, R: for<'de> Deserialize<'de>>(
         &mut self,
         request: &T,
@@ -513,8 +513,12 @@ impl CommandDaemon {
         let mut bad_lines = 0u32;
         loop {
             line.clear();
-            let n = self.stdout.read_line(&mut line).await
-                .map_err(|e| UntimedError::Dead(format!("Read error: {}", e)))?;
+            let n = tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                self.stdout.read_line(&mut line),
+            ).await.map_err(|_| UntimedError::Dead(
+                format!("Daemon timed out after 60s (request_id={})", id)
+            ))?.map_err(|e| UntimedError::Dead(format!("Read error: {}", e)))?;
             if n == 0 {
                 return Err(UntimedError::Dead("Daemon stdout EOF — process exited".to_string()));
             }

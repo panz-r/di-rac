@@ -3147,7 +3147,7 @@ mod tests {
             ObserverConfig {
                 buffer_activation: 1,
                 block_after: 10.0, // very high threshold
-                token_threshold: 15000,
+                token_threshold: 4000,
                 ..Default::default()
             },
             "test-sync-no",
