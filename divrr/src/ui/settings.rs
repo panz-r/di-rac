@@ -415,7 +415,8 @@ fn render_secret_edit_modal(
     };
     frame.render_widget(display, inner);
 
-    // Cursor positioned at secret_edit_cursor within the text
+    // Cursor positioned at secret_edit_cursor within the text,
+    // accounting for both hard newlines and soft wrapping at inner.width.
     let text = &settings.secret_edit_buffer;
     let cursor_byte = settings.secret_edit_cursor.min(text.len());
     let text_before_cursor = &text[..cursor_byte];
@@ -423,16 +424,53 @@ fn render_secret_edit_modal(
     if text.is_empty() {
         frame.set_cursor_position((inner.x, inner.y));
     } else {
-        // Count rows from newlines in text before cursor
-        let row = text_before_cursor.lines().count().max(1) - 1;
-        let last_newline = text_before_cursor.rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let col_text = &text_before_cursor[last_newline..];
-        let col = unicode_width::UnicodeWidthStr::width(col_text) as u16;
-
-        let cx = inner.x + col.min(inner.width.saturating_sub(1));
-        let cy = inner.y + (row as u16).min(inner.height.saturating_sub(1));
+        let wrap_w = inner.width as usize;
+        let (visual_row, visual_col) = visual_cursor_pos(text_before_cursor, wrap_w);
+        let cx = inner.x + (visual_col as u16).min(inner.width.saturating_sub(1));
+        let cy = inner.y + (visual_row as u16).min(inner.height.saturating_sub(1));
         frame.set_cursor_position((cx, cy));
     }
+}
+
+/// Given a string and a wrap width, compute the 0-indexed visual (row, col) of the
+/// position at the end of the string, accounting for both hard newlines and soft wrapping.
+fn visual_cursor_pos(text: &str, wrap_width: usize) -> (usize, usize) {
+    if text.is_empty() || wrap_width == 0 {
+        return (0, 0);
+    }
+    let mut total_rows: usize = 0;
+    let mut last_col: usize = 0;
+
+    for segment in text.split('\n') {
+        let seg_w = unicode_width::UnicodeWidthStr::width(segment);
+        if seg_w == 0 {
+            // Empty line after a newline — still occupies one row
+            total_rows += 1;
+            last_col = 0;
+            continue;
+        }
+        if seg_w <= wrap_width {
+            // Fits on one line
+            total_rows += 1;
+            last_col = seg_w;
+        } else {
+            // Wraps across multiple visual lines
+            let full_lines = seg_w / wrap_width;
+            let remainder = seg_w % wrap_width;
+            total_rows += full_lines;
+            if remainder > 0 {
+                total_rows += 1;
+                last_col = remainder;
+            } else {
+                // Exactly ends at a wrap boundary — cursor is at column wrap_width
+                // (the start of the next visual line)
+                last_col = wrap_width;
+            }
+        }
+    }
+
+    let row = total_rows.saturating_sub(1);
+    (row, last_col)
 }
 
 fn render_loading_overlay(frame: &mut Frame, theme: &Theme, size: Rect, panel_w: u16) {
