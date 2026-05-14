@@ -22,8 +22,8 @@ impl OutputManager {
         Self::cleanup_old_outputs(&output_dir);
         Self {
             output_dir,
-            budget_bytes: 4096,
-            preview_bytes: 2048,
+            budget_bytes: 8192,
+            preview_bytes: 4096,
         }
     }
 
@@ -88,13 +88,21 @@ impl OutputManager {
         serde_json::Value::String(output)
     }
 
-    fn truncate_preview<'a>(&self, content: &'a str) -> &'a str {
-        let byte_limit = self.preview_bytes.min(content.len());
-        let mut end = byte_limit;
-        while end > 0 && !content.is_char_boundary(end) {
-            end -= 1;
+    fn truncate_preview<'a>(&self, content: &'a str) -> std::borrow::Cow<'a, str> {
+        if content.len() <= self.preview_bytes {
+            return std::borrow::Cow::Borrowed(content);
         }
-        &content[..end]
+        let half = self.preview_bytes / 2;
+        let mut head_end = half;
+        while head_end > 0 && !content.is_char_boundary(head_end) {
+            head_end -= 1;
+        }
+        let mut tail_start = content.len() - half;
+        while tail_start < content.len() && !content.is_char_boundary(tail_start) {
+            tail_start += 1;
+        }
+        let omitted = content.len() - head_end - (content.len() - tail_start);
+        format!("{}...[{} bytes truncated]...\n{}", &content[..head_end], omitted, &content[tail_start..]).into()
     }
 
     fn cleanup_old_outputs(output_dir: &std::path::Path) {
