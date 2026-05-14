@@ -158,7 +158,9 @@ func NewKiloCodeHandler() *KiloCodeHandler {
 					result["max_tokens"] = req.MaxTokens
 				}
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = splitStopSequences(stop)
+					if seqs := splitStopSequences(stop); seqs != nil {
+					result["stop"] = seqs
+				}
 				}
 
 				if pp := req.SettingFloat("presence_penalty"); pp != 0 {

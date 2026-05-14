@@ -129,7 +129,9 @@ func NewOVHcloudHandler() *OVHcloudHandler {
 					result["seed"] = seed
 				}
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = splitStopSequences(stop)
+					if seqs := splitStopSequences(stop); seqs != nil {
+					result["stop"] = seqs
+				}
 				}
 				if rf := req.SettingString("response_format"); rf != "" {
 					result["response_format"] = map[string]string{"type": rf}

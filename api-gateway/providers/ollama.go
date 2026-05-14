@@ -143,7 +143,9 @@ func NewOllamaHandler() *OllamaHandler {
 					result["seed"] = seed
 				}
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = splitStopSequences(stop)
+					if seqs := splitStopSequences(stop); seqs != nil {
+					result["stop"] = seqs
+				}
 				}
 
 				// Reasoning

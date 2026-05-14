@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -34,25 +35,25 @@ var maxRequestsPerSecStr string = "5"
 var maxInflightReqsStr string = "3"
 
 func resolveRateLimits() (ratePerSec, maxConcurrent int) {
-	ratePerSec = parseLimit(maxRequestsPerSecStr, 5)
-	maxConcurrent = parseLimit(maxInflightReqsStr, 3)
+	ratePerSec = parseLimit(maxRequestsPerSecStr, 5, 100)
+	maxConcurrent = parseLimit(maxInflightReqsStr, 3, 100)
 	if v := os.Getenv("DIRAC_API_GATEWAY_RATE_PER_SEC"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			ratePerSec = n
+			ratePerSec = min(n, 100)
 		}
 	}
 	if v := os.Getenv("DIRAC_API_GATEWAY_MAX_CONCURRENT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			maxConcurrent = n
+			maxConcurrent = min(n, 100)
 		}
 	}
 	return
 }
 
 // parseLimit parses a build-time string as an int, returning defVal on failure.
-func parseLimit(s string, defVal int) int {
+func parseLimit(s string, defVal, maxVal int) int {
 	if n, err := strconv.Atoi(s); err == nil && n > 0 {
-		return n
+		return min(n, maxVal)
 	}
 	return defVal
 }
@@ -1079,6 +1080,13 @@ func (s *Server) handleNonStreaming(ctx context.Context, connID, id int64, handl
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			// Use provider-suggested Retry-After if available (e.g., from 429).
+			if lastErr != nil {
+				var pae *providers.ProviderAPIError
+				if errors.As(lastErr, &pae) && pae.RetryAfter > 0 {
+					backoff = pae.RetryAfter
+				}
+			}
 			if backoff > 60*time.Second {
 				backoff = 60 * time.Second
 			}

@@ -337,6 +337,9 @@ type ProviderAPIError struct {
 	StatusCode int
 	Message    string
 	Retriable  bool
+	// RetryAfter, if non-zero, is the provider-suggested backoff duration
+	// parsed from a Retry-After header on 429 responses.
+	RetryAfter time.Duration
 	// ContextExceeded is true when the provider rejected the request because
 	// the total prompt exceeded its context window. Providers set this when
 	// they detect their own provider-specific context-limit response.

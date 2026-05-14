@@ -202,7 +202,9 @@ func NewBytePlusHandler() *BytePlusHandler {
 				}
 
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = splitStopSequences(stop)
+					if seqs := splitStopSequences(stop); seqs != nil {
+					result["stop"] = seqs
+				}
 				}
 
 				if rf := req.SettingString("response_format"); rf != "" {
@@ -227,6 +229,9 @@ func splitStopSequences(s string) []string {
 	}
 	if len(parts) > 4 {
 		parts = parts[:4]
+	}
+	if len(parts) == 0 {
+		return nil
 	}
 	return parts
 }

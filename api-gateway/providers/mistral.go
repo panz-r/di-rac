@@ -149,7 +149,9 @@ func NewMistralHandler() *MistralHandler {
 					result["response_format"] = map[string]string{"type": rf}
 				}
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = splitStopSequences(stop)
+					if seqs := splitStopSequences(stop); seqs != nil {
+					result["stop"] = seqs
+				}
 				}
 				if tc := req.SettingString("tool_choice"); tc != "" {
 					result["tool_choice"] = tc

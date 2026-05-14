@@ -10,7 +10,9 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const maxBodySize = 10 << 20 // 10 MB safety cap on response bodies
@@ -98,7 +100,7 @@ func (h *openaiCompatHandler) Send(ctx context.Context, req *Request) (*SendResu
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, newAPIError(resp.StatusCode, string(body))
+		return nil, newAPIErrorFromResp(resp, string(body))
 	}
 
 	var raw map[string]interface{}
@@ -139,7 +141,7 @@ func (h *openaiCompatHandler) Stream(ctx context.Context, req *Request, callback
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 		log.Printf("[openai-compat] %s %s → status %d: %s", httpReq.Method, httpReq.URL.Path, resp.StatusCode, string(body))
-		return newAPIError(resp.StatusCode, string(body))
+		return newAPIErrorFromResp(resp, string(body))
 	}
 
 	return openaiParseSSE(ctx, &contextReader{ctx: ctx, r: resp.Body}, callback, h.config.FinishReasonMap, h.config.ContentArraySupport)
@@ -180,6 +182,20 @@ func newAPIError(statusCode int, body string) *ProviderAPIError {
 		Retriable:       statusCode == 429 || statusCode >= 500,
 		ContextExceeded: ctxExceeded,
 	}
+}
+
+// newAPIErrorFromResp creates a ProviderAPIError from an HTTP response,
+// parsing Retry-After header when present.
+func newAPIErrorFromResp(resp *http.Response, body string) *ProviderAPIError {
+	pae := newAPIError(resp.StatusCode, body)
+	if pae.StatusCode == 429 {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+				pae.RetryAfter = time.Duration(secs) * time.Second
+			}
+		}
+	}
+	return pae
 }
 
 func (h *openaiCompatHandler) setHeaders(httpReq *http.Request, apiKey string, req *Request) {

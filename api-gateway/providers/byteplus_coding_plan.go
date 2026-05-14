@@ -150,7 +150,9 @@ func NewBytePlusCodingPlanHandler() *BytePlusCodingPlanHandler {
 				}
 
 				if stop := req.SettingString("stop"); stop != "" {
-					result["stop"] = splitStopSequences(stop)
+					if seqs := splitStopSequences(stop); seqs != nil {
+					result["stop"] = seqs
+				}
 				}
 				if seed := req.SettingInt("seed"); seed > 0 {
 					result["seed"] = seed
