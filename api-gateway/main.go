@@ -138,7 +138,10 @@ type Server struct {
 	cancel           context.CancelFunc
 	providerConfigs  map[string]providers.ProviderConfig
 	configMu         sync.RWMutex
-	rateLimiter      *RateLimiter
+	limiters         map[string]*RateLimiter
+	limitMu          sync.Mutex
+	defaultRate      int
+	defaultConc      int
 	conns            map[net.Conn]struct{}
 	nextConnID       atomic.Int64
 	connMu           sync.Mutex
@@ -237,14 +240,38 @@ func (rl *RateLimiter) Stop() {
 
 // NewServer creates a new server instance
 func NewServer() *Server {
+	rate, conc := resolveRateLimits()
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
 		providerRegistry: providers.NewRegistry(),
 		ctx:              ctx,
 		cancel:           cancel,
 		providerConfigs:  make(map[string]providers.ProviderConfig),
-		rateLimiter:      NewRateLimiter(resolveRateLimits()),
+		limiters:         make(map[string]*RateLimiter),
+		defaultRate:      rate,
+		defaultConc:      conc,
 		conns:            make(map[net.Conn]struct{}),
+	}
+}
+
+// getLimiter returns the per-provider rate limiter, creating one lazily if needed.
+func (s *Server) getLimiter(providerID string) *RateLimiter {
+	s.limitMu.Lock()
+	defer s.limitMu.Unlock()
+	if rl, ok := s.limiters[providerID]; ok {
+		return rl
+	}
+	rl := NewRateLimiter(s.defaultRate, s.defaultConc)
+	s.limiters[providerID] = rl
+	return rl
+}
+
+// stopLimiters stops all per-provider rate limiters.
+func (s *Server) stopLimiters() {
+	s.limitMu.Lock()
+	defer s.limitMu.Unlock()
+	for _, rl := range s.limiters {
+		rl.Stop()
 	}
 }
 
@@ -282,7 +309,7 @@ func (s *Server) Start() error {
 
 	log.Println("Shutting down...")
 	s.cancel()
-	s.rateLimiter.Stop()
+	s.stopLimiters()
 	ln.Close()
 	// Force-close idle connections so wg.Wait does not block for 5 min.
 	// Two passes: once before, then after a short pause to catch any
@@ -704,19 +731,20 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		ctx, cancel := context.WithTimeout(s.ctx, time.Duration(req.Timeout)*time.Millisecond)
 
-		// Wait for rate limit token and inflight slot
-		if err := s.rateLimiter.Wait(ctx); err != nil {
+		// Wait for per-provider rate limit token and inflight slot
+		limiter := s.getLimiter(req.Provider.ID)
+		if err := limiter.Wait(ctx); err != nil {
 			w.write(&Response{
 				ID:     req.ID,
 				Status: 429,
-				Error:  &ErrorDetail{Code: "RATE_LIMITED", Message: "Gateway queue timeout: too many concurrent requests", Retriable: true},
+				Error:  &ErrorDetail{Code: "RATE_LIMITED", Message: fmt.Sprintf("Gateway queue timeout: too many concurrent requests for %s", req.Provider.ID), Retriable: true},
 			})
 			cancel()
 			continue
 		}
 
 		func() {
-			defer s.rateLimiter.Release()
+			defer limiter.Release()
 			defer cancel()
 
 			if req.Stream {
