@@ -31,7 +31,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 /// Build all Lines for the conversation view (blocks + streaming + pending).
 pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usize, mode: crate::app::Mode, theme: &Theme) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line> = Vec::new();
+    let mut lines: Vec<Line> = Vec::with_capacity(agent.log.blocks().len() + 2);
     let highlight_active = mode == crate::app::Mode::Action;
 
     for (i, block) in agent.log.blocks().iter().enumerate() {
@@ -84,7 +84,7 @@ pub fn build_all_lines(agent: &AgentState, max_width: usize, selected_block: usi
 
 /// Count the visual lines a single block will occupy after wrapping.
 pub fn count_block_visual_lines(block: &Block, width: u16, is_expanded: bool, is_wrapped: bool, theme: &Theme) -> usize {
-    let mut lines: Vec<Line> = Vec::new();
+    let mut lines: Vec<Line> = Vec::with_capacity(16);
     build_block_lines(&mut lines, block, width as usize, is_expanded, is_wrapped, false, false, theme);
     if lines.is_empty() {
         return 0;
