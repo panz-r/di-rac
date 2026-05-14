@@ -481,26 +481,45 @@ impl SettingsState {
     }
 
     pub fn secret_edit_type_char(&mut self, c: char) {
+        if !c.is_ascii() {
+            // Only ASCII is allowed in API keys to prevent UTF-8 corruption
+            return;
+        }
         self.secret_edit_buffer.insert(self.secret_edit_cursor, c);
         self.secret_edit_cursor += 1;
     }
 
     pub fn secret_edit_backspace(&mut self) {
         if self.secret_edit_cursor > 0 {
-            self.secret_edit_cursor -= 1;
+            let prev = self.secret_edit_buffer[..self.secret_edit_cursor]
+                .chars()
+                .last()
+                .map(|c| c.len_utf8())
+                .unwrap_or(0);
+            self.secret_edit_cursor -= prev;
             self.secret_edit_buffer.remove(self.secret_edit_cursor);
         }
     }
 
     pub fn secret_edit_left(&mut self) {
         if self.secret_edit_cursor > 0 {
-            self.secret_edit_cursor -= 1;
+            let prev = self.secret_edit_buffer[..self.secret_edit_cursor]
+                .chars()
+                .last()
+                .map(|c| c.len_utf8())
+                .unwrap_or(0);
+            self.secret_edit_cursor -= prev;
         }
     }
 
     pub fn secret_edit_right(&mut self) {
         if self.secret_edit_cursor < self.secret_edit_buffer.len() {
-            self.secret_edit_cursor += 1;
+            let next = self.secret_edit_buffer[self.secret_edit_cursor..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(0);
+            self.secret_edit_cursor += next;
         }
     }
 
@@ -652,5 +671,132 @@ impl SettingsState {
         self.pending_async = Some(PendingAsyncOp::Save { all_settings: self.all_settings.clone() });
 
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // Secret edit modal
+    // -----------------------------------------------------------------------
+    #[test]
+    fn secret_edit_cancel_does_not_modify_field() {
+        let mut s = SettingsState::new_empty();
+        // Cursor 2 = API Key field (Secret, index 1)
+        s.cursor = 2;
+        let original = match &s.fields[1] {
+            SettingsField::Secret { value, .. } => value.clone(),
+            _ => panic!("expected Secret field"),
+        };
+
+        s.open_secret_edit();
+        assert!(s.secret_edit_open);
+        s.secret_edit_type_char('n');
+        s.secret_edit_type_char('e');
+        s.secret_edit_type_char('w');
+        assert_eq!(s.secret_edit_buffer, "new");
+        s.cancel_secret_edit();
+        assert!(!s.secret_edit_open);
+
+        // Field unchanged
+        match &s.fields[1] {
+            SettingsField::Secret { value, .. } => assert_eq!(value, &original),
+            _ => panic!("expected Secret field"),
+        }
+    }
+
+    #[test]
+    fn secret_edit_confirm_writes_to_field() {
+        let mut s = SettingsState::new_empty();
+        s.cursor = 2;
+
+        s.open_secret_edit();
+        assert!(s.secret_edit_open);
+        s.secret_edit_type_char('s');
+        s.secret_edit_type_char('k');
+        s.secret_edit_type_char('-');
+        s.secret_edit_type_char('1');
+        s.confirm_secret_edit();
+        assert!(!s.secret_edit_open);
+
+        match &s.fields[1] {
+            SettingsField::Secret { value, .. } => assert_eq!(value, "sk-1"),
+            _ => panic!("expected Secret field"),
+        }
+    }
+
+    #[test]
+    fn secret_edit_cursor_movement() {
+        let mut s = SettingsState::new_empty();
+        s.cursor = 2;
+        s.open_secret_edit();
+        s.secret_edit_type_char('a');
+        s.secret_edit_type_char('b');
+        s.secret_edit_type_char('c');
+        assert_eq!(s.secret_edit_cursor, 3);
+
+        s.secret_edit_left();
+        assert_eq!(s.secret_edit_cursor, 2);
+        s.secret_edit_type_char('X');
+        assert_eq!(s.secret_edit_buffer, "abXc");
+
+        s.secret_edit_home();
+        assert_eq!(s.secret_edit_cursor, 0);
+        s.secret_edit_type_char('Z');
+        assert_eq!(s.secret_edit_buffer, "ZabXc");
+
+        s.secret_edit_end();
+        assert_eq!(s.secret_edit_cursor, 5);
+        s.secret_edit_backspace();
+        assert_eq!(s.secret_edit_buffer, "ZabX");
+    }
+
+    #[test]
+    fn secret_edit_non_ascii_ignored() {
+        let mut s = SettingsState::new_empty();
+        s.cursor = 2;
+        s.open_secret_edit();
+        s.secret_edit_type_char('a');
+        s.secret_edit_type_char('é'); // non-ASCII → rejected
+        s.secret_edit_type_char('€'); // non-ASCII → rejected
+        assert_eq!(s.secret_edit_buffer, "a");
+        assert_eq!(s.secret_edit_cursor, 1);
+    }
+
+    #[test]
+    fn secret_edit_open_on_non_secret_is_noop() {
+        let mut s = SettingsState::new_empty();
+        // Cursor 1 = Provider field (Selector, not Secret)
+        s.cursor = 1;
+        s.open_secret_edit();
+        assert!(!s.secret_edit_open);
+    }
+
+    #[test]
+    fn secret_edit_open_loads_existing_value() {
+        let mut s = SettingsState::new_empty();
+        s.cursor = 2;
+        // Pre-set a value
+        if let SettingsField::Secret { value, .. } = &mut s.fields[1] {
+            value.push_str("pre-existing");
+        }
+
+        s.open_secret_edit();
+        assert_eq!(s.secret_edit_buffer, "pre-existing");
+        assert_eq!(s.secret_edit_cursor, 12); // "pre-existing" len
+    }
+
+    #[test]
+    fn secret_edit_confirm_sets_saved_to_false() {
+        let mut s = SettingsState::new_empty();
+        s.cursor = 2;
+        s.saved = true; // pretend something was saved
+
+        s.open_secret_edit();
+        s.secret_edit_type_char('x');
+        s.confirm_secret_edit();
+        assert!(!s.saved); // modified — needs save again
     }
 }

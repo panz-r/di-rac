@@ -285,8 +285,6 @@ impl App {
                         self.settings.as_mut().unwrap().cancel_secret_edit();
                     } else if s.selector_open {
                         self.settings.as_mut().unwrap().cancel_selector();
-                    } else if s.saving {
-                        // Don't close while async save is in flight
                     } else {
                         self.settings = None;
                         self.mode = Mode::Normal;
@@ -1053,6 +1051,140 @@ impl App {
 
     pub fn view(&self, frame: &mut Frame) {
         ui::render(frame, self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    // -----------------------------------------------------------------------
+    // Multi-agent queue servicing
+    // -----------------------------------------------------------------------
+    fn make_agent(id: Uuid) -> AgentState {
+        AgentState::new(id, format!("Agent-{:x}", id.as_u128() & 0xFFFF))
+    }
+
+    #[test]
+    fn respond_to_queue_item_removes_and_clears_pending() {
+        let mut app = App::new();
+        let id_a = Uuid::from_u128(1);
+        let id_b = Uuid::from_u128(2);
+        app.agents.push(make_agent(id_a));
+        app.agents.push(make_agent(id_b));
+
+        // Set up pending inputs for both agents
+        app.agents[0].pending_input = Some(PendingInput::Approval {
+            tool: "bash".to_string(),
+            args: serde_json::json!({"command": "ls"}),
+            description: "Run ls".to_string(),
+        });
+        app.agents[1].pending_input = Some(PendingInput::Approval {
+            tool: "read".to_string(),
+            args: serde_json::json!({"path": "f.txt"}),
+            description: "Read file".to_string(),
+        });
+
+        // Push both to queue (agent A first)
+        let pending_a = app.agents[0].pending_input.clone().unwrap();
+        let pending_b = app.agents[1].pending_input.clone().unwrap();
+        app.input_queue.push((id_a, pending_a));
+        app.input_queue.push((id_b, pending_b));
+        assert_eq!(app.input_queue.len(), 2);
+
+        // Respond to first queue item (agent A)
+        let msg = app.respond_to_queue_item("y");
+        assert!(msg.is_some());
+        assert_eq!(app.input_queue.len(), 1);
+        // Agent A's pending should be cleared (no more items for A)
+        assert!(app.agents[0].pending_input.is_none());
+        // Agent B's pending should still be set
+        assert!(app.agents[1].pending_input.is_some());
+
+        // Respond to second queue item (agent B)
+        let msg = app.respond_to_queue_item("y");
+        assert!(msg.is_some());
+        assert!(app.input_queue.is_empty());
+        assert!(app.agents[1].pending_input.is_none());
+    }
+
+    #[test]
+    fn respond_to_queue_item_empty_queue_returns_none() {
+        let mut app = App::new();
+        app.agents.push(make_agent(Uuid::from_u128(3)));
+        assert!(app.input_queue.is_empty());
+        let msg = app.respond_to_queue_item("yes");
+        assert!(msg.is_none());
+    }
+
+    #[test]
+    fn clear_pending_for_agent_advances_to_next_queue_item() {
+        let mut app = App::new();
+        let id = Uuid::from_u128(4);
+        app.agents.push(make_agent(id));
+
+        // Two pending inputs for the SAME agent
+        let p1 = PendingInput::Approval {
+            tool: "bash".to_string(),
+            args: serde_json::json!({"command": "ls"}),
+            description: "first".to_string(),
+        };
+        let p2 = PendingInput::Approval {
+            tool: "read".to_string(),
+            args: serde_json::json!({"path": "f.txt"}),
+            description: "second".to_string(),
+        };
+
+        app.agents[0].pending_input = Some(p1.clone());
+        app.input_queue.push((id, p1));
+        app.input_queue.push((id, p2));
+
+        // Respond to first item
+        let msg = app.respond_to_queue_item("y");
+        assert!(msg.is_some());
+        // Queue should have 1 item left
+        assert_eq!(app.input_queue.len(), 1);
+        // Agent should still have pending_input = next item
+        assert!(app.agents[0].pending_input.is_some());
+        // The remaining item should be the second one
+        if let Some(PendingInput::Approval { description, .. }) = &app.agents[0].pending_input {
+            assert_eq!(description, "second");
+        } else {
+            panic!("expected Approval");
+        }
+    }
+
+    #[test]
+    fn respond_to_pending_always_approves() {
+        let mut app = App::new();
+        let id = Uuid::from_u128(5);
+        app.agents.push(make_agent(id));
+
+        app.agents[0].pending_input = Some(PendingInput::Approval {
+            tool: "bash".to_string(),
+            args: serde_json::json!({"command": "ls"}),
+            description: "test".to_string(),
+        });
+
+        let msg = app.respond_to_pending();
+        assert!(msg.is_some());
+        if let Some(FrontendMessage::ApprovalResponse { agent_id, approved }) = msg {
+            assert_eq!(agent_id, id);
+            assert!(approved);
+        } else {
+            panic!("expected ApprovalResponse");
+        }
+    }
+
+    #[test]
+    fn respond_to_pending_no_pending_returns_none() {
+        let mut app = App::new();
+        let id = Uuid::from_u128(5);
+        app.agents.push(make_agent(id));
+
+        let msg = app.respond_to_pending();
+        assert!(msg.is_none());
     }
 }
 
