@@ -1424,16 +1424,45 @@ impl AgentEngine {
                 // Gateway expects content as a string, not a JSON object.
                 // Always provide content to avoid gateway validation rejecting empty messages.
                 let content = match &m.content {
-                    serde_json::Value::Null => Some(serde_json::Value::String("(empty)".to_string())),
-                    serde_json::Value::String(s) => {
-                        if s.is_empty() && !m.tool_calls.is_empty() {
-                            // Assistant with tool calls but no text: provide placeholder
+                    serde_json::Value::Null => {
+                        if !m.tool_calls.is_empty() {
                             Some(serde_json::Value::String(".".to_string()))
+                        } else {
+                            Some(serde_json::Value::String("(empty)".to_string()))
+                        }
+                    }
+                    serde_json::Value::String(s) => {
+                        if s.is_empty() {
+                            if !m.tool_calls.is_empty() {
+                                Some(serde_json::Value::String(".".to_string()))
+                            } else if role == "assistant" {
+                                // Compaction may strip tool_calls — produce minimal placeholder
+                                let tn = if !m.tool_meta.tool_name.is_empty() {
+                                    m.tool_meta.tool_name.as_str()
+                                } else {
+                                    "tool"
+                                };
+                                Some(serde_json::Value::String(
+                                    format!("[compacted: called {}]", tn)
+                                ))
+                            } else {
+                                Some(serde_json::Value::String(s.clone()))
+                            }
                         } else {
                             Some(serde_json::Value::String(s.clone()))
                         }
                     }
-                    other => Some(serde_json::Value::String(other.to_string())),
+                    serde_json::Value::Object(ref obj) => {
+                        let s = obj.get("_output_str")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if s.is_empty() {
+                            Some(serde_json::Value::String(m.content.to_string()))
+                        } else {
+                            Some(serde_json::Value::String(s.to_string()))
+                        }
+                    }
+                    ref other => Some(serde_json::Value::String(other.to_string())),
                 };
 
                 GatewayMessage {
@@ -2142,7 +2171,7 @@ impl AgentEngine {
                         // Write-execute risk detection: warn when bash runs a script
                         // that was written/edited by the agent in this session.
                         if tool_name == "bash" {
-                            // Extract the output string and CWD from the result object
+                            // Extract output and CWD from the structured bash result
                             let bash_output_str = result.get("_output_str").and_then(|v| v.as_str()).unwrap_or("").to_string();
                             let bash_cwd_str = result.get("_cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
                             if !bash_cwd_str.is_empty() {
