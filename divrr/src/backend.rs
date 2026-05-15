@@ -172,9 +172,17 @@ impl DiCoreBackend {
 
 impl Drop for DiCoreBackend {
     fn drop(&mut self) {
-        // Kill the child process. Avoid blocking sleeps in drop — the OS
-        // will reap the zombie when our process exits, and try_wait is a
-        // non-blocking best-effort check.
+        if let Some(pid) = self.child.id() {
+            // Send SIGTERM first so di-core can shut down daemon children cleanly
+            // via its SIGTERM handler (breaks main loop, drops daemon handles).
+            let _ = std::process::Command::new("kill")
+                .arg("-TERM")
+                .arg(pid.to_string())
+                .output();
+        }
+        // Brief wait for di-core to handle SIGTERM and reap daemons
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        // Force kill if still alive
         let _ = self.child.start_kill();
         let _ = self.child.try_wait();
     }

@@ -37,6 +37,16 @@ pub fn summarize_tool_args(tool: &str, args: &serde_json::Value) -> String {
             let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
             if name.is_empty() { sub.to_string() } else { format!("{} {}", sub, name) }
         }
+        "repo" | "compact" | "ask" | "done" | "plan" | "task" => {
+            args.get("command").and_then(|v| v.as_str()).unwrap_or("?").to_string()
+        }
+        "tools" => {
+            args.get("command").and_then(|v| v.as_str()).unwrap_or("list").to_string()
+        }
+        "memory" => {
+            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("list");
+            cmd.to_string()
+        }
         _ => args.to_string().chars().take(40).collect(),
     }
 }
@@ -211,6 +221,78 @@ mod tests {
     fn summarize_symbols_default_subcommand() {
         let args = serde_json::json!({ "name": "bar" });
         assert_eq!(summarize_tool_args("symbols", &args), "search bar");
+    }
+
+    #[test]
+    fn summarize_repo() {
+        let args = serde_json::json!({ "command": "--detail files" });
+        assert_eq!(summarize_tool_args("repo", &args), "--detail files");
+    }
+
+    #[test]
+    fn summarize_repo_missing() {
+        let args = serde_json::json!({});
+        assert_eq!(summarize_tool_args("repo", &args), "?");
+    }
+
+    #[test]
+    fn summarize_compact() {
+        let args = serde_json::json!({ "command": "summary --keep src/main.rs" });
+        assert_eq!(summarize_tool_args("compact", &args), "summary --keep src/main.rs");
+    }
+
+    #[test]
+    fn summarize_ask() {
+        let args = serde_json::json!({ "command": "Are you sure? --options Yes,No" });
+        assert_eq!(summarize_tool_args("ask", &args), "Are you sure? --options Yes,No");
+    }
+
+    #[test]
+    fn summarize_done() {
+        let args = serde_json::json!({ "command": "Task complete --cmd echo done" });
+        assert_eq!(summarize_tool_args("done", &args), "Task complete --cmd echo done");
+    }
+
+    #[test]
+    fn summarize_plan() {
+        let args = serde_json::json!({ "command": "Implement X by doing Y" });
+        assert_eq!(summarize_tool_args("plan", &args), "Implement X by doing Y");
+    }
+
+    #[test]
+    fn summarize_task() {
+        let args = serde_json::json!({ "command": "Investigate the bug" });
+        assert_eq!(summarize_tool_args("task", &args), "Investigate the bug");
+    }
+
+    #[test]
+    fn summarize_tools_with_filter() {
+        let args = serde_json::json!({ "command": "bash" });
+        assert_eq!(summarize_tool_args("tools", &args), "bash");
+    }
+
+    #[test]
+    fn summarize_tools_default() {
+        let args = serde_json::json!({});
+        assert_eq!(summarize_tool_args("tools", &args), "list");
+    }
+
+    #[test]
+    fn summarize_memory_list() {
+        let args = serde_json::json!({ "command": "list" });
+        assert_eq!(summarize_tool_args("memory", &args), "list");
+    }
+
+    #[test]
+    fn summarize_memory_read() {
+        let args = serde_json::json!({ "command": "read notes.md" });
+        assert_eq!(summarize_tool_args("memory", &args), "read notes.md");
+    }
+
+    #[test]
+    fn summarize_memory_default() {
+        let args = serde_json::json!({});
+        assert_eq!(summarize_tool_args("memory", &args), "list");
     }
 
     #[test]

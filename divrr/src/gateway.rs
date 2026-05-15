@@ -81,18 +81,33 @@ pub fn launch(gateway_bin: &str) -> io::Result<GatewayChild> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
-    let child = cmd.spawn()?;
+    let mut child = cmd.spawn()?;
 
     // Wait for socket to become available (up to 3 seconds)
     for _ in 0..30 {
         if UnixStream::connect(&socket_path).is_ok() {
             return Ok(GatewayChild { child: Some(child), socket_path });
         }
+        // Check if child has already exited — avoids hanging on a crashed gateway
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let _ = std::fs::remove_file(&socket_path);
+                return Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused,
+                    "api-gateway exited before creating socket"));
+            }
+            Ok(None) => {} // still running
+            Err(e) => {
+                let _ = std::fs::remove_file(&socket_path);
+                return Err(std::io::Error::new(std::io::ErrorKind::Other,
+                    format!("failed to check api-gateway status: {}", e)));
+            }
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // Gateway may still be starting — return the path anyway
-    Ok(GatewayChild { child: Some(child), socket_path })
+    // Gateway process is still running but socket hasn't appeared
+    Err(std::io::Error::new(std::io::ErrorKind::TimedOut,
+        "api-gateway did not create socket within 3 seconds"))
 }
 
 /// Find the gateway binary relative to the divrr binary or in common locations.

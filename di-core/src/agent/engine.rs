@@ -1499,10 +1499,13 @@ impl AgentEngine {
             AgentMode::Plan => self.plan_provider_config.as_ref().or(self.provider_config.as_ref()),
             AgentMode::Act => self.provider_config.as_ref(),
         };
+        let active_provider = active_provider.ok_or_else(|| {
+            anyhow!("No provider configured. Send SetProviderConfig before SpawnAgent.")
+        })?;
         let request = GatewayRequest {
             id: self.request_id_counter,
             stream: true,
-            provider: active_provider.cloned(),
+            provider: Some(active_provider.clone()),
             messages: frame.messages,
             system: Some(frame.system),
             tools: Some(frame.tools),

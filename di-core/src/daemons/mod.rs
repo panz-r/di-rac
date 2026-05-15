@@ -391,6 +391,12 @@ pub struct CommandDaemon {
     request_id: u32,
 }
 
+impl Drop for CommandDaemon {
+    fn drop(&mut self) {
+        let _ = self._child.start_kill();
+    }
+}
+
 impl CommandDaemon {
     /// Spawn the command daemon as a child process.
     /// Waits for "ready" on stderr before returning.

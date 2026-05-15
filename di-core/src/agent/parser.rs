@@ -130,6 +130,9 @@ impl StreamingToolAccumulator {
         }
 
         for (_, pending) in self.pending {
+            if pending.name.is_empty() {
+                continue;
+            }
             let args: Value = serde_json::from_str(&pending.arguments_str)
                 .unwrap_or_else(|_| {
                     if std::env::var("DIRAC_DEBUG").is_ok() {

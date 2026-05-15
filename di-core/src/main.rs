@@ -114,12 +114,32 @@ async fn main() -> Result<()> {
     // Channel for spawned tasks to report completion so we can clean up frontend_channels.
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<Uuid>(32);
 
+    // SIGTERM channel: on graceful shutdown, break the main loop so that
+    // daemon children are killed via Drop before di-core exits.
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        Ok(mut sigterm) => {
+            tokio::spawn(async move {
+                sigterm.recv().await;
+                let _ = shutdown_tx.send(()).await;
+            });
+        }
+        Err(e) => {
+            log.log(&format!("WARNING: could not install SIGTERM handler: {}", e));
+        }
+    }
+
     loop {
         tokio::select! {
             // Agent task finished — clean up its channel
             Some(agent_id) = done_rx.recv() => {
                 log.log(&format!("agent {} task finished, cleaning up channel", agent_id));
                 orchestrator.cleanup_agent(&agent_id);
+            }
+            // SIGTERM received — break the main loop so Drop runs on daemons
+            _ = shutdown_rx.recv() => {
+                log.log("SIGTERM received, shutting down");
+                break;
             }
             // Stdin message from frontend
             line = stdin_rx.recv() => {
