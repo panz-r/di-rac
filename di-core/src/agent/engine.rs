@@ -2227,6 +2227,9 @@ impl AgentEngine {
                         let inner = if result.get("status").and_then(|v| v.as_str()) == Some("error") {
                             // Error result: extract the error field which contains <tool_error> XML
                             result.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string()
+                        } else if let Some(display) = result.get("_display").and_then(|v| v.as_str()) {
+                            // Structured result with display text (e.g. write returns path/lines + _display)
+                            display.to_string()
                         } else if let Some(s) = result.as_str() {
                             s.to_string()
                         } else {
@@ -2234,6 +2237,12 @@ impl AgentEngine {
                         };
                         // Build tool-specific envelope header fields matching tool description specs
                         let extra_header = match tool_name.as_str() {
+                            "write" => {
+                                // OK | lines:N | path:<path> | tokens:N
+                                let path = result.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                let lines = result.get("lines").and_then(|v| v.as_i64()).unwrap_or(0);
+                                format!(" | lines:{} | path:{}", lines, path)
+                            }
                             "read" => {
                                 // OK | detail:<level> | handles:N | lines:N | tokens:N
                                 let mut parts = Vec::new();

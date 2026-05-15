@@ -793,15 +793,13 @@ impl ToolExecutor {
 
         tokio::fs::write(path, content).await?;
 
-        let mut output = format!(
-            "The content was successfully saved to {}.\n\nIMPORTANT: Always base your future edit operations on this updated file state. (If you need to verify the current file content for a future edit, you may use the read tool.)",
-            path
-        );
+        let line_count = read_file::count_lines(content);
+        let mut output = format!("Created: {} ({} lines)", path, line_count);
         if !security_violations.is_empty() {
-            output.push_str(&format!("\n\n[SECURITY_CONSTRAINTS]\n{}",
+            output.push_str(&format!("\n[SECURITY_CONSTRAINTS]\n{}",
                 serde_json::to_string(&security_violations).unwrap_or_default()));
         }
-        Ok(json!(output))
+        Ok(json!({ "_display": output, "path": path, "lines": line_count }))
     }
 
     /// Execute bash command via the command daemon's execute endpoint.
