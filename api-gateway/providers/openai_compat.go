@@ -701,6 +701,7 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 		}
 
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			log.Printf("[SSE] malformed chunk, skipping: %v (data: %s)", err, data[:min(len(data), 128)])
 			continue
 		}
 
