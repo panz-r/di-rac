@@ -105,8 +105,8 @@ fn extract_flags(tokens: &[String]) -> ParsedFlags {
 
     // Boolean flags that don't take a value
     let bool_flags = [
-        "--dry-run", "--retry", "--recursive", "--create-dirs",
-        "--help", "--verbose",
+        "--dry-run", "--recursive", "--create-dirs",
+        "--help", "--verbose", "--verify", "--list", "--clear",
     ];
 
     while i < tokens.len() {
