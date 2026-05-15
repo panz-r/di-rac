@@ -1,6 +1,6 @@
 // API Gateway communication:
 //   The api-gateway is a separate process that exposes an HTTP-like JSON interface
-//   over a Unix domain socket (per-PID path: ~/.dirac/api-gateway-<pid>.sock).
+//   over a Unix domain socket (per-PID path: ~/.di/api-gateway-<pid>.sock).
 //   The settings panel uses GatewayConnection for CRUD operations (list providers,
 //   list models, validate API keys). The gateway is launched alongside divrr and
 //   killed on drop via GatewayChild. The gateway daemon auto-shuts down after 2
@@ -62,21 +62,21 @@ impl Drop for GatewayChild {
 }
 
 /// Launch the API gateway as a child process with a per-PID socket path.
-/// Sets DIRAC_API_GATEWAY_SOCKET in the current process env so settings picks it up.
+/// Sets DI_API_GATEWAY_SOCKET in the current process env so settings picks it up.
 /// Returns a GatewayChild that will kill the process on drop.
 pub fn launch(gateway_bin: &str) -> io::Result<GatewayChild> {
     let pid = std::process::id();
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let socket_path = format!("{}/.dirac/api-gateway-{}.sock", home, pid);
+    let socket_path = format!("{}/.di/api-gateway-{}.sock", home, pid);
 
     // Clean up stale socket if it exists
     let _ = std::fs::remove_file(&socket_path);
 
     // Set env var so settings.rs picks it up
-    std::env::set_var("DIRAC_API_GATEWAY_SOCKET", &socket_path);
+    std::env::set_var("DI_API_GATEWAY_SOCKET", &socket_path);
 
     let mut cmd = Command::new(gateway_bin);
-    cmd.env("DIRAC_API_GATEWAY_SOCKET", &socket_path);
+    cmd.env("DI_API_GATEWAY_SOCKET", &socket_path);
     // Detach from parent's stdin/stdout so gateway doesn't interfere with TUI
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -155,9 +155,9 @@ mod tests {
     fn socket_path_contains_pid() {
         let pid = std::process::id();
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        let socket_path = format!("{}/.dirac/api-gateway-{}.sock", home, pid);
+        let socket_path = format!("{}/.di/api-gateway-{}.sock", home, pid);
         assert!(socket_path.contains(&pid.to_string()));
-        assert!(socket_path.contains(".dirac"));
+        assert!(socket_path.contains(".di"));
         assert!(socket_path.ends_with(".sock"));
     }
 
@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn gateway_child_kill_does_not_panic_on_dead_child() {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        let socket_path = format!("{}/.dirac/test-gateway-{}.sock", home, std::process::id());
+        let socket_path = format!("{}/.di/test-gateway-{}.sock", home, std::process::id());
         let mut child = GatewayChild { child: None, socket_path };
         child.kill(); // should not panic
     }
@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn gateway_child_drop_does_not_panic() {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        let socket_path = format!("{}/.dirac/test-gateway-{}.sock", home, std::process::id());
+        let socket_path = format!("{}/.di/test-gateway-{}.sock", home, std::process::id());
         let child = GatewayChild { child: None, socket_path };
         drop(child); // should not panic
     }

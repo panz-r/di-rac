@@ -64,9 +64,9 @@ build-di-core:
 	@echo "  DONE    $(DIST)/di-core"
 
 # ---------------------------------------------------------------------------
-# Convenience install targets — copies binaries to ~/.dirac/dist/
+# Convenience install targets — copies binaries to ~/.di/dist/
 # ---------------------------------------------------------------------------
-PREFIX ?= $(HOME)/.dirac
+PREFIX ?= $(HOME)/.di
 
 install: build
 	@mkdir -p $(PREFIX)/dist

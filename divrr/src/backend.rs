@@ -16,7 +16,7 @@ impl DiCoreBackend {
     /// Spawn di-core as a child process with piped stdio.
     pub fn spawn(core_path: &str) -> Result<Self> {
         // Find command daemon binary: check env var, then next to di-core, then known locations
-        let cmd_binary = std::env::var("DIRAC_COMMAND_BINARY").ok()
+        let cmd_binary = std::env::var("DI_COMMAND_BINARY").ok()
             .filter(|p| std::path::Path::new(p).exists())
             .unwrap_or_else(|| {
                 let candidates = [
@@ -31,7 +31,7 @@ impl DiCoreBackend {
             });
 
         // Find analyzer daemon binary
-        let analyzer_binary = std::env::var("DIRAC_ANALYZER_BINARY").ok()
+        let analyzer_binary = std::env::var("DI_ANALYZER_BINARY").ok()
             .filter(|p| std::path::Path::new(p).exists())
             .unwrap_or_else(|| {
                 let candidates = [
@@ -45,8 +45,8 @@ impl DiCoreBackend {
             });
 
         let mut child = Command::new(core_path)
-            .env("DIRAC_COMMAND_BINARY", &cmd_binary)
-            .env("DIRAC_ANALYZER_BINARY", &analyzer_binary)
+            .env("DI_COMMAND_BINARY", &cmd_binary)
+            .env("DI_ANALYZER_BINARY", &analyzer_binary)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -106,7 +106,7 @@ impl DiCoreBackend {
         if let Some(stderr) = child.stderr.take() {
             tokio::spawn(async move {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-                let log_path = std::path::Path::new(&home).join(".dirac").join("di-core.log");
+                let log_path = std::path::Path::new(&home).join(".di").join("di-core.log");
 
                 let rotate = || {
                     if let Ok(meta) = std::fs::metadata(&log_path) {

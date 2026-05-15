@@ -2,12 +2,12 @@ use std::sync::Mutex;
 
 static LOG_MUTEX: Mutex<()> = Mutex::new(());
 
-/// Append a timestamped line to ~/.dirac/divrr.log (best-effort, never fails).
+/// Append a timestamped line to ~/.di/divrr.log (best-effort, never fails).
 /// When the log exceeds 1MB, keeps the most recent 256KB.
 pub fn log_event(msg: &str) {
     let _lock = LOG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let path = std::path::Path::new(&home).join(".dirac").join("divrr.log");
+    let path = std::path::Path::new(&home).join(".di").join("divrr.log");
     if let Ok(meta) = std::fs::metadata(&path) {
         if meta.len() > 1_048_576 {
             if let Ok(data) = std::fs::read(&path) {

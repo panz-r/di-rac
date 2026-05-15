@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-const DEFAULT_JSONL_FILE: &str = ".dirac/observations.jsonl";
+const DEFAULT_JSONL_FILE: &str = ".di/observations.jsonl";
 const MAX_STORED_OBSERVATIONS: usize = 200;
 
 pub struct ObservationStore {

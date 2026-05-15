@@ -25,10 +25,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-/// Debug log — only prints when DIRAC_DEBUG is set.
+/// Debug log — only prints when DI_DEBUG is set.
 macro_rules! debug_log {
     ($($arg:tt)*) => {
-        if std::env::var("DIRAC_DEBUG").is_ok() {
+        if std::env::var("DI_DEBUG").is_ok() {
             eprintln!($($arg)*);
         }
     };
@@ -1078,15 +1078,15 @@ impl AgentEngine {
             })), None);
         }
 
-        // /tmp redirect: rewrite /tmp paths to .dirac-tmp/
+        // /tmp redirect: rewrite /tmp paths to .di-tmp/
         if let Some(cmd) = tool.args.get("command").and_then(|v| v.as_str()) {
             if cmd.contains("/tmp/") {
-                let redirected = cmd.replace("/tmp/", ".dirac-tmp/");
+                let redirected = cmd.replace("/tmp/", ".di-tmp/");
                 let mut modified = tool.args.clone();
                 if let Some(map) = modified.as_object_mut() {
                     map.insert("command".to_string(), json!(redirected));
                 }
-                let _ = std::fs::create_dir_all(".dirac-tmp");
+                let _ = std::fs::create_dir_all(".di-tmp");
                 return (None, Some(modified));
             }
         }
@@ -1516,7 +1516,7 @@ impl AgentEngine {
         };
 
         // Debug: dump request to log
-        if std::env::var("DIRAC_DEBUG").is_ok() {
+        if std::env::var("DI_DEBUG").is_ok() {
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/di-core-request.log") {
                 use std::io::Write;
                 let _ = writeln!(f, "=== Request {} ===", self.request_id_counter);
@@ -2658,10 +2658,10 @@ impl AgentEngine {
         }
     }
 
-    /// Flush observer telemetry to .dirac-logs/observer-telemetry.jsonl.
+    /// Flush observer telemetry to .di-logs/observer-telemetry.jsonl.
     fn flush_observer_telemetry(&self, pause_weight: Option<f32>) {
         use std::io::Write;
-        let dir = std::path::Path::new(".dirac-logs");
+        let dir = std::path::Path::new(".di-logs");
         let _ = std::fs::create_dir_all(dir);
         let path = dir.join("observer-telemetry.jsonl");
         let entry = serde_json::json!({

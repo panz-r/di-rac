@@ -39,8 +39,8 @@ pub struct GatewayConnection {
 impl GatewayConnection {
     pub fn new() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        let socket_path = std::env::var("DIRAC_API_GATEWAY_SOCKET")
-            .unwrap_or_else(|_| format!("{}/.dirac/api-gateway.sock", home));
+        let socket_path = std::env::var("DI_API_GATEWAY_SOCKET")
+            .unwrap_or_else(|_| format!("{}/.di/api-gateway.sock", home));
         Self { socket_path, reader: None }
     }
 

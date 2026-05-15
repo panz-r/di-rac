@@ -66,7 +66,7 @@ impl StreamingToolAccumulator {
                 if let Some(idx) = chunk.index {
                     self.index_to_id.insert(idx, id.clone());
                 }
-                if std::env::var("DIRAC_DEBUG").is_ok() {
+                if std::env::var("DI_DEBUG").is_ok() {
                     eprintln!("[parser] content chunk: idx={:?} tool_call_id={} name={} is_tool_use={}",
                         chunk.index, id, name, is_tool_use);
                 }
@@ -122,7 +122,7 @@ impl StreamingToolAccumulator {
 
         // Native tool calls from streaming
         for (_, pending) in &self.pending {
-            if std::env::var("DIRAC_DEBUG").is_ok() {
+            if std::env::var("DI_DEBUG").is_ok() {
                 eprintln!("[parser] finalize: name={} args_len={} args={:?}",
                     pending.name, pending.arguments_str.len(),
                     if pending.arguments_str.len() > 200 { &pending.arguments_str[..200] } else { &pending.arguments_str });
@@ -135,7 +135,7 @@ impl StreamingToolAccumulator {
             }
             let args: Value = serde_json::from_str(&pending.arguments_str)
                 .unwrap_or_else(|_| {
-                    if std::env::var("DIRAC_DEBUG").is_ok() {
+                    if std::env::var("DI_DEBUG").is_ok() {
                         eprintln!("[parser] finalize: FAILED to parse args for {}: {:?}", pending.name, pending.arguments_str);
                     }
                     serde_json::json!({})

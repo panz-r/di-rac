@@ -13,7 +13,7 @@ use std::io::{self, BufRead, Write};
 use anyhow::Result;
 use uuid::Uuid;
 
-/// Simple file logger that appends to ~/.dirac/di-core.log
+/// Simple file logger that appends to ~/.di/di-core.log
 struct FileLogger {
     file: std::fs::File,
 }
@@ -21,7 +21,7 @@ struct FileLogger {
 impl FileLogger {
     fn new() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        let dir = std::path::Path::new(&home).join(".dirac");
+        let dir = std::path::Path::new(&home).join(".di");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("di-core.log");
         let file = std::fs::OpenOptions::new()
@@ -51,16 +51,16 @@ async fn main() -> Result<()> {
     let mut log = FileLogger::new();
     log.log("di-core starting");
 
-    let analyzer_binary = std::env::var("DIRAC_ANALYZER_BINARY")
+    let analyzer_binary = std::env::var("DI_ANALYZER_BINARY")
         .unwrap_or_else(|_| "divrr-analyzer".to_string());
-    let command_daemon_binary = std::env::var("DIRAC_COMMAND_BINARY")
+    let command_daemon_binary = std::env::var("DI_COMMAND_BINARY")
         .unwrap_or_else(|_| "di-rvv-cmd".to_string());
-    let central_socket = std::env::var("DIRAC_CENTRAL_SOCKET")
+    let central_socket = std::env::var("DI_CENTRAL_SOCKET")
         .unwrap_or_else(|_| "/tmp/di-vrr-coord.sock".to_string());
-    let gateway_socket = std::env::var("DIRAC_API_GATEWAY_SOCKET")
+    let gateway_socket = std::env::var("DI_API_GATEWAY_SOCKET")
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-            format!("{}/.dirac/api-gateway.sock", home)
+            format!("{}/.di/api-gateway.sock", home)
         });
 
     log.log(&format!("config: analyzer_binary={} cmd_binary={} central={} gateway={}",

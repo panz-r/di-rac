@@ -7,10 +7,11 @@ api-gateway/api-gateway
 bin
 dist
 .di/
-.dirac/
+.di-logs/
 .dirac-logs/
 .dirac-state/
-.dirac-symbol-index/
+.dirac/outputs/
+.dirac/
 tmp
 .vscode-test/
 *.vsix
@@ -21,7 +22,7 @@ tmp
 
 pnpm-lock.yaml
 
-.diracignore
+.diignore
 .venv
 .actrc
 CLAUDE.local.md
@@ -70,9 +71,4 @@ __pycache__/
 test_out/
 tmp_*.txt
 *scratch*
-.dirac-symbol-index*
-.dirac-logs/
-.dirac-state/
-.dirac/outputs/
 treesitter-daemon/target/
-api-gateway/dirac-api-gateway

@@ -670,9 +670,9 @@ pub fn validate_parameters(
 
 fn settings_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let dir = std::path::Path::new(&home).join(".dirac");
+    let dir = std::path::Path::new(&home).join(".di");
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        crate::logging::log_event(&format!("failed to create ~/.dirac: {}", e));
+        crate::logging::log_event(&format!("failed to create ~/.di: {}", e));
     }
     dir.join("provider-settings.json")
 }

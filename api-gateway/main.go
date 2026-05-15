@@ -30,19 +30,19 @@ const Version = "0.1.0"
 
 // Rate limit configuration.
 // Priority: environment variable > ldflags > default.
-// Env vars: DIRAC_API_GATEWAY_RATE_PER_SEC, DIRAC_API_GATEWAY_MAX_CONCURRENT
+// Env vars: DI_API_GATEWAY_RATE_PER_SEC, DI_API_GATEWAY_MAX_CONCURRENT
 var maxRequestsPerSecStr string = "5"
 var maxInflightReqsStr string = "3"
 
 func resolveRateLimits() (ratePerSec, maxConcurrent int) {
 	ratePerSec = parseLimit(maxRequestsPerSecStr, 5, 100)
 	maxConcurrent = parseLimit(maxInflightReqsStr, 3, 100)
-	if v := os.Getenv("DIRAC_API_GATEWAY_RATE_PER_SEC"); v != "" {
+	if v := os.Getenv("DI_API_GATEWAY_RATE_PER_SEC"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			ratePerSec = min(n, 100)
 		}
 	}
-	if v := os.Getenv("DIRAC_API_GATEWAY_MAX_CONCURRENT"); v != "" {
+	if v := os.Getenv("DI_API_GATEWAY_MAX_CONCURRENT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			maxConcurrent = min(n, 100)
 		}
@@ -58,7 +58,7 @@ func parseLimit(s string, defVal, maxVal int) int {
 	return defVal
 }
 
-var SocketPath = os.Getenv("DIRAC_API_GATEWAY_SOCKET")
+var SocketPath = os.Getenv("DI_API_GATEWAY_SOCKET")
 
 func init() {
 	if SocketPath == "" {
@@ -66,7 +66,7 @@ func init() {
 		if err != nil {
 			home = "/tmp"
 		}
-		SocketPath = home + "/.dirac/api-gateway.sock"
+		SocketPath = home + "/.di/api-gateway.sock"
 	}
 }
 

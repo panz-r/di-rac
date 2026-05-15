@@ -232,7 +232,7 @@ impl GatewayStreamClient {
     pub fn validate_socket(&self) -> Result<()> {
         let path = std::path::Path::new(&self.socket_path);
         if !path.exists() {
-            return Err(anyhow!("Gateway socket not found at '{}'. Check DIRAC_API_GATEWAY_SOCKET or ensure the api-gateway is running.", self.socket_path));
+            return Err(anyhow!("Gateway socket not found at '{}'. Check DI_API_GATEWAY_SOCKET or ensure the api-gateway is running.", self.socket_path));
         }
         Ok(())
     }

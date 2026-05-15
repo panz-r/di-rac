@@ -124,10 +124,10 @@ async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let args = Args::parse();
 
-    // Ensure ~/.dirac exists before any I/O (logs, socket, settings).
+    // Ensure ~/.di exists before any I/O (logs, socket, settings).
     {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        let _ = std::fs::create_dir_all(std::path::Path::new(&home).join(".dirac"));
+        let _ = std::fs::create_dir_all(std::path::Path::new(&home).join(".di"));
     }
 
     // Launch API gateway (per-PID socket). _gateway_child kills the process on drop.
@@ -451,7 +451,7 @@ async fn main() -> color_eyre::Result<()> {
             None => {
                 crate::logging::log_event("di-core process exited");
                 let msg = if app.agents.is_empty() {
-                    "di-core exited before creating any agents. Check ~/.dirac/di-core.log."
+                    "di-core exited before creating any agents. Check ~/.di/di-core.log."
                 } else {
                     "di-core process exited"
                 };

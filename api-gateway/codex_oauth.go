@@ -66,7 +66,7 @@ func init() {
 	if err != nil {
 		return
 	}
-	dir := filepath.Join(home, ".dirac")
+	dir := filepath.Join(home, ".di")
 	os.MkdirAll(dir, 0700)
 	codexTokens.path = filepath.Join(dir, "codex-auth.json")
 }
