@@ -497,7 +497,7 @@ impl App {
                                 self.input_queue.remove(i);
                             }
                             self.clear_pending_for_agent(&agent_id);
-                            return Some(FrontendMessage::ApprovalResponse { agent_id, approved: true });
+                            return Some(FrontendMessage::ApprovalResponse { agent_id, approval_id: None, approved: true });
                         }
                         'n' | 'N' => {
                             if let Some(i) = self.input_queue.iter().position(|(id, p)| {
@@ -506,7 +506,7 @@ impl App {
                                 self.input_queue.remove(i);
                             }
                             self.clear_pending_for_agent(&agent_id);
-                            return Some(FrontendMessage::ApprovalResponse { agent_id, approved: false });
+                            return Some(FrontendMessage::ApprovalResponse { agent_id, approval_id: None, approved: false });
                         }
                         _ => {}
                     }
@@ -1012,7 +1012,7 @@ impl App {
             let msg = match &pending {
                 PendingInput::Approval { .. } => {
                     let approved = matches!(text.to_lowercase().as_str(), "y" | "yes" | "");
-                    FrontendMessage::ApprovalResponse { agent_id, approved }
+                    FrontendMessage::ApprovalResponse { agent_id, approval_id: None, approved }
                 }
                 PendingInput::Followup { .. } => {
                     FrontendMessage::FollowupAnswer {
@@ -1265,7 +1265,7 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
         let msg = app.handle_normal_mode(key);
         assert!(msg.is_some());
-        if let Some(FrontendMessage::ApprovalResponse { agent_id, approved }) = msg {
+        if let Some(FrontendMessage::ApprovalResponse { agent_id, approval_id: None, approved }) = msg {
             assert_eq!(agent_id, id);
             assert!(approved);
         } else {
@@ -1288,7 +1288,7 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
         let msg = app.handle_normal_mode(key);
         assert!(msg.is_some());
-        if let Some(FrontendMessage::ApprovalResponse { agent_id, approved }) = msg {
+        if let Some(FrontendMessage::ApprovalResponse { agent_id, approval_id: None, approved }) = msg {
             assert_eq!(agent_id, id);
             assert!(!approved);
         } else {

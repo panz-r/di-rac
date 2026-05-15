@@ -46,6 +46,7 @@ pub enum CoreEvent {
     },
     ApprovalNeeded {
         agent_id: Uuid,
+        approval_id: Uuid,
         tool: String,
         args: Value,
         description: String,
@@ -100,6 +101,7 @@ pub enum FrontendMessage {
     },
     ApprovalResponse {
         agent_id: Uuid,
+        approval_id: Option<Uuid>,
         approved: bool,
     },
     FollowupAnswer {

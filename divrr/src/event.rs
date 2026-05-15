@@ -116,7 +116,7 @@ pub fn handle_core_event(app: &mut App, event: CoreEvent) {
                 if let Some(agent) = app.agents.iter_mut().find(|a| a.id == agent_id) {
                     agent.pending_input = None;
                 }
-                app.pending_messages.push(FrontendMessage::ApprovalResponse {
+                app.pending_messages.push(FrontendMessage::ApprovalResponse { approval_id: None, 
                     agent_id,
                     approved: true,
                 });
