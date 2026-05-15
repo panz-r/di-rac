@@ -5,6 +5,10 @@
 
 IndexDB* db_open(const char *path) {
     IndexDB *db = malloc(sizeof(IndexDB));
+    if (!db) {
+        fprintf(stderr, "[db] Failed to allocate IndexDB\n");
+        return NULL;
+    }
     if (sqlite3_open(path, &db->db) != SQLITE_OK) {
         fprintf(stderr, "[db] Failed to open database: %s\n", sqlite3_errmsg(db->db));
         free(db);

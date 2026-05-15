@@ -7,6 +7,31 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block as WidgetBlock, Paragraph, Wrap};
 
+/// Strip ANSI escape sequences and control characters from user-controlled
+/// text before rendering to prevent terminal injection attacks.
+fn sanitize(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // ESC — consume until we hit a letter terminator (end of ANSI sequence)
+            // C1 control characters (0x80-0x9F) handled by is_control below.
+            while let Some(&n) = chars.peek() {
+                if n.is_ascii_alphabetic() && n != '\x1b' {
+                    chars.next(); // consume the terminator
+                    break;
+                }
+                chars.next();
+            }
+        } else if c.is_control() && c != '\n' && c != '\r' && c != '\t' {
+            // Drop remaining control chars
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let agent = match app.agents.get(app.active_tab) {
         Some(a) => a,
@@ -309,18 +334,19 @@ pub fn build_block_lines(lines: &mut Vec<Line>, block: &Block, max_width: usize,
 /// Truncate a single line to max_len characters (appending "…").
 /// When wrapping is enabled, return the full string unchanged.
 fn maybe_truncate(s: &str, max_len: usize, is_wrapped: bool) -> String {
-    if is_wrapped {
-        s.to_string()
-    } else {
-        truncate_single(s, max_len)
+    let s = sanitize(s);
+    if s.len() <= max_len || max_len < 3 || is_wrapped {
+        return s;
     }
+    let boundary = s.floor_char_boundary(max_len.saturating_sub(3));
+    format!("{}...", &s[..boundary])
 }
 
 fn truncate_single(s: &str, max_len: usize) -> String {
-    // Fast path: if byte length fits, char count definitely fits (each char >= 1 byte)
-    if s.len() <= max_len {
-        return s.to_string();
+    let s = sanitize(s);
+    if s.len() <= max_len || max_len < 3 {
+        return s;
     }
-    let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
-    format!("{}...", truncated)
+    let boundary = s.floor_char_boundary(max_len.saturating_sub(3));
+    format!("{}...", &s[..boundary])
 }

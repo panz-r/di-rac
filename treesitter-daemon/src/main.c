@@ -766,7 +766,18 @@ int main(int argc, char *argv[]) {
 
                     if (start[0] && start[0] != '\r' && start[0] != '\0') {
                         RequestTask *task = malloc(sizeof(RequestTask));
+                        if (!task) {
+                            send_error(&gctx.stdout_lock, NULL, 0, "OOM", "Failed to allocate request task");
+                            start = nl + 1;
+                            continue;
+                        }
                         task->line = strdup(start);
+                        if (!task->line) {
+                            free(task);
+                            send_error(&gctx.stdout_lock, NULL, 0, "OOM", "Failed to copy request line");
+                            start = nl + 1;
+                            continue;
+                        }
                         task->gctx = &gctx;
                         pthread_mutex_lock(&gctx.thread_count_lock);
                         if (gctx.active_threads >= MAX_THREADS) {
