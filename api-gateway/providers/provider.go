@@ -516,7 +516,11 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg Provid
 	// However, if the caller's context expires first, forget the key so
 	// subsequent callers can retry instead of inheriting the stale result.
 	ch := r.modelsSF.DoChan(cacheKey, func() (interface{}, error) {
-		return ml.ListModels(context.Background(), cfg)
+		// Bound the listing call to prevent hung providers from blocking
+		// all callers sharing this singleflight key forever.
+		listCtx, listCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer listCancel()
+		return ml.ListModels(listCtx, cfg)
 	})
 	var v interface{}
 	var err error

@@ -742,7 +742,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
-		if req.Timeout == 0 {
+		if req.Timeout <= 0 {
 			req.Timeout = 240000
 		} else if req.Timeout > 3600000 {
 			req.Timeout = 3600000 // cap at 1 hour to prevent Duration overflow
