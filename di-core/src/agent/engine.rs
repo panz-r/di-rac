@@ -790,6 +790,13 @@ impl AgentEngine {
                     FrontendMessage::Interrupt { .. } => {
                         should_abort = true;
                     }
+                    FrontendMessage::SetMode { mode, .. } => {
+                        eprintln!("[di-core] agent {} mode set to {}", self.id, mode);
+                        self.mode = match mode.as_str() {
+                            "plan" => AgentMode::Plan,
+                            _ => AgentMode::Act,
+                        };
+                    }
                     other => {
                         // Don't discard — leave for recv_frontend to handle
                         to_reinject.push(other);
@@ -3181,6 +3188,21 @@ impl MultiAgentOrchestrator {
                     apply(&mut guard);
                 }
             }
+        }
+    }
+
+    /// Switch an agent between Act and Plan mode.
+    pub fn set_agent_mode(&mut self, agent_id: Uuid, mode: &str) {
+        let agent_mode = match mode {
+            "plan" => AgentMode::Plan,
+            _ => AgentMode::Act,
+        };
+        // Update running agent via channel — the agent will pick it up
+        // in drain_user_responses / recv_frontend.
+        self.send_to_agent(agent_id, FrontendMessage::SetMode { agent_id, mode: mode.to_string() });
+        // Also update unspawned agents directly
+        if let Some(agent) = self.agents.get_mut(&agent_id) {
+            agent.mode = agent_mode;
         }
     }
 

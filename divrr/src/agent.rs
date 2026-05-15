@@ -250,6 +250,8 @@ pub struct AgentState {
     pub pending_input: Option<PendingInput>,
     pub metrics: Option<Metrics>,
     pub last_activity: DateTime<Utc>,
+    /// Current agent mode: "act" or "plan"
+    pub mode: String,
 }
 
 impl AgentState {
@@ -264,6 +266,7 @@ impl AgentState {
             pending_input: None,
             metrics: None,
             last_activity: Utc::now(),
+            mode: "act".to_string(),
         }
     }
 

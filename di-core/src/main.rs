@@ -254,6 +254,10 @@ async fn main() -> Result<()> {
                                 log.log("SetObserverConfig: updating observer settings");
                                 orchestrator.set_observer_config(msg);
                             }
+                            FrontendMessage::SetMode { agent_id, mode } => {
+                                log.log(&format!("SetMode: agent={} mode={}", agent_id, mode));
+                                orchestrator.set_agent_mode(agent_id, &mode);
+                            }
                         }
                     }
                     Err(e) => {

@@ -30,6 +30,8 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
     CommandEntry { name: "interrupt", description: "Interrupt active agent", prefix: "" },
     CommandEntry { name: "new", description: "Spawn a new agent with a task", prefix: "" },
     CommandEntry { name: "close", description: "Close active agent tab", prefix: "" },
+    CommandEntry { name: "plan", description: "Switch active agent to Plan mode (read-only)", prefix: "" },
+    CommandEntry { name: "act", description: "Switch active agent to Act mode (full tool access)", prefix: "" },
 ];
 
 /// State for the save-block-to-file dialog.

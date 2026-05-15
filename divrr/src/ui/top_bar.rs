@@ -17,6 +17,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 agent.name.clone(),
                 theme.accent_bold(),
             ));
+            if agent.mode != "act" {
+                spans.push(Span::styled(
+                    format!(" [{}]", agent.mode),
+                    theme.warning_style(),
+                ));
+            }
             spans.push(Span::raw(" | "));
             spans.push(Span::styled(
                 format!("State: {}", agent.display_status()),

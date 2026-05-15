@@ -53,6 +53,20 @@ pub fn execute_command(app: &mut App, cmd: &str) -> Option<FrontendMessage> {
         "close" => {
             app.close_active_tab()
         }
+        "plan" | "act" => {
+            let mode = cmd; // "plan" or "act"
+            let agent_id = app.active_agent().map(|a| a.id);
+            if let Some(id) = agent_id {
+                app.status_message = Some(format!("Switched to {} mode", mode));
+                if let Some(agent) = app.active_agent_mut() {
+                    agent.mode = mode.to_string();
+                }
+                Some(FrontendMessage::SetMode { agent_id: id, mode: mode.to_string() })
+            } else {
+                app.status_message = Some("No active agent".to_string());
+                None
+            }
+        }
         _ if cmd.starts_with("new ") => {
             let task = cmd[4..].trim().to_string();
             if task.is_empty() {

@@ -138,4 +138,10 @@ pub enum FrontendMessage {
         observer_provider: Option<String>,
         observer_model_id: Option<String>,
     },
+    /// Switch an agent between Act and Plan mode.
+    SetMode {
+        agent_id: Uuid,
+        /// "act" or "plan"
+        mode: String,
+    },
 }
