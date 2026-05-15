@@ -57,18 +57,18 @@ add_grammar(php ${VENDOR_DIR}/tree-sitter-php/php)
 
 # --- Daemon ---
 
-include_directories(include-c)
+include_directories(include)
 include_directories(../command-daemon/src) # Reuse JSON helpers
 
 set(DAEMON_SOURCES
-    src-c/main.c
-    src-c/analyzer.c
-    src-c/languages.c
-    src-c/queries.c
-    src-c/skeleton.c
-    src-c/repo_map.c
-    src-c/search.c
-    src-c/db.c
+    src/main.c
+    src/analyzer.c
+    src/languages.c
+    src/queries.c
+    src/skeleton.c
+    src/repo_map.c
+    src/search.c
+    src/db.c
 )
 
 add_executable(di-rvv-analyzer ${DAEMON_SOURCES})

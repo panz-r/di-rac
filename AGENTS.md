@@ -21,7 +21,7 @@ Provider APIs (OpenAI, Anthropic, MiniMax, etc.)
 
 Supporting daemons (launched by di-core):
 - `command-daemon` (C) — Child process execution with timeout/safety enforcement
-- `treesitter-daemon` (Rust) — AST analysis for code-aware editing
+- `treesitter-daemon` (C, CMake) — AST analysis via vendored tree-sitter C library; out-of-memory guarded, bounds-checked
 - `central-daemon` (C) — Coordination daemon with trie-based file routing
 
 ## 🏗️ Codebase Modules
@@ -172,7 +172,7 @@ Avoid searching in the following directories as they contain large generated fil
 - `**/target/` — Cargo build artifacts
 - `**/vendor/` — Vendored dependencies
 - `command-daemon/build/`
-- `treesitter-daemon/target/`
+- `treesitter-daemon/build/`
 - `di-core/target/`
 - `divrr/target/`
 - `node_modules/` (if present)

@@ -20,7 +20,7 @@ A fork of [dirac-run/dirac](https://github.com/dirac-run/dirac), a coding agent 
                      ┌────────▼───┐  ┌──▼─────────────┐
                      │ treesitter │  │ command-daemon  │
                      │ daemon     │  │ (C — child      │
-                     │ (Rust)     │  │  process exec)  │
+                     │ (C)     │  │  process exec)  │
                      └────────────┘  └─────────────────┘
 ```
 
@@ -29,7 +29,7 @@ A fork of [dirac-run/dirac](https://github.com/dirac-run/dirac), a coding agent 
 | `di-core/` | Rust | Agent engine: streaming LLM loop, tool dispatch, context compilation |
 | `divrr/` | Rust | Terminal UI (ratatui): conversation view, approval flow, settings |
 | `api-gateway/` | Go | LLM proxy: streaming NDJSON over UDS, multi-provider support |
-| `treesitter-daemon/` | Rust | Code analysis: AST outline/skeleton, symbol search, repo map |
+| `treesitter-daemon/` | C | Code analysis: AST outline/skeleton, symbol search, repo map |
 | `command-daemon/` | C | Shell command execution with sandboxing and output truncation |
 | `central-daemon/` | C | Session state and coordination (in development) |
 

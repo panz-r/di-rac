@@ -30,13 +30,14 @@ build-command-daemon:
 	@echo "  DONE    $(DIST)/di-rvv-cmd"
 
 # ---------------------------------------------------------------------------
-# treesitter-daemon (Rust) — AST analysis
+# treesitter-daemon (C) — AST analysis
 # ---------------------------------------------------------------------------
 build-treesitter-daemon:
 	@echo "  BUILD   treesitter-daemon"
 	@mkdir -p $(DIST)
-	cargo build --release --manifest-path treesitter-daemon/Cargo.toml 2>&1 | tail -1
-	cp treesitter-daemon/target/release/di-rvv-analyzer $(DIST)/di-rvv-analyzer
+	cd treesitter-daemon && cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -1
+	cd treesitter-daemon && cmake --build build 2>&1 | tail -1
+	cp treesitter-daemon/build/di-rvv-analyzer $(DIST)/di-rvv-analyzer
 	@chmod 755 $(DIST)/di-rvv-analyzer
 	@echo "  DONE    $(DIST)/di-rvv-analyzer"
 
@@ -99,7 +100,7 @@ clean:
 	rm -rf $(DIST)
 	cd api-gateway && go clean 2>/dev/null || true
 	cd command-daemon && rm -rf build 2>/dev/null || true
-	cargo clean --manifest-path treesitter-daemon/Cargo.toml 2>/dev/null || true
+	cd treesitter-daemon && rm -rf build 2>/dev/null || true
 	cargo clean --manifest-path divrr/Cargo.toml 2>/dev/null || true
 	cargo clean --manifest-path di-core/Cargo.toml 2>/dev/null || true
 	@echo "  CLEAN   all builds"
