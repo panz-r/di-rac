@@ -835,6 +835,8 @@ impl AgentEngine {
 
         // TaskInitialized is emitted by the orchestrator in main.rs
 
+        let mut consecutive_gateway_errors: u32 = 0;
+
         loop {
             // Process any user text that arrived while the previous turn was running
             self.drain_user_responses();
@@ -878,10 +880,20 @@ impl AgentEngine {
                     // For provider or gateway errors, don't abort — add as user message
                     // so the agent sees the problem and waits for the user to fix settings.
                     // The user can update provider config and the agent retries on the next turn.
+                    consecutive_gateway_errors += 1;
+                    if consecutive_gateway_errors >= 5 {
+                        eprintln!("[di-core] too many consecutive gateway errors ({}), giving up", consecutive_gateway_errors);
+                        self.emit_event(CoreEvent::TaskFinished {
+                            agent_id: self.id,
+                            success: false,
+                            message: format!("Too many consecutive gateway errors: {}", err_msg),
+                        }).await?;
+                        return Err(e);
+                    }
                     eprintln!("[di-core] run_turn error (non-fatal, continuing): {}", err_msg);
                     self.trajectory.add_message(
                         Role::User,
-                        json!(format!("[SYSTEM: Request failed: {}]\nPlease check your provider configuration and try again. The agent will retry on the next turn.", err_msg)),
+                        json!(format!("[SYSTEM: Request failed: {}]\nPlease check your provider configuration and try again.", err_msg)),
                         20,
                     );
                     continue;
@@ -912,6 +924,9 @@ impl AgentEngine {
                 }
                 TurnOutcome::Continue { tools_used: _ } => {}  // mistake count persists across turns
             }
+
+            // Turn succeeded — reset gateway error counter
+            consecutive_gateway_errors = 0;
 
             // General mistake limit: checks across all turns, including bash failures
             // that accumulated from mixed-tool turns (the tools_used == 0 path above
