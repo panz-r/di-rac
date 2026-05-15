@@ -266,9 +266,17 @@ func (p *minimaxToolCallPipe) handle(chunk StreamChunk) error {
 		}
 	}
 
+	// Models may emit the same tokens first as content (TextDelta, buffered
+	// above) then as reasoning_details (Thinking). Without flushing here,
+	// the buffered text would be emitted later, causing duplication.
+	if chunk.Type == "delta" && chunk.Thinking != "" {
+		if err := p.flush(); err != nil {
+			return err
+		}
+	}
+
 	return p.callback(chunk)
 }
-
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

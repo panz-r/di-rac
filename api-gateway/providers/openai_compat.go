@@ -714,15 +714,16 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			}
 			continue
 		}
-			if stopped {
-				continue
-			}
+		if stopped {
+			continue
+		}
 
 		choice := chunk.Choices[0]
 		choiceIdx := choice.Index
 		delta := choice.Delta
 
-		if len(delta.Content) > 0 {
+		hasReasoning := delta.ReasoningContent != "" || delta.Reasoning != "" || len(delta.ReasoningDetails) > 0
+		if len(delta.Content) > 0 && !hasReasoning {
 			if contentArraySupport {
 				if text := extractContentString(delta.Content); text != "" {
 					if err := callback(StreamChunk{Type: "delta", TextDelta: text}); err != nil {
@@ -820,7 +821,7 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 				return err
 			}
 		}
-			stopped = true
+		stopped = true
 	}
 
 	return scanner.Err()
