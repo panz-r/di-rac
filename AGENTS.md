@@ -117,10 +117,9 @@ Binaries are built to `bin/`. The TUI (`divrr`) launches `api-gateway` and `di-c
 
 Runtime state is stored in `~/.di/`:
 - `provider-settings.json` — Saved provider configs per role
-- `di-core.log` — Agent engine log
-- `divrr.log` — TUI log
+- `logs/` — Agent engine log (`di-core.log`), TUI log (`divrr.log`)
+- `state/` — Persistent agent state (daemon state, recovery data)
 - `api-gateway-<pid>.sock` — Gateway Unix socket
-- `data/` — Persistent agent state (daemon state, recovery data)
 
 ## Protocol: divrr ↔ di-core (JSON over stdin/stdout)
 

@@ -2671,10 +2671,10 @@ impl AgentEngine {
         }
     }
 
-    /// Flush observer telemetry to .di-logs/observer-telemetry.jsonl.
+    /// Flush observer telemetry to .di/logs/observer-telemetry.jsonl.
     fn flush_observer_telemetry(&self, pause_weight: Option<f32>) {
         use std::io::Write;
-        let dir = std::path::Path::new(".di-logs");
+        let dir = std::path::Path::new(".di/logs");
         let _ = std::fs::create_dir_all(dir);
         let path = dir.join("observer-telemetry.jsonl");
         let entry = serde_json::json!({
