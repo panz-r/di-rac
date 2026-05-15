@@ -9,8 +9,12 @@ pub enum Mode {
     SaveDialog,
 }
 
-/// Number of actions in the spacebar action palette (Expand, Save, Copy, Wrap).
-pub const BLOCK_ACTION_COUNT: usize = 4;
+/// Actions available in the spacebar action palette.
+pub const BLOCK_ACTIONS: &[&str] = &["Expand", "Save", "Copy", "Wrap"];
+
+/// Number of actions — derived from the list so adding a new one only requires
+/// updating BLOCK_ACTIONS.
+pub const BLOCK_ACTION_COUNT: usize = BLOCK_ACTIONS.len();
 
 /// A command that can be run from the command palette.
 #[derive(Debug, Clone)]

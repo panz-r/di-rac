@@ -114,38 +114,75 @@ impl App {
             .unwrap_or((0, HashSet::new(), HashSet::new()));
 
         if self.line_cache.as_ref().is_some_and(|c| c.is_valid(width, generation, &expanded, &wrapped)) {
-            // Cache is valid — ensure visible blocks are rendered
             self.ensure_visible_blocks_cached(width);
             return;
         }
 
-        let agent = match self.active_agent() {
-            Some(a) => a,
-            None => {
-                self.line_cache = None;
-                return;
-            }
+        // Take old cache first to release the mutable borrow before agent access
+        let prev = self.line_cache.take();
+
+        let Some(agent) = self.active_agent() else {
+            return; // line_cache already None
         };
 
-        // Build line counts for all blocks (lightweight — only counts, no styled Lines stored)
-        let mut per_block = Vec::with_capacity(agent.log.blocks().len());
-        let mut blocks_total = 0usize;
-        let mut cached_block_lines: Vec<Option<Vec<Line<'static>>>> = vec![None; agent.log.blocks().len()];
+        let block_count = agent.log.blocks().len();
+        let can_reuse = prev.as_ref().is_some_and(|c| {
+            c.width == width
+                && c.expanded == expanded
+                && c.wrapped == wrapped
+                && c.per_block.len() == block_count
+        });
 
-        for (i, block) in agent.log.blocks().iter().enumerate() {
-            let is_expanded = agent.expanded.contains(&i);
-            let is_wrapped = agent.wrapped.contains(&i);
+        if can_reuse {
+            // Incremental: only recompute the last block (streaming optimization)
+            let mut cache = prev.unwrap();
+            let last = block_count - 1;
+            let is_expanded = expanded.contains(&last);
+            let is_wrapped = wrapped.contains(&last);
             let mut lines = Vec::new();
             crate::ui::conversation::build_block_lines(
-                &mut lines, block, width as usize, is_expanded, is_wrapped,
-                false, false, &self.theme,
+                &mut lines, &agent.log.blocks()[last], width as usize,
+                is_expanded, is_wrapped, false, false, &self.theme,
             );
             let count = ratatui::widgets::Paragraph::new(lines.clone())
                 .wrap(ratatui::widgets::Wrap { trim: false })
                 .line_count(width);
+            let old_count = cache.per_block[last];
+            cache.per_block[last] = count;
+            cache.blocks_total = cache.blocks_total - old_count + count;
+            cache.generation = generation;
+            cache.cached_block_lines[last] = Some(lines);
+            let _ = agent; // NLL: release immutable borrow
+            self.line_cache = Some(cache);
+            return;
+        }
+
+        // Full rebuild: collect rendered data from all blocks
+        let rendered: Vec<(usize, Vec<Line<'static>>)> = agent.log.blocks().iter().enumerate()
+            .map(|(i, block)| {
+                let is_expanded = expanded.contains(&i);
+                let is_wrapped = wrapped.contains(&i);
+                let mut lines = Vec::new();
+                crate::ui::conversation::build_block_lines(
+                    &mut lines, block, width as usize, is_expanded, is_wrapped,
+                    false, false, &self.theme,
+                );
+                let count = ratatui::widgets::Paragraph::new(lines.clone())
+                    .wrap(ratatui::widgets::Wrap { trim: false })
+                    .line_count(width);
+                (count, lines)
+            })
+            .collect();
+        let _ = agent; // NLL: release immutable borrow
+
+        // Build cache (no active agent borrow)
+        let mut per_block = Vec::with_capacity(rendered.len());
+        let mut blocks_total = 0usize;
+        let mut cached_block_lines: Vec<Option<Vec<Line<'static>>>> = vec![None; rendered.len()];
+
+        for (i, (count, lines)) in rendered.into_iter().enumerate() {
             per_block.push(count);
             blocks_total += count;
-            // Cache only visible blocks
             if self.is_block_visible(i) {
                 cached_block_lines[i] = Some(lines);
             }

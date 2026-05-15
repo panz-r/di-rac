@@ -124,6 +124,12 @@ async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let args = Args::parse();
 
+    // Ensure ~/.dirac exists before any I/O (logs, socket, settings).
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        let _ = std::fs::create_dir_all(std::path::Path::new(&home).join(".dirac"));
+    }
+
     // Launch API gateway (per-PID socket). _gateway_child kills the process on drop.
     let mut _gateway_child: Option<gateway::GatewayChild> = match &args.gateway {
         Some(path) => Some(gateway::launch(path)?),

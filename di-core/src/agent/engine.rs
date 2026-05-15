@@ -16,7 +16,7 @@ use crate::protocol::{CoreEvent, FrontendMessage};
 use crate::tools::{ToolExecutor, ToolCoordinator};
 use crate::prompt::{ContextCompiler, DynamicContext, session::SessionContext};
 use crate::tools::approval::ApprovalManager;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde_json::json;
 use std::collections::{HashSet, HashMap};
 use std::sync::Arc;
@@ -1516,16 +1516,17 @@ impl AgentEngine {
         let mut thinking_text = String::new();
         let mut tool_accumulator = StreamingToolAccumulator::new();
         let mut _usage_total: Option<crate::daemons::Usage> = None;
+        let mut stream_completed = false; // set true only on "complete" chunk
         // Per-chunk idle timeout: if the stream goes silent for more than 120s
         // between chunks, abort. The gateway has its own total timeout (240s)
         // but this catches provider stalls mid-stream.
         let chunk_timeout = std::time::Duration::from_secs(120);
 
         while let Some(result) = tokio::time::timeout(chunk_timeout, chunk_rx.recv()).await.unwrap_or_else(|_| {
-            // Timeout: stream went silent. Drain the channel to get any pending error.
-            // Return None to signal stream end after logging.
+            // Timeout: stream went silent. Emit an error so the engine treats
+            // this as a failed turn instead of silently proceeding with partial content.
             eprintln!("[di-core] stream idle timeout (120s no data) for agent {}", self.id);
-            None
+            Some(Err(anyhow!("STREAM_IDLE_TIMEOUT: no data received for 120s")))
         }) {
             if self.is_aborted() {
                 full_text.push_str("\n[interrupted by user]");
@@ -1588,9 +1589,27 @@ impl AgentEngine {
                         self.last_output_truncated = true;
                     }
                 }
-                "complete" => break,
+                "complete" => {
+                    stream_completed = true;
+                    break;
+                }
                 _ => {}
             }
+        }
+
+        // Stream integrity check: if the loop exited without a "complete" chunk,
+        // the connection was dropped or timed out. Treat as a failed turn rather
+        // than proceeding with partial content that may contain broken tool calls.
+        if !stream_completed {
+            let text_len = full_text.len();
+            eprintln!("[di-core] stream interrupted for agent {} ({}b accumulated, no complete signal)", self.id, text_len);
+            // Save whatever we got so it's visible in the UI, then fail the turn.
+            if !full_text.is_empty() {
+                let redacted = crate::util::secrets::redact_secrets(&full_text);
+                self.trajectory.add_message(Role::Assistant, json!(redacted), self.estimator.count_text(&redacted));
+                let _ = self.emit_event(CoreEvent::ThoughtFinished { agent_id: self.id }).await;
+            }
+            return Err(anyhow!("STREAM_INTERRUPTED: provider stream ended without complete signal ({}b received)", text_len));
         }
 
         // Emit actual token usage from provider

@@ -326,7 +326,13 @@ impl GatewayStreamClient {
                             }
                         }
                     }
-                    Ok(Ok(None)) => break, // stream ended
+                    Ok(Ok(None)) => {
+                        // Stream ended without a "complete" chunk — the gateway
+                        // dropped the connection mid-stream. Signal this as an
+                        // error so the engine knows the stream was interrupted.
+                        let _ = tx.send(Err(anyhow!("STREAM_EOF: gateway closed connection without complete signal"))).await;
+                        break;
+                    }
                     Ok(Err(e)) => {
                         let _ = tx.send(Err(anyhow!("Read error: {}", e))).await;
                         break;
