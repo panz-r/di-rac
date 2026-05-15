@@ -266,21 +266,47 @@ static void handle_repo_map(pthread_mutex_t *lock, const char *raw_id, int id_le
 }
 
 static void handle_search_symbols(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *query, const char *kind, int limit, AnalyzerCtx *ctx) {
-    pthread_mutex_lock(lock);
-    struct jsonw w;
-    jsonw_init(&w, stdout);
-    jsonw_object_open(&w);
-    jsonw_kv_str(&w, "type", "search_symbols_result");
-    jsonw_id(&w, raw_id, id_len);
-    jsonw_kv_bool(&w, "ok", true);
-    
-    if (ctx->db) pthread_mutex_lock(db_lock);
-    analyzer_search_symbols(ctx, query, kind, limit, &w);
-    if (ctx->db) pthread_mutex_unlock(db_lock);
-
-    jsonw_object_close(&w);
-    jsonw_flush(&w);
-    pthread_mutex_unlock(lock);
+    /* For DB-backed search (fast), hold stdout_lock during the brief SQL query.
+       For fallback workspace walk (slow), build into a temp buffer first, then
+       lock only for the final write to avoid blocking other output. */
+    if (ctx->db) {
+        pthread_mutex_lock(lock);
+        struct jsonw w;
+        jsonw_init(&w, stdout);
+        jsonw_object_open(&w);
+        jsonw_kv_str(&w, "type", "search_symbols_result");
+        jsonw_id(&w, raw_id, id_len);
+        jsonw_kv_bool(&w, "ok", true);
+        pthread_mutex_lock(db_lock);
+        analyzer_search_symbols(ctx, query, kind, limit, &w);
+        pthread_mutex_unlock(db_lock);
+        jsonw_object_close(&w);
+        jsonw_flush(&w);
+        pthread_mutex_unlock(lock);
+    } else {
+        /* Slow fallback: build JSON into a memory buffer */
+        char *buf = NULL;
+        size_t buf_size = 0;
+        FILE *mem = open_memstream(&buf, &buf_size);
+        if (!mem) { send_error(lock, raw_id, id_len, "OOM", "Failed to allocate output buffer"); return; }
+        struct jsonw w;
+        jsonw_init(&w, mem);
+        jsonw_object_open(&w);
+        jsonw_kv_str(&w, "type", "search_symbols_result");
+        jsonw_id(&w, raw_id, id_len);
+        jsonw_kv_bool(&w, "ok", true);
+        analyzer_search_symbols(ctx, query, kind, limit, &w);
+        jsonw_object_close(&w);
+        jsonw_flush(&w);
+        fclose(mem);
+        /* Lock and write the buffered result */
+        pthread_mutex_lock(lock);
+        fwrite(buf, 1, buf_size, stdout);
+        fputc('\n', stdout);
+        fflush(stdout);
+        pthread_mutex_unlock(lock);
+        free(buf);
+    }
 }
 
 static void handle_index_observation(pthread_mutex_t *lock, pthread_mutex_t *db_lock, const char *raw_id, int id_len, const char *type, const char *content, double timestamp, int tokens, AnalyzerCtx *ctx) {
@@ -535,18 +561,23 @@ static void* request_worker(void *arg) {
     const char *raw_id = NULL;
     int id_len = 0;
     bool handled = false;
-    char command[64] = "", file[4096] = "", content[MAX_LINE] = "", lang[32] = "", dir[4096] = "", query[256] = "", kind[64] = "", obs_type[32] = "", file_hash[128] = "";
+    char command[64] = "", file[4096] = "", lang[32] = "", dir[4096] = "", query[256] = "", kind[64] = "", obs_type[32] = "", file_hash[128] = "";
+    char *content = NULL;
     int limit = 100, tokens = 0, turn = 0;
     double timestamp = 0.0, confidence = 0.0;
     char key[64];
     const char *val;
     int vlen;
 
+    content = malloc(MAX_LINE);
+    if (!content) { send_error(&task->gctx->stdout_lock, NULL, 0, "OOM", "Failed to allocate content buffer"); goto cleanup; }
+    content[0] = '\0';
+
     while ((vlen = json_next_key(&j, key, sizeof(key), &val)) > 0) {
         if (strcmp(key, "id") == 0) { raw_id = val; id_len = vlen; }
         else if (strcmp(key, "command") == 0) json_get_str(val, vlen, command, sizeof(command));
         else if (strcmp(key, "file") == 0) json_get_str(val, vlen, file, sizeof(file));
-        else if (strcmp(key, "content") == 0) json_get_str(val, vlen, content, sizeof(content));
+        else if (strcmp(key, "content") == 0) json_get_str(val, vlen, content, MAX_LINE);
         else if (strcmp(key, "language") == 0) json_get_str(val, vlen, lang, sizeof(lang));
         else if (strcmp(key, "dir") == 0 || strcmp(key, "root") == 0) json_get_str(val, vlen, dir, sizeof(dir));
         else if (strcmp(key, "query") == 0) json_get_str(val, vlen, query, sizeof(query));
@@ -680,6 +711,7 @@ cleanup:
     pthread_mutex_lock(&task->gctx->thread_count_lock);
     task->gctx->active_threads--;
     pthread_mutex_unlock(&task->gctx->thread_count_lock);
+    free(content);
     free(task->line);
     free(task);
     return NULL;

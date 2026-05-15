@@ -131,16 +131,29 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
         sqlite3_finalize(stmt);
     }
 
-    if (sqlite3_exec(db->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) return -1;
+    if (sqlite3_exec(db->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) { sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     return 0;
 }
 
 int db_invalidate_file(IndexDB *db, const char *path) {
     sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db->db, "DELETE FROM files WHERE path = ?", -1, &stmt, NULL) != SQLITE_OK) return -1;
+    if (sqlite3_exec(db->db, "BEGIN", NULL, NULL, NULL) != SQLITE_OK) return -1;
+    /* Delete symbols first (foreign keys are not enabled, so cascade won't fire) */
+    if (sqlite3_prepare_v2(db->db, "DELETE FROM symbols WHERE file_id = (SELECT id FROM files WHERE path = ?)", -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1;
+    }
     sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT);
-    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); return -1; }
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     sqlite3_finalize(stmt);
+
+    if (sqlite3_prepare_v2(db->db, "DELETE FROM files WHERE path = ?", -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1;
+    }
+    sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
+    sqlite3_finalize(stmt);
+
+    if (sqlite3_exec(db->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) { sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     return 0;
 }
 
@@ -174,7 +187,7 @@ int db_index_observation(IndexDB *db, const char *type, const char *content, dou
     if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     sqlite3_finalize(stmt);
 
-    if (sqlite3_exec(db->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) return -1;
+    if (sqlite3_exec(db->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) { sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     return 0;
 }
 

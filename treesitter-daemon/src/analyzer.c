@@ -228,6 +228,7 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
     if (!query) return NULL;
 
     TSQueryCursor *cursor = ts_query_cursor_new();
+    if (!cursor) { ts_query_delete(query); return NULL; }
     ts_query_cursor_exec(cursor, query, ts_tree_root_node(ps->tree));
 
     Symbol *symbols = NULL;
@@ -297,6 +298,7 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
     if (!query) return NULL;
 
     TSQueryCursor *cursor = ts_query_cursor_new();
+    if (!cursor) { ts_query_delete(query); return NULL; }
     ts_query_cursor_exec(cursor, query, ts_tree_root_node(ps->tree));
 
     Import *imports = NULL;
@@ -413,10 +415,11 @@ ApiDependencies* analyzer_extract_apis(ParsedSource *ps) {
     if (!query) return NULL;
 
     TSQueryCursor *cursor = ts_query_cursor_new();
+    if (!cursor) { ts_query_delete(query); return NULL; }
     ts_query_cursor_exec(cursor, query, ts_tree_root_node(ps->tree));
 
     ApiDependencies *ad = calloc(1, sizeof(ApiDependencies));
-    if (!ad) return NULL;
+    if (!ad) { ts_query_cursor_delete(cursor); ts_query_delete(query); return NULL; }
     TSQueryMatch match;
     while (ts_query_cursor_next_match(cursor, &match)) {
         for (uint32_t i = 0; i < match.capture_count; i++) {
