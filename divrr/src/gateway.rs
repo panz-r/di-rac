@@ -12,6 +12,7 @@ use std::process::{Child, Command};
 use std::time::Duration;
 
 /// Handle to the launched gateway child process. Kills it on drop.
+#[derive(Debug)]
 pub struct GatewayChild {
     child: Option<Child>,
     socket_path: String,
@@ -148,6 +149,8 @@ fn which(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn socket_path_contains_pid() {
         let pid = std::process::id();
@@ -156,5 +159,85 @@ mod tests {
         assert!(socket_path.contains(&pid.to_string()));
         assert!(socket_path.contains(".dirac"));
         assert!(socket_path.ends_with(".sock"));
+    }
+
+    #[test]
+    fn which_returns_none_for_nonexistent() {
+        let result = which("this-binary-definitely-does-not-exist-abc123xyz");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn which_finds_sh_in_path() {
+        let result = which("sh");
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert!(path.ends_with("/sh"), "expected /sh suffix, got {}", path);
+    }
+
+    #[test]
+    fn find_gateway_returns_some_when_binary_exists() {
+        // Create a temp directory with a fake api-gateway binary
+        let dir = std::env::temp_dir().join(format!("gateway_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let fake_bin = dir.join("api-gateway");
+        let _ = std::fs::write(&fake_bin, "#!/bin/sh\necho fake");
+        let _ = std::fs::set_permissions(&fake_bin, std::os::unix::fs::PermissionsExt::from_mode(0o755));
+
+        // Temporarily prepend the temp dir to PATH
+        let old_path = std::env::var_os("PATH").unwrap_or_default();
+        let dir_str = dir.to_str().unwrap();
+        let mut new_path = std::ffi::OsString::from(dir_str);
+        new_path.push(":");
+        new_path.push(&old_path);
+        std::env::set_var("PATH", &new_path);
+
+        let result = which("api-gateway");
+        assert!(result.is_some(), "expected to find api-gateway in modified PATH");
+        assert!(result.unwrap().contains(dir.to_str().unwrap()));
+
+        // Restore PATH
+        std::env::set_var("PATH", &old_path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn gateway_child_kill_does_not_panic_on_dead_child() {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        let socket_path = format!("{}/.dirac/test-gateway-{}.sock", home, std::process::id());
+        let mut child = GatewayChild { child: None, socket_path };
+        child.kill(); // should not panic
+    }
+
+    #[test]
+    fn gateway_child_drop_does_not_panic() {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        let socket_path = format!("{}/.dirac/test-gateway-{}.sock", home, std::process::id());
+        let child = GatewayChild { child: None, socket_path };
+        drop(child); // should not panic
+    }
+
+    #[test]
+    fn launch_returns_err_when_binary_not_found() {
+        let result = crate::gateway::launch("/nonexistent/path/to/api-gateway");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn launch_returns_err_when_binary_exits_immediately() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("gateway_launch_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let fake_bin = dir.join("fake-gateway");
+        let mut f = std::fs::File::create(&fake_bin).unwrap();
+        writeln!(f, "#!/bin/sh").unwrap();
+        writeln!(f, "exit 1").unwrap();
+        std::fs::set_permissions(&fake_bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+        // This should fail because the fake gateway exits before creating a socket
+        let result = crate::gateway::launch(fake_bin.to_str().unwrap());
+        assert!(result.is_err(), "expected Err when gateway exits immediately, got {:?}", result);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
