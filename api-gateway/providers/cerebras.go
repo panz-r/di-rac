@@ -86,26 +86,74 @@ func (h *CerebrasHandler) Stream(ctx context.Context, req *Request, callback fun
 		return h.inner.Stream(ctx, req, callback)
 	}
 
-	// Wrap callback for <think/> tag tracking on reasoning models
-	var reasoningAccum *strings.Builder
+	// Wrap callback for <think...>...</think...> tag tracking on reasoning models.
+	// We track inThink state so content after </think...> is emitted as TextDelta.
+	var buf strings.Builder
+	inThink := false
 	return h.inner.Stream(ctx, req, func(chunk StreamChunk) error {
-		if chunk.Type == "delta" && chunk.TextDelta != "" && chunk.Thinking == "" {
-			content := chunk.TextDelta
-			if reasoningAccum != nil || strings.Contains(content, "<think") {
-				if reasoningAccum == nil {
-					reasoningAccum = &strings.Builder{}
+		if chunk.Type != "delta" || chunk.TextDelta == "" || chunk.Thinking != "" {
+			return callback(chunk)
+		}
+		buf.WriteString(chunk.TextDelta)
+		text := buf.String()
+		buf.Reset()
+
+		for {
+			if inThink {
+				closeIdx := strings.Index(text, "</think")
+				if closeIdx == -1 {
+					// Still inside think block — emit as Thinking
+					text = strings.TrimSpace(text)
+					if text != "" {
+						return callback(StreamChunk{Type: "delta", Thinking: text})
+					}
+					return nil
 				}
-				reasoningAccum.WriteString(content)
-				clean := strings.ReplaceAll(content, "<think", "")
-				clean = strings.ReplaceAll(clean, "</think", "")
-				clean = strings.TrimSpace(clean)
-				if clean != "" {
-					return callback(StreamChunk{Type: "delta", Thinking: clean})
+				// Found closing tag — emit thinking up to it
+				reasoning := strings.TrimSpace(text[:closeIdx])
+				if reasoning != "" {
+					if err := callback(StreamChunk{Type: "delta", Thinking: reasoning}); err != nil {
+						return err
+					}
+				}
+				// Advance past </think...>
+				afterTag := closeIdx + len("</think")
+				gtIdx := strings.IndexByte(text[afterTag:], '>')
+				if gtIdx == -1 {
+					// Incomplete close tag — nothing more to emit
+					return nil
+				}
+				text = text[afterTag+gtIdx+1:]
+				inThink = false
+				continue
+			}
+
+			// Not in think block — look for opening tag
+			openIdx := strings.Index(text, "<think")
+			if openIdx == -1 {
+				// No think tag — emit as plain text
+				if text != "" {
+					return callback(StreamChunk{Type: "delta", TextDelta: text})
 				}
 				return nil
 			}
+			// Emit text before the tag
+			if openIdx > 0 {
+				if err := callback(StreamChunk{Type: "delta", TextDelta: text[:openIdx]}); err != nil {
+					return err
+				}
+			}
+			// Advance past <think...>
+			afterTag := openIdx + len("<think")
+			gtIdx := strings.IndexByte(text[afterTag:], '>')
+			if gtIdx == -1 {
+				// Incomplete open tag — wait for more data
+				buf.WriteString(text[openIdx:])
+				return nil
+			}
+			text = text[afterTag+gtIdx+1:]
+			inThink = true
 		}
-		return callback(chunk)
 	})
 }
 
@@ -181,18 +229,31 @@ func cerebrasConvertTextMessages(messages []map[string]interface{}, req *Request
 	return result
 }
 
-// stripThinkTags removes <think...</think...> blocks from content.
+// stripThinkTags removes <think...>...</think...> blocks from content.
+// Tags may include trailing spaces before the '>' (e.g. "<think >", "</think >").
 func stripThinkTags(content string) string {
 	for {
 		start := strings.Index(content, "<think")
 		if start == -1 {
 			break
 		}
-		end := strings.Index(content[start:], "</think")
+		// Advance past the opening tag's '>'
+		openClose := strings.IndexByte(content[start:], '>')
+		if openClose == -1 {
+			break
+		}
+		tagEnd := start + openClose + 1 // past '>'
+		end := strings.Index(content[tagEnd:], "</think")
 		if end == -1 {
 			break
 		}
-		content = content[:start] + content[start+end+len("</think"):]
+		closeStart := tagEnd + end
+		// Advance past the closing tag's '>'
+		closeClose := strings.IndexByte(content[closeStart:], '>')
+		if closeClose == -1 {
+			break
+		}
+		content = content[:start] + content[closeStart+closeClose+1:]
 	}
 	return strings.TrimSpace(content)
 }
