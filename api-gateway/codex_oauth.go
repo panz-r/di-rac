@@ -533,7 +533,12 @@ func codexPollDeviceCode(ctx context.Context, dc *CodexDeviceCode) (*CodexAuthTo
 			"user_code":      dc.UserCode,
 		})
 
-		resp, err := oauthHTTPClient.Post("https://auth.openai.com/api/accounts/deviceauth/token", "application/json", strings.NewReader(string(payload)))
+		pollReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://auth.openai.com/api/accounts/deviceauth/token", strings.NewReader(string(payload)))
+		if err != nil {
+			return nil, fmt.Errorf("create device token request: %w", err)
+		}
+		pollReq.Header.Set("Content-Type", "application/json")
+		resp, err := oauthHTTPClient.Do(pollReq)
 		if err != nil {
 			backoff = min(backoff+time.Second, 30*time.Second)
 			continue
