@@ -772,7 +772,7 @@ impl AgentEngine {
 
     /// Drain any pending UserResponse messages from the frontend channel.
     /// Called between turns so user text sent while the agent was busy gets processed.
-    fn drain_user_responses(&mut self) {
+    async fn drain_user_responses(&mut self) {
         let mut should_abort = false;
         // Collect non-matching messages to re-inject after draining
         let mut to_reinject = Vec::new();
@@ -799,8 +799,8 @@ impl AgentEngine {
         }
         // Re-inject non-consumed messages back into the channel
         for msg in to_reinject {
-            if let Err(e) = self.frontend_tx.try_send(msg) {
-                eprintln!("[di-core] drain_user_responses: failed to re-inject message: {}", e);
+            if self.frontend_tx.send(msg).await.is_err() {
+                eprintln!("[di-core] drain_user_responses: channel closed, dropping re-inject");
             }
         }
         if should_abort {
@@ -850,7 +850,7 @@ impl AgentEngine {
 
         loop {
             // Process any user text that arrived while the previous turn was running
-            self.drain_user_responses();
+            self.drain_user_responses().await;
             if self.is_aborted() {
                 self.emit_event(CoreEvent::TaskFinished {
                     agent_id: self.id,
@@ -3045,17 +3045,10 @@ impl MultiAgentOrchestrator {
 
     /// Route a frontend message (approval, followup answer, user response) to the agent's channel.
     /// Returns true if the message was sent successfully.
-    /// Uses try_send to avoid blocking the main loop if the agent's channel is full.
-    pub fn send_to_agent(&self, agent_id: Uuid, msg: FrontendMessage) -> bool {
+    /// Uses send().await to ensure critical messages (approval, interrupt) are never dropped.
+    pub async fn send_to_agent(&self, agent_id: Uuid, msg: FrontendMessage) -> bool {
         if let Some(tx) = self.frontend_channels.get(&agent_id) {
-            match tx.try_send(msg) {
-                Ok(()) => true,
-                Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
-                    eprintln!("[di-core] send_to_agent: channel full for agent {}, dropping {:?}", agent_id, msg);
-                    false
-                }
-                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => false,
-            }
+            tx.send(msg).await.is_ok()
         } else {
             eprintln!("[di-core] send_to_agent: no channel for agent {}", agent_id);
             false
@@ -3212,9 +3205,8 @@ impl MultiAgentOrchestrator {
     }
 
     pub async fn handle_user_response(&self, agent_id: Uuid, text: String) -> Result<()> {
-        let ok = self.send_to_agent(agent_id, FrontendMessage::UserResponse { agent_id, text });
-        if !ok {
-            anyhow::bail!("Failed to send user response to agent {}: channel full or agent not found", agent_id);
+        if !self.send_to_agent(agent_id, FrontendMessage::UserResponse { agent_id, text }).await {
+            anyhow::bail!("Failed to send user response to agent {}: agent not found or channel closed", agent_id);
         }
         Ok(())
     }
