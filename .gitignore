@@ -6,6 +6,11 @@ command-daemon/build
 api-gateway/api-gateway
 bin
 dist
+.di/
+.dirac/
+.dirac-logs/
+.dirac-state/
+.dirac-symbol-index/
 tmp
 .vscode-test/
 *.vsix
