@@ -648,6 +648,7 @@ static void* request_worker(void *arg) {
         handle_ast_churn(&task->gctx->stdout_lock, raw_id, id_len, file, content);
         handled = true;
     } else if (strcmp(command, "invalidate-file") == 0) {
+        if (!is_path_safe(file, task->gctx->base.workspace_root)) { goto send_err; }
         handle_invalidate_file(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, file, &task->gctx->base);
         handled = true;
     } else if (strcmp(command, "clear-index") == 0) {
@@ -668,10 +669,10 @@ static void* request_worker(void *arg) {
     }
 
 send_err:
-    /* File-read failure (reached via goto send_err from outline/skeleton).
+    /* File-read failure (reached via goto send_err from outline/skeleton/index-file/ast-churn).
        Send an error response only if no handler already wrote one. */
     if (!handled) {
-        send_error(&task->gctx->stdout_lock, raw_id, id_len, "FILE_IO_ERROR", "Failed to read file");
+        send_error(&task->gctx->stdout_lock, raw_id, id_len, "FILE_IO_ERROR", "Failed to read file (missing, empty, or too large)");
     }
 
 cleanup:
