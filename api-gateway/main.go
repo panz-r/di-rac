@@ -256,11 +256,24 @@ func NewServer() *Server {
 	}
 }
 
+const maxRateLimiters = 64
+
 // getLimiter returns the per-provider rate limiter, creating one lazily if needed.
 func (s *Server) getLimiter(providerID string) *RateLimiter {
 	s.limitMu.Lock()
 	defer s.limitMu.Unlock()
 	if rl, ok := s.limiters[providerID]; ok {
+		return rl
+	}
+	// Cap the number of per-provider limiters to prevent resource exhaustion
+	// from random provider IDs (getLimiter is called before provider validation).
+	if len(s.limiters) >= maxRateLimiters {
+		// Return a shared default limiter instead of creating a new one
+		if rl, ok := s.limiters["__default__"]; ok {
+			return rl
+		}
+		rl := NewRateLimiter(s.defaultRate, s.defaultConc)
+		s.limiters["__default__"] = rl
 		return rl
 	}
 	rl := NewRateLimiter(s.defaultRate, s.defaultConc)

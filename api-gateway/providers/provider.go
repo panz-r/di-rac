@@ -511,11 +511,22 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg Provid
 	r.modelsMu.RUnlock()
 
 	// Deduplicate concurrent requests for the same provider+baseURL.
-	// Use context.Background() so one caller's cancellation doesn't poison
-	// all other callers waiting on the same singleflight key.
-	v, err, _ := r.modelsSF.Do(cacheKey, func() (interface{}, error) {
+	// Use context.Background() inside the fn so one caller's cancellation
+	// doesn't poison all other callers waiting on the same singleflight key.
+	// However, if the caller's context expires first, forget the key so
+	// subsequent callers can retry instead of inheriting the stale result.
+	ch := r.modelsSF.DoChan(cacheKey, func() (interface{}, error) {
 		return ml.ListModels(context.Background(), cfg)
 	})
+	var v interface{}
+	var err error
+	select {
+	case <-ctx.Done():
+		r.modelsSF.Forget(cacheKey)
+		return nil, ctx.Err()
+	case res := <-ch:
+		v, err = res.Val, res.Err
+	}
 	if err != nil {
 		return nil, err
 	}
