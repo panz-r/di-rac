@@ -603,10 +603,17 @@ pub fn query_list_providers(gw: &mut crate::settings::GatewayConnection) -> std:
     Ok(providers)
 }
 
-pub fn query_models(gw: &mut crate::settings::GatewayConnection, provider: &str, api_key: &str) -> std::io::Result<Vec<ModelEntry>> {
+pub fn query_models(gw: &mut crate::settings::GatewayConnection, provider: &str, api_key: &str, base_url: &str) -> std::io::Result<Vec<ModelEntry>> {
     let mut req = serde_json::json!({"type": "models", "provider": provider});
+    let mut cfg = serde_json::json!({"id": provider});
     if !api_key.is_empty() {
-        req["config"] = serde_json::json!({"id": provider, "api_key": api_key});
+        cfg["api_key"] = serde_json::json!(api_key);
+    }
+    if !base_url.is_empty() {
+        cfg["base_url"] = serde_json::json!(base_url);
+    }
+    if cfg.as_object().map_or(false, |m| m.len() > 1) {
+        req["config"] = cfg;
     }
     let resp = gw.request(&req)?;
     if resp.status != 200 {
@@ -819,7 +826,7 @@ pub fn build_role_fields(
     };
 
     let (models, model_index) = if gateway_ok && !provider_id.is_empty() {
-        match query_models(gw, &provider_id, &rs.api_key) {
+        match query_models(gw, &provider_id, &rs.api_key, &rs.base_url) {
             Ok(m) => {
                 let idx = m.iter().position(|m| m.id == rs.model).unwrap_or(0);
                 (m, idx)
