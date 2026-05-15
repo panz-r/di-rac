@@ -624,9 +624,11 @@ func parseResponsesSSE(ctx context.Context, body io.Reader, callback func(Stream
 		case "response.failed":
 			statusCode := 500
 			if resp, ok := evt["response"].(map[string]interface{}); ok {
-				lastErr, _ := resp["last_error"].(map[string]interface{})
-				code, _ := lastErr["code"].(string)
-				message, _ := lastErr["message"].(string)
+				var code, message string
+				if lastErr, ok := resp["last_error"].(map[string]interface{}); ok {
+					code, _ = lastErr["code"].(string)
+					message, _ = lastErr["message"].(string)
+				}
 				if code == "rate_limit_exceeded" {
 					statusCode = 429
 				}

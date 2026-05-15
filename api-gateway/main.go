@@ -539,7 +539,6 @@ func (s *Server) handleConnection(conn net.Conn) {
 			s.configMu.RUnlock()
 
 			modelsCtx, modelsCancel := context.WithTimeout(s.ctx, 30*time.Second)
-			defer modelsCancel()
 			models, err := s.providerRegistry.ListModels(modelsCtx, modelsReq.Provider, cfg)
 			modelsCancel()
 			if err != nil {
@@ -596,7 +595,6 @@ func (s *Server) handleConnection(conn net.Conn) {
 			s.configMu.RUnlock()
 
 			modelsCtx, modelsCancel := context.WithTimeout(s.ctx, 30*time.Second)
-			defer modelsCancel()
 			models, err := s.providerRegistry.ListModels(modelsCtx, modelInfoReq.Provider, cfg)
 			modelsCancel()
 			if err != nil {
