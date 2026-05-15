@@ -285,6 +285,8 @@ pub struct AgentEngine {
     pub turn_edits: HashSet<String>,
     /// Bash execution history: (id, command, exit_code).
     pub bash_history: Vec<(String, String, i32)>,
+    /// Agent's current working directory — updated on `cd` via bash.
+    pub agent_cwd: String,
     /// Whether the last LLM output was truncated (hit MAX_TOKENS).
     pub last_output_truncated: bool,
     pub request_id_counter: i64,
@@ -384,6 +386,9 @@ impl AgentEngine {
             net_change_lines: 0,
             turn_edits: HashSet::new(),
             bash_history: Vec::new(),
+            agent_cwd: std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".into()),
             last_output_truncated: false,
             request_id_counter: 0,
             tool_call_counter: 0,
@@ -1869,7 +1874,22 @@ impl AgentEngine {
                 }
             }
 
-            let exec_result = self.tool_executor.execute(tool, &mut self.coordinator).await;
+            // Inject agent CWD into tool args so tools use it instead of process CWD
+            let cwd_tool = crate::tools::ToolCall {
+                name: tool.name.clone(),
+                args: {
+                    let mut args = tool.args.clone();
+                    if !args.is_object() {
+                        args = serde_json::json!({});
+                    }
+                    args.as_object_mut()
+                        .unwrap()
+                        .insert("_cwd".to_string(), serde_json::json!(self.agent_cwd));
+                    args
+                },
+            };
+
+            let exec_result = self.tool_executor.execute(&cwd_tool, &mut self.coordinator).await;
             eprintln!("[di-core] run_turn: tool {} done ({})", ti, if exec_result.is_ok() { "ok" } else { "err" });
 
             // Record success/failure for circuit breaker
@@ -2122,6 +2142,13 @@ impl AgentEngine {
                         // Write-execute risk detection: warn when bash runs a script
                         // that was written/edited by the agent in this session.
                         if tool_name == "bash" {
+                            // Extract the output string and CWD from the result object
+                            let bash_output_str = result.get("_output_str").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let bash_cwd_str = result.get("_cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            if !bash_cwd_str.is_empty() {
+                                self.agent_cwd = bash_cwd_str;
+                            }
+
                             if let Some(ref cmd) = bash_command {
                                 let script_extensions = [".sh", ".py", ".rb", ".js", ".ts", ".pl", ".lua", ".php", ".bash"];
                                 let risky_paths: Vec<&str> = self.file_context.files_edited.iter()
@@ -2137,16 +2164,13 @@ impl AgentEngine {
                                         "\n[security: executing AI-written file: {}]",
                                         risky_paths.join(", ")
                                     );
-                                    if let Some(s) = result.as_str() {
-                                        result = serde_json::json!(format!("{}{}", s, warning));
-                                    }
+                                    result = serde_json::json!(format!("{}{}", bash_output_str, warning));
                                 }
                             }
 
                             // Bash mistake tracking: non-zero exit increments mistakes, zero resets.
-                            // Empty command also increments.
-                            if let Some(s) = result.as_str() {
-                                let exit_code = s.strip_prefix("exit:")
+                            if !bash_output_str.is_empty() {
+                                let exit_code = bash_output_str.strip_prefix("exit:")
                                     .and_then(|rest| rest.lines().next())
                                     .and_then(|line| line.trim().parse::<i32>().ok());
 
@@ -2157,7 +2181,7 @@ impl AgentEngine {
 
                                 // Append execution_id to result for proof-of-execution
                                 let exec_tag = format!("\n[execution_id: {}]", exec_id);
-                                result = serde_json::json!(format!("{}{}", s, exec_tag));
+                                result = serde_json::json!(format!("{}{}", bash_output_str, exec_tag));
 
                                 // Mistake tracking
                                 match exit_code {

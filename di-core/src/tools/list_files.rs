@@ -26,7 +26,8 @@ pub async fn list_files(
 
     // --detail files: walk filesystem directly for a plain file listing
     if detail == "files" {
-        return list_files_filesystem(&paths);
+        let agent_cwd = call.args.get("_cwd").and_then(|v| v.as_str()).unwrap_or(".");
+        return list_files_filesystem(&paths, agent_cwd);
     }
 
     // Default: use analyzer for symbol-aware listing
@@ -69,12 +70,18 @@ pub async fn list_files(
 // --detail files: filesystem walk with mtime sorting
 // ---------------------------------------------------------------------------
 
-fn list_files_filesystem(paths: &[String]) -> ToolResponse {
+fn list_files_filesystem(paths: &[String], agent_cwd: &str) -> ToolResponse {
     let mut all_output: Vec<String> = Vec::new();
 
     for root in paths {
+        /* Resolve relative paths against agent CWD */
+        let root_path = if root.starts_with('/') {
+            std::path::PathBuf::from(root)
+        } else {
+            std::path::Path::new(agent_cwd).join(root)
+        };
         let mut entries: Vec<FileEntry> = Vec::new();
-        collect_files(std::path::Path::new(root), &mut entries, &mut 0);
+        collect_files(&root_path, agent_cwd, &mut entries, &mut 0);
 
         // Sort by modification time, newest first
         entries.sort_by(|a, b| b.mtime.cmp(&a.mtime));
@@ -121,7 +128,7 @@ const SKIP_FILES: &[&str] = &[
     ".DS_Store", "Thumbs.db",
 ];
 
-fn collect_files(dir: &std::path::Path, entries: &mut Vec<FileEntry>, count: &mut usize) {
+fn collect_files(dir: &std::path::Path, agent_cwd: &str, entries: &mut Vec<FileEntry>, count: &mut usize) {
     if *count >= MAX_FILES_LIMIT * 2 {
         return; // Safety limit for recursion
     }
@@ -130,34 +137,47 @@ fn collect_files(dir: &std::path::Path, entries: &mut Vec<FileEntry>, count: &mu
 
     for entry in read_dir.flatten() {
         let path = entry.path();
+        /* Skip symlinks to avoid leaking files outside workspace */
+        if path.is_symlink() {
+            continue;
+        }
         let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
 
         if path.is_dir() {
-            // Skip hidden dirs and known skip dirs
             if file_name.starts_with('.') || SKIP_DIRS.contains(&file_name.as_str()) {
                 continue;
             }
-            collect_files(&path, entries, count);
+            collect_files(&path, agent_cwd, entries, count);
         } else {
-            // Skip hidden files and known skip files
             if file_name.starts_with('.') || SKIP_FILES.contains(&file_name.as_str()) {
                 continue;
             }
 
             let mtime = entry.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-            // Read file to count lines (skip binary/large files)
             let line_count = std::fs::read_to_string(&path)
                 .map(|c| c.lines().count())
                 .unwrap_or(0);
 
-            let relative_path = path.to_string_lossy().replace('\\', "/");
+            /* Strip agent CWD prefix so LLM sees clean relative paths */
+            let abs = path.to_string_lossy().replace('\\', "/");
+            let relative_path = if abs.starts_with(agent_cwd) {
+                let rest = abs[agent_cwd.len()..].trim_start_matches('/');
+                if rest.is_empty() {
+                    abs.split('/').last().unwrap_or(&abs).to_string()
+                } else {
+                    rest.to_string()
+                }
+            } else if abs.starts_with("./") {
+                abs[2..].to_string()
+            } else if abs == "." {
+                ".".to_string()
+            } else {
+                /* Path outside agent CWD — skip to prevent leaking unrelated files */
+                continue;
+            };
 
-            entries.push(FileEntry {
-                relative_path,
-                line_count,
-                mtime,
-            });
+            entries.push(FileEntry { relative_path, line_count, mtime });
             *count += 1;
 
             if *count >= MAX_FILES_LIMIT * 2 {

@@ -846,9 +846,11 @@ impl ToolExecutor {
             .and_then(|v| v.as_i64())
             .unwrap_or(30_000);
 
+        let agent_cwd = call.args.get("_cwd").and_then(|v| v.as_str()).unwrap_or("");
         let request = json!({
             "type": "execute",
             "command": command,
+            "cwd": agent_cwd,
             "timeout_ms": timeout_ms,
         });
         let resp: crate::daemons::ExecuteResult = self.command_daemon.lock().await.send_request(request).await?;
@@ -886,7 +888,10 @@ impl ToolExecutor {
             output.push_str(&format!("\n[hint: {}]", hint));
         }
 
-        json!(output)
+        json!({
+            "_output_str": output,
+            "_cwd": resp.meta.cwd,
+        })
     }
 
     async fn compact(&self, call: &ToolCall) -> Result<serde_json::Value> {

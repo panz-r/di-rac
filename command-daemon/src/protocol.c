@@ -323,10 +323,12 @@ static void handle_execute(const char *line, int line_len,
     char key[64];
     const char *val;
     int vlen;
+    char cwd_field[4096] = "";
     while ((vlen = json_next_key(&j, key, (int)sizeof(key), &val)) > 0) {
         if (strcmp(key, "id") == 0) json_get_raw_str(val, vlen, id, (int)sizeof(id));
         else if (strcmp(key, "command") == 0) json_get_str(val, vlen, command, (int)sizeof(command));
         else if (strcmp(key, "session_id") == 0) json_get_str(val, vlen, session_id, (int)sizeof(session_id));
+        else if (strcmp(key, "cwd") == 0) json_get_str(val, vlen, cwd_field, (int)sizeof(cwd_field));
         else if (strcmp(key, "timeout") == 0) json_get_int(val, vlen, &client_timeout_s);
     }
 
@@ -348,7 +350,10 @@ static void handle_execute(const char *line, int line_len,
     }
 
     const char *cwd = ctx->workspace_root;
-    if (session_id[0]) {
+    /* Prefer explicit `cwd` field from client, then session cwd, then workspace root */
+    if (cwd_field[0]) {
+        cwd = cwd_field;
+    } else if (session_id[0]) {
         Session *session = session_get_or_create(ctx->sessions, session_id, ctx->workspace_root);
         if (session) cwd = session->cwd;
     }
