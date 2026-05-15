@@ -1,5 +1,5 @@
 use crate::tools::ToolCall;
-use crate::daemons::StreamChunk;
+use crate::daemons::{StreamChunk, ContentBlock};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -159,5 +159,240 @@ impl StreamingToolAccumulator {
         }
 
         tools
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_chunk(chunk_type: &str, text_delta: Option<&str>, thinking: Option<&str>,
+                  tool_call_id: Option<&str>, tool_call_name: Option<&str>,
+                  json_delta: Option<&str>, index: Option<i64>,
+                  content: Option<&str>, content_blocks: Option<Vec<ContentBlock>>) -> StreamChunk
+    {
+        StreamChunk {
+            chunk_type: chunk_type.to_string(),
+            text_delta: text_delta.map(String::from),
+            thinking: thinking.map(String::from),
+            tool_call_id: tool_call_id.map(String::from),
+            tool_call_name: tool_call_name.map(String::from),
+            json_delta: json_delta.map(String::from),
+            index,
+            content: content.map(|s| serde_json::Value::String(s.to_string())),
+            content_blocks,
+            usage: None,
+            finish_reason: None,
+        }
+    }
+
+    // --- feed_chunk: text delta ---
+    #[test]
+    fn feed_chunk_text_delta_returns_false() {
+        let mut acc = StreamingToolAccumulator::new();
+        let chunk = make_chunk("delta", Some("hello"), None, None, None, None, None, None, None);
+        assert!(!acc.feed_chunk(&chunk));
+        assert!(acc.pending.is_empty());
+    }
+
+    // --- feed_chunk: tool call with id + name ---
+    #[test]
+    fn feed_chunk_tool_call_with_name_creates_pending() {
+        let mut acc = StreamingToolAccumulator::new();
+        let chunk = make_chunk("delta", None, None, Some("call_1"), Some("bash"),
+                               None, Some(0), None, None);
+        assert!(acc.feed_chunk(&chunk));
+        let entry = acc.pending.get("call_1").unwrap();
+        assert_eq!(entry.name, "bash");
+        assert_eq!(entry.arguments_str, "");
+    }
+
+    // --- feed_chunk: tool call id without name (MiniMax-style) ---
+    #[test]
+    fn feed_chunk_tool_call_id_without_name_creates_placeholder() {
+        let mut acc = StreamingToolAccumulator::new();
+        let chunk = make_chunk("delta", None, None, Some("call_1"), None,
+                               None, None, None, None);
+        assert!(acc.feed_chunk(&chunk));
+        let entry = acc.pending.get("call_1").unwrap();
+        assert!(entry.name.is_empty());
+        assert_eq!(entry.arguments_str, "");
+    }
+
+    // --- feed_chunk: json_delta accumulated into pending ---
+    #[test]
+    fn feed_chunk_json_delta_appends_to_pending() {
+        let mut acc = StreamingToolAccumulator::new();
+        // First chunk: create entry with id + name
+        let chunk1 = make_chunk("delta", None, None, Some("call_1"), Some("bash"),
+                                None, None, None, None);
+        acc.feed_chunk(&chunk1);
+        // Second chunk: accumulate json_delta
+        let chunk2 = make_chunk("delta", None, None, Some("call_1"), Some("bash"),
+                                Some(r#"{"cmd":"ls"}"#), None, None, None);
+        assert!(acc.feed_chunk(&chunk2));
+        let entry = acc.pending.get("call_1").unwrap();
+        assert_eq!(entry.arguments_str, r#"{"cmd":"ls"}"#);
+    }
+
+    // --- feed_chunk: json_delta without prior id uses index mapping ---
+    #[test]
+    fn feed_chunk_json_delta_without_id_uses_index() {
+        let mut acc = StreamingToolAccumulator::new();
+        // First chunk: "content" type sets up index mapping
+        let content_block = ContentBlock {
+            block_type: "tool_use".to_string(),
+            id: Some("call_1".to_string()),
+            name: Some("bash".to_string()),
+            text: None,
+            input: None,
+            extra: serde_json::Map::new(),
+        };
+        let chunk1 = StreamChunk {
+            chunk_type: "content".to_string(),
+            index: Some(0),
+            content: Some(serde_json::Value::String("tool_use".to_string())),
+            content_blocks: Some(vec![content_block]),
+            text_delta: None,
+            thinking: None,
+            tool_call_id: None,
+            tool_call_name: None,
+            json_delta: None,
+            usage: None,
+            finish_reason: None,
+        };
+        assert!(acc.feed_chunk(&chunk1));
+        assert!(acc.pending.contains_key("call_1"));
+
+        // Second chunk: json_delta with index but no tool_call_id
+        let chunk2 = make_chunk("delta", None, None, None, None,
+                                Some(r#"{"cmd":"ls"}"#), Some(0), None, None);
+        assert!(acc.feed_chunk(&chunk2));
+        let entry = acc.pending.get("call_1").unwrap();
+        assert_eq!(entry.arguments_str, r#"{"cmd":"ls"}"#);
+    }
+
+    // --- feed_chunk: content block registers tool_use ---
+    #[test]
+    fn feed_chunk_content_block_registers_tool() {
+        let mut acc = StreamingToolAccumulator::new();
+        let content_block = ContentBlock {
+            block_type: "tool_use".to_string(),
+            id: Some("tool_abc".to_string()),
+            name: Some("read".to_string()),
+            text: None,
+            input: None,
+            extra: serde_json::Map::new(),
+        };
+        let chunk = StreamChunk {
+            chunk_type: "content".to_string(),
+            index: Some(0),
+            content: Some(serde_json::Value::String("tool_use".to_string())),
+            content_blocks: Some(vec![content_block]),
+            text_delta: None,
+            thinking: None,
+            tool_call_id: None,
+            tool_call_name: None,
+            json_delta: None,
+            usage: None,
+            finish_reason: None,
+        };
+        assert!(acc.feed_chunk(&chunk));
+        let entry = acc.pending.get("tool_abc").unwrap();
+        assert_eq!(entry.name, "read");
+    }
+
+    // --- feed_chunk: unknown chunk type returns false ---
+    #[test]
+    fn feed_chunk_unknown_type_returns_false() {
+        let mut acc = StreamingToolAccumulator::new();
+        let chunk = make_chunk("stop", None, None, None, None, None, None, None, None);
+        assert!(!acc.feed_chunk(&chunk));
+    }
+
+    // --- finalize: empty accumulator ---
+    #[test]
+    fn finalize_empty_returns_empty() {
+        let acc = StreamingToolAccumulator::new();
+        let tools = acc.finalize("");
+        assert!(tools.is_empty());
+    }
+
+    // --- finalize: single tool call ---
+    #[test]
+    fn finalize_single_tool() {
+        let mut acc = StreamingToolAccumulator::new();
+        let chunk = make_chunk("delta", None, None, Some("call_1"), Some("bash"),
+                                Some(r#"{"cmd":"ls"}"#), None, None, None);
+        acc.feed_chunk(&chunk);
+        let tools = acc.finalize("");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "bash");
+        assert_eq!(tools[0].args, serde_json::json!({"cmd":"ls"}));
+    }
+
+    // --- finalize: skips empty-named tool calls ---
+    #[test]
+    fn finalize_skips_empty_name() {
+        let mut acc = StreamingToolAccumulator::new();
+        // Create a pending entry with empty name
+        let chunk = make_chunk("delta", None, None, Some("call_1"), None,
+                                None, None, None, None);
+        acc.feed_chunk(&chunk);
+        let tools = acc.finalize("");
+        assert!(tools.is_empty());
+    }
+
+    // --- finalize: malformed JSON args produce empty object ---
+    #[test]
+    fn finalize_malformed_args_returns_empty_object() {
+        let mut acc = StreamingToolAccumulator::new();
+        let chunk = make_chunk("delta", None, None, Some("call_1"), Some("bash"),
+                                Some("not valid json"), None, None, None);
+        acc.feed_chunk(&chunk);
+        let tools = acc.finalize("");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].args, serde_json::json!({}));
+    }
+
+    // --- finalize: prefers native over XML fallback ---
+    #[test]
+    fn finalize_prefers_native_over_xml() {
+        let mut acc = StreamingToolAccumulator::new();
+        let chunk = make_chunk("delta", None, None, Some("call_1"), Some("bash"),
+                                Some(r#"{"cmd":"ls"}"#), None, None, None);
+        acc.feed_chunk(&chunk);
+        // fallback_text has XML too, but native should win
+        let tools = acc.finalize(r#"<tool_code name="bash">{"cmd":"whoami"}</tool_code>"#);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "bash");
+        assert_eq!(tools[0].args, serde_json::json!({"cmd":"ls"}));
+    }
+
+    // --- finalize: XML fallback when native is empty ---
+    #[test]
+    fn finalize_xml_fallback() {
+        let acc = StreamingToolAccumulator::new();
+        let tools = acc.finalize(r#"Some text <tool_code name="read">{"path":"/etc/hosts"}</tool_code> more text"#);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "read");
+        assert_eq!(tools[0].args, serde_json::json!({"path":"/etc/hosts"}));
+    }
+
+    // --- finalize: multiple tool calls ---
+    #[test]
+    fn finalize_multiple_tools() {
+        let mut acc = StreamingToolAccumulator::new();
+        let chunk1 = make_chunk("delta", None, None, Some("call_1"), Some("bash"),
+                                Some(r#"{"cmd":"ls"}"#), None, None, None);
+        acc.feed_chunk(&chunk1);
+        let chunk2 = make_chunk("delta", None, None, Some("call_2"), Some("read"),
+                                Some(r#"{"path":"/etc"}"#), None, None, None);
+        acc.feed_chunk(&chunk2);
+        let tools = acc.finalize("");
+        assert_eq!(tools.len(), 2);
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"bash"));
+        assert!(names.contains(&"read"));
     }
 }
