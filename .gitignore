@@ -4,9 +4,8 @@ treesitter-daemon/build
 central-deamon/build
 command-daemon/build
 api-gateway/api-gateway
+bin
 dist
-dist-standalone
-node_modules
 tmp
 .vscode-test/
 *.vsix
