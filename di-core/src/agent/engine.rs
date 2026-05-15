@@ -2291,26 +2291,31 @@ impl AgentEngine {
                             artifact_ref: None,
                         };
                         let result_str = result.to_string();
-                        let is_cached = result_str.starts_with("\"[Cache Hit]");
-                        // Apply envelope wrapping to content string results
-                        // Error results carry <tool_error> XML in the "error" field
-                        let inner = if result.get("status").and_then(|v| v.as_str()) == Some("error") {
+                        let is_cached = result.get("_cached").and_then(|v| v.as_bool()).unwrap_or(false);
+                        // For cached results wrapped in {"_cached":true, "value": ...},
+                        // unwrap to the inner value for display.
+                        let effective = if is_cached {
+                            result.get("value").cloned().unwrap_or(serde_json::Value::Null)
+                        } else {
+                            result.clone()
+                        };
+                        let inner = if effective.get("status").and_then(|v| v.as_str()) == Some("error") {
                             // Error result: extract the error field which contains <tool_error> XML
-                            result.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string()
-                        } else if let Some(display) = result.get("_display").and_then(|v| v.as_str()) {
+                            effective.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string()
+                        } else if let Some(display) = effective.get("_display").and_then(|v| v.as_str()) {
                             // Structured result with display text (e.g. write returns path/lines + _display)
                             display.to_string()
-                        } else if let Some(s) = result.as_str() {
+                        } else if let Some(s) = effective.as_str() {
                             s.to_string()
                         } else {
-                            result_str.clone()
+                            effective.to_string()
                         };
                         // Build tool-specific envelope header fields matching tool description specs
                         let extra_header = match tool_name.as_str() {
                             "write" => {
                                 // OK | lines:N | path:<path> | tokens:N
-                                let path = result.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                                let lines = result.get("lines").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let path = effective.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                let lines = effective.get("lines").and_then(|v| v.as_i64()).unwrap_or(0);
                                 format!(" | lines:{} | path:{}", lines, path)
                             }
                             "read" => {
@@ -2322,20 +2327,20 @@ impl AgentEngine {
                             }
                             "search" => {
                                 // OK | matches:N | files:N | hint:refinements | tokens:N
-                                let matches = result.get("matches").and_then(|v| v.as_i64()).unwrap_or(0);
-                                let files = result.get("files").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let matches = effective.get("matches").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let files = effective.get("files").and_then(|v| v.as_i64()).unwrap_or(0);
                                 format!(" | matches:{} | files:{}", matches, files)
                             }
                             "repo" => {
                                 // OK | files:N | lines:N | symbols:N | detail:<level> | tokens:N
-                                let files = result.get("files").and_then(|v| v.as_i64()).unwrap_or(0);
-                                let symbols = result.get("symbols").and_then(|v| v.as_i64()).unwrap_or(0);
-                                let detail = result.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+                                let files = effective.get("files").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let symbols = effective.get("symbols").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let detail = effective.get("detail").and_then(|v| v.as_str()).unwrap_or("");
                                 format!(" | files:{} | symbols:{} | detail:{}", files, symbols, detail)
                             }
                             "bash" => {
                                 // OK | tokens:N | lines:N | exit:N
-                                if let Some(exit_code) = result.get("exit_code").and_then(|v| v.as_i64()) {
+                                if let Some(exit_code) = effective.get("exit_code").and_then(|v| v.as_i64()) {
                                     format!(" | exit:{}", exit_code)
                                 } else {
                                     String::new()
@@ -2343,7 +2348,7 @@ impl AgentEngine {
                             }
                             "edit" => {
                                 // OK | edits:N | tokens:N
-                                let edits = result.get("edits").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let edits = effective.get("edits").and_then(|v| v.as_i64()).unwrap_or(0);
                                 format!(" | edits:{}", edits)
                             }
                             _ => String::new(),
@@ -2944,7 +2949,7 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
                     let mut handle = stdout.lock();
                     let _ = writeln!(handle, "{}", json);
                     let _ = handle.flush();
-                }).await?;
+                }).await.ok();
             }
             Err(e) => {
                 eprintln!("[di-core] emit_event: serialization failed: {}", e);
@@ -3223,7 +3228,7 @@ impl MultiAgentOrchestrator {
                     let mut handle = stdout.lock();
                     let _ = writeln!(handle, "{}", json);
                     let _ = handle.flush();
-                }).await?;
+                }).await.ok();
             }
             Err(e) => eprintln!("[di-core] emit_event: serialization failed: {}", e),
         }

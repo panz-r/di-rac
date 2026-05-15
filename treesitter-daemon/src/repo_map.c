@@ -16,8 +16,9 @@ typedef struct {
 static void queue_init(WalkQueue *q) {
     q->capacity = 256;
     q->paths = malloc(sizeof(char[4096]) * q->capacity);
+    if (!q->paths) { q->capacity = 0; q->had_error = -1; return; }
     q->count = 0;
-    q->had_error = (q->paths == NULL) ? -1 : 0;
+    q->had_error = 0;
 }
 
 static void queue_free(WalkQueue *q) {
@@ -33,7 +34,9 @@ static int queue_push(WalkQueue *q, const char *path) {
         q->paths = tmp;
         q->capacity = new_cap;
     }
-    if (snprintf(q->paths[q->count++], 4096, "%s", path) >= 4096) return -1;
+    if (snprintf(q->paths[q->count], 4096, "%s", path) >= 4096) return -1;
+    q->count++;
+    return 0;
     return 0;
 }
 

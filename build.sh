@@ -49,7 +49,7 @@ echo "    OK"
 
 echo "==> Building C analyzer daemon (tree-sitter)..."
 (cd treesitter-daemon && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build)
-cp treesitter-daemon/build/di-rvv-analyzer dist/di-rvv-analyzer
+cp treesitter-daemon/build/divrr-analyzer dist/divrr-analyzer
 echo "    OK"
 
 echo "==> Building Go api-gateway..."

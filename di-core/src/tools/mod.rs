@@ -162,7 +162,18 @@ impl ToolCoordinator {
                     }
                 }
                 if fresh {
-                    return Ok(serde_json::Value::String(format!("[Cache Hit]{}", entry.result)));
+                    let cached_val: serde_json::Value = serde_json::from_str(&entry.result)
+                        .unwrap_or(serde_json::Value::String(entry.result.clone()));
+                    let mut result = cached_val;
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("_cached".to_string(), serde_json::Value::Bool(true));
+                    } else {
+                        result = serde_json::json!({
+                            "_cached": true,
+                            "value": result,
+                        });
+                    }
+                    return Ok(result);
                 }
             }
         }

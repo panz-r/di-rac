@@ -405,6 +405,10 @@ impl CommandDaemon {
             return Err(anyhow!("Command daemon binary not found: {}", binary_path));
         }
 
+        // tokio::process::Command creates pipes with O_NONBLOCK on both ends.
+        // The daemon uses poll + read on stdin and handles non-blocking I/O
+        // correctly, but still needs stderr drained so its fprintf(stderr)
+        // doesn't fill the pipe buffer.
         let mut child = tokio::process::Command::new(binary_path)
             .arg("--workspace-root")
             .arg(workspace_root)
@@ -424,6 +428,19 @@ impl CommandDaemon {
             std::time::Duration::from_secs(5),
             stderr_reader.read_line(&mut ready_line),
         ).await??;
+
+        // Drain daemon stderr in background. If we close the pipe, the
+        // daemon's fprintf(stderr) triggers SIGPIPE (killing it) or
+        // the pipe buffer fills up (blocking the daemon).
+        let drain = tokio::io::BufReader::new(stderr_reader.into_inner());
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut drain = drain;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = drain.read(&mut buf).await {
+                if n == 0 { break; }
+            }
+        });
 
         let stdout_reader = tokio::io::BufReader::new(stdout);
 
@@ -524,6 +541,7 @@ impl CommandDaemon {
             .map_err(|e| UntimedError::App(anyhow!("Failed to serialize payload: {}", e)))?;
 
         use tokio::io::AsyncWriteExt;
+        let t0 = std::time::Instant::now();
         if let Err(e) = self.stdin.write_all(json.as_bytes()).await {
             return Err(UntimedError::Dead(format!("Write failed (daemon dead?): {}", e)));
         }
@@ -533,18 +551,21 @@ impl CommandDaemon {
         if let Err(e) = self.stdin.flush().await {
             return Err(UntimedError::Dead(format!("Flush failed (daemon dead?): {}", e)));
         }
+        eprintln!("[di-core] daemon write+flush took {:?}", t0.elapsed());
 
         let id_str = id.to_string();
         let mut line = String::new();
         let mut bad_lines = 0u32;
         loop {
             line.clear();
+            let t0 = std::time::Instant::now();
             let n = tokio::time::timeout(
                 std::time::Duration::from_secs(60),
                 self.stdout.read_line(&mut line),
             ).await.map_err(|_| UntimedError::Dead(
                 format!("Daemon timed out after 60s (request_id={})", id)
             ))?.map_err(|e| UntimedError::Dead(format!("Read error: {}", e)))?;
+            eprintln!("[di-core] daemon read_line took {:?} ({} bytes)", t0.elapsed(), n);
             if n == 0 {
                 return Err(UntimedError::Dead("Daemon stdout EOF — process exited".to_string()));
             }
@@ -567,10 +588,12 @@ impl CommandDaemon {
 
                 // Application error — not a dead daemon, return to caller
                 if msg_type == "error" || ok == Some(false) {
+                    let code = val.get("code").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+                    let error_type = val.get("error_type").and_then(|v| v.as_str()).unwrap_or("ToolInternalError");
                     let msg = val.get("message").and_then(|v| v.as_str())
                         .or_else(|| val.get("error").and_then(|e| e.get("message")).and_then(|v| v.as_str()))
                         .unwrap_or("unknown daemon error");
-                    return Err(UntimedError::App(anyhow!("Daemon error: {}", msg)));
+                    return Err(UntimedError::App(anyhow!("[{}][{}] {}", code, error_type, msg)));
                 }
 
                 if msg_type == "ack" || msg_type == "progress" {

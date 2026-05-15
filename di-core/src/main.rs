@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
     log.log("di-core starting");
 
     let analyzer_binary = std::env::var("DIRAC_ANALYZER_BINARY")
-        .unwrap_or_else(|_| "di-rvv-analyzer".to_string());
+        .unwrap_or_else(|_| "divrr-analyzer".to_string());
     let command_daemon_binary = std::env::var("DIRAC_COMMAND_BINARY")
         .unwrap_or_else(|_| "di-rvv-cmd".to_string());
     let central_socket = std::env::var("DIRAC_CENTRAL_SOCKET")

@@ -37,9 +37,9 @@ build-treesitter-daemon:
 	@mkdir -p $(DIST)
 	cd treesitter-daemon && cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -1
 	cd treesitter-daemon && cmake --build build 2>&1 | tail -1
-	cp treesitter-daemon/build/di-rvv-analyzer $(DIST)/di-rvv-analyzer
-	@chmod 755 $(DIST)/di-rvv-analyzer
-	@echo "  DONE    $(DIST)/di-rvv-analyzer"
+	cp treesitter-daemon/build/divrr-analyzer $(DIST)/divrr-analyzer
+	@chmod 755 $(DIST)/divrr-analyzer
+	@echo "  DONE    $(DIST)/divrr-analyzer"
 
 # ---------------------------------------------------------------------------
 # divrr (Rust) — TUI frontend
@@ -72,7 +72,7 @@ install: build
 	@mkdir -p $(PREFIX)/dist
 	cp $(DIST)/api-gateway $(PREFIX)/dist/api-gateway
 	cp $(DIST)/di-rvv-cmd $(PREFIX)/dist/di-rvv-cmd
-	cp $(DIST)/di-rvv-analyzer $(PREFIX)/dist/di-rvv-analyzer
+	cp $(DIST)/divrr-analyzer $(PREFIX)/dist/divrr-analyzer
 	cp $(DIST)/divrr $(PREFIX)/dist/divrr
 	cp $(DIST)/di-core $(PREFIX)/dist/di-core
 	@echo "  INSTALL $(PREFIX)/dist/"

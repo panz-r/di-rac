@@ -32,8 +32,9 @@ char* analyzer_generate_skeleton(ParsedSource *ps) {
     skel[0] = '\0';
 
     for (size_t i = 0; i < sr->count; i++) {
-        append_to_skeleton(&skel, &len, &cap, sr->symbols[i].signature);
-        append_to_skeleton(&skel, &len, &cap, "\n");
+        const char *sig = sr->symbols[i].signature ? sr->symbols[i].signature : "???";
+        if (append_to_skeleton(&skel, &len, &cap, sig) < 0) break;
+        if (append_to_skeleton(&skel, &len, &cap, "\n") < 0) break;
     }
 
     analyzer_free_symbols(sr);

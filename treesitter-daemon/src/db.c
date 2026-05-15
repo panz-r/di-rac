@@ -14,6 +14,7 @@ IndexDB* db_open(const char *path) {
     const char *schema = 
         "PRAGMA journal_mode=WAL;"
         "PRAGMA synchronous=NORMAL;"
+        "PRAGMA foreign_keys=ON;"
         "CREATE TABLE IF NOT EXISTS files ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  path TEXT UNIQUE NOT NULL,"
@@ -277,11 +278,11 @@ void db_search_symbols(IndexDB *db, const char *query, const char *kind_filter, 
     if (kind_filter) {
         sql = "SELECT s.name, s.kind, s.handle, f.path, s.start_line "
               "FROM symbols s JOIN files f ON s.file_id = f.id "
-              "WHERE s.name LIKE ? AND s.kind = ? LIMIT ?";
+              "WHERE s.name COLLATE NOCASE LIKE ? AND s.kind = ? LIMIT ?";
     } else {
         sql = "SELECT s.name, s.kind, s.handle, f.path, s.start_line "
               "FROM symbols s JOIN files f ON s.file_id = f.id "
-              "WHERE s.name LIKE ? LIMIT ?";
+              "WHERE s.name COLLATE NOCASE LIKE ? LIMIT ?";
     }
 
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {

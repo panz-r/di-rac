@@ -343,9 +343,38 @@ impl ToolResponse {
 }
 
 /// Classify a legacy `anyhow` error message into a structured error code.
+/// Matches daemon error codes from `[CODE][ERROR_TYPE] message` format
+/// and fallback string patterns.
 fn classify_legacy_error(msg: &str) -> ToolErrorCode {
+    // Structured error type from daemon protocol: [CODE][error_type] message
+    if let Some(et_start) = msg.find('[') {
+        if let Some(et_end) = msg[et_start+1..].find(']') {
+            let bracket_end = et_start + 1 + et_end;
+            if bracket_end + 1 < msg.len() && msg.as_bytes()[bracket_end + 1] == b'[' {
+                if let Some(et_end2) = msg[bracket_end+2..].find(']') {
+                    let error_type = &msg[bracket_end+2..bracket_end+2+et_end2];
+                    return match error_type {
+                        "ParseError" | "FileError" => ToolErrorCode::ToolInternalError,
+                        "InvalidRequest" => ToolErrorCode::InvalidInput,
+                        "UnknownCommand" => ToolErrorCode::MissingArgument,
+                        "ServerOverloaded" => ToolErrorCode::DaemonUnavailable,
+                        _ => {
+                            let lower = error_type.to_lowercase();
+                            if lower.contains("unavailable") || lower.contains("timeout") {
+                                ToolErrorCode::DaemonUnavailable
+                            } else {
+                                ToolErrorCode::ToolInternalError
+                            }
+                        }
+                    };
+                }
+            }
+        }
+    }
+
+    // Fallback: legacy string pattern matching
     let lower = msg.to_lowercase();
-    if lower.contains("file not found") || lower.contains("enoent") {
+    if lower.contains("file not found") || lower.contains("enoent") || lower.contains("no such file") {
         ToolErrorCode::IoFileNotFound
     } else if lower.contains("permission denied") {
         ToolErrorCode::IoFilePermissionDenied
@@ -357,7 +386,7 @@ fn classify_legacy_error(msg: &str) -> ToolErrorCode {
         ToolErrorCode::MissingArgument
     } else if lower.contains("anchor") && lower.contains("not found") {
         ToolErrorCode::AnchorNotFound
-    } else if lower.contains("connection refused") || lower.contains("daemon") {
+    } else if lower.contains("connection refused") {
         ToolErrorCode::DaemonUnavailable
     } else {
         ToolErrorCode::ToolInternalError

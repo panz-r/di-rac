@@ -30,8 +30,13 @@ struct jsonw {
     bool need_comma;   /* need a comma before the next item */
 };
 
+/* Thread-local override: when non-NULL, jsonw_init uses this FILE* instead
+   of the passed argument. Workers set this to an open_memstream to capture
+   output for the main loop's poll-based flush to the real stdout. */
+extern __thread FILE *jsonw_output_fallback;
+
 static inline void jsonw_init(struct jsonw *w, FILE *f) {
-    w->f = f;
+    w->f = jsonw_output_fallback ? jsonw_output_fallback : f;
     w->need_comma = false;
 }
 
@@ -171,7 +176,11 @@ static inline void jsonw_null(struct jsonw *w) {
 
 static inline void jsonw_kv_str(struct jsonw *w, const char *key, const char *val) {
     jsonw_key(w, key);
-    jsonw_str(w, val);
+    if (val) {
+        jsonw_str(w, val);
+    } else {
+        jsonw_null(w);
+    }
 }
 
 static inline void jsonw_kv_strn(struct jsonw *w, const char *key,

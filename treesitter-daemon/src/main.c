@@ -5,6 +5,8 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <poll.h>
+#include <signal.h>
 #include <tree_sitter/api.h>
 
 #include "analyzer.h"
@@ -14,12 +16,15 @@
 
 #define MAX_LINE 1048576 
 #define MAX_THREADS 8
+#define MAX_FILE_SIZE (50 * 1024 * 1024)  /* 50 MB max file read */
+#define LINE_BUF_SZ (1024 * 1024)
 
 typedef struct {
     pthread_mutex_t stdout_lock;
     pthread_mutex_t thread_count_lock;
     pthread_mutex_t db_lock;
     int active_threads;
+    int shutdown_requested;
     AnalyzerCtx base;
 } GlobalCtx;
 
@@ -28,17 +33,36 @@ typedef struct {
     GlobalCtx *gctx;
 } RequestTask;
 
+__thread FILE *jsonw_output_fallback = NULL;
+
+#include <sys/syscall.h>
 static void jsonw_id(struct jsonw *w, const char *raw_id, int id_len) {
     jsonw_key(w, "id");
     if (!raw_id || id_len <= 0) {
         jsonw_null(w);
+    } else if (raw_id[0] == '"' && id_len >= 2 && raw_id[id_len - 1] == '"') {
+        // Quoted string id: strip quotes and output as JSON string
+        jsonw_strn(w, raw_id + 1, id_len - 2, 0);
+    } else if (raw_id[0] == '"') {
+        // Unterminated quoted id — fall back to null
+        jsonw_null(w);
     } else {
+        // Numeric or bare id: write raw value (already valid JSON)
         fwrite(raw_id, 1, id_len, w->f);
         w->need_comma = true;
     }
 }
 
 static void send_error(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *code, const char *message) {
+    // Map daemon-internal error codes to standard error types
+    const char *error_type = "ToolInternalError";
+    if (strcmp(code, "PARSE_FAILED") == 0)               error_type = "ParseError";
+    else if (strcmp(code, "INVALID_REQUEST") == 0)        error_type = "InvalidRequest";
+    else if (strcmp(code, "UNKNOWN_COMMAND") == 0)        error_type = "UnknownCommand";
+    else if (strcmp(code, "FILE_ERROR") == 0)             error_type = "FileError";
+    else if (strcmp(code, "THREAD_REJECTED") == 0 ||
+             strcmp(code, "THREAD_FAILED") == 0)           error_type = "ServerOverloaded";
+
     pthread_mutex_lock(lock);
     struct jsonw w;
     jsonw_init(&w, stdout);
@@ -47,6 +71,7 @@ static void send_error(pthread_mutex_t *lock, const char *raw_id, int id_len, co
     jsonw_id(&w, raw_id, id_len);
     jsonw_kv_bool(&w, "ok", false);
     jsonw_kv_str(&w, "code", code);
+    jsonw_kv_str(&w, "error_type", error_type);
     jsonw_kv_str(&w, "message", message);
     jsonw_object_close(&w);
     jsonw_flush(&w);
@@ -76,7 +101,7 @@ static void write_outline_payload(struct jsonw *w, SymbolResult *sr, ImportResul
             jsonw_object_open(w);
             if (compact) {
                 jsonw_kv_str(w, "n", sr->symbols[i].name);
-                jsonw_kv_str(w, "t", "d");
+                jsonw_kv_str(w, "t", symbol_kind_to_short(sr->symbols[i].kind));
                 jsonw_kv_str(w, "k", symbol_kind_to_str(sr->symbols[i].kind));
                 jsonw_kv_int(w, "start_line", sr->symbols[i].start_line);
                 jsonw_kv_int(w, "start_col", 1);
@@ -364,6 +389,10 @@ static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, c
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
+    if (size <= 0 || size > MAX_FILE_SIZE) { fclose(f);
+        send_error(lock, raw_id, id_len, "FILE_TOO_LARGE", "File exceeds maximum indexable size");
+        return;
+    }
     char *content = malloc(size + 1);
     if (!content) { fclose(f); send_error(lock, raw_id, id_len, "OOM", "Failed to allocate buffer for file content"); return; }
     if (fread(content, 1, size, f) != (size_t)size) { free(content); fclose(f); send_error(lock, raw_id, id_len, "READ_ERROR", "Incomplete read"); return; }
@@ -468,10 +497,22 @@ static void handle_clear_index(pthread_mutex_t *lock, pthread_mutex_t *db_lock, 
     pthread_mutex_unlock(lock);
 }
 
+/* Verify that path resolves within workspace_root (security: prevent
+   arbitrary file reads outside the intended tree). */
+static bool is_path_safe(const char *path, const char *workspace_root) {
+    if (!path || !workspace_root || !workspace_root[0]) return false;
+    char resolved[4096];
+    if (!realpath(path, resolved)) return false;
+    size_t rl = strlen(workspace_root);
+    // workspace_root may have a trailing slash; normalise by checking prefix
+    return strncmp(resolved, workspace_root, rl) == 0 &&
+           (resolved[rl] == '/' || resolved[rl] == '\0');
+}
+
 static void* request_worker(void *arg) {
     RequestTask *task = (RequestTask*)arg;
     int len = strlen(task->line);
-    
+
     struct json j;
     if (json_enter_object(&j, task->line, len) < 0) {
         send_error(&task->gctx->stdout_lock, NULL, 0, "INVALID_REQUEST", "Malformed JSON");
@@ -480,6 +521,7 @@ static void* request_worker(void *arg) {
 
     const char *raw_id = NULL;
     int id_len = 0;
+    bool handled = false;
     char command[64] = "", file[4096] = "", content[MAX_LINE] = "", lang[32] = "", dir[4096] = "", query[256] = "", kind[64] = "", obs_type[32] = "", file_hash[128] = "";
     int limit = 100, tokens = 0, turn = 0;
     double timestamp = 0.0, confidence = 0.0;
@@ -507,20 +549,23 @@ static void* request_worker(void *arg) {
 
     if (strcmp(command, "status") == 0) {
         handle_status(&task->gctx->stdout_lock, raw_id, id_len, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "outline") == 0) {
         if (content[0] == '\0' && file[0] != '\0') {
+            if (!is_path_safe(file, task->gctx->base.workspace_root)) { goto send_err; }
             FILE *f = fopen(file, "r");
             if (f) {
                 fseek(f, 0, SEEK_END);
                 long fsize = ftell(f);
                 fseek(f, 0, SEEK_SET);
-                if (fsize <= 0) { fclose(f); goto send_err; }
+                if (fsize <= 0 || fsize > MAX_FILE_SIZE) { fclose(f); goto send_err; }
                 char *fcontent = malloc(fsize + 1);
                 if (!fcontent) { fclose(f); goto send_err; }
                 size_t bytes_read = fread(fcontent, 1, fsize, f);
                 if (bytes_read != (size_t)fsize) { free(fcontent); fclose(f); goto send_err; }
                 fcontent[bytes_read] = '\0';
                 handle_outline(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang, &task->gctx->base);
+                handled = true;
                 free(fcontent);
                 fclose(f);
             } else {
@@ -528,9 +573,39 @@ static void* request_worker(void *arg) {
             }
         } else {
             handle_outline(&task->gctx->stdout_lock, raw_id, id_len, content, lang, &task->gctx->base);
+            handled = true;
         }
     } else if (strcmp(command, "extract-apis") == 0) {
         handle_extract_apis(&task->gctx->stdout_lock, raw_id, id_len, content, lang);
+        handled = true;
+    } else if (strcmp(command, "skeleton") == 0) {
+        if (content[0] == '\0' && file[0] != '\0') {
+            if (!is_path_safe(file, task->gctx->base.workspace_root)) { goto send_err; }
+            FILE *f = fopen(file, "r");
+            if (f) {
+                fseek(f, 0, SEEK_END);
+                long fsize = ftell(f);
+                fseek(f, 0, SEEK_SET);
+                if (fsize <= 0 || fsize > MAX_FILE_SIZE) { fclose(f); goto send_err; }
+                char *fcontent = malloc(fsize + 1);
+                if (!fcontent) { fclose(f); goto send_err; }
+                size_t bytes_read = fread(fcontent, 1, fsize, f);
+                if (bytes_read != (size_t)fsize) { free(fcontent); fclose(f); goto send_err; }
+                fcontent[bytes_read] = '\0';
+                handle_outline(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang, &task->gctx->base);
+                handled = true;
+                free(fcontent);
+                fclose(f);
+            } else {
+                goto send_err;
+            }
+        } else {
+            handle_outline(&task->gctx->stdout_lock, raw_id, id_len, content, lang, &task->gctx->base);
+            handled = true;
+        }
+    } else if (strcmp(command, "extract-apis") == 0) {
+        handle_extract_apis(&task->gctx->stdout_lock, raw_id, id_len, content, lang);
+        handled = true;
     } else if (strcmp(command, "skeleton") == 0) {
         if (content[0] == '\0' && file[0] != '\0') {
             FILE *f = fopen(file, "r");
@@ -538,13 +613,14 @@ static void* request_worker(void *arg) {
                 fseek(f, 0, SEEK_END);
                 long fsize = ftell(f);
                 fseek(f, 0, SEEK_SET);
-                if (fsize <= 0) { fclose(f); goto send_err; }
+                if (fsize <= 0 || fsize > MAX_FILE_SIZE) { fclose(f); goto send_err; }
                 char *fcontent = malloc(fsize + 1);
                 if (!fcontent) { fclose(f); goto send_err; }
                 size_t bytes_read = fread(fcontent, 1, fsize, f);
                 if (bytes_read != (size_t)fsize) { free(fcontent); fclose(f); goto send_err; }
                 fcontent[bytes_read] = '\0';
                 handle_skeleton(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang);
+                handled = true;
                 free(fcontent);
                 fclose(f);
             } else {
@@ -552,48 +628,67 @@ static void* request_worker(void *arg) {
             }
         } else {
             handle_skeleton(&task->gctx->stdout_lock, raw_id, id_len, content, lang);
+            handled = true;
         }
     } else if (strcmp(command, "repo-map") == 0) {
         handle_repo_map(&task->gctx->stdout_lock, raw_id, id_len, dir, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "search-symbols") == 0 || strcmp(command, "search-index") == 0) {
         handle_search_symbols(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, kind[0] ? kind : NULL, limit, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "index-file") == 0) {
         handle_index_file(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, file, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "index-observation") == 0) {
         handle_index_observation(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, obs_type, content, timestamp, tokens, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "search-observations") == 0) {
         handle_search_observations(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, limit, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "index-critic-decision") == 0) {
         handle_index_critic_decision(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, content, turn, confidence, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "search-critic-decisions") == 0) {
         handle_search_critic_decisions(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, limit, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "index-watcher-pattern") == 0) {
         handle_index_watcher_pattern(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, content, file_hash, turn, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "search-watcher-patterns") == 0) {
         handle_search_watcher_patterns(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, limit, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "ast-churn") == 0) {
         handle_ast_churn(&task->gctx->stdout_lock, raw_id, id_len, file, content);
+        handled = true;
     } else if (strcmp(command, "invalidate-file") == 0) {
         handle_invalidate_file(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, file, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "clear-index") == 0) {
         handle_clear_index(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, &task->gctx->base);
+        handled = true;
     } else if (strcmp(command, "shutdown") == 0) {
-        /* Send response before jumping to cleanup — lock already held */
+        /* Send response before jumping to cleanup */
+        pthread_mutex_lock(&task->gctx->stdout_lock);
         struct jsonw w; jsonw_init(&w, stdout); jsonw_object_open(&w);
         jsonw_kv_bool(&w, "ok", true); jsonw_id(&w, raw_id, id_len); jsonw_kv_str(&w, "status", "shutting_down");
         jsonw_object_close(&w); jsonw_flush(&w);
         pthread_mutex_unlock(&task->gctx->stdout_lock);
-        goto cleanup; /* clean up: decrement thread count, free task, return NULL */
-    } else {
+        task->gctx->shutdown_requested = 1;
+        goto cleanup;
+    } else if (command[0] && !handled) {
         send_error(&task->gctx->stdout_lock, raw_id, id_len, "UNKNOWN_COMMAND", "Unknown analyzer command");
+        goto cleanup;
     }
 
 send_err:
-    pthread_mutex_lock(&task->gctx->stdout_lock);
-    send_error(&task->gctx->stdout_lock, raw_id, id_len, "FILE_ERROR", "Failed to read file");
-    pthread_mutex_unlock(&task->gctx->stdout_lock);
+    /* File-read failure (reached via goto send_err from outline/skeleton).
+       Send an error response only if no handler already wrote one. */
+    if (!handled) {
+        send_error(&task->gctx->stdout_lock, raw_id, id_len, "FILE_IO_ERROR", "Failed to read file");
+    }
 
 cleanup:
+    jsonw_output_fallback = NULL;
     pthread_mutex_lock(&task->gctx->thread_count_lock);
     task->gctx->active_threads--;
     pthread_mutex_unlock(&task->gctx->thread_count_lock);
@@ -603,10 +698,13 @@ cleanup:
 }
 
 int main(int argc, char *argv[]) {
+    // Ignore SIGPIPE: writing to a broken pipe kills the daemon otherwise.
+    // With SIG_IGN the write fails with EPIPE and we continue.
+    signal(SIGPIPE, SIG_IGN);
+
     GlobalCtx gctx = {0};
     pthread_mutex_init(&gctx.stdout_lock, NULL);
     pthread_mutex_init(&gctx.thread_count_lock, NULL);
-    pthread_mutex_init(&gctx.db_lock, NULL);
     
     char db_path[4096] = "";
     for (int i = 1; i < argc; i++) {
@@ -623,37 +721,94 @@ int main(int argc, char *argv[]) {
     if (db_path[0]) gctx.base.db = db_open(db_path);
 
     if (!gctx.base.oneshot) {
-        fprintf(stderr, "di-rvv-analyzer: ready (C version)\n");
-        char *line = NULL;
-        size_t cap = 0;
-        while (getline(&line, &cap, stdin) > 0) {
-            if (line[0] == '\n' || line[0] == '\r' || line[0] == '\0') continue;
-            RequestTask *task = malloc(sizeof(RequestTask));
-            task->line = strdup(line);
-            task->gctx = &gctx;
-            pthread_mutex_lock(&gctx.thread_count_lock);
-            if (gctx.active_threads >= MAX_THREADS) {
-                pthread_mutex_unlock(&gctx.thread_count_lock);
-                send_error(&gctx.stdout_lock, NULL, 0, "THREAD_REJECTED", "Server at maximum thread capacity");
-                free(task->line);
-                free(task);
-                continue;
+        fprintf(stderr, "divrr-analyzer: ready (C version)\n");
+
+        // poll-based stdin reader + stdout writer. Single poll loop handles
+        // both fds: when stdin is readable, read and spawn workers; when
+        // stdout is writable, drain the response queue to the real fd.
+        char *line_buf = malloc(LINE_BUF_SZ);
+        size_t buf_used = 0;
+
+        while (1) {
+            struct pollfd pfd;
+            pfd.fd = STDIN_FILENO;
+            pfd.events = POLLIN;
+
+            int ret = poll(&pfd, 1, 100);
+            if (ret <= 0) continue;
+
+            if (pfd.revents & POLLIN) {
+                // If buffer is nearly full without a newline, discard
+                // to prevent DOS from oversized lines.
+                if (buf_used >= LINE_BUF_SZ / 2) {
+                    // Check if there's any newline in the buffer
+                    char *nl = memchr(line_buf, '\n', buf_used);
+                    if (!nl) {
+                        // No newline found — discard all data and reset
+                        buf_used = 0;
+                    } else {
+                        // Keep from last newline onward
+                        size_t keep = buf_used - ((nl + 1) - line_buf);
+                        memmove(line_buf, nl + 1, keep);
+                        buf_used = keep;
+                    }
+                }
+                ssize_t n = read(STDIN_FILENO, line_buf + buf_used, LINE_BUF_SZ - buf_used - 1);
+                if (n <= 0) break;
+                buf_used += (size_t)n;
+                line_buf[buf_used] = '\0';
+
+                char *start = line_buf;
+                while (1) {
+                    char *nl = strchr(start, '\n');
+                    if (!nl) break;
+                    *nl = '\0';
+
+                    if (start[0] && start[0] != '\r' && start[0] != '\0') {
+                        RequestTask *task = malloc(sizeof(RequestTask));
+                        task->line = strdup(start);
+                        task->gctx = &gctx;
+                        pthread_mutex_lock(&gctx.thread_count_lock);
+                        if (gctx.active_threads >= MAX_THREADS) {
+                            pthread_mutex_unlock(&gctx.thread_count_lock);
+                            send_error(&gctx.stdout_lock, NULL, 0, "THREAD_REJECTED",
+                                       "Server at maximum thread capacity");
+                            free(task->line);
+                            free(task);
+                        } else {
+                            gctx.active_threads++;
+                            pthread_mutex_unlock(&gctx.thread_count_lock);
+                            pthread_t thread;
+                            if (pthread_create(&thread, NULL, request_worker, task) != 0) {
+                                pthread_mutex_lock(&gctx.thread_count_lock);
+                                gctx.active_threads--;
+                                pthread_mutex_unlock(&gctx.thread_count_lock);
+                                send_error(&gctx.stdout_lock, NULL, 0, "THREAD_FAILED",
+                                           "Failed to spawn worker thread");
+                                free(task->line);
+                                free(task);
+                            } else {
+                                pthread_detach(thread);
+                            }
+                        }
+                    }
+                    start = nl + 1;
+                }
+
+                // Keep incomplete trailing data
+                size_t consumed = (size_t)(start - line_buf);
+                if (consumed > 0) {
+                    size_t remaining = buf_used - consumed;
+                    if (remaining > 0) memmove(line_buf, start, remaining);
+                    buf_used = remaining;
+                }
             }
-            gctx.active_threads++;
-            pthread_mutex_unlock(&gctx.thread_count_lock);
-            pthread_t thread;
-            if (pthread_create(&thread, NULL, request_worker, task) != 0) {
-                pthread_mutex_lock(&gctx.thread_count_lock);
-                gctx.active_threads--;
-                pthread_mutex_unlock(&gctx.thread_count_lock);
-                send_error(&gctx.stdout_lock, NULL, 0, "THREAD_FAILED", "Failed to spawn worker thread");
-                free(task->line);
-                free(task);
-            } else {
-                pthread_detach(thread);
-            }
+
+            /* Check POLLHUP or shutdown request */
+            if ((pfd.revents & (POLLHUP | POLLERR)) || gctx.shutdown_requested) break;
         }
-        free(line);
+        free(line_buf);
+
         while (1) {
             pthread_mutex_lock(&gctx.thread_count_lock);
             int count = gctx.active_threads;

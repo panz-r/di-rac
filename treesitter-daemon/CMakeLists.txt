@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(di-rvv-analyzer C)
+project(divrr-analyzer C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O3 -D_GNU_SOURCE")
@@ -71,7 +71,7 @@ set(DAEMON_SOURCES
     src/db.c
 )
 
-add_executable(di-rvv-analyzer ${DAEMON_SOURCES})
+add_executable(divrr-analyzer ${DAEMON_SOURCES})
 
 set(LIBS
     tree-sitter
@@ -92,6 +92,6 @@ set(LIBS
     dl
 )
 
-target_link_libraries(di-rvv-analyzer ${LIBS})
+target_link_libraries(divrr-analyzer ${LIBS})
 
-install(TARGETS di-rvv-analyzer DESTINATION bin)
+install(TARGETS divrr-analyzer DESTINATION bin)

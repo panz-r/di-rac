@@ -99,7 +99,7 @@ All binaries are built to `bin/`:
 - `bin/divrr` — Terminal UI (Rust)
 - `bin/di-core` — Agent engine (Rust)
 - `bin/di-rvv-cmd` — Command daemon (C)
-- `bin/di-rvv-analyzer` — Tree-sitter daemon (Rust)
+- `bin/divrr-analyzer` — Tree-sitter daemon (Rust)
 
 ## Running
 

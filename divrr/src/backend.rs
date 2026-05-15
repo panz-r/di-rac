@@ -35,13 +35,13 @@ impl DiCoreBackend {
             .filter(|p| std::path::Path::new(p).exists())
             .unwrap_or_else(|| {
                 let candidates = [
-                    std::path::Path::new(core_path).parent().map(|p| p.join("di-rvv-analyzer")),
+                    std::path::Path::new(core_path).parent().map(|p| p.join("divrr-analyzer")),
                 ];
                 candidates.iter()
                     .filter_map(|c| c.as_ref())
                     .find(|p| p.exists())
                     .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "di-rvv-analyzer".to_string())
+                    .unwrap_or_else(|| "divrr-analyzer".to_string())
             });
 
         let mut child = Command::new(core_path)

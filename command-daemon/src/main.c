@@ -191,6 +191,8 @@ static void send_child_result(ExecChild *child) {
     pthread_mutex_unlock(&stdout_lock);
 }
 
+__thread FILE *jsonw_output_fallback = NULL;
+
 int main(int argc, char *argv[]) {
     char workspace_root[4096] = "";
     for (int i = 1; i < argc; i++) {

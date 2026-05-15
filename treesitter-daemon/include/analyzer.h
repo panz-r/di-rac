@@ -90,5 +90,6 @@ void analyzer_search_symbols(AnalyzerCtx *ctx, const char *query, const char *ki
 void analyzer_ast_churn(const char *file_path, const char *new_content, struct jsonw *w);
 
 const char* symbol_kind_to_str(SymbolKind kind);
+const char* symbol_kind_to_short(SymbolKind kind);
 
 #endif

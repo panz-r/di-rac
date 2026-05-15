@@ -240,6 +240,8 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
                 const char *prefix = (sym.kind == KIND_CLASS) ? "class" : "fn";
                 sym.handle = malloc(strlen(sym.name) + 10);
                 if (!sym.handle) {
+                    free(sym.name);
+                    free(sym.signature);
                     error_code = -1;
                     break;
                 }
@@ -308,7 +310,13 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
                 if (count == cap) {
                     size_t new_cap = cap ? cap * 2 : 16;
                     void *tmp = realloc(imports, sizeof(Import) * new_cap);
-                    if (!tmp) { error_code = -1; /* imp.module and imp.names leak but we must continue */ break; }
+                    if (!tmp) {
+                        free(imp.module);
+                        for (size_t ei = 0; ei < imp.names_count; ei++) free(imp.names[ei]);
+                        free(imp.names);
+                        error_code = -1;
+                        break;
+                    }
                     imports = tmp;
                     cap = new_cap;
                 }
@@ -419,6 +427,18 @@ const char* symbol_kind_to_str(SymbolKind kind) {
         case KIND_INTERFACE: return "interface";
         case KIND_MODULE: return "module";
         default:            return "unknown";
+    }
+}
+
+const char* symbol_kind_to_short(SymbolKind kind) {
+    switch (kind) {
+        case KIND_FUNCTION: return "f";
+        case KIND_CLASS:    return "c";
+        case KIND_METHOD:   return "m";
+        case KIND_VARIABLE: return "v";
+        case KIND_INTERFACE: return "i";
+        case KIND_MODULE: return "u";
+        default:            return "?";
     }
 }
 
