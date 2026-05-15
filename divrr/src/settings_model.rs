@@ -644,18 +644,26 @@ pub fn validate_parameters(
     api_key: &str,
     model: &str,
     base_url: &str,
+    provider_params: &std::collections::HashMap<String, String>,
 ) -> std::io::Result<serde_json::Value> {
-    let mut config = serde_json::json!({"id": provider, "model": model});
+    let mut settings = serde_json::Map::new();
     if !api_key.is_empty() {
-        config["api_key"] = serde_json::Value::String(api_key.to_string());
+        settings.insert("api_key".to_string(), serde_json::Value::String(api_key.to_string()));
+    }
+    if !model.is_empty() {
+        settings.insert("model".to_string(), serde_json::Value::String(model.to_string()));
     }
     if !base_url.is_empty() {
-        config["base_url"] = serde_json::Value::String(base_url.to_string());
+        settings.insert("base_url".to_string(), serde_json::Value::String(base_url.to_string()));
+    }
+    // Include provider-specific params (temperature, max_tokens, etc.) for full validation
+    for (key, val) in provider_params {
+        settings.insert(key.clone(), string_to_json_value(val));
     }
     let resp = gw.request(&serde_json::json!({
         "type": "validate-parameters",
         "provider": provider,
-        "config": config,
+        "settings": settings,
     }))?;
     if resp.status != 200 {
         let msg = resp.error.map(|e| e.message).unwrap_or_default();

@@ -359,7 +359,7 @@ async fn main() -> color_eyre::Result<()> {
                                             if let Some(rs) = all_settings.roles.get(*role) {
                                                 if rs.provider.is_empty() { continue; }
                                                 if let Err(e) = crate::settings::validate_parameters(
-                                                    &mut gw, &rs.provider, &rs.api_key, &rs.model, &rs.base_url,
+                                                    &mut gw, &rs.provider, &rs.api_key, &rs.model, &rs.base_url, &rs.provider_params,
                                                 ) {
                                                     error = Some(format!("Validation failed for {}: {}", role, e));
                                                     break;
