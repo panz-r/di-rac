@@ -874,12 +874,17 @@ impl AgentEngine {
                             }
                         }
                     }
-                    self.emit_event(CoreEvent::TaskFinished {
-                        agent_id: self.id,
-                        success: false,
-                        message: format!("Error: {}", e),
-                    }).await?;
-                    return Err(e);
+
+                    // For provider or gateway errors, don't abort — add as user message
+                    // so the agent sees the problem and waits for the user to fix settings.
+                    // The user can update provider config and the agent retries on the next turn.
+                    eprintln!("[di-core] run_turn error (non-fatal, continuing): {}", err_msg);
+                    self.trajectory.add_message(
+                        Role::User,
+                        json!(format!("[SYSTEM: Request failed: {}]\nPlease check your provider configuration and try again. The agent will retry on the next turn.", err_msg)),
+                        20,
+                    );
+                    continue;
                 }
             };
 
