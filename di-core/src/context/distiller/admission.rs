@@ -39,7 +39,6 @@ impl DistillerAdmission {
     /// `is_hard_compaction` bypasses all limits (never block critical compaction).
     pub async fn try_acquire(&self, agent_id: Uuid, is_hard_compaction: bool) -> AdmissionDecision {
         if is_hard_compaction {
-            let _ = self.concurrency_sem.acquire().await.expect("semaphore not closed");
             return AdmissionDecision::Allowed;
         }
 
