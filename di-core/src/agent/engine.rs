@@ -2946,17 +2946,15 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
     async fn emit_event(&self, event: CoreEvent) -> Result<()> {
         match serde_json::to_string(&event) {
             Ok(json) => {
-                // Use spawn_blocking to avoid blocking the tokio worker thread
-                // during stdout write+flush. This prevents pipe-buffer deadlocks
-                // where di-core blocks on flush while divrr blocks on writing a
-                // response to di-core's stdin.
-                tokio::task::spawn_blocking(move || {
-                    use std::io::Write;
-                    let stdout = std::io::stdout();
-                    let mut handle = stdout.lock();
-                    let _ = writeln!(handle, "{}", json);
-                    let _ = handle.flush();
-                }).await.ok();
+                use tokio::io::AsyncWriteExt;
+                let mut stdout = tokio::io::stdout();
+                if let Err(e) = stdout.write_all(json.as_bytes()).await {
+                    eprintln!("[di-core] emit_event: write failed: {}", e);
+                } else if let Err(e) = stdout.write_all(b"\n").await {
+                    eprintln!("[di-core] emit_event: newline failed: {}", e);
+                } else if let Err(e) = stdout.flush().await {
+                    eprintln!("[di-core] emit_event: flush failed: {}", e);
+                }
             }
             Err(e) => {
                 eprintln!("[di-core] emit_event: serialization failed: {}", e);
@@ -3236,13 +3234,15 @@ impl MultiAgentOrchestrator {
     pub async fn emit_event(&self, event: CoreEvent) -> Result<()> {
         match serde_json::to_string(&event) {
             Ok(json) => {
-                tokio::task::spawn_blocking(move || {
-                    use std::io::Write;
-                    let stdout = std::io::stdout();
-                    let mut handle = stdout.lock();
-                    let _ = writeln!(handle, "{}", json);
-                    let _ = handle.flush();
-                }).await.ok();
+                use tokio::io::AsyncWriteExt;
+                let mut stdout = tokio::io::stdout();
+                if let Err(e) = stdout.write_all(json.as_bytes()).await {
+                    eprintln!("[di-core] emit_event: write failed: {}", e);
+                } else if let Err(e) = stdout.write_all(b"\n").await {
+                    eprintln!("[di-core] emit_event: newline failed: {}", e);
+                } else if let Err(e) = stdout.flush().await {
+                    eprintln!("[di-core] emit_event: flush failed: {}", e);
+                }
             }
             Err(e) => eprintln!("[di-core] emit_event: serialization failed: {}", e),
         }
