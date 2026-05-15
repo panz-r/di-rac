@@ -739,3 +739,316 @@ impl ResilientDaemon {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- ProviderConfig serialization ---
+
+    #[test]
+    fn provider_config_roundtrip() {
+        let cfg = ProviderConfig {
+            id: "anthropic".to_string(),
+            api_key: Some("sk-test".to_string()),
+            base_url: None,
+            model: "claude-3".to_string(),
+            region: None,
+            project_id: None,
+            params: [("temperature".to_string(), serde_json::json!(0.7))].into(),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains(r#""id":"anthropic""#));
+        assert!(json.contains(r#""api_key":"sk-test""#));
+        assert!(json.contains(r#""extra""#));
+
+        let deserialized: ProviderConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, "anthropic");
+        assert_eq!(deserialized.api_key, Some("sk-test".to_string()));
+        assert_eq!(deserialized.model, "claude-3");
+        assert_eq!(deserialized.params.get("temperature").and_then(|v| v.as_f64()), Some(0.7));
+    }
+
+    #[test]
+    fn provider_config_deserializes_from_gateway_format() {
+        // This is the format the Go api-gateway sends
+        let json = r#"{"id":"anthropic","api_key":"sk-test","model":"claude-3","extra":{"temperature":0.7}}"#;
+        let cfg: ProviderConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.id, "anthropic");
+        assert_eq!(cfg.api_key.unwrap(), "sk-test");
+        assert_eq!(cfg.params.get("temperature").and_then(|v| v.as_f64()), Some(0.7));
+    }
+
+    // --- GatewayMessage ---
+
+    #[test]
+    fn gateway_message_simple_creates_correctly() {
+        let msg = GatewayMessage::simple("user", serde_json::json!("hello"));
+        assert_eq!(msg.role, "user");
+        assert_eq!(msg.content, Some(serde_json::json!("hello")));
+        assert!(msg.tool_calls.is_none());
+        assert!(msg.thinking.is_none());
+    }
+
+    #[test]
+    fn gateway_message_roundtrip() {
+        let msg = GatewayMessage {
+            role: "assistant".to_string(),
+            content: Some(serde_json::json!("Hello!")),
+            content_blocks: None,
+            tool_calls: Some(vec![
+                serde_json::json!({
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": r#"{"cmd":"ls"}"#}
+                })
+            ]),
+            tool_use_id: None,
+            thinking: Some("Let me think...".to_string()),
+            name: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: GatewayMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.role, "assistant");
+        assert!(deserialized.tool_calls.is_some());
+        assert_eq!(deserialized.tool_calls.unwrap().len(), 1);
+    }
+
+    // --- GatewayRequest ---
+
+    #[test]
+    fn gateway_request_roundtrip() {
+        let req = GatewayRequest {
+            id: 42,
+            stream: true,
+            timeout: Some(120000),
+            provider: Some(ProviderConfig {
+                id: "openai".to_string(),
+                api_key: Some("sk-test".to_string()),
+                base_url: None,
+                model: "gpt-4".to_string(),
+                region: None,
+                project_id: None,
+                params: [("temperature".to_string(), serde_json::json!(0.5))].into(),
+            }),
+            messages: vec![
+                GatewayMessage::simple("user", serde_json::json!("hello")),
+                GatewayMessage::simple("assistant", serde_json::json!("world")),
+            ],
+            system: Some("You are a helpful assistant.".to_string()),
+            tools: Some(vec![
+                serde_json::json!({"name": "bash", "description": "Run a command"}),
+            ]),
+            max_tokens: Some(4096),
+            temperature: None,
+            thinking: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let deserialized: GatewayRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, 42);
+        assert_eq!(deserialized.messages.len(), 2);
+        assert_eq!(deserialized.provider.unwrap().id, "openai");
+        assert_eq!(deserialized.tools.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn gateway_request_provider_absent_when_none() {
+        // When provider is None, the JSON should not contain a "provider" key
+        let req = GatewayRequest {
+            id: 1,
+            stream: false,
+            timeout: None,
+            provider: None,
+            messages: vec![GatewayMessage::simple("user", serde_json::json!("hi"))],
+            system: None,
+            tools: None,
+            max_tokens: None,
+            temperature: None,
+            thinking: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        // Provider is Option<ProviderConfig> with #[serde(default)] — it serializes as null/absent
+        let deserialized: GatewayRequest = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.provider.is_none());
+        assert_eq!(deserialized.messages.len(), 1);
+    }
+
+    // --- StreamChunk ---
+
+    #[test]
+    fn stream_chunk_text_delta_roundtrip() {
+        let chunk = StreamChunk {
+            chunk_type: "delta".to_string(), index: None, text_delta: Some("Hello".to_string()),
+            json_delta: None, tool_call_id: None, tool_call_name: None, thinking: None,
+            usage: None, finish_reason: None, content: None, content_blocks: None,
+        };
+        let json = serde_json::to_string(&chunk).unwrap();
+        let deserialized: StreamChunk = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.chunk_type, "delta");
+        assert_eq!(deserialized.text_delta.unwrap(), "Hello");
+    }
+
+    #[test]
+    fn stream_chunk_tool_call_roundtrip() {
+        let chunk = StreamChunk {
+            chunk_type: "delta".to_string(), index: Some(0),
+            json_delta: Some(r#"{"cmd":"ls"}"#.to_string()),
+            tool_call_id: Some("call_1".to_string()),
+            tool_call_name: Some("bash".to_string()),
+            text_delta: None, thinking: None, usage: None, finish_reason: None,
+            content: None, content_blocks: None,
+        };
+        let json = serde_json::to_string(&chunk).unwrap();
+        let deserialized: StreamChunk = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.tool_call_id.unwrap(), "call_1");
+        assert_eq!(deserialized.tool_call_name.unwrap(), "bash");
+    }
+
+    #[test]
+    fn stream_chunk_stop_with_usage() {
+        let chunk = StreamChunk {
+            chunk_type: "stop".to_string(), index: None,
+            usage: Some(Usage {
+                input_tokens: 10, output_tokens: 20, total_tokens: 30,
+                cache_creation_input_tokens: None, cache_read_input_tokens: None,
+                reasoning_tokens: Some(5),
+            }),
+            finish_reason: Some("stop".to_string()),
+            text_delta: None, json_delta: None, tool_call_id: None, tool_call_name: None,
+            thinking: None, content: None, content_blocks: None,
+        };
+        let json = serde_json::to_string(&chunk).unwrap();
+        let deserialized: StreamChunk = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.finish_reason.unwrap(), "stop");
+        assert_eq!(deserialized.usage.unwrap().total_tokens, 30);
+    }
+
+    #[test]
+    fn stream_chunk_roundtrip_all_none() {
+        let chunk = StreamChunk {
+            chunk_type: "complete".to_string(),
+            index: None, text_delta: None, json_delta: None, tool_call_id: None,
+            tool_call_name: None, thinking: None, usage: None, finish_reason: None,
+            content: None, content_blocks: None,
+        };
+        let json = serde_json::to_string(&chunk).unwrap();
+        let deserialized: StreamChunk = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.chunk_type, "complete");
+        assert!(deserialized.text_delta.is_none());
+    }
+
+    // --- GatewayResponse ---
+
+    #[test]
+    fn gateway_response_roundtrip_with_body() {
+        let resp = GatewayResponse {
+            id: 1, status: 200,
+            body: Some(StreamChunk {
+                chunk_type: "delta".to_string(), index: None,
+                text_delta: Some("Hello".to_string()), json_delta: None,
+                tool_call_id: None, tool_call_name: None, thinking: None,
+                usage: None, finish_reason: None, content: None, content_blocks: None,
+            }),
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let deserialized: GatewayResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, 1);
+        assert_eq!(deserialized.status, 200);
+        assert!(deserialized.body.is_some());
+        assert!(deserialized.error.is_none());
+    }
+
+    #[test]
+    fn gateway_response_deserializes_ack() {
+        // The gateway sends acks with just id + status (no body, no error)
+        let json = r#"{"id":1,"status":200}"#;
+        let resp: GatewayResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, 1);
+        assert_eq!(resp.status, 200);
+        assert!(resp.body.is_none());
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn gateway_response_deserializes_error() {
+        let json = r#"{"id":0,"status":400,"error":{"code":"INVALID_REQUEST","message":"bad request"}}"#;
+        let resp: GatewayResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status, 400);
+        assert!(resp.body.is_none());
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn gateway_response_deserializes_with_null_body() {
+        // Some providers/clients send null body explicitly
+        let json = r#"{"id":1,"status":200,"body":null}"#;
+        let resp: GatewayResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status, 200);
+        assert!(resp.body.is_none());
+    }
+
+    // --- ContentBlock ---
+
+    #[test]
+    fn content_block_text_roundtrip() {
+        let block = ContentBlock {
+            block_type: "text".to_string(), text: Some("Hello".to_string()),
+            id: None, name: None, input: None, extra: serde_json::Map::new(),
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        let deserialized: ContentBlock = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.block_type, "text");
+        assert_eq!(deserialized.text.unwrap(), "Hello");
+    }
+
+    #[test]
+    fn content_block_tool_use_roundtrip() {
+        let block = ContentBlock {
+            block_type: "tool_use".to_string(), text: None,
+            id: Some("call_1".to_string()), name: Some("bash".to_string()),
+            input: Some(serde_json::json!({"cmd":"ls"})),
+            extra: serde_json::Map::new(),
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        let deserialized: ContentBlock = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.block_type, "tool_use");
+        assert_eq!(deserialized.id.unwrap(), "call_1");
+    }
+
+    // --- ThinkingConfig ---
+
+    #[test]
+    fn thinking_config_roundtrip() {
+        let tc = ThinkingConfig {
+            thinking_type: "enabled".to_string(),
+            budget_tokens: Some(16000),
+            reasoning_effort: Some("high".to_string()),
+        };
+        let json = serde_json::to_string(&tc).unwrap();
+        let deserialized: ThinkingConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.thinking_type, "enabled");
+        assert_eq!(deserialized.budget_tokens.unwrap(), 16000);
+    }
+
+    #[test]
+    fn thinking_config_defaults() {
+        let tc = ThinkingConfig {
+            thinking_type: "disabled".to_string(),
+            budget_tokens: None,
+            reasoning_effort: None,
+        };
+        let json = serde_json::to_string(&tc).unwrap();
+        let deserialized: ThinkingConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.thinking_type, "disabled");
+        assert!(deserialized.budget_tokens.is_none());
+    }
+
+    // --- GatewayStreamClient ---
+
+    #[test]
+    fn validate_socket_returns_err_for_nonexistent() {
+        let client = GatewayStreamClient::with_socket("/tmp/nonexistent-test-socket-12345.sock");
+        assert!(client.validate_socket().is_err());
+    }
+}
