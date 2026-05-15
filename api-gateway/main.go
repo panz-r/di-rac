@@ -418,6 +418,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 			s.configMu.Lock()
 			if _, err := s.providerRegistry.GetHandler(setProviderReq.Provider); err != nil {
+				s.configMu.Unlock()
 				w.write(&Response{
 					ID:     0,
 					Status: 400,
