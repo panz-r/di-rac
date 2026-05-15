@@ -49,8 +49,8 @@ impl GatewayConnection {
             return Ok(());
         }
         let stream = UnixStream::connect(&self.socket_path)?;
-        stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
-        stream.set_write_timeout(Some(std::time::Duration::from_secs(3)))?;
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(35)))?;
+        stream.set_write_timeout(Some(std::time::Duration::from_secs(5)))?;
         self.reader = Some(std::io::BufReader::new(stream));
         Ok(())
     }
@@ -299,10 +299,6 @@ impl SettingsState {
             }
             return;
         }
-        if self.cursor > 1 && self.fields.is_empty() {
-            self.cursor -= 1;
-            return;
-        }
         if self.cursor > 0 {
             self.cursor -= 1;
         }
@@ -477,9 +473,11 @@ impl SettingsState {
             self.error = None;
         }
         self.secret_edit_open = false;
-        // If the edited field was API key, reload models for the current provider
+        // If the edited field was API key, reload models for the current provider.
+        // Use reload_models instead of on_provider_changed so the API key is
+        // preserved rather than cleared before the gateway query.
         if self.active_panel == SettingsPanel::Provider && fo == F_API_KEY && self.gateway_available {
-            self.on_provider_changed();
+            self.reload_models();
         }
     }
 
@@ -663,7 +661,7 @@ impl SettingsState {
                 let fo = self.field_offset();
                 if self.cursor > 0 && fo < self.fields.len() && self.fields[fo].kind() == FieldKind::Secret {
                     self.open_secret_edit();
-                } else {
+                } else if fo < self.fields.len() {
                     self.open_selector();
                 }
             }
@@ -763,6 +761,40 @@ impl SettingsState {
         if let Some(field) = self.fields.get_mut(F_API_KEY) {
             if let SettingsField::Secret { value, .. } = field {
                 value.clear();
+            }
+        }
+        self.flush_fields_to_settings();
+        self.error = None;
+        self.loading = true;
+        let provider_id = match &self.fields[F_PROVIDER] {
+            SettingsField::Selector { options, index, .. } => {
+                options.get(*index).cloned().unwrap_or_default()
+            }
+            _ => String::new(),
+        };
+        if !provider_id.is_empty() && !self.gateway_available {
+            self.error = Some("Gateway not available — provider change limited".into());
+        }
+
+        let seq = self.async_op_seq.wrapping_add(1);
+        self.async_op_seq = seq;
+        self.pending_async = Some(PendingAsyncOp::ProviderChanged {
+            seq,
+            rs: gather_role_settings(&self.fields, self.provider_info.as_ref()
+                .map(|info| info.settings.as_slice()).unwrap_or(&[])),
+            providers: self.provider_metas.clone(),
+            gateway_available: self.gateway_available,
+        });
+    }
+
+    /// Reload models for the current provider without clearing the API key.
+    /// Used when the API key is updated, since the provider hasn't changed.
+    fn reload_models(&mut self) {
+        if let Some(field) = self.fields.get_mut(F_MODEL) {
+            if let SettingsField::Selector { options, labels, index, .. } = field {
+                options.clear();
+                labels.clear();
+                *index = 0;
             }
         }
         self.flush_fields_to_settings();
