@@ -23,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dirac-dev/api-gateway/providers"
+	"github.com/panz-r/di-rac/api-gateway/providers"
 )
 
 const Version = "0.1.0"

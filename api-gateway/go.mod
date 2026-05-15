@@ -1,10 +1,11 @@
-module github.com/dirac-dev/api-gateway
+module github.com/panz-r/di-rac/api-gateway
 
 go 1.26.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.35.0
 	github.com/google/generative-ai-go v0.20.1
+	golang.org/x/sync v0.20.0
 	google.golang.org/api v0.189.0
 )
 
@@ -38,7 +39,6 @@ require (
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
 	golang.org/x/text v0.27.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
