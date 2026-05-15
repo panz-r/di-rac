@@ -256,7 +256,7 @@ async fn main() -> Result<()> {
                             }
                             FrontendMessage::SetMode { agent_id, mode } => {
                                 log.log(&format!("SetMode: agent={} mode={}", agent_id, mode));
-                                orchestrator.set_agent_mode(agent_id, &mode);
+                                orchestrator.set_agent_mode(agent_id, &mode).await;
                             }
                         }
                     }
