@@ -601,7 +601,12 @@ func openBrowser(url string) error {
 		return fmt.Errorf("no browser command found (tried xdg-open, open, sensible-browser)")
 	}
 
-	return exec.Command(cmd, args...).Start()
+	c := exec.Command(cmd, args...)
+	if err := c.Start(); err != nil {
+		return err
+	}
+	go c.Wait() // reap the child process to prevent zombies
+	return nil
 }
 
 func commandExists(name string) bool {

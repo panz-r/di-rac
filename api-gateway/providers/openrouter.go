@@ -575,6 +575,7 @@ func (h *OpenRouterHandler) ListModels(ctx context.Context, cfg ProviderConfig) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 		return nil, fmt.Errorf("OpenRouter /models returned status %d", resp.StatusCode)
 	}
 

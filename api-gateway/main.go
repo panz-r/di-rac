@@ -551,6 +551,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 			s.configMu.RUnlock()
 
+			if cfg.BaseURL != "" {
+				if err := isSafeBaseURL(s.ctx, cfg.BaseURL); err != nil {
+					w.write(&Response{ID: 0, Status: 400, Error: &ErrorDetail{Code: "SSRF", Message: err.Error()}})
+					continue
+				}
+			}
+
 			modelsCtx, modelsCancel := context.WithTimeout(s.ctx, 30*time.Second)
 			models, err := s.providerRegistry.ListModels(modelsCtx, modelsReq.Provider, cfg)
 			modelsCancel()
@@ -606,6 +613,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 				}
 			}
 			s.configMu.RUnlock()
+
+			if cfg.BaseURL != "" {
+				if err := isSafeBaseURL(s.ctx, cfg.BaseURL); err != nil {
+					w.write(&Response{ID: 0, Status: 400, Error: &ErrorDetail{Code: "SSRF", Message: err.Error()}})
+					continue
+				}
+			}
 
 			modelsCtx, modelsCancel := context.WithTimeout(s.ctx, 30*time.Second)
 			models, err := s.providerRegistry.ListModels(modelsCtx, modelInfoReq.Provider, cfg)
@@ -1086,29 +1100,20 @@ func (s *Server) handleStreaming(ctx context.Context, connID, id int64, req *Req
 						}
 						return
 					}
-						if body, err := mustMarshal(chunk); err != nil {
-							w.write(&Response{ID: id, Status: 500, Error: &ErrorDetail{Code: "INTERNAL_ERROR", Message: err.Error()}})
-							return
-						} else {
-							w.write(&Response{
-								ID:     id,
-								Status: 200,
-								Body:   body,
-							})
-						}
-					// Final check: an error may have arrived between the first check and now
-					select {
-					case streamErr := <-errChan:
-						s.reqLogf(connID, id, "streaming provider error: %v", streamErr)
-						w.write(&Response{
-							ID:     id,
-							Status: 500,
-							Error:  &ErrorDetail{Code: classifyError(streamErr), Message: sanitizeProviderError(streamErr), Retriable: providers.IsRetriable(streamErr)},
-						})
+					body, marshalErr := mustMarshal(chunk)
+					if marshalErr != nil {
+						w.write(&Response{ID: id, Status: 500, Error: &ErrorDetail{Code: "INTERNAL_ERROR", Message: marshalErr.Error()}})
 						return
-					default:
 					}
-					// Send complete only if provider did not emit one
+					if err := w.write(&Response{
+						ID:     id,
+						Status: 200,
+						Body:   body,
+					}); err != nil {
+						return // client disconnected
+					}
+				default:
+					// No more chunks buffered — send complete if provider didn't
 					if !completeSent {
 						w.write(&Response{
 							ID:     id,
