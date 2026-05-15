@@ -339,12 +339,12 @@ static void handle_search_observations(pthread_mutex_t *lock, pthread_mutex_t *d
     jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "search_observations_result");
     jsonw_id(&w, raw_id, id_len);
-    jsonw_kv_bool(&w, "ok", true);
     
     pthread_mutex_lock(db_lock);
-    db_search_observations((IndexDB*)ctx->db, query, limit, &w);
+    int rc = db_search_observations((IndexDB*)ctx->db, query, limit, &w);
     pthread_mutex_unlock(db_lock);
 
+    jsonw_kv_bool(&w, "ok", rc == 0);
     jsonw_object_close(&w);
     jsonw_flush(&w);
     pthread_mutex_unlock(lock);
@@ -369,8 +369,9 @@ static void handle_search_critic_decisions(pthread_mutex_t *lock, pthread_mutex_
     struct jsonw w; jsonw_init(&w, stdout); jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "search_critic_decisions_result"); jsonw_id(&w, raw_id, id_len);
     pthread_mutex_lock(db_lock);
-    db_search_critic_decisions((IndexDB*)ctx->db, query, limit, &w);
+    int rc = db_search_critic_decisions((IndexDB*)ctx->db, query, limit, &w);
     pthread_mutex_unlock(db_lock);
+    jsonw_kv_bool(&w, "ok", rc == 0);
     jsonw_object_close(&w); jsonw_flush(&w);
     pthread_mutex_unlock(lock);
 }
@@ -394,8 +395,9 @@ static void handle_search_watcher_patterns(pthread_mutex_t *lock, pthread_mutex_
     struct jsonw w; jsonw_init(&w, stdout); jsonw_object_open(&w);
     jsonw_kv_str(&w, "type", "search_watcher_patterns_result"); jsonw_id(&w, raw_id, id_len);
     pthread_mutex_lock(db_lock);
-    db_search_watcher_patterns((IndexDB*)ctx->db, query, limit, &w);
+    int rc = db_search_watcher_patterns((IndexDB*)ctx->db, query, limit, &w);
     pthread_mutex_unlock(db_lock);
+    jsonw_kv_bool(&w, "ok", rc == 0);
     jsonw_object_close(&w); jsonw_flush(&w);
     pthread_mutex_unlock(lock);
 }

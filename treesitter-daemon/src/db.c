@@ -198,15 +198,7 @@ int db_search_observations(IndexDB *db, const char *query, int limit, struct jso
                       "WHERE observer_logs_fts MATCH ? ORDER BY rank LIMIT ?";
 
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-        jsonw_key(w, "results");
-        jsonw_array_open(w);
-        jsonw_array_close(w);
-        jsonw_key(w, "ok");
-        jsonw_bool(w, 0);
-        jsonw_key(w, "code");
-        jsonw_str(w, "SEARCH_FAILED");
-        jsonw_key(w, "message");
-        jsonw_str(w, sqlite3_errmsg(db->db));
+        jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
         return -1;
     }
 
@@ -224,9 +216,10 @@ int db_search_observations(IndexDB *db, const char *query, int limit, struct jso
         jsonw_object_close(w);
     }
     jsonw_array_close(w);
+    /* Check for step errors (e.g. invalid FTS5 syntax) */
+    int rc = sqlite3_errcode(db->db);
     sqlite3_finalize(stmt);
-    jsonw_key(w, "ok");
-    jsonw_bool(w, 1);
+    if (rc != SQLITE_OK && rc != SQLITE_DONE && rc != SQLITE_ROW) return -1;
     return 0;
 }
 
@@ -246,9 +239,6 @@ int db_search_critic_decisions(IndexDB *db, const char *query, int limit, struct
     const char *sql = "SELECT decision_text, turn_number, confidence FROM critic_decisions_fts WHERE critic_decisions_fts MATCH ? ORDER BY rank LIMIT ?";
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
-        jsonw_key(w, "ok"); jsonw_bool(w, 0);
-        jsonw_key(w, "code"); jsonw_str(w, "SEARCH_FAILED");
-        jsonw_key(w, "message"); jsonw_str(w, sqlite3_errmsg(db->db));
         return -1;
     }
     sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
@@ -263,8 +253,9 @@ int db_search_critic_decisions(IndexDB *db, const char *query, int limit, struct
         jsonw_object_close(w);
     }
     jsonw_array_close(w);
+    int rc = sqlite3_errcode(db->db);
     sqlite3_finalize(stmt);
-    jsonw_key(w, "ok"); jsonw_bool(w, 1);
+    if (rc != SQLITE_OK && rc != SQLITE_DONE && rc != SQLITE_ROW) return -1;
     return 0;
 }
 
@@ -284,9 +275,6 @@ int db_search_watcher_patterns(IndexDB *db, const char *query, int limit, struct
     const char *sql = "SELECT pattern_text, file_hash, turn_number FROM watcher_patterns_fts WHERE watcher_patterns_fts MATCH ? ORDER BY rank LIMIT ?";
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
-        jsonw_key(w, "ok"); jsonw_bool(w, 0);
-        jsonw_key(w, "code"); jsonw_str(w, "SEARCH_FAILED");
-        jsonw_key(w, "message"); jsonw_str(w, sqlite3_errmsg(db->db));
         return -1;
     }
     sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
@@ -301,8 +289,9 @@ int db_search_watcher_patterns(IndexDB *db, const char *query, int limit, struct
         jsonw_object_close(w);
     }
     jsonw_array_close(w);
+    int rc = sqlite3_errcode(db->db);
     sqlite3_finalize(stmt);
-    jsonw_key(w, "ok"); jsonw_bool(w, 1);
+    if (rc != SQLITE_OK && rc != SQLITE_DONE && rc != SQLITE_ROW) return -1;
     return 0;
 }
 
