@@ -265,6 +265,8 @@ pub struct AgentEngine {
     pub observer: Observer,
     pub context_manager: ContextManager,
     pub gateway_client: Arc<GatewayStreamClient>,
+    pub analyzer_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
+    pub command_daemon: Arc<tokio::sync::Mutex<ResilientDaemon>>,
     pub tool_executor: ToolExecutor,
     pub coordinator: ToolCoordinator,
     pub approval_manager: ApprovalManager,
@@ -305,9 +307,12 @@ pub struct AgentEngine {
     pub plan_provider_config: Option<crate::daemons::ProviderConfig>,
     /// Calibrated token estimator — replaces inline len()/4 with model-aware estimation.
     pub estimator: ConservativeEstimator,
-    /// Turn counter for lifecycle metrics.
+    /// turn_counter for lifecycle metrics.
     turn_counter: usize,
+    /// Cache for extracted APIs from assistant messages to avoid O(N^2) processing.
+    pub api_extraction_cache: std::sync::Arc<tokio::sync::Mutex<HashMap<Uuid, crate::observer::ExtractApisResponse>>>,
     /// Context lifecycle manager: state machine for adaptive compaction.
+
     pub lifecycle: ContextLifecycleManager,
     /// Timestamp of last activity (turn execution). Used for idle detection.
     pub last_activity: std::time::Instant,
@@ -360,6 +365,8 @@ impl AgentEngine {
             observer: Observer::new_with_task(crate::observer::ObserverConfig::default(), &id.to_string()),
             context_manager: ContextManager::new(32000, 24000),
             gateway_client,
+            analyzer_daemon: analyzer_daemon.clone(),
+            command_daemon: command_daemon.clone(),
             tool_executor: ToolExecutor::new(
                 analyzer_daemon, command_daemon,
                 output_manager.clone(),
@@ -393,6 +400,7 @@ impl AgentEngine {
             distiller: None,
             estimator: ConservativeEstimator::default_conservative(),
             turn_counter: 0,
+            api_extraction_cache: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             lifecycle: ContextLifecycleManager::new(),
             last_activity: std::time::Instant::now(),
             context_compiler: None,
@@ -581,7 +589,7 @@ impl AgentEngine {
                     let single_range = range.or_else(|| {
                         raw.get("range").and_then(|v| v.as_array())
                             .and_then(|a| {
-                                let start = a.get(0)?.as_u64()? as usize;
+                                let start = a.first()?.as_u64()? as usize;
                                 let end = a.get(1)?.as_u64()? as usize;
                                 Some((start, end))
                             })
@@ -591,7 +599,7 @@ impl AgentEngine {
                     let multi_ranges: Option<Vec<(usize, usize)>> = ranges_raw.and_then(|arr| {
                         let parsed: Vec<(usize, usize)> = arr.iter().filter_map(|a| {
                             let arr = a.as_array()?;
-                            Some((arr.get(0)?.as_u64()? as usize, arr.get(1)?.as_u64()? as usize))
+                            Some((arr.first()?.as_u64()? as usize, arr.get(1)?.as_u64()? as usize))
                         }).collect();
                         if parsed.is_empty() { None } else { Some(merge_ranges(parsed)) }
                     });
@@ -638,7 +646,7 @@ impl AgentEngine {
         // Preserve the user's original range through degradation
         let original_range = raw.get("range").and_then(|v| v.as_array())
             .and_then(|a| {
-                let start = a.get(0)?.as_u64()? as usize;
+                let start = a.first()?.as_u64()? as usize;
                 let end = a.get(1)?.as_u64()? as usize;
                 Some((start, end))
             });
@@ -1157,48 +1165,12 @@ impl AgentEngine {
                 self.context_compiler.as_ref().expect("context compiler initialized above").session_prefix_len());
         }
 
-        // 1. API extraction via observer + analyzer daemon
+        // 1. API extraction
+        let api_filter_response = self.extract_current_apis().await.ok();
         let mut current_apis: HashSet<String> = HashSet::new();
-        let mut api_filter_response: Option<crate::observer::ExtractApisResponse> = None;
-        if self.observer.config.enabled {
-            if let Some(req) = self.observer.build_extract_apis_request(&self.trajectory) {
-                let analyzer_req = crate::daemons::AnalyzerRequest {
-                    command: "extract-apis".to_string(),
-                    file: None,
-                    content: Some(req.content.clone()),
-                    language: req.language.clone(),
-                    query: None,
-                    subcommand: None,
-                };
-                match self.tool_executor.analyzer_daemon().lock().await.send_request::<_, crate::daemons::AnalyzerResponse>(analyzer_req).await {
-                    Ok(resp) if resp.ok => {
-                        if let Some(arr) = resp.data.get("calls").and_then(|v| v.as_array()) {
-                            for call in arr {
-                                if let Some(name) = call.as_str() {
-                                    current_apis.insert(name.to_string());
-                                }
-                            }
-                        }
-                        if let Some(arr) = resp.data.get("definitions").and_then(|v| v.as_array()) {
-                            for def in arr {
-                                if let Some(name) = def.as_str() {
-                                    current_apis.insert(name.to_string());
-                                }
-                            }
-                        }
-                        let calls = resp.data.get("calls")
-                            .and_then(|v| v.as_array())
-                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                            .unwrap_or_default();
-                        let definitions = resp.data.get("definitions")
-                            .and_then(|v| v.as_array())
-                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                            .unwrap_or_default();
-                        api_filter_response = Some(crate::observer::ExtractApisResponse { calls, definitions });
-                    }
-                    Ok(_) | Err(_) => {} // Analyzer unavailable — keep empty apis
-                }
-            }
+        if let Some(ref resp) = api_filter_response {
+            for c in &resp.calls { current_apis.insert(c.clone()); }
+            for d in &resp.definitions { current_apis.insert(d.clone()); }
         }
 
         // 2. Lifecycle-aware compaction: evaluate state, compact if due
@@ -1670,7 +1642,6 @@ impl AgentEngine {
 
         // Record assistant thought
         let full_text_str = full_text.clone();
-        let thinking_text_str = thinking_text.clone();
 
         // Finalize tool calls (native + XML fallback)
         let tools = tool_accumulator.finalize(&full_text);
@@ -1782,7 +1753,10 @@ impl AgentEngine {
                     match msg {
                         Some(FrontendMessage::ApprovalResponse { approval_id: ref resp_id, approved, .. }) => {
                             // Accept if no ID (backward compat) or if IDs match
-                            let matches = resp_id.map_or(true, |rid| rid == approval_id);
+                            let matches = match resp_id {
+                                Some(rid) => *rid == approval_id,
+                                None => true,
+                            };
                             if matches {
                                 break approved;
                             }
@@ -2174,13 +2148,12 @@ impl AgentEngine {
                             if let Some(s) = result.as_str() {
                                 let exit_code = s.strip_prefix("exit:")
                                     .and_then(|rest| rest.lines().next())
-                                    .and_then(|line| line.trim().parse::<i32>().ok())
-                                    .unwrap_or(-1);
+                                    .and_then(|line| line.trim().parse::<i32>().ok());
 
                                 // Bash execution history tracking
                                 let exec_id = format!("exec-{}", self.bash_history.len() + 1);
                                 let cmd_str = bash_command.clone().unwrap_or_default();
-                                self.bash_history.push((exec_id.clone(), cmd_str, exit_code));
+                                self.bash_history.push((exec_id.clone(), cmd_str, exit_code.unwrap_or(-1)));
 
                                 // Append execution_id to result for proof-of-execution
                                 let exec_tag = format!("\n[execution_id: {}]", exec_id);
@@ -2188,8 +2161,18 @@ impl AgentEngine {
 
                                 // Mistake tracking
                                 match exit_code {
-                                    0 => self.consecutive_mistake_count = 0,
-                                    _ => self.consecutive_mistake_count += 1,
+                                    Some(0) => self.consecutive_mistake_count = 0,
+                                    Some(_) => self.consecutive_mistake_count += 1,
+                                    None => {
+                                        // exit:running or parse failure — check for empty command
+                                        let is_empty = match bash_command {
+                                            Some(ref c) => c.trim().is_empty(),
+                                            None => true,
+                                        };
+                                        if is_empty {
+                                            self.consecutive_mistake_count += 1;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2497,8 +2480,8 @@ impl AgentEngine {
             if matches!(msg.role, Role::Tool) {
                 let content = msg.content.to_string();
                 let lower = content.to_lowercase();
-                if lower.contains("error") || lower.contains("failed") || lower.contains("fatal") {
-                    if latest_failures.len() < 5 {
+                if (lower.contains("error") || lower.contains("failed") || lower.contains("fatal"))
+                    && latest_failures.len() < 5 {
                         let truncated = if content.len() > 200 {
                             safe_truncate(&content, 200).into_owned()
                         } else {
@@ -2506,7 +2489,6 @@ impl AgentEngine {
                         };
                         latest_failures.push(truncated);
                     }
-                }
             }
         }
 
@@ -2558,7 +2540,7 @@ impl AgentEngine {
     /// Run LLM-driven observations: build prompts, call gateway, parse responses.
     /// This runs after the heuristic observer cycle to potentially upgrade observations.
     async fn run_llm_observations(&mut self, interrupt: &Option<crate::observer::InterruptResult>, filter_just_fired: bool) {
-        use crate::observer::{ObservationType, parse_llm_observation};
+        use crate::observer::parse_llm_observation;
         use std::time::Instant;
 
         // Determine which observation types should fire this turn
@@ -2634,7 +2616,7 @@ impl AgentEngine {
     /// Blocking summarizer: synchronously compresses unobserved messages via LLM.
     /// Called when unobserved token ratio exceeds blockAfter (TS runSummarizerSync).
     async fn run_sync_summarizer(&mut self) {
-        use crate::observer::{ObservationType, SkeletonFidelity, parse_llm_observation};
+        use crate::observer::{ObservationType, parse_llm_observation};
 
         let req = self.observer.build_summarizer_llm_prompt(&self.trajectory);
         let token_est = self.observer.get_unobserved_token_estimate(&self.trajectory);
@@ -2941,6 +2923,99 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
         let continuation = enriched;
 
         self.finalize_compaction(summary.to_string(), continuation).await
+    }
+
+    async fn extract_current_apis(&self) -> Result<crate::observer::ExtractApisResponse> {
+        let mut total_calls = HashSet::new();
+        let mut total_defs = HashSet::new();
+        let mut cache = self.api_extraction_cache.lock().await;
+
+        for msg in self.trajectory.messages.iter().filter(|m| matches!(m.role, Role::Assistant)) {
+            // Check if we already have extracted APIs for this message
+            if let Some(cached) = cache.get(&msg.id) {
+                for c in &cached.calls { total_calls.insert(c.clone()); }
+                for d in &cached.definitions { total_defs.insert(d.clone()); }
+                continue;
+            }
+
+            let mut message_calls = HashSet::new();
+            let mut message_defs = HashSet::new();
+            let mut contents_to_parse = HashSet::new();
+
+            // 1. Extract from content (text blocks or raw string)
+            let content = match msg.content.as_str() {
+                Some(s) => s.to_string(),
+                None => {
+                    if let Some(arr) = msg.content.as_array() {
+                        let mut full_text = String::new();
+                        for block in arr {
+                            if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                                full_text.push_str(text);
+                                full_text.push('\n');
+                            } else if let Some(parts) = block.get("parts").and_then(|v| v.as_array()) {
+                                for part in parts {
+                                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                                        full_text.push_str(text);
+                                        full_text.push('\n');
+                                    }
+                                }
+                            }
+                        }
+                        full_text
+                    } else {
+                        "".to_string()
+                    }
+                }
+            };
+            if !content.is_empty() { contents_to_parse.insert(content); }
+
+            // 2. Extract from tool calls (specifically 'run_python' or 'python' tools)
+            for call in &msg.tool_calls {
+                if call.name == "run_python" || call.name == "python" {
+                    if let Ok(args) = serde_json::from_str::<serde_json::Value>(&call.arguments) {
+                        if let Some(code) = args.get("code").and_then(|v| v.as_str()) {
+                            if !code.is_empty() { contents_to_parse.insert(code.to_string()); }
+                        }
+                    }
+                }
+            }
+
+            for content in contents_to_parse {
+                let req = crate::daemons::AnalyzerRequest {
+                    command: "extract-apis".to_string(),
+                    file: None,
+                    content: Some(content),
+                    language: Some("python".to_string()), 
+                    query: None,
+                    subcommand: None,
+                };
+                
+                let mut daemon = self.analyzer_daemon.lock().await;
+                match daemon.send_request::<_, crate::daemons::ApiResponse>(req).await {
+                    Ok(resp) => {
+                        for call in resp.calls { message_calls.insert(call); }
+                        for def in resp.definitions { message_defs.insert(def); }
+                    },
+                    Err(e) => {
+                        tracing::warn!(%e, "API extraction failed for assistant message");
+                    }
+                }
+            }
+
+            // Cache the results for this message
+            let resp = crate::observer::ExtractApisResponse {
+                calls: message_calls.into_iter().collect(),
+                definitions: message_defs.into_iter().collect(),
+            };
+            for c in &resp.calls { total_calls.insert(c.clone()); }
+            for d in &resp.definitions { total_defs.insert(d.clone()); }
+            cache.insert(msg.id, resp);
+        }
+
+        Ok(crate::observer::ExtractApisResponse {
+            calls: total_calls.into_iter().collect(),
+            definitions: total_defs.into_iter().collect(),
+        })
     }
 
     async fn emit_event(&self, event: CoreEvent) -> Result<()> {

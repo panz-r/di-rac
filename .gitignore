@@ -72,3 +72,7 @@ test_out/
 tmp_*.txt
 *scratch*
 treesitter-daemon/target/
+api-gateway/dirac-api-gateway
+standalone/runtime-files/
+wasm-runner/target/
+*.wasm.aot

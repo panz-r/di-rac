@@ -1,0 +1,15 @@
+[package]
+name = "wasm-runner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.102"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.52.3", features = ["full"] }
+wasmedge-sys = { version = "0.19.4", features = ["standalone"] }
+tempfile = "3.10"
+nix = { version = "0.27", features = ["process", "fs"] }
+clap = { version = "4.5", features = ["derive"] }
+os_pipe = "1.2.3"
