@@ -749,7 +749,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Merge stored provider config (set-provider) into request
-		if err := s.mergeProviderConfig(connID, &req); err != nil {
+		if err := s.mergeProviderConfig(s.ctx, connID, &req); err != nil {
 			w.write(&Response{
 				ID:     req.ID,
 				Status: 400,
@@ -801,7 +801,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 // mergeProviderConfig fills in missing fields from the stored set-provider config.
 // Precedence: request fields > stored config > handler defaults (resolved by the handler itself).
-func (s *Server) mergeProviderConfig(connID int64, req *Request) error {
+func (s *Server) mergeProviderConfig(ctx context.Context, connID int64, req *Request) error {
 	if req.Provider.ID == "" {
 		return nil
 	}
@@ -871,7 +871,7 @@ func (s *Server) mergeProviderConfig(connID int64, req *Request) error {
 
 	// Validate the final base_url against SSRF, whether from request or stored config.
 	if req.Provider.BaseURL != "" {
-		if err := isSafeBaseURL(req.Provider.BaseURL); err != nil {
+		if err := isSafeBaseURL(ctx, req.Provider.BaseURL); err != nil {
 			s.connLogf(connID, "[SSRF] rejected base_url %q: %v", req.Provider.BaseURL, err)
 			return fmt.Errorf("base_url rejected: %v", err)
 		}
@@ -1216,7 +1216,7 @@ func sameHostPort(a, b string) bool {
 
 // isSafeBaseURL rejects URLs that point to private/internal networks (SSRF protection).
 // Allows localhost/127.0.0.1 for local providers (Ollama, LM Studio).
-func isSafeBaseURL(rawURL string) error {
+func isSafeBaseURL(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
@@ -1249,20 +1249,20 @@ func isSafeBaseURL(rawURL string) error {
 	}
 
 	// Resolve and check for private/link-local/metadata IPs
-	ips, err := net.LookupIP(host)
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		// DNS resolution failed — allow through so users can use hostnames
 		// that may not resolve on the gateway host but resolve in the client's network.
 		// The actual request will fail if the host is truly unreachable.
 		return nil
 	}
-	for _, ip := range ips {
-		addr, ok := netip.AddrFromSlice(ip)
+	for _, addr := range addrs {
+		ip, ok := netip.AddrFromSlice(addr.IP)
 		if !ok {
 			continue
 		}
-		if addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsLoopback() {
-			return fmt.Errorf("base_url host %s resolves to private/internal IP %s", host, addr)
+		if ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLoopback() {
+			return fmt.Errorf("base_url host %s resolves to private/internal IP %s", host, ip)
 		}
 
 	}
