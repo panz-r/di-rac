@@ -21,6 +21,11 @@ ParsedSource* analyzer_parse(const char *source, Language lang) {
     ParsedSource *ps = malloc(sizeof(ParsedSource));
     if (!ps) return NULL;
     ps->source = strdup(source);
+    if (!ps->source) {
+        ts_tree_delete(tree);
+        free(ps);
+        return NULL;
+    }
     ps->lang = lang;
     ps->tree = tree;
     return ps;

@@ -151,21 +151,30 @@ int db_clear(IndexDB *db) {
 
 int db_index_observation(IndexDB *db, const char *type, const char *content, double timestamp, int token_estimate) {
     sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs (type, content, timestamp, tokens) VALUES (?, ?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) return -1;
+    if (sqlite3_exec(db->db, "BEGIN", NULL, NULL, NULL) != SQLITE_OK) return -1;
+
+    if (sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs (type, content, timestamp, tokens) VALUES (?, ?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
     sqlite3_bind_text(stmt, 1, type, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, content, -1, SQLITE_TRANSIENT);
     sqlite3_bind_double(stmt, 3, timestamp);
     sqlite3_bind_int(stmt, 4, token_estimate);
-    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); return -1; }
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     int64_t row_id = sqlite3_last_insert_rowid(db->db);
     sqlite3_finalize(stmt);
 
-    if (sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs_fts (rowid, content) VALUES (?, ?)", -1, &stmt, NULL) != SQLITE_OK) return -1;
+    if (sqlite3_prepare_v2(db->db, "INSERT INTO observer_logs_fts (rowid, content) VALUES (?, ?)", -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
+        return -1;
+    }
     sqlite3_bind_int64(stmt, 1, row_id);
     sqlite3_bind_text(stmt, 2, content, -1, SQLITE_TRANSIENT);
-    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); return -1; }
+    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
     sqlite3_finalize(stmt);
 
+    if (sqlite3_exec(db->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) return -1;
     return 0;
 }
 
