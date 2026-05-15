@@ -79,10 +79,13 @@ impl StreamingToolAccumulator {
         // json_delta on the SAME chunk, so we must create the pending entry BEFORE
         // trying to accumulate json_delta.
         if chunk.chunk_type == "delta" {
-            // 1. Ensure pending entry exists if tool info is present
-            if let (Some(id), Some(name)) = (&chunk.tool_call_id, &chunk.tool_call_name) {
+            // 1. Ensure pending entry exists if tool info is present.
+            // Some providers (e.g. MiniMax) send tool_call_id without tool_call_name
+            // in the first chunk, with the name arriving in a later separate chunk.
+            // Create a placeholder entry even without a name so the tool call isn't lost.
+            if let Some(id) = &chunk.tool_call_id {
                 self.pending.entry(id.clone()).or_insert_with(|| PendingTool {
-                    name: name.clone(),
+                    name: chunk.tool_call_name.clone().unwrap_or_default(),
                     arguments_str: String::new(),
                 });
                 if let Some(idx) = chunk.index {
@@ -102,8 +105,8 @@ impl StreamingToolAccumulator {
                 }
             }
 
-            // 3. If we created a pending entry but had no json_delta, still absorbed
-            if chunk.tool_call_id.is_some() || chunk.tool_call_name.is_some() {
+            // 3. If tool info was present in any form, mark as absorbed
+            if chunk.tool_call_id.is_some() || chunk.tool_call_name.is_some() || chunk.json_delta.is_some() {
                 return true;
             }
             return false; // text delta, not tool
