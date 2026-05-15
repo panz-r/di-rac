@@ -241,7 +241,7 @@ func (h *BytePlusHandler) Send(ctx context.Context, req *Request) (*SendResult, 
 }
 
 func (h *BytePlusHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	return h.inner.Stream(ctx, req, callback)
+	return h.inner.Stream(ctx, req, NewThinkTagStream(callback))
 }
 
 func (h *BytePlusHandler) Capabilities() *ProviderInfo {

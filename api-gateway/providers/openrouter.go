@@ -428,7 +428,7 @@ func (h *OpenRouterHandler) Send(ctx context.Context, req *Request) (*SendResult
 }
 
 func (h *OpenRouterHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	return h.inner.Stream(ctx, req, callback)
+	return h.inner.Stream(ctx, req, NewThinkTagStream(callback))
 }
 
 func (h *OpenRouterHandler) Capabilities() *ProviderInfo {

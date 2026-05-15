@@ -219,6 +219,7 @@ type minimaxToolCallPipe struct {
 	totalBuffered  int
 	totalXmlParsed int
 	counter        *atomic.Int64
+	inThinkBlock   bool
 }
 
 const minimaxMaxBuffer = 1 << 20 // 1 MB cap on text buffer
@@ -229,9 +230,70 @@ func newMinimaxToolCallPipe(callback func(StreamChunk) error, counter *atomic.In
 
 
 func (p *minimaxToolCallPipe) handle(chunk StreamChunk) error {
-	// Only intercept text deltas
-	if chunk.Type == "delta" && chunk.TextDelta != "" {
-		p.textBuffer.WriteString(chunk.TextDelta)
+	// Intercept <think> tags in text deltas and emit them as Thinking chunks.
+	if chunk.Type == "delta" && chunk.TextDelta != "" && chunk.Thinking == "" {
+		text := chunk.TextDelta
+		if p.inThinkBlock {
+			// Strip leading ">" that may be the remainder of a split <think> tag
+			text = strings.TrimPrefix(text, ">")
+			if text == "" {
+				return nil
+			}
+			// Inside a think block — emit as Thinking (flush buffer first)
+			if p.textBuffer.Len() > 0 {
+				if err := p.flush(); err != nil {
+					return err
+				}
+			}
+			if idx := strings.Index(text, "</think"); idx >= 0 {
+				p.inThinkBlock = false
+				before := strings.TrimSpace(text[:idx])
+				after := strings.TrimSpace(text[idx+7:]) // len("</think") = 7; skip optional >
+				if strings.HasPrefix(after, ">") {
+					after = strings.TrimSpace(after[1:])
+				}
+				if before != "" {
+					if err := p.callback(StreamChunk{Type: "delta", Thinking: before}); err != nil {
+						return err
+					}
+				}
+				if after != "" {
+					p.textBuffer.WriteString(after)
+					p.totalBuffered++
+					return p.tryParse()
+				}
+				return nil
+			}
+			return p.callback(StreamChunk{Type: "delta", Thinking: text})
+		}
+		// Check for opening <think tag
+		if idx := strings.Index(text, "<think"); idx >= 0 {
+			// Flush buffer before handling think block
+			if p.textBuffer.Len() > 0 {
+				flushed := p.textBuffer.String()
+				p.textBuffer.Reset()
+				if err := p.callback(StreamChunk{Type: "delta", TextDelta: flushed}); err != nil {
+					return err
+				}
+			}
+			p.inThinkBlock = true
+			before := strings.TrimSpace(text[:idx])
+			after := strings.TrimSpace(text[idx+6:]) // len("<think") = 6; skip optional >
+			if strings.HasPrefix(after, ">") {
+				after = strings.TrimSpace(after[1:])
+			}
+			if before != "" {
+				if err := p.callback(StreamChunk{Type: "delta", TextDelta: before}); err != nil {
+					return err
+				}
+			}
+			if after != "" {
+				return p.callback(StreamChunk{Type: "delta", Thinking: after})
+			}
+			return nil
+		}
+		// Normal text — buffer for tool call parsing
+		p.textBuffer.WriteString(text)
 		p.totalBuffered++
 		// If buffer exceeds cap, flush as plain text to prevent unbounded growth.
 		if p.textBuffer.Len() > minimaxMaxBuffer {
@@ -241,11 +303,9 @@ func (p *minimaxToolCallPipe) handle(chunk StreamChunk) error {
 				return err
 			}
 		}
-		// Log text content to see if MiniMax sends XML tool calls or plain text
-		if strings.Contains(chunk.TextDelta, "<minimax") || strings.Contains(chunk.TextDelta, "<invoke") {
+		if strings.Contains(text, "<minimax") || strings.Contains(text, "<invoke") {
 		} else if p.totalBuffered <= 3 || p.textBuffer.Len() > 64 {
-			// Log first few chunks and when buffer grows, to see what model outputs
-			log.Printf("[MiniMax] text delta: bytes=%d", len(chunk.TextDelta))
+			log.Printf("[MiniMax] text delta: bytes=%d", len(text))
 		}
 		return p.tryParse()
 	}

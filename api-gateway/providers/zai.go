@@ -261,7 +261,7 @@ func (h *ZAIHandler) Stream(ctx context.Context, req *Request, callback func(Str
 	if req.Provider.BaseURL == "" {
 		req.Provider.BaseURL = h.resolveBaseURL(req)
 	}
-	return h.inner.Stream(ctx, req, callback)
+	return h.inner.Stream(ctx, req, NewThinkTagStream(callback))
 }
 
 func (h *ZAIHandler) Capabilities() *ProviderInfo {

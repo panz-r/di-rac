@@ -232,7 +232,7 @@ func (h *HuggingFaceHandler) Send(ctx context.Context, req *Request) (*SendResul
 }
 
 func (h *HuggingFaceHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	return h.inner.Stream(ctx, req, callback)
+	return h.inner.Stream(ctx, req, NewThinkTagStream(callback))
 }
 
 func (h *HuggingFaceHandler) Capabilities() *ProviderInfo {

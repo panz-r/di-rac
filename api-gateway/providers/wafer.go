@@ -178,7 +178,7 @@ func (h *WaferHandler) Send(ctx context.Context, req *Request) (*SendResult, err
 }
 
 func (h *WaferHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	return h.inner.Stream(ctx, req, callback)
+	return h.inner.Stream(ctx, req, NewThinkTagStream(callback))
 }
 
 func (h *WaferHandler) Capabilities() *ProviderInfo {

@@ -141,7 +141,7 @@ func (h *XiaomiMimoHandler) Send(ctx context.Context, req *Request) (*SendResult
 
 func (h *XiaomiMimoHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
 	h.applyEndpoint(req)
-	return h.inner.Stream(ctx, req, callback)
+	return h.inner.Stream(ctx, req, NewThinkTagStream(callback))
 }
 
 // applyEndpoint sets req.Provider.BaseURL from the endpoint setting when not overridden.

@@ -223,8 +223,12 @@ func (h *OpenCodeGoHandler) Send(ctx context.Context, req *Request) (*SendResult
 	return h.inner.Send(ctx, req)
 }
 
+// Stream delegates to inner but wraps the callback to handle <think> tag
+// detection in content. Some OpenCode Go models (e.g. deepseek-v4-flash)
+// emit <think> tags in content rather than in the reasoning_content field,
+// which need to be extracted and emitted as Thinking deltas.
 func (h *OpenCodeGoHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	return h.inner.Stream(ctx, req, callback)
+	return h.inner.Stream(ctx, req, NewThinkTagStream(callback))
 }
 
 func (h *OpenCodeGoHandler) Capabilities() *ProviderInfo {

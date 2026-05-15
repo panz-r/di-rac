@@ -258,11 +258,12 @@ func (h *GroqHandler) Send(ctx context.Context, req *Request) (*SendResult, erro
 }
 
 func (h *GroqHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
+	wrapped := NewThinkTagStream(callback)
 	return h.inner.Stream(ctx, req, func(chunk StreamChunk) error {
 		if chunk.Usage != nil {
 			chunk.Usage = groqSubtractCachedTokens(chunk.Usage)
 		}
-		return callback(chunk)
+		return wrapped(chunk)
 	})
 }
 

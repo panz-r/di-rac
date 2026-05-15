@@ -172,7 +172,7 @@ func (h *OllamaHandler) Send(ctx context.Context, req *Request) (*SendResult, er
 }
 
 func (h *OllamaHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	return h.inner.Stream(ctx, req, callback)
+	return h.inner.Stream(ctx, req, NewThinkTagStream(callback))
 }
 
 func (h *OllamaHandler) Capabilities() *ProviderInfo {

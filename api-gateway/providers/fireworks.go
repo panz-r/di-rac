@@ -400,29 +400,7 @@ func (h *FireworksHandler) Send(ctx context.Context, req *Request) (*SendResult,
 // rather than in the reasoning_content field, which need to be extracted and
 // emitted as Thinking deltas.
 func (h *FireworksHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	var inThinkBlock bool
-	return h.inner.Stream(ctx, req, func(chunk StreamChunk) error {
-		if chunk.Type == "delta" && chunk.TextDelta != "" && chunk.Thinking == "" {
-			if inThinkBlock {
-				if strings.Contains(chunk.TextDelta, "</think") {
-					inThinkBlock = false
-				}
-				return callback(StreamChunk{Type: "delta", Thinking: chunk.TextDelta})
-			}
-			if strings.Contains(chunk.TextDelta, "<think") {
-				inThinkBlock = true
-				return callback(StreamChunk{Type: "delta", Thinking: chunk.TextDelta})
-			}
-		}
-		if chunk.Type == "delta" && chunk.Thinking != "" {
-			if strings.Contains(chunk.Thinking, "</think") {
-				inThinkBlock = false
-			} else if strings.Contains(chunk.Thinking, "<think") {
-				inThinkBlock = true
-			}
-		}
-		return callback(chunk)
-	})
+	return h.inner.Stream(ctx, req, NewThinkTagStream(callback))
 }
 
 func (h *FireworksHandler) Capabilities() *ProviderInfo {
