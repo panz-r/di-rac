@@ -1,0 +1,10 @@
+group("sensitive", ["src/auth/**", "src/payments/**", "src/crypto/**"])
+
+@on("post_tool_use")
+def observer_fanout():
+    if changed_files.any_match("sensitive"):
+        trigger_observer(observer_id="security_review", reason="Sensitive code changed")
+        trigger_observer(observer_id="payments_review", reason="Sensitive code changed")
+        trigger_observer(observer_id="crypto_review", reason="Sensitive code changed")
+        trigger_observer(observer_id="privacy_review", reason="Sensitive code changed")
+        trigger_observer(observer_id="abuse_review", reason="Sensitive code changed")

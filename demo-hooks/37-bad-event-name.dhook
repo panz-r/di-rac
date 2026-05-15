@@ -1,0 +1,3 @@
+@on("post_tool")
+def wrong_event_name():
+    warn(severity="info", message="This should not compile.")

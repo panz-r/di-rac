@@ -1,0 +1,11 @@
+group("rust", ["src/**/*.rs"])
+
+@on("post_tool_use")
+def post_tool_note():
+    if changed_files.any_match("rust"):
+        require_final_note("Mention test status.")
+
+@on("pre_finish")
+def pre_finish_note():
+    if changed_files.any_match("rust"):
+        require_final_note("Mention test status.")

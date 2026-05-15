@@ -11,6 +11,10 @@ pub fn execute_command(app: &mut App, cmd: &str) -> Option<FrontendMessage> {
             app.should_quit = true;
             None
         }
+        "hooks" => {
+            app.mode = Mode::Hooks;
+            None
+        }
         "settings" => {
             app.settings = Some(SettingsState::new_empty());
             app.mode = Mode::Settings;

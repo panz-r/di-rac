@@ -1,0 +1,4 @@
+@on("post_tool_use")
+def no_loops():
+    for f in changed_files:
+        warn(severity="info", message="Should not compile in v0.1")

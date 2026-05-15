@@ -1,0 +1,4 @@
+@on("observer_result")
+def try_to_loop():
+    if observer.name == "loop_test":
+        trigger_observer(observer_id="loop_test", reason="Testing loop guard")

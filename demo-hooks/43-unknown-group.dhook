@@ -1,0 +1,6 @@
+group("rust", ["src/**/*.rs"])
+
+@on("post_tool_use")
+def unknown_group():
+    if changed_files.any_match("typescript"):
+        warn(severity="info", message="Unknown group should not compile.")

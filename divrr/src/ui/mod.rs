@@ -1,5 +1,6 @@
 pub mod top_bar;
 pub mod conversation;
+pub mod hooks;
 pub mod queue;
 pub mod input_box;
 pub mod settings;
@@ -81,6 +82,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     // Settings overlay on top of everything
     if app.settings.is_some() {
         settings::render(frame, app);
+    }
+
+    // Hooks editor overlay
+    if app.mode == crate::app_types::Mode::Hooks {
+        hooks::render(frame, app);
     }
 }
 

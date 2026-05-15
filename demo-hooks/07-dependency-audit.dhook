@@ -1,0 +1,14 @@
+group("deps", [
+    "Cargo.lock",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "go.sum"
+])
+
+@on("post_tool_use")
+def dependency_change_policy():
+    if changed_files.any_match("deps"):
+        audit(kind="dependency-change", severity="high")
+        approval_note(severity="high", message="Dependency lockfile changed; supply-chain impact should be reviewed.")
+        require_final_note("Mention dependency changes in the final summary.")

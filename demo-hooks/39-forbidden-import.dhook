@@ -1,0 +1,4 @@
+import os
+@on("post_tool_use")
+def no_imports():
+    warn(severity="info", message="Should never compile.")

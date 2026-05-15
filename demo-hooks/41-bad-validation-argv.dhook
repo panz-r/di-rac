@@ -1,0 +1,3 @@
+@on("post_tool_use")
+def bad_validation_argv():
+    require_validation(argv="cargo test", reason="argv must be list of strings")

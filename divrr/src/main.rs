@@ -25,6 +25,7 @@ mod commands;
 mod errors;
 mod event;
 mod gateway;
+mod hooks_editor;
 mod input;
 mod line_cache;
 mod logging;

@@ -1,0 +1,11 @@
+group("low", ["docs/**"])
+group("medium", ["src/api/**"])
+group("critical", ["src/auth/**"])
+@on("post_tool_use")
+def severity_ordering():
+    if changed_files.any_match("low"):
+        approval_note(severity="low", message="Docs changed.")
+    if changed_files.any_match("medium"):
+        approval_note(severity="medium", message="API changed.")
+    if changed_files.any_match("critical"):
+        approval_note(severity="critical", message="Auth changed.")

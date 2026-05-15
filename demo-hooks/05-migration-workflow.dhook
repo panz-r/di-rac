@@ -1,0 +1,15 @@
+group("migrations", ["migrations/**", "db/migrations/**"])
+
+@role("migration_review", kind="observer")
+def migration_review():
+    system("Review database migration changes for data-loss risk, rollback concerns, and ordering issues.")
+    input.diff(paths="migrations/**")
+    output.schema({"risk": "low|medium|high|critical", "rollback_required": "bool", "notes": "list<string>"})
+    budget(max_tokens=1000, max_runs=1)
+
+@on("post_tool_use")
+def migration_policy():
+    if changed_files.any_match("migrations"):
+        trigger_observer(observer_id="migration_review", reason="Migration changed")
+        require_final_note("Mention migration testing and rollback considerations.")
+        audit(kind="migration-change", severity="high")

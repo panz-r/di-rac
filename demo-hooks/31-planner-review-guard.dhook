@@ -1,0 +1,4 @@
+@on("plan_created")
+def initial_plan_review():
+    if plan_contains("quick fix"):
+        trigger_planner_review(reason="Plan says quick fix; verify hidden complexity.")

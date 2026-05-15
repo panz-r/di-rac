@@ -1,0 +1,12 @@
+group("rust", ["src/**/*.rs"])
+
+@on("post_tool_use")
+def require_validation():
+    if changed_files.any_match("rust"):
+        require_validation(argv=["cargo", "test", "-q"], reason="Rust files changed")
+
+@on("pre_finish")
+def finish_gate():
+    if changed_files.any_match("rust"):
+        require_evidence("cargo test result")
+        block_finish_until(condition="Cargo tests pass or user explicitly waives validation.")

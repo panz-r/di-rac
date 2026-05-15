@@ -80,6 +80,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 theme.text_dim(),
             ));
         }
+        Mode::Hooks => {
+            spans.push(Span::styled(
+                "[Hooks editor open]",
+                theme.text_dim(),
+            ));
+        }
     }
 
     let mut paragraph = Paragraph::new(Line::from(spans));

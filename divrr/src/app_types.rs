@@ -6,6 +6,7 @@ pub enum Mode {
     Command,
     Action,
     Settings,
+    Hooks,
     SaveDialog,
 }
 
@@ -32,6 +33,7 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
     CommandEntry { name: "close", description: "Close active agent tab", prefix: "" },
     CommandEntry { name: "plan", description: "Switch active agent to Plan mode (read-only)", prefix: "" },
     CommandEntry { name: "act", description: "Switch active agent to Act mode (full tool access)", prefix: "" },
+    CommandEntry { name: "hooks", description: "Open hooks editor", prefix: "" },
 ];
 
 /// State for the save-block-to-file dialog.

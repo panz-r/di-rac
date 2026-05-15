@@ -1,6 +1,7 @@
 use crate::agent::{AgentState, AgentStatus, PendingInput};
 use crate::app_types::{CommandEntry, Mode, SaveDialogState};
 use crate::clipboard::copy_to_clipboard;
+use crate::hooks_editor::HooksEditorState;
 use crate::input::InputBuffer;
 use crate::message::FrontendMessage;
 use crate::settings::{SettingsLoadResult, SettingsState};
@@ -60,6 +61,8 @@ pub struct App {
     line_cache: Option<LineCache>,
     /// Whether we've already shown the stream stall warning this streaming session.
     pub stream_stall_warned: bool,
+    /// Hooks editor state (None when closed).
+    pub hooks_editor: Option<HooksEditorState>,
 }
 
 impl App {
@@ -94,6 +97,7 @@ impl App {
 
             line_cache: None,
             stream_stall_warned: false,
+            hooks_editor: None,
         }
     }
 
@@ -387,6 +391,7 @@ impl App {
             Mode::Insert => self.handle_insert_mode(key),
             Mode::Command => self.handle_command_mode(key),
             Mode::Settings => self.handle_settings_mode(key),
+            Mode::Hooks => self.handle_hooks_mode(key),
             Mode::Action => self.handle_action_mode(key),
             Mode::SaveDialog => self.handle_save_dialog(key),
         }
@@ -479,6 +484,89 @@ impl App {
                 }
             }
             crate::settings::SettingsAction::None => {}
+        }
+        None
+    }
+
+    fn handle_hooks_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
+        let hooks = match &mut self.hooks_editor {
+            Some(h) => h,
+            None => { self.mode = Mode::Normal; return None; }
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                self.hooks_editor = None;
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                hooks.insert_newline();
+            }
+            KeyCode::Left => hooks.move_left(),
+            KeyCode::Right => hooks.move_right(),
+            KeyCode::Up => hooks.move_up(),
+            KeyCode::Down => hooks.move_down(),
+            KeyCode::Home => hooks.home(),
+            KeyCode::End => hooks.end(),
+            KeyCode::Delete => hooks.delete(),
+            KeyCode::Backspace => hooks.backspace(),
+            KeyCode::Char(c) => {
+                // Ctrl+S = save session, Ctrl+R = save repo
+                if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                    match c {
+                        's' => {
+                            hooks.saving = true;
+                            if let Some(agent_id) = hooks.agent_id {
+                                match HooksEditorState::save_session(&hooks.source, &agent_id.to_string()) {
+                                    Ok(()) => {
+                                        hooks.saved = true;
+                                        hooks.saving = false;
+                                        hooks.error = None;
+                                    }
+                                    Err(e) => {
+                                        hooks.error = Some(e);
+                                        hooks.saving = false;
+                                    }
+                                }
+                            } else {
+                                hooks.error = Some("No active agent — cannot save session".to_string());
+                                hooks.saving = false;
+                            }
+                        }
+                        'r' => {
+                            hooks.saving = true;
+                            match HooksEditorState::save_repo(&hooks.source) {
+                                Ok(path) => {
+                                    hooks.saved = true;
+                                    hooks.saving = false;
+                                    hooks.error = None;
+                                    self.status_message = Some(format!("Saved repo hook to {}", path));
+                                }
+                                Err(e) => {
+                                    hooks.error = Some(e);
+                                    hooks.saving = false;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    hooks.type_char(c);
+                }
+            }
+            KeyCode::F(5) => {
+                // Preview: count lines, check syntax
+                let line_count = hooks.source.lines().count();
+                let char_count = hooks.source.len();
+                hooks.set_preview(format!(
+                    "Source: {} lines, {} chars\nPress Ctrl+S to save as session overlay",
+                    line_count, char_count
+                ));
+                // Validate: run a quick parse check via diagnostics
+                let errors = HooksEditorState::validate(&hooks.source);
+                hooks.set_diagnostics(errors);
+            }
+            _ => {}
         }
         None
     }

@@ -1,0 +1,4 @@
+@on("session_start")
+def hello():
+    hint("Dirac hook system is active.")
+    audit(kind="hook-smoke-test", severity="low")

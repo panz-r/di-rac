@@ -1,0 +1,6 @@
+@on("observer_result")
+def react_to_security_review():
+    if observer.name == "security_review" and observer.output.risk in ["high", "critical"]:
+        trigger_planner_review(reason="Security observer found high-risk issues")
+        require_final_note("Mention unresolved security findings or how they were addressed.")
+        block_finish_until(condition="Security findings addressed, waived, or disclosed.")

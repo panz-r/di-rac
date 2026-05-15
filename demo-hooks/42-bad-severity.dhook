@@ -1,0 +1,3 @@
+@on("post_tool_use")
+def bad_severity():
+    warn(severity="urgent", message="This severity does not exist.")

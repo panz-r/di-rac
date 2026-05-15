@@ -1,0 +1,3 @@
+@on("post_tool_use")
+def broken():
+    something_unknown("this should not parse")

@@ -1,0 +1,3 @@
+@on("post_tool_use")
+def trigger_missing_observer():
+    trigger_observer(observer_id="nonexistent_review", reason="Should fail typecheck")

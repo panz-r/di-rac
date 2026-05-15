@@ -1,0 +1,12 @@
+group("rust", ["src/**/*.rs", "crates/**/*.rs"])
+
+@on("post_tool_use")
+def require_rust_validation():
+    if changed_files.any_match("rust"):
+        require_validation(argv=["cargo", "fmt", "--check"], reason="Rust files changed")
+        require_validation(argv=["cargo", "test", "-q"], reason="Rust source changed")
+
+@on("pre_finish")
+def finish_gate():
+    if changed_files.any_match("rust"):
+        require_evidence("cargo test result")

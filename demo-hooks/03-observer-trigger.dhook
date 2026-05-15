@@ -1,0 +1,15 @@
+group("auth", ["src/auth/**", "crates/auth/**", "src/security/**"])
+
+@role("security_review", kind="observer")
+def security_review():
+    system("Review the changed auth/security code for authorization bugs, secret handling, and privilege bypasses.")
+    input.diff()
+    input.changed_files()
+    output.schema({"risk": "low|medium|high|critical", "findings": "list<string>", "followups": "list<string>"})
+    budget(max_tokens=1200, max_runs=1)
+
+@on("post_tool_use")
+def trigger_security_review():
+    if changed_files.any_match("auth"):
+        trigger_observer(observer_id="security_review", reason="Auth/security code changed")
+        approval_note(severity="high", message="Auth/security code changed; observer review requested.")

@@ -102,6 +102,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(theme.warning),
             ));
         }
+        crate::app_types::Mode::Hooks => {
+            spans.push(Span::styled(
+                " | HOOKS",
+                Style::default().fg(theme.accent),
+            ));
+        }
     }
 
     // Status message (e.g., errors, confirmations)

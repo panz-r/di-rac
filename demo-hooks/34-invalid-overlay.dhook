@@ -1,0 +1,4 @@
+@on("post_tool_use")
+def broken_live_edit():
+    if changed_files.any_match("rust"):
+        require_validation(argv=["cargo", "test"], reason="missing close paren"

@@ -1,0 +1,13 @@
+@role("reviewer", kind="observer")
+def reviewer_a():
+    system("First reviewer.")
+    input.diff()
+    output.schema({"risk": "low|medium|high"})
+    budget(max_tokens=500, max_runs=1)
+
+@role("reviewer", kind="observer")
+def reviewer_b():
+    system("Second reviewer.")
+    input.diff()
+    output.schema({"risk": "low|medium|high"})
+    budget(max_tokens=500, max_runs=1)

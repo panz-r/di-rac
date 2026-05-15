@@ -1,0 +1,6 @@
+@on("observer_result")
+def observer_schema_missing_field():
+    if observer.name == "security_review" and observer.output.risk == "high":
+        require_final_note("Security risk was high.")
+    if observer.name == "security_review" and observer.output.nonexistent == "x":
+        warn(severity="low", message="This should not trigger.")

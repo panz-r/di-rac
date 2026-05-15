@@ -1,0 +1,4 @@
+@on("user_prompt")
+def refactor_guidance():
+    hint("For refactors, preserve public behavior unless explicitly asked otherwise.")
+    criterion("Final answer should mention whether behavior was intended to change.")

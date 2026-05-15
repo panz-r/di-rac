@@ -1,0 +1,6 @@
+group("rust", ["src/**/*.rs"])
+
+@on("post_tool_use")
+def require_rust_tests():
+    if changed_files.any_match("rust"):
+        require_validation(argv=["cargo", "test", "-q"], reason="Rust files changed")

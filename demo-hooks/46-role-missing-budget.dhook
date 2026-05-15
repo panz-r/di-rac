@@ -1,0 +1,9 @@
+@role("security_review", kind="observer")
+def security_review():
+    system("Review security-sensitive changes.")
+    input.diff()
+    output.schema({"risk": "low|medium|high|critical", "findings": "list<string>"})
+
+@on("post_tool_use")
+def trigger_it():
+    trigger_observer(observer_id="security_review", reason="Testing missing budget")

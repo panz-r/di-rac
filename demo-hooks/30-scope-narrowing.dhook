@@ -1,0 +1,8 @@
+group("api", ["src/api/**", "openapi/**"])
+group("ui", ["web/src/**"])
+@on("post_tool_use")
+def trigger_api_review():
+    if changed_files.any_match("api"):
+        trigger_observer(observer_id="api_review", reason="API files changed")
+    if changed_files.any_match("ui"):
+        audit(kind="ui-change", severity="info")

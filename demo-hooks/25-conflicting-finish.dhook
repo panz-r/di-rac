@@ -1,0 +1,11 @@
+group("rust", ["src/**/*.rs", "crates/**/*.rs"])
+group("migrations", ["migrations/**"])
+
+@on("pre_finish")
+def finish_requirements():
+    if changed_files.any_match("rust"):
+        require_evidence("cargo test result")
+        require_final_note("Mention Rust validation status.")
+    if changed_files.any_match("migrations"):
+        require_evidence("migration review result")
+        require_final_note("Mention migration rollback/testing plan.")

@@ -1,0 +1,3 @@
+@on("post_tool_use")
+def unknown_action():
+    send_slack(message="hello from hook")

@@ -1,0 +1,7 @@
+group("rust", ["src/**/*.rs"])
+
+@on("post_tool_use")
+def session_policy():
+    if changed_files.any_match("rust"):
+        require_validation(argv=["cargo", "test", "--lib"], reason="Session override for faster check")
+        warn(severity="medium", message="Session hook requested faster library-only test.")

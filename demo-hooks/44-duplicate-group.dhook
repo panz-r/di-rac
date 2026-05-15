@@ -1,0 +1,6 @@
+group("rust", ["src/**/*.rs"])
+group("rust", ["crates/**/*.rs"])
+
+@on("post_tool_use")
+def duplicate_group():
+    warn(severity="info", message="Should not compile.")

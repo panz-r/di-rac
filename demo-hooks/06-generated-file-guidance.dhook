@@ -1,0 +1,6 @@
+group("generated", ["generated/**", "**/*.pb.rs", "**/*.generated.ts", "dist/**"])
+
+@on("post_tool_use")
+def generated_file_warning():
+    if changed_files.any_match("generated"):
+        warn(severity="medium", message="Generated files changed; confirm whether source schema/files should be edited instead.")

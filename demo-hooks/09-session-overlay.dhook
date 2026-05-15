@@ -1,0 +1,7 @@
+@on("post_tool_use")
+def temporary_extra_review():
+    trigger_observer(observer_id="observer", reason="User requested one extra observer pass from session hook")
+
+@on("pre_finish")
+def temporary_finish_requirement():
+    require_final_note("Mention that an extra observer pass was requested during the session.")

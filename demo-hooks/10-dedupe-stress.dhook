@@ -1,0 +1,9 @@
+group("rust", ["src/**/*.rs"])
+
+@on("post_tool_use")
+def repeated_requests():
+    if changed_files.any_match("rust"):
+        require_validation(argv=["cargo", "test", "-q"], reason="Rust changed")
+        require_validation(argv=["cargo", "test", "-q"], reason="Rust changed")
+        trigger_observer(observer_id="observer", reason="Rust changed")
+        trigger_observer(observer_id="observer", reason="Rust changed")
