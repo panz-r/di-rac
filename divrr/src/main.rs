@@ -303,15 +303,18 @@ async fn main() -> color_eyre::Result<()> {
                     }
                 }
 
-                if let Some(msg) = app.handle_key(key) {
-                    // Drain any new pending messages pushed during handle_key (e.g. SetProviderConfig from :new)
-                    // before sending the returned message (e.g. SpawnAgent) to ensure correct ordering.
-                    for pending in app.pending_messages.drain(..) {
-                        if let Err(e) = send_with_timeout(&mut di_core, &pending).await {
-                            crate::logging::log_event(&format!("send error: {}", e));
-                            app.status_message = Some(format!("Send error: {}", e));
-                        }
+                let returned_msg = app.handle_key(key);
+
+                // Drain any new pending messages pushed during handle_key (e.g. SetProviderConfig from :new,
+                // ReloadSessionHooks from Ctrl+S in hooks editor).
+                for pending in app.pending_messages.drain(..) {
+                    if let Err(e) = send_with_timeout(&mut di_core, &pending).await {
+                        crate::logging::log_event(&format!("send error: {}", e));
+                        app.status_message = Some(format!("Send error: {}", e));
                     }
+                }
+
+                if let Some(msg) = returned_msg {
                     if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
                         crate::logging::log_event(&format!("send error: {}", e));
                         app.status_message = Some(format!("Send error: {}", e));

@@ -23,6 +23,9 @@ pub fn handle_core_event(app: &mut App, event: CoreEvent) {
         CoreEvent::BackgroundCommandFinished { agent_id, .. } => *agent_id,
         CoreEvent::ObserverSignal { agent_id, .. } => *agent_id,
         CoreEvent::FrontendTimeout { agent_id, .. } => *agent_id,
+        CoreEvent::HookModuleActivated { agent_id, .. } => *agent_id,
+        CoreEvent::HookDirectiveEmitted { agent_id, .. } => *agent_id,
+        CoreEvent::HookEvaluationFailed { agent_id, .. } => *agent_id,
     };
 
     match event {
@@ -239,6 +242,28 @@ pub fn handle_core_event(app: &mut App, event: CoreEvent) {
         CoreEvent::ObserverSignal { message, .. } => {
             if let Some(agent) = app.agents.iter_mut().find(|a| a.id == agent_id) {
                 agent.log.push_system(format!("[observer] {}", message));
+            }
+        }
+        CoreEvent::HookModuleActivated { id, source_hash, rule_count, .. } => {
+            if let Some(agent) = app.agents.iter_mut().find(|a| a.id == agent_id) {
+                agent.log.push_system(format!("Hooks: module '{}' active ({} rules, hash={})", id, rule_count, &source_hash[..8.min(source_hash.len())]));
+            }
+        }
+        CoreEvent::HookDirectiveEmitted { directive, hook_id, .. } => {
+            if let Some(agent) = app.agents.iter_mut().find(|a| a.id == agent_id) {
+                // Truncate long directives for display
+                let short = if directive.len() > 80 {
+                    let end = directive.floor_char_boundary(77);
+                    format!("{}...", &directive[..end])
+                } else {
+                    directive.clone()
+                };
+                agent.log.push_system(format!("Hook [{}]: {}", hook_id, short));
+            }
+        }
+        CoreEvent::HookEvaluationFailed { event, error, .. } => {
+            if let Some(agent) = app.agents.iter_mut().find(|a| a.id == agent_id) {
+                agent.log.push_system(format!("Hook eval failed on '{}': {}", event, error));
             }
         }
         CoreEvent::FrontendTimeout { tool, question, .. } => {

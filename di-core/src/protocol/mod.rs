@@ -144,6 +144,10 @@ pub enum FrontendMessage {
         /// Provider-specific parameters (temperature, top_p, max_tokens, etc.)
         params: std::collections::HashMap<String, serde_json::Value>,
     },
+    /// Frontend requests di-core to reload session hooks from disk.
+    ReloadSessionHooks {
+        agent_id: Uuid,
+    },
     /// Frontend passes observer behavior settings to di-core.
     SetObserverConfig {
         enabled: bool,

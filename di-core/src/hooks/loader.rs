@@ -24,12 +24,16 @@ impl HookLoader {
         self.session_overlay_path = Some(path);
     }
 
-    /// Find .dirac/agent.dhook in current or parent directories.
+    pub fn clear_session_overlay(&mut self) {
+        self.session_overlay_path = None;
+    }
+
+    /// Find .di/hooks/agent.dhook in current or parent directories.
     fn find_repo_hook() -> Option<PathBuf> {
         let cwd = std::env::current_dir().ok()?;
         let mut dir = Some(cwd.as_path());
         while let Some(d) = dir {
-            let candidate = d.join(".dirac").join("agent.dhook");
+            let candidate = d.join(".di").join("hooks").join("agent.dhook");
             if candidate.exists() {
                 return Some(candidate);
             }
@@ -127,15 +131,20 @@ impl HookLoader {
         }
     }
 
-    /// Get the hooks directory in the working directory.
+    /// Get the repo-level hooks directory (.di/hooks/ in cwd).
     pub fn hooks_dir() -> PathBuf {
         std::env::current_dir().unwrap_or_default().join(".di").join("hooks")
     }
 
-    /// Save session overlay hook source to disk.
-    /// Creates the hooks directory if it doesn't exist.
+    /// Get the user-level hooks directory (~/.di/hooks/).
+    pub fn user_hooks_dir() -> PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        PathBuf::from(home).join(".di").join("hooks")
+    }
+
+    /// Save session overlay hook source to disk under ~/.di/hooks/.
     pub fn save_session_overlay(source: &str, agent_id: &str) -> Result<(), String> {
-        let dir = Self::hooks_dir();
+        let dir = Self::user_hooks_dir();
         std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create hooks dir: {}", e))?;
         let path = dir.join(format!("{}.dhook", agent_id));
         std::fs::write(&path, source).map_err(|e| format!("Failed to write session hook: {}", e))?;
@@ -144,16 +153,16 @@ impl HookLoader {
 
     /// Save session overlay and return the path used.
     pub fn save_session_overlay_path(source: &str, agent_id: &str) -> Result<PathBuf, String> {
-        let dir = Self::hooks_dir();
+        let dir = Self::user_hooks_dir();
         std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create hooks dir: {}", e))?;
         let path = dir.join(format!("{}.dhook", agent_id));
         std::fs::write(&path, source).map_err(|e| format!("Failed to write session hook: {}", e))?;
         Ok(path)
     }
 
-    /// Load session overlay from disk for a given agent id.
+    /// Load session overlay from ~/.di/hooks/ for a given agent id.
     pub fn load_session_overlay(agent_id: &str) -> Option<String> {
-        let path = Self::hooks_dir().join(format!("{}.dhook", agent_id));
+        let path = Self::user_hooks_dir().join(format!("{}.dhook", agent_id));
         if path.exists() {
             std::fs::read_to_string(&path).ok()
         } else {
@@ -161,12 +170,10 @@ impl HookLoader {
         }
     }
 
-    /// Save repo hook to .dirac/agent.dhook in the current directory.
-    /// Creates .dirac directory if needed.
+    /// Save repo hook to .di/hooks/agent.dhook in the current directory.
     pub fn save_repo_hook(source: &str) -> Result<PathBuf, String> {
-        let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {}", e))?;
-        let dir = cwd.join(".dirac");
-        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create .dirac dir: {}", e))?;
+        let dir = Self::hooks_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create hooks dir: {}", e))?;
         let path = dir.join("agent.dhook");
         std::fs::write(&path, source).map_err(|e| format!("Failed to write repo hook: {}", e))?;
         Ok(path)

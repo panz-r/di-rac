@@ -130,6 +130,10 @@ impl App {
         };
 
         let block_count = agent.log.blocks().len();
+        if block_count == 0 {
+            self.line_cache = prev;
+            return;
+        }
         let can_reuse = prev.as_ref().is_some_and(|c| {
             c.width == width
                 && c.expanded == expanded
@@ -459,6 +463,18 @@ impl App {
                     d.exists_warned = false;
                 }
             }
+            Mode::Hooks => {
+                if let Some(h) = &mut self.hooks_editor {
+                    let filtered: String = text.chars().filter(|&c| c == '\n' || !c.is_control()).collect();
+                    for c in filtered.chars() {
+                        if c == '\n' {
+                            h.insert_newline();
+                        } else {
+                            h.type_char(c);
+                        }
+                    }
+                }
+            }
             Mode::Insert => {
                 self.input.insert_str(text);
             }
@@ -517,11 +533,17 @@ impl App {
                         's' => {
                             hooks.saving = true;
                             if let Some(agent_id) = hooks.agent_id {
+                                // Normalize source before saving (fixes paste without newlines) then save
+                                let normalized = HooksEditorState::normalize_source(&hooks.source);
+                                hooks.source = normalized;
+                                hooks.cursor = hooks.source.len().min(hooks.source.len());
                                 match HooksEditorState::save_session(&hooks.source, &agent_id.to_string()) {
                                     Ok(()) => {
                                         hooks.saved = true;
                                         hooks.saving = false;
                                         hooks.error = None;
+                                        // Tell di-core to reload session hooks
+                                        self.pending_messages.push(FrontendMessage::ReloadSessionHooks { agent_id });
                                     }
                                     Err(e) => {
                                         hooks.error = Some(e);
@@ -571,33 +593,41 @@ impl App {
         None
     }
 
-    fn handle_normal_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
-        // Check for Y/n approval keys before the general key dispatch
-        if let (Some(agent), KeyCode::Char(c)) = (self.active_agent(), key.code) {
-            if let Some(pending) = agent.pending_input.clone() {
-                if matches!(pending, PendingInput::Approval { .. }) {
-                    let agent_id = agent.id;
+    /// Handle a pending approval/followup input for the active agent.
+    /// Returns Some(FrontendMessage) if the key was consumed, None otherwise.
+    fn handle_agent_pending_input(&mut self, key: KeyEvent, agent: &crate::agent::AgentState, pending: PendingInput) -> Option<FrontendMessage> {
+        let agent_id = agent.id;
+        match pending {
+            PendingInput::Approval { .. } => {
+                if let KeyCode::Char(c) = key.code {
                     match c {
                         'y' | 'Y' => {
-                            if let Some(i) = self.input_queue.iter().position(|(id, p)| {
-                                id == &agent_id && *p == pending
-                            }) {
-                                self.input_queue.remove(i);
-                            }
+                            self.input_queue.retain(|(id, p)| !(id == &agent_id && *p == pending));
                             self.clear_pending_for_agent(&agent_id);
                             return Some(FrontendMessage::ApprovalResponse { agent_id, approval_id: None, approved: true });
                         }
                         'n' | 'N' => {
-                            if let Some(i) = self.input_queue.iter().position(|(id, p)| {
-                                id == &agent_id && *p == pending
-                            }) {
-                                self.input_queue.remove(i);
-                            }
+                            self.input_queue.retain(|(id, p)| !(id == &agent_id && *p == pending));
                             self.clear_pending_for_agent(&agent_id);
                             return Some(FrontendMessage::ApprovalResponse { agent_id, approval_id: None, approved: false });
                         }
                         _ => {}
                     }
+                }
+            }
+            PendingInput::Followup { .. } => {
+                // Followup responses come via the input buffer (Insert mode), not direct keys
+            }
+        }
+        None
+    }
+
+    fn handle_normal_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
+        // Check for Y/n approval keys before the general key dispatch
+        if let (Some(agent), _) = (self.active_agent(), &key) {
+            if let Some(pending) = agent.pending_input.clone() {
+                if let Some(msg) = self.handle_agent_pending_input(key, agent, pending) {
+                    return Some(msg);
                 }
             }
         }

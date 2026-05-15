@@ -208,6 +208,12 @@ async fn main() -> Result<()> {
                                 // Also send via channel so blocking recv_frontend loops in the agent wake up
                                 orchestrator.send_to_agent(agent_id, FrontendMessage::Interrupt { agent_id }).await;
                             }
+                            FrontendMessage::ReloadSessionHooks { agent_id } => {
+                                log.log(&format!("ReloadSessionHooks: agent={}", agent_id));
+                                // Route through frontend channel — the agent is in a spawned task
+                                // and not in self.agents. send_to_agent uses frontend_channels.
+                                orchestrator.send_to_agent(agent_id, FrontendMessage::ReloadSessionHooks { agent_id }).await;
+                            }
                             FrontendMessage::ApprovalResponse { agent_id, approval_id, approved } => {
                                 log.log(&format!("ApprovalResponse: agent={} approved={}", agent_id, approved));
                                 if !orchestrator.send_to_agent(agent_id, FrontendMessage::ApprovalResponse { agent_id, approval_id, approved }).await {

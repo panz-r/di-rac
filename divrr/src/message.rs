@@ -83,6 +83,25 @@ pub enum CoreEvent {
         tool: Option<String>,
         question: Option<String>,
     },
+    /// Hook module was activated (loaded or swapped).
+    HookModuleActivated {
+        agent_id: Uuid,
+        id: String,
+        source_hash: String,
+        rule_count: usize,
+    },
+    /// Hook emitted a directive.
+    HookDirectiveEmitted {
+        agent_id: Uuid,
+        directive: String,
+        hook_id: String,
+    },
+    /// Hook evaluation failed.
+    HookEvaluationFailed {
+        agent_id: Uuid,
+        event: String,
+        error: String,
+    },
 }
 
 /// Messages sent by the frontend to di-core on stdin (NDJSON).
@@ -143,5 +162,9 @@ pub enum FrontendMessage {
         agent_id: Uuid,
         /// "act" or "plan"
         mode: String,
+    },
+    /// Request di-core to reload session hooks from disk.
+    ReloadSessionHooks {
+        agent_id: Uuid,
     },
 }

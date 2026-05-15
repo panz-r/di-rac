@@ -1,5 +1,4 @@
 use crate::app::App;
-use crate::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
@@ -15,106 +14,105 @@ pub fn render(frame: &mut Frame, app: &App) {
     let theme = &app.theme;
     let size = frame.area();
 
-    let panel_w = size.width.min(96).max(60);
-    let panel_h = size.height.min(36).max(16);
-
-    let x = (size.width.saturating_sub(panel_w)) / 2;
-    let y = (size.height.saturating_sub(panel_h)) / 2;
-    let area = Rect::new(x, y, panel_w, panel_h);
-
+    // Full-screen overlay — clear everything first
+    let area = Rect::new(0, 0, size.width, size.height);
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" Hook Editor (session overlay) ")
+        .title(" Hook Editor ")
         .title_style(theme.accent_bold())
         .borders(Borders::ALL)
         .border_style(theme.text_dim());
     let inner = block.inner(area);
+    let ih = inner.height;
+
     frame.render_widget(block, area);
 
+    // Layout: help(1) + editor + status(1)
+    let header_h = 1u16;
+    let footer_h = 1u16;
+    let editor_h = ih.saturating_sub(header_h + footer_h).max(1);
+
     let rows = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(6),
-        Constraint::Length(1),
-        Constraint::Length(4),
-        Constraint::Min(2),
-        Constraint::Length(1),
+        Constraint::Length(header_h),
+        Constraint::Fill(1),
+        Constraint::Length(footer_h),
     ]).split(inner);
 
     // Help bar
     let help_text = Line::from(vec![
-        Span::styled(" Ctrl+S Save session  ", Style::default().fg(theme.accent)),
+        Span::styled(" Ctrl+S Session  ", Style::default().fg(theme.accent)),
         Span::styled(" Esc Close  ", Style::default().fg(theme.warning)),
         Span::styled(" F5 Preview  ", Style::default().fg(theme.accent)),
-        Span::styled(" Ctrl+R Save repo  ", Style::default().fg(theme.warning)),
+        Span::styled(" Ctrl+R Repo  ", Style::default().fg(theme.warning)),
     ]);
     frame.render_widget(Paragraph::new(help_text), rows[0]);
 
-    // Editor area
-    let editor_block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(theme.text_dim())
-        .title(" Source ");
-    let editor_inner = editor_block.inner(rows[1]);
-    frame.render_widget(editor_block, rows[1]);
-
+    // Editor content with scrolling — no word wrap, preserve newlines
     let display_text = if hooks.source.is_empty() {
-        "  (empty — type your .dhook DSL here)".to_string()
+        "  (empty — type .dhook DSL here)".to_string()
     } else {
-        let mut display = hooks.source.clone();
-        let pos = hooks.cursor.min(display.len());
-        display.insert(pos, '|');
-        display.insert(pos + 1, '|');
-        format!(" {}", display.lines().collect::<Vec<_>>().join("\n "))
+        let (before, after) = hooks.source.split_at(hooks.cursor.min(hooks.source.len()));
+        let mut with_cursor = String::with_capacity(hooks.source.len() + 2);
+        with_cursor.push_str(before);
+        with_cursor.push('|');
+        with_cursor.push_str(after);
+        with_cursor
+    };
+    let line_count = display_text.lines().count();
+    let visible_lines = editor_h as usize;
+
+    // Compute scroll offset so cursor stays visible
+    let cursor_line = hooks.source[..hooks.cursor.min(hooks.source.len())].matches('\n').count();
+    let scroll = if cursor_line >= visible_lines {
+        cursor_line - visible_lines + 1
+    } else {
+        0
     };
 
-    let editor_paragraph = Paragraph::new(Line::from(Span::raw(display_text)))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(editor_paragraph, editor_inner);
+    let editor_lines: Vec<Line> = display_text.lines()
+        .map(|l| Line::from(Span::raw(l.to_string())))
+        .collect();
+    let editor_paragraph = Paragraph::new(editor_lines)
+        .scroll((scroll as u16, 0));
+    frame.render_widget(editor_paragraph, rows[1]);
 
-    // Separator
-    let sep = Paragraph::new(Line::from(Span::styled(
-        "── Diagnostics ──────────────────────",
-        theme.text_dim(),
-    )));
-    frame.render_widget(sep, rows[2]);
-
-    // Diagnostics
-    let diag_text = if hooks.diagnostics.is_empty() {
-        vec![Line::from(Span::styled("  No errors", theme.success_style()))]
+    // Status bar (diagnostics + save state)
+    let line_count = hooks.source.lines().count().to_string();
+    let status_parts: Vec<Span> = if hooks.diagnostics.is_empty() {
+        vec![
+            Span::styled(" No errors", theme.success_style()),
+            Span::raw(" | "),
+            Span::styled(format!(" {} lines", line_count), theme.text_dim()),
+        ]
     } else {
-        hooks.diagnostics.iter()
-            .map(|e| Line::from(Span::styled(format!("  {}", e), theme.warning_style())))
-            .collect()
+        let mut parts = Vec::new();
+        for d in hooks.diagnostics.iter().take(2) {
+            parts.push(Span::styled(format!(" {}", d), theme.warning_style()));
+            parts.push(Span::raw(" |"));
+        }
+        parts
     };
-    let diag_paragraph = Paragraph::new(diag_text).wrap(Wrap { trim: false });
-    frame.render_widget(diag_paragraph, rows[3]);
 
-    // Preview
-    let preview_block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(theme.text_dim())
-        .title(" Preview ");
-    let preview_text = if hooks.preview.is_empty() {
-        vec![Line::from(Span::styled("  (press F5 to preview)", theme.text_dim()))]
-    } else {
-        hooks.preview.lines()
-            .map(|l| Line::from(Span::raw(format!("  {}", l))))
-            .collect()
-    };
-    let preview_paragraph = Paragraph::new(preview_text).wrap(Wrap { trim: false });
-    frame.render_widget(preview_block, rows[2]); // overlay on separator
-    frame.render_widget(preview_paragraph, rows[4]);
-
-    // Status
-    let status = if let Some(ref err) = hooks.error {
-        Line::from(Span::styled(format!(" Error: {}", err), theme.error_style()))
+    let save_msg = if let Some(ref err) = hooks.error {
+        err.clone()
     } else if hooks.saving {
-        Line::from(Span::styled(" Saving...", Style::default().fg(theme.accent)))
+        " Saving...".to_string()
     } else if hooks.saved {
-        Line::from(Span::styled(" Saved (session)", theme.success_style()))
+        " Saved".to_string()
     } else {
-        Line::from(Span::styled(" Unsaved changes", theme.warning_style()))
+        " Unsaved".to_string()
     };
-    frame.render_widget(Paragraph::new(status), rows[5]);
+    let save_style = if hooks.error.is_some() { theme.error_style() }
+        else if hooks.saving { Style::default().fg(theme.accent) }
+        else if hooks.saved { theme.success_style() }
+        else { theme.warning_style() };
+
+    let mut all_spans: Vec<Span> = status_parts;
+    if !all_spans.is_empty() {
+        all_spans.push(Span::raw(" | "));
+    }
+    all_spans.push(Span::styled(save_msg, save_style));
+    let status_line = Line::from(all_spans);
+    frame.render_widget(Paragraph::new(status_line), rows[2]);
 }

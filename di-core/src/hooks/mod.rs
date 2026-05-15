@@ -19,11 +19,25 @@ pub struct AgentHookManager {
     active: ArcSwap<CompiledHookModule>,
     limits: AgentHookLimits,
     merged: MergedDirectives,
+    agent_id: Option<String>,
 }
 
 impl AgentHookManager {
     pub fn new() -> Self {
+        Self::with_agent_id(None)
+    }
+
+    /// Create a hook manager that auto-discovers the session overlay for the given agent.
+    pub fn with_agent_id(agent_id: Option<String>) -> Self {
         let mut loader = HookLoader::new();
+        // Auto-discover session overlay from ~/.di/hooks/<agent_id>.dhook
+        if let Some(ref id) = agent_id {
+            let overlay_path = crate::hooks::loader::HookLoader::user_hooks_dir()
+                .join(format!("{}.dhook", id));
+            if overlay_path.exists() {
+                loader.set_session_overlay(overlay_path);
+            }
+        }
         let active = loader.load().unwrap_or_else(|_| CompiledHookModule {
             id: "empty".to_string(),
             source_hash: "empty".to_string(),
@@ -37,6 +51,7 @@ impl AgentHookManager {
             active: ArcSwap::new(Arc::new(active)),
             limits: AgentHookLimits::default(),
             merged: MergedDirectives::default(),
+            agent_id,
         }
     }
 
@@ -45,6 +60,23 @@ impl AgentHookManager {
         let module = self.loader.load()?;
         self.active.store(Arc::new(module));
         Ok(())
+    }
+
+    /// Reload hooks, discovering the session overlay from agent id.
+    pub fn reload_session(&mut self) -> Result<(), Vec<String>> {
+        if let Some(ref id) = self.agent_id {
+            let overlay_path = crate::hooks::loader::HookLoader::user_hooks_dir()
+                .join(format!("{}.dhook", id));
+            // Only set overlay if the file exists
+            if overlay_path.exists() {
+                self.loader.set_session_overlay(overlay_path);
+            } else {
+                // No session overlay — clear any previous session overlay path
+                // so only the repo hook is loaded
+                self.loader.clear_session_overlay();
+            }
+        }
+        self.reload()
     }
 
     /// Apply a new session overlay source (from TUI editing).

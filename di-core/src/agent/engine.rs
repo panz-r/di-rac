@@ -426,7 +426,7 @@ impl AgentEngine {
             shared_observer_config: Arc::new(tokio::sync::RwLock::new(
                 crate::observer::ObserverConfig::default(),
             )),
-            hooks: AgentHookManager::new(),
+            hooks: AgentHookManager::with_agent_id(Some(id.to_string())),
         }
     }
 
@@ -794,6 +794,8 @@ impl AgentEngine {
         let mut should_abort = false;
         // Collect non-matching messages to re-inject after draining
         let mut to_reinject = Vec::new();
+        // Collect events to emit after drain loop (avoids borrow conflict with rx)
+        let mut pending_hook_events: Vec<CoreEvent> = Vec::new();
         if let Some(ref mut rx) = self.frontend_rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -815,6 +817,31 @@ impl AgentEngine {
                             _ => AgentMode::Act,
                         };
                     }
+                    FrontendMessage::ReloadSessionHooks { .. } => {
+                        eprintln!("[di-core] agent {} reloading session hooks", self.id);
+                        match self.hooks.reload_session() {
+                            Ok(()) => {
+                                let module = self.hooks.active_module();
+                                let rule_count: usize = module.handlers.iter().map(|h| h.rules.len()).sum();
+                                eprintln!("[di-core] session hooks loaded: {} rules", rule_count);
+                                pending_hook_events.push(CoreEvent::HookModuleActivated {
+                                    agent_id: self.id,
+                                    id: module.id.clone(),
+                                    source_hash: module.source_hash.clone(),
+                                    rule_count,
+                                });
+                            }
+                            Err(errors) => {
+                                let err_msg = format!("Hook reload failed: {}", errors.join("; "));
+                                eprintln!("[di-core] {}", err_msg);
+                                pending_hook_events.push(CoreEvent::HookEvaluationFailed {
+                                    agent_id: self.id,
+                                    event: "reload_session".to_string(),
+                                    error: err_msg,
+                                });
+                            }
+                        }
+                    }
                     other => {
                         // Don't discard — leave for recv_frontend to handle
                         to_reinject.push(other);
@@ -827,6 +854,10 @@ impl AgentEngine {
             if self.frontend_tx.send(msg).await.is_err() {
                 eprintln!("[di-core] drain_user_responses: channel closed, dropping re-inject");
             }
+        }
+        // Emit pending hook events (collected during drain to avoid borrow conflict)
+        for event in pending_hook_events {
+            let _ = self.emit_event(event).await;
         }
         if should_abort {
             self.request_abort();
@@ -1859,6 +1890,11 @@ impl AgentEngine {
                     }
                     let msg = self.recv_frontend().await;
                     match msg {
+                        Some(FrontendMessage::ReloadSessionHooks { .. }) => {
+                            // Handle hook reload mid-approval, then continue waiting
+                            self.handle_reload_session_hooks().await;
+                            continue;
+                        }
                         Some(FrontendMessage::ApprovalResponse { approval_id: ref resp_id, approved, .. }) => {
                             // Accept if no ID (backward compat) or if IDs match
                             let matches = match resp_id {
@@ -2102,6 +2138,10 @@ impl AgentEngine {
                         let user_msg = loop {
                             let msg = self.recv_frontend().await;
                             match msg {
+                                Some(FrontendMessage::ReloadSessionHooks { .. }) => {
+                                    self.handle_reload_session_hooks().await;
+                                    continue;
+                                }
                                 Some(FrontendMessage::UserResponse { text, .. }) => break Some(text),
                                 Some(FrontendMessage::ApprovalResponse { approved: false, .. }) => break None,
                                 Some(FrontendMessage::ApprovalResponse { approved: true, .. }) => {
@@ -2145,6 +2185,10 @@ impl AgentEngine {
                             }
                             let msg = self.recv_frontend().await;
                             match msg {
+                                Some(FrontendMessage::ReloadSessionHooks { .. }) => {
+                                    self.handle_reload_session_hooks().await;
+                                    continue;
+                                }
                                 Some(FrontendMessage::FollowupAnswer { text, .. }) => break text,
                                 Some(FrontendMessage::UserResponse { text, .. }) => {
                                     self.task_reducer.process(&text, false);
@@ -3307,6 +3351,30 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
         }
     }
 
+    /// Handle ReloadSessionHooks — reload hooks from disk and emit CoreEvent.
+    async fn handle_reload_session_hooks(&mut self) {
+        match self.hooks.reload_session() {
+            Ok(()) => {
+                let module = self.hooks.active_module();
+                let rule_count: usize = module.handlers.iter().map(|h| h.rules.len()).sum();
+                let _ = self.emit_event(CoreEvent::HookModuleActivated {
+                    agent_id: self.id,
+                    id: module.id.clone(),
+                    source_hash: module.source_hash.clone(),
+                    rule_count,
+                }).await;
+            }
+            Err(errors) => {
+                let err_msg = format!("Hook reload failed: {}", errors.join("; "));
+                let _ = self.emit_event(CoreEvent::HookEvaluationFailed {
+                    agent_id: self.id,
+                    event: "reload_session".to_string(),
+                    error: err_msg,
+                }).await;
+            }
+        }
+    }
+
     /// Fire post_tool_use after tool execution, collect changed files.
     async fn fire_post_tool_use(&mut self, tool_name: &str, paths_written: &[String], success: bool) {
         let changed_files: Vec<String> = paths_written.iter()
@@ -3419,6 +3487,10 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
                         if self.is_aborted() { return Err(anyhow::anyhow!("Interrupted")); }
                         let msg = self.recv_frontend().await;
                         match msg {
+                            Some(FrontendMessage::ReloadSessionHooks { .. }) => {
+                                self.handle_reload_session_hooks().await;
+                                continue;
+                            }
                             Some(FrontendMessage::FollowupAnswer { text, .. }) => break text,
                             Some(FrontendMessage::UserResponse { text, .. }) => break text,
                             Some(FrontendMessage::ApprovalResponse { approved, .. }) => {
