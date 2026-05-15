@@ -1,1 +1,0 @@
-export { DiracTempManager } from "./DiracTempManager"
