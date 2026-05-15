@@ -965,32 +965,27 @@ impl App {
             return self.respond_to_queue_item(&text);
         }
 
-        // If the active agent has a pending input, respond to it
+        // If the active agent has a pending followup, respond to it.
+        // Approval prompts are handled by Y/n in normal mode only — text
+        // submitted from insert mode is treated as a user message instead.
         if let Some(agent) = self.active_agent() {
             if let Some(pending) = agent.pending_input.clone() {
                 let agent_id = agent.id;
-                return match &pending {
-                    PendingInput::Approval { .. } => {
-                        let approved = matches!(text.to_lowercase().as_str(), "y" | "yes" | "");
-                        // Remove the exact matching item from the queue
-                        if let Some(i) = self.input_queue.iter().position(|(id, p)| {
-                            id == &agent_id && *p == pending
-                        }) {
-                            self.input_queue.remove(i);
-                        }
-                        self.clear_pending_for_agent(&agent_id);
-                        Some(FrontendMessage::ApprovalResponse { agent_id, approved })
+                if matches!(&pending, PendingInput::Followup { .. }) {
+                    if let Some(i) = self.input_queue.iter().position(|(id, p)| {
+                        id == &agent_id && *p == pending
+                    }) {
+                        self.input_queue.remove(i);
                     }
-                    PendingInput::Followup { .. } => {
-                        if let Some(i) = self.input_queue.iter().position(|(id, p)| {
-                            id == &agent_id && *p == pending
-                        }) {
-                            self.input_queue.remove(i);
-                        }
-                        self.clear_pending_for_agent(&agent_id);
-                        Some(FrontendMessage::FollowupAnswer { agent_id, text })
-                    }
-                };
+                    self.clear_pending_for_agent(&agent_id);
+                    return Some(FrontendMessage::FollowupAnswer { agent_id, text });
+                }
+                // For approval prompts, ignore text input from insert mode.
+                // The user must use Y/n in normal mode.
+                if matches!(&pending, PendingInput::Approval { .. }) {
+                    self.status_message = Some("Press Y to approve or n to deny".to_string());
+                    return None;
+                }
             }
         }
 
