@@ -340,11 +340,14 @@ func (h *ZAIHandler) ValidateSettings(settings map[string]interface{}, thinking 
 		}
 
 		// Cross-parameter: logprobs requires top_logprobs > 0
-		if s.Key == "top_logprobs" && toFloat(settings["logprobs"]) != 0 {
-			num := toFloat(val)
-			if num <= 0 {
-				v.Error = "Must be > 0 when logprobs is enabled"
-				v.Value = float64(1)
+		if s.Key == "top_logprobs" {
+			logprobsEnabled, _ := settings["logprobs"].(bool)
+			if logprobsEnabled {
+				num := toFloat(val)
+				if num <= 0 {
+					v.Error = "Must be > 0 when logprobs is enabled"
+					v.Value = float64(1)
+				}
 			}
 		}
 

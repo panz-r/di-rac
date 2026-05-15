@@ -529,7 +529,8 @@ func (h *OpenRouterHandler) ValidateSettings(settings map[string]interface{}, th
 				v.Value = sid[:256]
 			}
 		case "top_logprobs":
-			if toFloat(settings["logprobs"]) != 0 {
+			logprobsEnabled, _ := settings["logprobs"].(bool)
+			if logprobsEnabled {
 				num := toFloat(val)
 				if num <= 0 {
 					v.Error = "Must be > 0 when logprobs is enabled"
