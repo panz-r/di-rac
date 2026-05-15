@@ -3297,6 +3297,7 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
         let merged = self.hooks.merged_directives();
         let mut unsatisfied = Vec::new();
 
+        // Check unsatisfied finish gates (EvidencePresent, FinalNotePresent, ObserverCleared)
         for gate in &merged.finish_gates {
             if !gate.satisfied {
                 let msg = match &gate.condition {
@@ -3314,12 +3315,12 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
             }
         }
 
-        if merged.evidence_required.iter().any(|e| {
-            !merged.finish_gates.iter().any(|g| {
-                matches!(&g.condition, hooks::directive::FinishCondition::EvidencePresent(n) if n == e) && g.satisfied
-            })
-        }) {
-            for ev in &merged.evidence_required {
+        // Check evidence_required items that DON'T have a satisfied FinishGate
+        for ev in &merged.evidence_required {
+            let has_satisfied_gate = merged.finish_gates.iter().any(|g| {
+                matches!(&g.condition, hooks::directive::FinishCondition::EvidencePresent(n) if n == ev) && g.satisfied
+            });
+            if !has_satisfied_gate {
                 unsatisfied.push(format!("Evidence not yet provided: {}", ev));
             }
         }
@@ -3505,8 +3506,8 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
 
                     match user_msg.trim().to_lowercase().as_str() {
                         "override" | "yes" | "y" => {
-                            // User explicitly overrides — clear all gates and allow finish
-                            self.hooks.reset();
+                            // User explicitly overrides — clear gates and allow finish
+                            self.hooks.clear_finish_gates();
                             return Ok(());
                         }
                         "continue" | "no" | "n" => {
@@ -3615,7 +3616,20 @@ impl MultiAgentOrchestrator {
     /// Uses send().await to ensure critical messages (approval, interrupt) are never dropped.
     pub async fn send_to_agent(&self, agent_id: Uuid, msg: FrontendMessage) -> bool {
         if let Some(tx) = self.frontend_channels.get(&agent_id) {
-            tx.send(msg).await.is_ok()
+            match tx.try_send(msg) {
+                Ok(()) => true,
+                Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
+                    // Channel full — the agent may be busy or stuck. Try async send to
+                    // avoid blocking but still queue. This should almost never happen
+                    // with capacity 256, but if it does, we must not block the main loop.
+                    eprintln!("[di-core] send_to_agent: channel full for agent {}, retrying async", agent_id);
+                    tx.send(msg).await.is_ok()
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    eprintln!("[di-core] send_to_agent: channel closed for agent {}", agent_id);
+                    false
+                }
+            }
         } else {
             eprintln!("[di-core] send_to_agent: no channel for agent {}", agent_id);
             false

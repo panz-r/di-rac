@@ -1,6 +1,46 @@
 use crate::hooks::ir;
 use crate::hooks::directive::*;
 
+/// Values the evaluator can produce. Fixes C2: comparisons compare real values, not truthiness.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EvalValue {
+    Bool(bool),
+    String(String),
+    Int(i64),
+    List(Vec<String>),
+}
+
+impl EvalValue {
+    /// Truthiness for condition evaluation.
+    fn is_truthy(&self) -> bool {
+        match self {
+            EvalValue::Bool(b) => *b,
+            EvalValue::String(s) => !s.is_empty(),
+            EvalValue::Int(n) => *n != 0,
+            EvalValue::List(l) => !l.is_empty(),
+        }
+    }
+
+    /// String value for comparison (used by observer compare path).
+    fn as_str(&self) -> Option<&str> {
+        match self {
+            EvalValue::String(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Equal: two values are equal if they have the same type and same data.
+    fn eq_value(&self, other: &EvalValue) -> bool {
+        match (self, other) {
+            (EvalValue::Bool(a), EvalValue::Bool(b)) => a == b,
+            (EvalValue::String(a), EvalValue::String(b)) => a == b,
+            (EvalValue::Int(a), EvalValue::Int(b)) => a == b,
+            (EvalValue::List(a), EvalValue::List(b)) => a == b,
+            _ => false, // different types are never equal
+        }
+    }
+}
+
 pub struct EvalContext {
     pub hook_id: String,
     pub event: String,
@@ -46,7 +86,7 @@ impl HookEvaluator {
 
                 let matched = match &rule.condition {
                     None => true,
-                    Some(cond) => Self::eval_expr(cond, ctx, module),
+                    Some(cond) => Self::eval_condition(cond, ctx, module),
                 };
 
                 if !matched {
@@ -187,65 +227,87 @@ impl HookEvaluator {
         }
     }
 
-    fn eval_expr(expr: &ir::Expr, ctx: &EvalContext, module: &ir::CompiledHookModule) -> bool {
+    fn eval_expr(expr: &ir::Expr, ctx: &EvalContext, module: &ir::CompiledHookModule) -> EvalValue {
         match expr {
-            ir::Expr::Bool(b) => *b,
-            ir::Expr::String(_) => true,
-            ir::Expr::Int(n) => *n != 0,
+            ir::Expr::Bool(b) => EvalValue::Bool(*b),
+            ir::Expr::String(s) => EvalValue::String(s.clone()),
+            ir::Expr::Int(n) => EvalValue::Int(*n),
+            ir::Expr::StringList(items) => EvalValue::List(items.clone()),
             ir::Expr::Ident(name) => {
-                name == "changed_files" && !ctx.changed_files.is_empty()
-                    || name == "observer" && ctx.observer_id.is_some()
+                if name == "changed_files" {
+                    EvalValue::Bool(!ctx.changed_files.is_empty())
+                } else if name == "observer" {
+                    EvalValue::Bool(ctx.observer_id.is_some())
+                } else {
+                    EvalValue::String(name.clone())
+                }
             }
             ir::Expr::ChangedFilesAnyMatch(name) => {
-                Self::match_any_group(name, &ctx.changed_files, module)
-                    || Self::match_literal_glob(name, &ctx.changed_files, false)
+                let matched = Self::match_any_group(name, &ctx.changed_files, module)
+                    || Self::match_literal_glob(name, &ctx.changed_files, false);
+                EvalValue::Bool(matched)
             }
             ir::Expr::ChangedFilesAllMatch(name) => {
-                Self::match_all_groups(name, &ctx.changed_files, module)
-                    || Self::match_literal_glob(name, &ctx.changed_files, true)
+                let matched = Self::match_all_groups(name, &ctx.changed_files, module)
+                    || Self::match_literal_glob(name, &ctx.changed_files, true);
+                EvalValue::Bool(matched)
             }
             ir::Expr::ObserverField { observer_id: obs, field_path } => {
                 _ = obs;
-                // observer.X expressions are only meaningful in comparisons.
-                // Handled specially in BinaryOp::Eq. Here we just check truthiness:
-                // observer.name is truthy if there IS an observer
                 if field_path == &["name"] {
-                    return ctx.observer_id.is_some();
+                    return EvalValue::Bool(ctx.observer_id.is_some());
                 }
-                // observer.output or observer.output.field
                 if field_path.first().map(|s| s.as_str()) == Some("output") {
                     if field_path.len() == 1 {
-                        return ctx.observer_output.is_some();
+                        return EvalValue::Bool(ctx.observer_output.is_some());
                     }
                     if let Some(output) = &ctx.observer_output {
                         let mut current = output;
                         for field in &field_path[1..] {
                             current = current.get(field).unwrap_or(&serde_json::Value::Null);
                         }
-                        return !current.is_null();
+                        return EvalValue::Bool(!current.is_null());
                     }
                 }
-                false
+                EvalValue::Bool(false)
             }
             ir::Expr::BinaryOp { left, op, right } => {
-                // Handle observer.name == "value" and observer.output.* == "value" patterns
+                // Handle observer.name == "value" patterns (special-cased string compare)
                 if matches!(op, ir::BinOp::Eq | ir::BinOp::Neq) {
                     if let Some(result) = Self::eval_observer_compare(left, right, ctx, *op) {
-                        return result;
+                        return EvalValue::Bool(result);
                     }
                 }
                 let lv = Self::eval_expr(left, ctx, module);
                 let rv = Self::eval_expr(right, ctx, module);
                 match op {
-                    ir::BinOp::And => lv && rv,
-                    ir::BinOp::Or => lv || rv,
-                    ir::BinOp::Eq => lv == rv,
-                    ir::BinOp::Neq => lv != rv,
-                    ir::BinOp::In => lv == rv,
+                    ir::BinOp::And => EvalValue::Bool(lv.is_truthy() && rv.is_truthy()),
+                    ir::BinOp::Or => EvalValue::Bool(lv.is_truthy() || rv.is_truthy()),
+                    ir::BinOp::Eq => EvalValue::Bool(lv.eq_value(&rv)),
+                    ir::BinOp::Neq => EvalValue::Bool(!lv.eq_value(&rv)),
+                    ir::BinOp::In => {
+                        // x in [list]: check if x's string value is in the list
+                        let needle = lv.as_str();
+                        let haystack = match &rv {
+                            EvalValue::List(items) => items.clone(),
+                            EvalValue::String(s) => vec![s.clone()],
+                            _ => Vec::new(),
+                        };
+                        let found = needle.map_or(false, |n| haystack.iter().any(|h| h == n));
+                        EvalValue::Bool(found)
+                    }
                 }
             }
-            ir::Expr::Not(inner) => !Self::eval_expr(inner, ctx, module),
+            ir::Expr::Not(inner) => {
+                let val = Self::eval_expr(inner, ctx, module);
+                EvalValue::Bool(!val.is_truthy())
+            }
         }
+    }
+
+    /// Evaluate an expression to a boolean for condition checking.
+    fn eval_condition(expr: &ir::Expr, ctx: &EvalContext, module: &ir::CompiledHookModule) -> bool {
+        Self::eval_expr(expr, ctx, module).is_truthy()
     }
 
     fn lower_action(action: &ir::ActionIR, dedupe_key: &DedupeKey) -> LoopDirective {
@@ -335,6 +397,7 @@ impl HookEvaluator {
             ir::Expr::Bool(b) => b.to_string(),
             ir::Expr::String(s) => format!("\"{}\"", s),
             ir::Expr::Int(n) => n.to_string(),
+            ir::Expr::StringList(items) => format!("[{}]", items.join(", ")),
             ir::Expr::Ident(name) => name.clone(),
             ir::Expr::ChangedFilesAnyMatch(p) => format!("changed_files.any_match(\"{}\")", p),
             ir::Expr::ChangedFilesAllMatch(p) => format!("changed_files.all_match(\"{}\")", p),
@@ -1633,7 +1696,11 @@ def on_complete():
     fn test_hook_manager_reset_clears_state() {
         let mut mgr = crate::hooks::AgentHookManager::new();
         mgr.on_event(AgentLoopEvent::SessionStart);
-        assert!(!mgr.merged_directives().hints.is_empty() || !mgr.merged_directives().hints.is_empty() == false);
+        // SessionStart should add hints if repo hook is loaded
+        // With empty module, no hints expected
+        let hints_were_empty = mgr.merged_directives().hints.is_empty();
+        mgr.reset();
+        assert!(mgr.merged_directives().hints.is_empty());
         mgr.reset();
         assert!(mgr.merged_directives().hints.is_empty());
         assert!(mgr.merged_directives().criteria.is_empty());

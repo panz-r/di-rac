@@ -166,28 +166,49 @@ async fn main() -> Result<()> {
                                     let done_tx = done_tx.clone();
                                     let task_clone = task.clone();
                                     tokio::spawn(async move {
-                                        // Guard ensures done_tx.send runs even on panic
-                                        struct PanicGuard { agent_id: uuid::Uuid, done_tx: tokio::sync::mpsc::Sender<uuid::Uuid> }
-                                        impl Drop for PanicGuard {
-                                            fn drop(&mut self) {
-                                                // best-effort: spawn a tiny task to send the ID
-                                                let id = self.agent_id;
-                                                let tx = self.done_tx.clone();
-                                                tokio::spawn(async move { let _ = tx.send(id).await; });
+                                        // Emit TaskFinished on both Err and panic paths so TUI doesn't hang.
+                                        let finish_event = |agent_id: uuid::Uuid, success: bool, msg: String| {
+                                            if let Ok(json) = serde_json::to_string(&CoreEvent::TaskFinished {
+                                                agent_id, success, message: msg,
+                                            }) {
+                                                use std::io::Write;
+                                                let _ = std::io::stdout().write_all(json.as_bytes());
+                                                let _ = std::io::stdout().write_all(b"\n");
+                                                let _ = std::io::stdout().flush();
+                                            }
+                                        };
+
+                                        let agent_id = agent.id;
+                                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                                            || {
+                                                let rt = tokio::runtime::Handle::current();
+                                                rt.block_on(async { agent.run_task(task_clone).await })
+                                            }
+                                        ));
+
+                                        match result {
+                                            Ok(Ok(())) => {
+                                                // Normal completion — TaskFinished already emitted by engine
+                                            }
+                                            Ok(Err(e)) => {
+                                                eprintln!("[di-core] agent {} FAILED: {}", agent_id, e);
+                                                finish_event(agent_id, false, format!("Agent error: {}", e));
+                                            }
+                                            Err(panic) => {
+                                                let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                                                    s.to_string()
+                                                } else if let Some(s) = panic.downcast_ref::<String>() {
+                                                    s.clone()
+                                                } else {
+                                                    "Agent panicked".to_string()
+                                                };
+                                                eprintln!("[di-core] agent {} PANICKED: {}", agent_id, msg);
+                                                finish_event(agent_id, false, format!("Agent panic: {}", msg));
                                             }
                                         }
-                                        let _guard = PanicGuard { agent_id: agent.id, done_tx: done_tx.clone() };
 
-                                        if let Err(e) = agent.run_task(task_clone).await {
-                                            eprintln!("[di-core] agent {} FAILED: {}", agent.id, e);
-                                            let event = serde_json::to_string(&CoreEvent::TaskFinished {
-                                                agent_id: agent.id,
-                                                success: false,
-                                                message: format!("Agent error: {}", e),
-                                            }).unwrap_or_default();
-                                            println!("{}", event);
-                                            let _ = std::io::stdout().flush();
-                                        }
+                                        // Signal cleanup via done_tx (best-effort, non-blocking)
+                                        let _ = done_tx.try_send(agent_id);
                                     });
                                 }
                             }
@@ -268,7 +289,22 @@ async fn main() -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        log.log(&format!("PARSE ERROR: {} — line: {}", e, &line[..line.len().min(200)]));
+                        let err_msg = format!("PARSE ERROR: {} — line: {}", e, &line[..line.len().min(200)]);
+                        log.log(&err_msg);
+                        // Emit to stdout so TUI can show it (best-effort)
+                        if let Ok(json) = serde_json::to_string(&serde_json::json!({
+                            "type": "TaskFinished",
+                            "payload": {
+                                "agent_id": uuid::Uuid::nil(),
+                                "success": false,
+                                "message": err_msg,
+                            }
+                        })) {
+                            use std::io::Write;
+                            let _ = std::io::stdout().write_all(json.as_bytes());
+                            let _ = std::io::stdout().write_all(b"\n");
+                            let _ = std::io::stdout().flush();
+                        }
                     }
                 }
             }

@@ -504,6 +504,44 @@ impl App {
         None
     }
 
+    /// Handle hook save (Ctrl+S) — avoids borrow conflicts with self.
+    fn handle_hook_save(
+        hooks: &mut crate::hooks_editor::HooksEditorState,
+        agent_id: Option<uuid::Uuid>,
+        status_message: &mut Option<String>,
+        pending_messages: &mut Vec<FrontendMessage>,
+    ) -> Option<FrontendMessage> {
+        hooks.saving = true;
+        match agent_id {
+            None => {
+                hooks.error = Some("No active agent — cannot save session".to_string());
+                hooks.saving = false;
+                None
+            }
+            Some(agent_id) => {
+                // Normalize source before saving
+                let normalized = crate::hooks_editor::HooksEditorState::normalize_source(&hooks.source);
+                hooks.source = normalized;
+                hooks.cursor = hooks.source.len().min(hooks.source.len());
+                match crate::hooks_editor::HooksEditorState::save_session(&hooks.source, &agent_id.to_string()) {
+                    Ok(()) => {
+                        hooks.saved = true;
+                        hooks.saving = false;
+                        hooks.error = None;
+                        *status_message = Some("Hook saved, requesting reload...".to_string());
+                        pending_messages.push(FrontendMessage::ReloadSessionHooks { agent_id });
+                        None
+                    }
+                    Err(e) => {
+                        hooks.error = Some(e);
+                        hooks.saving = false;
+                        None
+                    }
+                }
+            }
+        }
+    }
+
     fn handle_hooks_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
         let hooks = match &mut self.hooks_editor {
             Some(h) => h,
@@ -531,29 +569,9 @@ impl App {
                 if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
                     match c {
                         's' => {
-                            hooks.saving = true;
-                            if let Some(agent_id) = hooks.agent_id {
-                                // Normalize source before saving (fixes paste without newlines) then save
-                                let normalized = HooksEditorState::normalize_source(&hooks.source);
-                                hooks.source = normalized;
-                                hooks.cursor = hooks.source.len().min(hooks.source.len());
-                                match HooksEditorState::save_session(&hooks.source, &agent_id.to_string()) {
-                                    Ok(()) => {
-                                        hooks.saved = true;
-                                        hooks.saving = false;
-                                        hooks.error = None;
-                                        // Tell di-core to reload session hooks
-                                        self.pending_messages.push(FrontendMessage::ReloadSessionHooks { agent_id });
-                                    }
-                                    Err(e) => {
-                                        hooks.error = Some(e);
-                                        hooks.saving = false;
-                                    }
-                                }
-                            } else {
-                                hooks.error = Some("No active agent — cannot save session".to_string());
-                                hooks.saving = false;
-                            }
+                            // Save hook and send reload message. Use a helper to avoid borrow conflicts.
+                            let agent_id = hooks.agent_id;
+                            return Self::handle_hook_save(hooks, agent_id, &mut self.status_message, &mut self.pending_messages);
                         }
                         'r' => {
                             hooks.saving = true;
@@ -624,10 +642,27 @@ impl App {
 
     fn handle_normal_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
         // Check for Y/n approval keys before the general key dispatch
-        if let (Some(agent), _) = (self.active_agent(), &key) {
-            if let Some(pending) = agent.pending_input.clone() {
-                if let Some(msg) = self.handle_agent_pending_input(key, agent, pending) {
-                    return Some(msg);
+        let pending = self.active_agent()
+            .and_then(|a| a.pending_input.clone());
+        if let Some(pending) = pending {
+            let agent_id = self.active_agent().map(|a| a.id);
+            if let Some(agent_id) = agent_id {
+                if matches!(pending, PendingInput::Approval { .. }) {
+                    if let KeyCode::Char(c) = key.code {
+                        match c {
+                            'y' | 'Y' => {
+                                self.input_queue.retain(|(id, p)| !(id == &agent_id && *p == pending));
+                                self.clear_pending_for_agent(&agent_id);
+                                return Some(FrontendMessage::ApprovalResponse { agent_id, approval_id: None, approved: true });
+                            }
+                            'n' | 'N' => {
+                                self.input_queue.retain(|(id, p)| !(id == &agent_id && *p == pending));
+                                self.clear_pending_for_agent(&agent_id);
+                                return Some(FrontendMessage::ApprovalResponse { agent_id, approval_id: None, approved: false });
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
         }

@@ -42,6 +42,7 @@ pub enum Expr {
     Bool(bool),
     String(String),
     Int(i64),
+    StringList(Vec<String>),
     Ident(String),
     ChangedFilesAnyMatch(String),
     ChangedFilesAllMatch(String),

@@ -34,15 +34,13 @@ impl HookCompiler {
                 errors.push(format!("Group \"{}\" is already defined.", g.name));
                 continue;
             }
-            let patterns: Vec<glob::Pattern> = g.patterns.iter()
-                .filter_map(|p| match glob::Pattern::new(p) {
-                    Ok(pat) => Some(pat),
-                    Err(e) => {
-                        errors.push(format!("Invalid glob pattern \"{}\": {}", p, e));
-                        None
-                    }
-                })
-                .collect();
+            let mut patterns: Vec<glob::Pattern> = Vec::new();
+            for p in &g.patterns {
+                match glob::Pattern::new(p) {
+                    Ok(pat) => patterns.push(pat),
+                    Err(e) => errors.push(format!("Invalid glob pattern \"{}\" in group \"{}\": {}", p, g.name, e)),
+                }
+            }
             groups.push(ir::PathGroup { name: g.name.clone(), patterns });
         }
 
@@ -343,6 +341,10 @@ impl HookCompiler {
                             _ => ir::Expr::Bool(false),
                         }
                     }
+                    "__call__" => {
+                        // Function-call syntax like plan_contains("x") — unknown function
+                        ir::Expr::Bool(false)
+                    }
                     _ => {
                         // Generic method call — treat as identifier lookup for now
                         ir::Expr::Ident(format!("{}.{}", Self::expr_to_debug(object), method))
@@ -365,8 +367,18 @@ impl HookCompiler {
             }
 
             parser::ast::Expr::List(items, _) => {
-                // Represent list as first item for now (simplified)
-                items.first().map(Self::compile_expr).unwrap_or(ir::Expr::Bool(false))
+                let strings: Vec<String> = items.iter()
+                    .filter_map(|e| match e {
+                        parser::ast::Expr::String(s, _) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if strings.is_empty() {
+                    // If no strings found, compile as list of generic expressions (truth check)
+                    items.first().map(Self::compile_expr).unwrap_or(ir::Expr::Bool(false))
+                } else {
+                    ir::Expr::StringList(strings)
+                }
             }
 
             parser::ast::Expr::MemberAccess { object, member, .. } => {

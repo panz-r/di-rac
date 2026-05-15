@@ -38,13 +38,19 @@ impl AgentHookManager {
                 loader.set_session_overlay(overlay_path);
             }
         }
-        let active = loader.load().unwrap_or_else(|_| CompiledHookModule {
-            id: "empty".to_string(),
-            source_hash: "empty".to_string(),
-            groups: Vec::new(),
-            roles: Vec::new(),
-            handlers: Vec::new(),
-        });
+        let active = match loader.load() {
+            Ok(module) => module,
+            Err(errors) => {
+                eprintln!("[di-core] hooks: load failed (using empty module): {}", errors.join("; "));
+                CompiledHookModule {
+                    id: "empty".to_string(),
+                    source_hash: "empty".to_string(),
+                    groups: Vec::new(),
+                    roles: Vec::new(),
+                    handlers: Vec::new(),
+                }
+            }
+        };
 
         Self {
             loader,
@@ -135,6 +141,14 @@ impl AgentHookManager {
     /// Reset merged state (e.g., at session_start).
     pub fn reset(&mut self) {
         self.merged = MergedDirectives::default();
+    }
+
+    /// Clear only finish gates and evidence requirements. Leaves hints, criteria,
+    /// validations, audit events, etc. intact for subsequent turns.
+    pub fn clear_finish_gates(&mut self) {
+        self.merged.finish_gates.clear();
+        self.merged.evidence_required.clear();
+        self.merged.final_notes.clear();
     }
 
     /// Get role definitions from the active module.

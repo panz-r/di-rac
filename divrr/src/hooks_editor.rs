@@ -202,7 +202,9 @@ impl HooksEditorState {
                     result.push('\n');
                 } else if after.is_alphabetic() {
                     // Check if this starts a known statement keyword
-                    let word: String = chars[j..].iter().take_while(|c| c.is_alphabetic()).collect();
+                    let word_len = chars[j..].iter().take_while(|c| c.is_alphabetic()).count();
+                    let word_end = j + word_len;
+                    let word: String = chars[j..word_end].iter().collect();
                     if stmt_keywords.contains(&word.as_str()) {
                         result.push('\n');
                         // Preserve indentation: copy the leading whitespace from context
@@ -213,7 +215,9 @@ impl HooksEditorState {
                         } else { 0 };
                         for _ in 0..indent { result.push(' '); }
                     } else {
-                        for k in i+1..j { result.push(chars[k]); }
+                        // Not a known keyword — copy everything including spaces and the word
+                        for k in i+1..word_end { result.push(chars[k]); }
+                        i = word_end - 1; // will be incremented by loop
                     }
                 } else {
                     for k in i+1..j { result.push(chars[k]); }
