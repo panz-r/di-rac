@@ -2485,7 +2485,7 @@ def on_complete():
         let result = crate::hooks::AgentHookManager::save_session_hook(source, &agent_id);
         assert!(result.is_ok(), "Save should succeed");
         let path = result.unwrap();
-        assert!(path.exists(), "File should exist");
+        assert!(path.exists(), "File should exist at: {}", path.display());
 
         // Load it back
         let loaded = crate::hooks::AgentHookManager::load_session_overlay(&agent_id);
@@ -2494,8 +2494,9 @@ def on_complete():
 
         // Clean up
         let _ = std::fs::remove_file(&path);
-        let dir = path.parent().unwrap();
-        let _ = std::fs::remove_dir_all(dir);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
     }
 
     #[test]
@@ -2823,11 +2824,10 @@ def on_complete():
     }
 
     #[test]
-    fn test_loader_session_state_dir_format() {
-        let dir = crate::hooks::loader::HookLoader::session_state_dir("test-agent");
+    fn test_loader_hooks_dir_format() {
+        let dir = crate::hooks::loader::HookLoader::hooks_dir();
         let dir_str = dir.to_string_lossy();
-        assert!(dir_str.contains("test-agent"), "Dir should contain agent id: {}", dir_str);
-        assert!(dir_str.ends_with("test-agent"), "Dir should end with agent id");
+        assert!(dir_str.ends_with(".di/hooks"), "Dir should end with .di/hooks: {}", dir_str);
     }
 
     #[test]

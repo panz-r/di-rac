@@ -134,13 +134,12 @@ impl HooksEditorState {
     }
 
     /// Save source as session overlay for the given agent id.
-    /// Writes to ~/.dirac/sessions/<agent_id>/hooks.dhook
+    /// Writes to <cwd>/.di/hooks/<agent_id>.dhook
     pub fn save_session(source: &str, agent_id: &str) -> Result<(), String> {
-        let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-        let dir = std::path::PathBuf::from(home)
-            .join(".dirac").join("sessions").join(agent_id);
-        std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create session dir: {}", e))?;
-        let path = dir.join("hooks.dhook");
+        let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {}", e))?;
+        let dir = cwd.join(".di").join("hooks");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create hooks dir: {}", e))?;
+        let path = dir.join(format!("{}.dhook", agent_id));
         std::fs::write(&path, source).map_err(|e| format!("Cannot write session hook: {}", e))?;
         Ok(())
     }
@@ -155,6 +154,17 @@ impl HooksEditorState {
         let path_str = path.to_string_lossy().to_string();
         std::fs::write(&path, source).map_err(|e| format!("Cannot write repo hook: {}", e))?;
         Ok(path_str)
+    }
+
+    /// Load session overlay from disk for a given agent id.
+    pub fn load_session(agent_id: &str) -> Option<String> {
+        let cwd = std::env::current_dir().ok()?;
+        let path = cwd.join(".di").join("hooks").join(format!("{}.dhook", agent_id));
+        if path.exists() {
+            std::fs::read_to_string(&path).ok()
+        } else {
+            None
+        }
     }
 
     /// Validate .dhook source syntax.

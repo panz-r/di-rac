@@ -12,6 +12,15 @@ pub fn execute_command(app: &mut App, cmd: &str) -> Option<FrontendMessage> {
             None
         }
         "hooks" => {
+            let mut editor = crate::hooks_editor::HooksEditorState::new();
+            // Try to load existing session overlay for the active agent
+            if let Some(agent) = app.active_agent() {
+                editor.agent_id = Some(agent.id);
+                if let Some(content) = crate::hooks_editor::HooksEditorState::load_session(&agent.id.to_string()) {
+                    editor.source = content;
+                }
+            }
+            app.hooks_editor = Some(editor);
             app.mode = Mode::Hooks;
             None
         }

@@ -127,34 +127,33 @@ impl HookLoader {
         }
     }
 
-    /// Get the session state directory for a given agent id.
-    pub fn session_state_dir(agent_id: &str) -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        PathBuf::from(home).join(".dirac").join("sessions").join(agent_id)
+    /// Get the hooks directory in the working directory.
+    pub fn hooks_dir() -> PathBuf {
+        std::env::current_dir().unwrap_or_default().join(".di").join("hooks")
     }
 
     /// Save session overlay hook source to disk.
-    /// Creates the session state directory if it doesn't exist.
+    /// Creates the hooks directory if it doesn't exist.
     pub fn save_session_overlay(source: &str, agent_id: &str) -> Result<(), String> {
-        let dir = Self::session_state_dir(agent_id);
-        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create session dir: {}", e))?;
-        let path = dir.join("hooks.dhook");
+        let dir = Self::hooks_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create hooks dir: {}", e))?;
+        let path = dir.join(format!("{}.dhook", agent_id));
         std::fs::write(&path, source).map_err(|e| format!("Failed to write session hook: {}", e))?;
         Ok(())
     }
 
     /// Save session overlay and return the path used.
     pub fn save_session_overlay_path(source: &str, agent_id: &str) -> Result<PathBuf, String> {
-        let dir = Self::session_state_dir(agent_id);
-        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create session dir: {}", e))?;
-        let path = dir.join("hooks.dhook");
+        let dir = Self::hooks_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create hooks dir: {}", e))?;
+        let path = dir.join(format!("{}.dhook", agent_id));
         std::fs::write(&path, source).map_err(|e| format!("Failed to write session hook: {}", e))?;
         Ok(path)
     }
 
     /// Load session overlay from disk for a given agent id.
     pub fn load_session_overlay(agent_id: &str) -> Option<String> {
-        let path = Self::session_state_dir(agent_id).join("hooks.dhook");
+        let path = Self::hooks_dir().join(format!("{}.dhook", agent_id));
         if path.exists() {
             std::fs::read_to_string(&path).ok()
         } else {
