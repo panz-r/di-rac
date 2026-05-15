@@ -721,8 +721,15 @@ pub fn push_role_to_gateway(gw: &mut crate::settings::GatewayConnection, role: &
         "base_url": if rs.base_url.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(rs.base_url.clone()) },
     });
 
-    for (key, val) in &rs.provider_params {
-        config[key] = string_to_json_value(val);
+    // Provider params must be nested under "extra" to match Go's ProviderConfig struct.
+    // Top-level keys (temperature, max_tokens, etc.) are silently dropped by Go
+    // deserialization since the struct has no catch-all field.
+    if !rs.provider_params.is_empty() {
+        let mut extra = serde_json::Map::new();
+        for (key, val) in &rs.provider_params {
+            extra.insert(key.clone(), string_to_json_value(val));
+        }
+        config["extra"] = serde_json::Value::Object(extra);
     }
 
     let msg = serde_json::json!({
