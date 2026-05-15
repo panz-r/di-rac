@@ -2,33 +2,26 @@
   <img src="di-vrr-logo.png" alt="di-vrr" width="320">
 </p>
 
-# di-rac: Progress Report
+# di-rac
 
-This is a fork of [dirac-run/dirac](https://github.com/dirac-run/dirac), a coding agent focused on efficiency and context curation. **divrr** is the new CLI-native agent that replaces the original VS Code extension and TypeScript runtime with native components — a Rust agent engine, a Rust TUI, a Go API gateway, and a C tree-sitter daemon for code analysis.
-
-Nothing here is ready for production use yet. This document tracks what's been built so far.
+A fork of [dirac-run/dirac](https://github.com/dirac-run/dirac), a coding agent focused on efficiency and context curation. **divrr** replaces the original VS Code extension and TypeScript runtime with native components — a Rust agent engine, a Rust TUI, a Go API gateway, and a C tree-sitter daemon for code analysis. The entire system builds from a single `Makefile`.
 
 ## Architecture
 
 ```
-                                ┌────────────────┐
-                                │ central-daemon  │
-                                │  coordinator    │
-                                └───────┬────────┘
-                                 NDJSON/UDS
-                                        │
-                                        ▼
-┌─────────┐    NDJSON/UDS    ┌──────────────┐    HTTP/streaming    ┌──────────────┐
-│  divrr   │ ◄──────────────► │   di-core    │ ◄──────────────────► │ api-gateway  │ ◄──► LLM providers
-│  (TUI)   │                  │ (agent core) │                      │   (Go)       │
-└─────────┘                  └──┬────────┬──┘                      └──────────────┘
-                                │          │
-                    stdin/stdout│          │stdin/stdout
-                    NDJSON      │          │NDJSON
-                       ┌────────▼──┐  ┌───▼───────────┐
-                       │ treesitter│  │ command-daemon │
-                       │ daemon(C) │  │   (C/bash)     │
-                       └───────────┘  └───────────────┘
+┌─────────┐   JSON/stdin   ┌──────────────┐   HTTP/streaming   ┌──────────────┐
+│  divrr   │ ◄───────────► │   di-core    │ ◄────────────────► │ api-gateway  │ ◄──► LLM providers
+│ (Rust    │   (NDJSON)    │ (Rust engine)│    (NDJSON/UDS)    │    (Go)      │
+│  TUI)    │               │              │                    │              │
+└─────────┘               └──┬─────────┬──┘                    └──────────────┘
+                             │         │
+                  stdin/stdout│         │stdin/stdout
+                  NDJSON      │         │NDJSON
+                     ┌────────▼───┐  ┌──▼─────────────┐
+                     │ treesitter │  │ command-daemon  │
+                     │ daemon     │  │ (C — child      │
+                     │ (Rust)     │  │  process exec)  │
+                     └────────────┘  └─────────────────┘
 ```
 
 | Component | Language | Role |
@@ -36,11 +29,11 @@ Nothing here is ready for production use yet. This document tracks what's been b
 | `di-core/` | Rust | Agent engine: streaming LLM loop, tool dispatch, context compilation |
 | `divrr/` | Rust | Terminal UI (ratatui): conversation view, approval flow, settings |
 | `api-gateway/` | Go | LLM proxy: streaming NDJSON over UDS, multi-provider support |
-| `treesitter-daemon/` | C | Code analysis: AST outline/skeleton, symbol search, repo map |
+| `treesitter-daemon/` | Rust | Code analysis: AST outline/skeleton, symbol search, repo map |
 | `command-daemon/` | C | Shell command execution with sandboxing and output truncation |
-| `central-daemon/` | C | Session state, configuration, and coordination of agent/divrr instances |
+| `central-daemon/` | C | Session state and coordination (in development) |
 
-Components communicate via **NDJSON over Unix domain sockets** (divrr ↔ central-daemon, di-core ↔ api-gateway, di-core ↔ central-daemon) and **stdin/stdout piped NDJSON** (di-core ↔ tree-sitter daemon, di-core ↔ command-daemon).
+Components communicate via **NDJSON over Unix domain sockets** (di-core ↔ api-gateway) and **stdin/stdout piped NDJSON** (divrr ↔ di-core, di-core ↔ tree-sitter daemon, di-core ↔ command-daemon).
 
 ## What's built so far
 
@@ -57,15 +50,13 @@ Components communicate via **NDJSON over Unix domain sockets** (divrr ↔ centra
 - **Artifact store** — large tool outputs stored on disk with token-budget eviction and `artifact://` references
 - **Context distillation** — model-backed distiller framework scaffolded (prompts, schemas, validation, admission); `NoopDistiller` wired as placeholder
 
-### Single-token base-32 content-hash anchors (redesigned, being ported)
+### Single-token base-32 content-hash anchors
 
 - 3-char `[0-9a-v]` anchors — deterministic, collision-resistant, always a single token for every major LLM tokenizer
-- Redesign of upstream's anchor system, built in our TS codebase (`FileAnchorIndex` / `formatLineWithHash`); porting to Rust
 
-### Progressive file exploration (from upstream, being ported)
+### Progressive file exploration
 
 - `skeleton` / `outline` / `expand` modes let the model pay for structure first, bodies later
-- Built in TS; port to Rust in progress
 
 ### TUI (divrr)
 
@@ -78,11 +69,12 @@ Components communicate via **NDJSON over Unix domain sockets** (divrr ↔ centra
 
 ### API gateway (Go)
 
-- **Multi-provider support** — OpenAI, Anthropic, Google Gemini, Codex (OAuth), DeepSeek, MiniMax, ZAI
+- **Multi-provider support** — OpenAI, Anthropic, Google Gemini, Codex (OAuth), DeepSeek, MiniMax, Mistral, Groq, Together, OpenRouter, opencode-go router
 - **Streaming proxy** — NDJSON chunk streaming over UDS with usage tracking
+- **Model listing** — provider-agnostic model discovery with 1-hour TTL cache
 - **Provider persistence** — saves/loads provider config to disk
 
-### Tree-sitter daemon (C)
+### Tree-sitter daemon (Rust)
 
 - **AST operations** — outline, skeleton, symbol search, repo map
 - **SQLite-backed** — persistent symbol index across restarts
@@ -93,21 +85,37 @@ Components communicate via **NDJSON over Unix domain sockets** (divrr ↔ centra
 - VS Code extension and webview — removed entirely
 - Headless browser tool
 - Browser-use / screenshot capabilities
-- The TypeScript agent runtime (`src/core/task/`) — replaced by di-core
+- The entire TypeScript codebase (`src/`, `cli/`) — replaced by di-core + divrr
+- npm/Node.js build infrastructure — replaced by `make`
 
 ## Building
 
 ```bash
-./build.sh
+make
 ```
+
+All binaries are built to `bin/`:
+- `bin/api-gateway` — LLM proxy (Go)
+- `bin/divrr` — Terminal UI (Rust)
+- `bin/di-core` — Agent engine (Rust)
+- `bin/di-rvv-cmd` — Command daemon (C)
+- `bin/di-rvv-analyzer` — Tree-sitter daemon (Rust)
 
 ## Running
 
 ```bash
-./dist/divrr
+./bin/divrr --core ./bin/di-core
 ```
 
-divrr starts the gateway and daemons automatically.
+Or with an initial task:
+
+```bash
+./bin/divrr --core ./bin/di-core --task "Review the codebase"
+```
+
+divrr starts the api-gateway and di-core as child processes automatically.
+The gateway and daemon binaries are found relative to the divrr binary,
+in `$PWD/bin/`, or in PATH.
 
 ## License
 
