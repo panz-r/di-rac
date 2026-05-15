@@ -258,6 +258,14 @@ func codexStartOAuth(ctx context.Context) (*CodexAuthTokens, error) {
 			return
 		}
 
+		// Verify state to prevent CSRF
+		if callbackState := r.URL.Query().Get("state"); callbackState != state {
+			errChan <- fmt.Errorf("OAuth state mismatch")
+			w.WriteHeader(400)
+			w.Write([]byte("Error: invalid state parameter"))
+			return
+		}
+
 		code := r.URL.Query().Get("code")
 		if code == "" {
 			errChan <- fmt.Errorf("no authorization code in callback")
