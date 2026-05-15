@@ -722,8 +722,7 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 		choiceIdx := choice.Index
 		delta := choice.Delta
 
-		hasReasoning := delta.ReasoningContent != "" || delta.Reasoning != "" || len(delta.ReasoningDetails) > 0
-		if len(delta.Content) > 0 && !hasReasoning {
+		if len(delta.Content) > 0 {
 			if contentArraySupport {
 				if text := extractContentString(delta.Content); text != "" {
 					if err := callback(StreamChunk{Type: "delta", TextDelta: text}); err != nil {
@@ -739,23 +738,26 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 				}
 			}
 		}
-		if delta.ReasoningContent != "" {
+		// Emit thinking from reasoning_details (MiniMax, multi-fragment),
+		// reasoning_content (DeepSeek), or reasoning (Groq). Only one source
+		// is used per chunk — reasoning_details takes priority since it
+		// contains incremental fragments. This avoids emitting the same
+		// thinking text multiple times when providers populate several fields.
+		if len(delta.ReasoningDetails) > 0 {
+			for _, rd := range delta.ReasoningDetails {
+				if rd.Text != "" {
+					if err := callback(StreamChunk{Type: "delta", Thinking: rd.Text}); err != nil {
+						return err
+					}
+				}
+			}
+		} else if delta.ReasoningContent != "" {
 			if err := callback(StreamChunk{Type: "delta", Thinking: delta.ReasoningContent}); err != nil {
 				return err
 			}
-		}
-		// Groq reasoning field (DeepSeek models with reasoning_format: "parsed")
-		if delta.Reasoning != "" {
+		} else if delta.Reasoning != "" {
 			if err := callback(StreamChunk{Type: "delta", Thinking: delta.Reasoning}); err != nil {
 				return err
-			}
-		}
-		// MiniMax reasoning_details field (with reasoning_split=true)
-		for _, rd := range delta.ReasoningDetails {
-			if rd.Text != "" {
-				if err := callback(StreamChunk{Type: "delta", Thinking: rd.Text}); err != nil {
-					return err
-				}
 			}
 		}
 

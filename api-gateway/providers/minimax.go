@@ -90,6 +90,7 @@ func NewMiniMaxHandler() *MiniMaxHandler {
 				},
 			},
 			ModifyRequest: func(req *Request, result map[string]interface{}) {
+				result["reasoning_split"] = true
 				model, _ := result["model"].(string)
 				nTools := 0
 				if tools, ok := result["tools"].([]map[string]interface{}); ok {
