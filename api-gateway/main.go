@@ -539,8 +539,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 			s.configMu.RUnlock()
 
 			modelsCtx, modelsCancel := context.WithTimeout(s.ctx, 30*time.Second)
-				models, err := s.providerRegistry.ListModels(modelsCtx, modelsReq.Provider, cfg)
-				modelsCancel()
+			defer modelsCancel()
+			models, err := s.providerRegistry.ListModels(modelsCtx, modelsReq.Provider, cfg)
+			modelsCancel()
 			if err != nil {
 				w.write(&Response{
 					ID:     0,
@@ -595,8 +596,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 			s.configMu.RUnlock()
 
 			modelsCtx, modelsCancel := context.WithTimeout(s.ctx, 30*time.Second)
-				models, err := s.providerRegistry.ListModels(modelsCtx, modelInfoReq.Provider, cfg)
-				modelsCancel()
+			defer modelsCancel()
+			models, err := s.providerRegistry.ListModels(modelsCtx, modelInfoReq.Provider, cfg)
+			modelsCancel()
 			if err != nil {
 				w.write(&Response{
 					ID:     0,
