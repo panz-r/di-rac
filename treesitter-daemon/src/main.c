@@ -24,7 +24,7 @@ typedef struct {
     pthread_mutex_t thread_count_lock;
     pthread_mutex_t db_lock;
     int active_threads;
-    int shutdown_requested;
+    volatile int running;
     AnalyzerCtx base;
 } GlobalCtx;
 
@@ -240,8 +240,17 @@ static void handle_skeleton(pthread_mutex_t *lock, const char *raw_id, int id_le
     analyzer_free_source(ps);
 }
 
+/* Forward declaration for path safety check used below */
+static bool is_path_safe(const char *path, const char *workspace_root);
+
 static void handle_repo_map(pthread_mutex_t *lock, const char *raw_id, int id_len, const char *dir, AnalyzerCtx *ctx) {
     const char *root = (dir && dir[0]) ? dir : ctx->workspace_root;
+    
+    /* Reject dir outside workspace for security */
+    if (dir && dir[0] && !is_path_safe(dir, ctx->workspace_root)) {
+        send_error(lock, raw_id, id_len, "PATH_NOT_SAFE", "Directory is outside workspace root");
+        return;
+    }
     
     pthread_mutex_lock(lock);
     struct jsonw w;
@@ -389,7 +398,11 @@ static void handle_index_file(pthread_mutex_t *lock, pthread_mutex_t *db_lock, c
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (size <= 0 || size > MAX_FILE_SIZE) { fclose(f);
+    if (size < 0) { fclose(f);
+        send_error(lock, raw_id, id_len, "FILE_READ_ERROR", "Failed to determine file size");
+        return;
+    }
+    if (size == 0 || size > MAX_FILE_SIZE) { fclose(f);
         send_error(lock, raw_id, id_len, "FILE_TOO_LARGE", "File exceeds maximum indexable size");
         return;
     }
@@ -580,34 +593,6 @@ static void* request_worker(void *arg) {
         handled = true;
     } else if (strcmp(command, "skeleton") == 0) {
         if (content[0] == '\0' && file[0] != '\0') {
-            if (!is_path_safe(file, task->gctx->base.workspace_root)) { goto send_err; }
-            FILE *f = fopen(file, "r");
-            if (f) {
-                fseek(f, 0, SEEK_END);
-                long fsize = ftell(f);
-                fseek(f, 0, SEEK_SET);
-                if (fsize <= 0 || fsize > MAX_FILE_SIZE) { fclose(f); goto send_err; }
-                char *fcontent = malloc(fsize + 1);
-                if (!fcontent) { fclose(f); goto send_err; }
-                size_t bytes_read = fread(fcontent, 1, fsize, f);
-                if (bytes_read != (size_t)fsize) { free(fcontent); fclose(f); goto send_err; }
-                fcontent[bytes_read] = '\0';
-                handle_outline(&task->gctx->stdout_lock, raw_id, id_len, fcontent, lang, &task->gctx->base);
-                handled = true;
-                free(fcontent);
-                fclose(f);
-            } else {
-                goto send_err;
-            }
-        } else {
-            handle_outline(&task->gctx->stdout_lock, raw_id, id_len, content, lang, &task->gctx->base);
-            handled = true;
-        }
-    } else if (strcmp(command, "extract-apis") == 0) {
-        handle_extract_apis(&task->gctx->stdout_lock, raw_id, id_len, content, lang);
-        handled = true;
-    } else if (strcmp(command, "skeleton") == 0) {
-        if (content[0] == '\0' && file[0] != '\0') {
             FILE *f = fopen(file, "r");
             if (f) {
                 fseek(f, 0, SEEK_END);
@@ -637,6 +622,7 @@ static void* request_worker(void *arg) {
         handle_search_symbols(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, kind[0] ? kind : NULL, limit, &task->gctx->base);
         handled = true;
     } else if (strcmp(command, "index-file") == 0) {
+        if (!is_path_safe(file, task->gctx->base.workspace_root)) { goto send_err; }
         handle_index_file(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, file, &task->gctx->base);
         handled = true;
     } else if (strcmp(command, "index-observation") == 0) {
@@ -658,6 +644,7 @@ static void* request_worker(void *arg) {
         handle_search_watcher_patterns(&task->gctx->stdout_lock, &task->gctx->db_lock, raw_id, id_len, query, limit, &task->gctx->base);
         handled = true;
     } else if (strcmp(command, "ast-churn") == 0) {
+        if (!is_path_safe(file, task->gctx->base.workspace_root)) { goto send_err; }
         handle_ast_churn(&task->gctx->stdout_lock, raw_id, id_len, file, content);
         handled = true;
     } else if (strcmp(command, "invalidate-file") == 0) {
@@ -673,7 +660,7 @@ static void* request_worker(void *arg) {
         jsonw_kv_bool(&w, "ok", true); jsonw_id(&w, raw_id, id_len); jsonw_kv_str(&w, "status", "shutting_down");
         jsonw_object_close(&w); jsonw_flush(&w);
         pthread_mutex_unlock(&task->gctx->stdout_lock);
-        task->gctx->shutdown_requested = 1;
+        task->gctx->running = 0;
         goto cleanup;
     } else if (command[0] && !handled) {
         send_error(&task->gctx->stdout_lock, raw_id, id_len, "UNKNOWN_COMMAND", "Unknown analyzer command");
@@ -697,10 +684,19 @@ cleanup:
     return NULL;
 }
 
+static volatile int sig_shutdown = 0;
+
+static void handle_signal(int sig) {
+    (void)sig;
+    sig_shutdown = 1;
+}
+
 int main(int argc, char *argv[]) {
     // Ignore SIGPIPE: writing to a broken pipe kills the daemon otherwise.
     // With SIG_IGN the write fails with EPIPE and we continue.
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGTERM, handle_signal);
+    signal(SIGINT, handle_signal);
 
     GlobalCtx gctx = {0};
     pthread_mutex_init(&gctx.stdout_lock, NULL);
@@ -710,15 +706,17 @@ int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--oneshot") == 0) gctx.base.oneshot = true;
         else if (strcmp(argv[i], "-w") == 0 && i + 1 < argc) {
-            strncpy(gctx.base.workspace_root, argv[i+1], sizeof(gctx.base.workspace_root)-1);
+            snprintf(gctx.base.workspace_root, sizeof(gctx.base.workspace_root), "%s", argv[i+1]);
             i++;
         } else if (strcmp(argv[i], "--db") == 0 && i + 1 < argc) {
-            strncpy(db_path, argv[i+1], sizeof(db_path)-1);
+            snprintf(db_path, sizeof(db_path), "%s", argv[i+1]);
             i++;
         }
     }
     if (!gctx.base.workspace_root[0]) (void)getcwd(gctx.base.workspace_root, sizeof(gctx.base.workspace_root));
     if (db_path[0]) gctx.base.db = db_open(db_path);
+
+    gctx.running = 1;
 
     if (!gctx.base.oneshot) {
         fprintf(stderr, "divrr-analyzer: ready (C version)\n");
@@ -730,6 +728,13 @@ int main(int argc, char *argv[]) {
         size_t buf_used = 0;
 
         while (1) {
+            /* Check shutdown flags (set by shutdown command or signal handler)
+               on every iteration — poll timeout ensures we wake regularly. */
+            if (!gctx.running || sig_shutdown) {
+                gctx.running = 0;
+                break;
+            }
+
             struct pollfd pfd;
             pfd.fd = STDIN_FILENO;
             pfd.events = POLLIN;
@@ -815,8 +820,8 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            /* Check POLLHUP or shutdown request */
-            if ((pfd.revents & (POLLHUP | POLLERR)) || gctx.shutdown_requested) break;
+            /* Check for connection close or error on stdin */
+            if (pfd.revents & (POLLHUP | POLLERR)) break;
         }
         free(line_buf);
 

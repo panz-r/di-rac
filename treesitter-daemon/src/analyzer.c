@@ -50,16 +50,31 @@ static char* get_node_signature(TSNode node, const char *source, Language lang) 
     const char *snippet = source + start;
     uint32_t len = end - start;
 
-    const char *bracket = strchr(snippet, '{');
-    if (lang == LANG_PYTHON) bracket = strchr(snippet, ':');
-
-    if (bracket && (uint32_t)(bracket - snippet) < len) {
-        len = bracket - snippet;
-        if (lang == LANG_PYTHON) len++;
+    if (lang == LANG_PYTHON) {
+        /* For Python, find the ':' that precedes the suite (body) by walking
+           from the end of the function definition backwards past type annotations.
+           Tree-sitter Python: function_definition → parameters: (parameters) → suite: (block).
+           The ':' before suite is the one after the parameter list / return annotation. */
+        uint32_t n = ts_node_child_count(node);
+        TSNode suite = ts_node_child(node, n - 1); /* last child is the suite */
+        if (!ts_node_is_null(suite)) {
+            uint32_t suite_start = ts_node_start_byte(suite);
+            if (suite_start > start && suite_start <= end) {
+                len = suite_start - start;  /* up to (but not including) the suite */
+                /* Trim trailing whitespace */
+                while (len > 0 && (snippet[len-1] == ' ' || snippet[len-1] == '\r' || snippet[len-1] == '\n' || snippet[len-1] == ':'))
+                    len--;
+            }
+        }
     } else {
-        const char *newline = strchr(snippet, '\n');
-        if (newline && (uint32_t)(newline - snippet) < len) {
-            len = newline - snippet;
+        const char *bracket = strchr(snippet, '{');
+        if (bracket && (uint32_t)(bracket - snippet) < len) {
+            len = bracket - snippet;
+        } else {
+            const char *newline = strchr(snippet, '\n');
+            if (newline && (uint32_t)(newline - snippet) < len) {
+                len = newline - snippet;
+            }
         }
     }
 
@@ -93,8 +108,14 @@ static char* get_c_function_name(TSNode node, const char *source) {
     return NULL;
 }
 
-static int walk_collect_functions(TSNode node, const char *source, AnalyzerCtx *ctx, Symbol **symbols, size_t *count, size_t *cap, int *out_error) {
+/* Depth limit for recursive AST walks — prevents stack overflow on
+   deeply nested or maliciously crafted source files. The maximum practical
+   nesting depth in real code is < 1000; we allow 10000 as a safety margin. */
+#define MAX_WALK_DEPTH 10000
+
+static int walk_collect_functions(TSNode node, const char *source, AnalyzerCtx *ctx, Symbol **symbols, size_t *count, size_t *cap, int *out_error, uint32_t depth) {
     if (*out_error) return *out_error;
+    if (depth > MAX_WALK_DEPTH) return 0;
 
     const char *kind = ts_node_type(node);
     bool is_func = (strcmp(kind, "function_definition") == 0 || strcmp(kind, "method_declaration") == 0);
@@ -129,13 +150,14 @@ static int walk_collect_functions(TSNode node, const char *source, AnalyzerCtx *
 
     uint32_t n = ts_node_child_count(node);
     for (uint32_t i = 0; i < n; i++) {
-        if (walk_collect_functions(ts_node_child(node, i), source, ctx, symbols, count, cap, out_error) < 0) return -1;
+        if (walk_collect_functions(ts_node_child(node, i), source, ctx, symbols, count, cap, out_error, depth + 1) < 0) return -1;
     }
     return 0;
 }
 
-static int walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *ctx, Symbol **symbols, size_t *count, size_t *cap, int *out_error) {
+static int walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *ctx, Symbol **symbols, size_t *count, size_t *cap, int *out_error, uint32_t depth) {
     if (*out_error) return *out_error;
+    if (depth > MAX_WALK_DEPTH) return 0;
 
     const char *kind = ts_node_type(node);
     bool is_class = (strcmp(kind, "class_declaration") == 0 || strcmp(kind, "struct_specifier") == 0);
@@ -170,7 +192,7 @@ static int walk_collect_classes(TSNode node, const char *source, AnalyzerCtx *ct
 
     uint32_t n = ts_node_child_count(node);
     for (uint32_t i = 0; i < n; i++) {
-        if (walk_collect_classes(ts_node_child(node, i), source, ctx, symbols, count, cap, out_error) < 0) return -1;
+        if (walk_collect_classes(ts_node_child(node, i), source, ctx, symbols, count, cap, out_error, depth + 1) < 0) return -1;
     }
     return 0;
 }
@@ -181,9 +203,9 @@ SymbolResult* analyzer_extract_symbols(ParsedSource *ps, AnalyzerCtx *ctx) {
         size_t count = 0;
         size_t cap = 0;
         int error_code = 0;
-        int err = walk_collect_functions(ts_tree_root_node(ps->tree), ps->source, ctx, &symbols, &count, &cap, &error_code);
+        int err = walk_collect_functions(ts_tree_root_node(ps->tree), ps->source, ctx, &symbols, &count, &cap, &error_code, 0);
         (void)err; /* no further action needed — partial results are returned */
-        if (!err) err = walk_collect_classes(ts_tree_root_node(ps->tree), ps->source, ctx, &symbols, &count, &cap, &error_code);
+        if (!err) err = walk_collect_classes(ts_tree_root_node(ps->tree), ps->source, ctx, &symbols, &count, &cap, &error_code, 0);
         SymbolResult *res = malloc(sizeof(SymbolResult));
         if (!res) { free(symbols); return NULL; }
         res->symbols = symbols;
@@ -337,6 +359,11 @@ ImportResult* analyzer_extract_imports(ParsedSource *ps, AnalyzerCtx *ctx) {
                 cap = new_cap;
             }
             imports[count++] = imp;
+        } else {
+            /* Match had name captures but no module — prevent memory leak */
+            for (size_t ei = 0; ei < imp.names_count; ei++) free(imp.names[ei]);
+            free(imp.names);
+            free(imp.module);
         }
     }
     ts_query_cursor_delete(cursor);
@@ -443,10 +470,32 @@ const char* symbol_kind_to_short(SymbolKind kind) {
 }
 
 static uint32_t count_nodes(TSNode node) {
-    uint32_t count = 1;
-    uint32_t n = ts_node_child_count(node);
-    for (uint32_t i = 0; i < n; i++) {
-        count += count_nodes(ts_node_child(node, i));
+    /* Iterative post-order traversal avoids stack overflow on deeply nested ASTs */
+    uint32_t count = 0;
+    typedef struct { TSNode node; uint32_t child_i; uint32_t child_count; } Frame;
+    Frame stack[4096];
+    uint32_t sp = 0;
+
+    stack[sp].node = node;
+    stack[sp].child_i = 0;
+    stack[sp].child_count = ts_node_child_count(node);
+    sp++;
+
+    while (sp > 0) {
+        Frame *f = &stack[sp - 1];
+        if (f->child_i < f->child_count) {
+            TSNode child = ts_node_child(f->node, f->child_i);
+            f->child_i++;
+            if (sp < 4096) {
+                stack[sp].node = child;
+                stack[sp].child_i = 0;
+                stack[sp].child_count = ts_node_child_count(child);
+                sp++;
+            }
+        } else {
+            count++;
+            sp--;
+        }
     }
     return count;
 }

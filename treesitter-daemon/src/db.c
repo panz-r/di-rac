@@ -83,6 +83,14 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
 
     if (sqlite3_exec(db->db, "BEGIN TRANSACTION", NULL, NULL, NULL) != SQLITE_OK) return -1;
 
+    /* Find old file_id first (if re-indexing) to clean up orphaned symbols */
+    int64_t old_file_id = -1;
+    if (sqlite3_prepare_v2(db->db, "SELECT id FROM files WHERE path = ?", -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) == SQLITE_ROW) old_file_id = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+    }
+
     if (sqlite3_prepare_v2(db->db, "INSERT OR REPLACE INTO files (path, mtime, content_hash) VALUES (?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) {
         sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
         return -1;
@@ -94,13 +102,16 @@ int db_index_file(IndexDB *db, const char *path, double mtime, const char *hash,
     int64_t file_id = sqlite3_last_insert_rowid(db->db);
     sqlite3_finalize(stmt);
 
-    if (sqlite3_prepare_v2(db->db, "DELETE FROM symbols WHERE file_id = ?", -1, &stmt, NULL) != SQLITE_OK) {
-        sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
-        return -1;
+    /* Delete symbols for the OLD file_id (pre-replace) — the new file_id has none yet */
+    if (old_file_id >= 0) {
+        if (sqlite3_prepare_v2(db->db, "DELETE FROM symbols WHERE file_id = ?", -1, &stmt, NULL) != SQLITE_OK) {
+            sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
+            return -1;
+        }
+        sqlite3_bind_int64(stmt, 1, old_file_id);
+        if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
+        sqlite3_finalize(stmt);
     }
-    sqlite3_bind_int64(stmt, 1, file_id);
-    if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL); return -1; }
-    sqlite3_finalize(stmt);
 
     if (sr) {
         if (sqlite3_prepare_v2(db->db, "INSERT INTO symbols (file_id, name, kind, start_line, end_line, handle) VALUES (?, ?, ?, ?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) {
@@ -275,18 +286,43 @@ int db_search_watcher_patterns(IndexDB *db, const char *query, int limit, struct
 
 void db_search_symbols(IndexDB *db, const char *query, const char *kind_filter, int limit, struct jsonw *w) {
     sqlite3_stmt *stmt;
-    char pattern[256];
-    snprintf(pattern, sizeof(pattern), "%%%s%%", query);
+    /* Escape LIKE wildcards (% and _) to prevent them from matching unintended
+       patterns. This is both a correctness fix and a DoS hardening measure —
+       unescaped wildcards can cause expensive full-index scans. */
+    char escaped[4096];
+    size_t ei = 0;
+    for (const char *p = query; *p && ei < sizeof(escaped) - 3; p++) {
+        if (*p == '%' || *p == '_') {
+            if (ei < sizeof(escaped) - 4) {
+                escaped[ei++] = '\\';
+                escaped[ei++] = *p;
+            }
+        } else {
+            escaped[ei++] = *p;
+        }
+    }
+    escaped[ei] = '\0';
+
+    /* Largest practical pattern: escaped query * 2 + 2 for %% markers.
+       Reject queries that won't fit to avoid silent truncation. */
+    char pattern[8196];
+    int n = snprintf(pattern, sizeof(pattern), "%%%s%%", escaped);
+    if (n < 0 || (size_t)n >= sizeof(pattern)) {
+        jsonw_key(w, "results"); jsonw_array_open(w); jsonw_array_close(w);
+        jsonw_key(w, "ok"); jsonw_bool(w, 0);
+        jsonw_key(w, "error"); jsonw_str(w, "QUERY_TOO_LONG");
+        return;
+    }
 
     const char *sql;
     if (kind_filter) {
         sql = "SELECT s.name, s.kind, s.handle, f.path, s.start_line "
               "FROM symbols s JOIN files f ON s.file_id = f.id "
-              "WHERE s.name COLLATE NOCASE LIKE ? AND s.kind = ? LIMIT ?";
+              "WHERE s.name COLLATE NOCASE LIKE ? ESCAPE '\\' AND s.kind = ? LIMIT ?";
     } else {
         sql = "SELECT s.name, s.kind, s.handle, f.path, s.start_line "
               "FROM symbols s JOIN files f ON s.file_id = f.id "
-              "WHERE s.name COLLATE NOCASE LIKE ? LIMIT ?";
+              "WHERE s.name COLLATE NOCASE LIKE ? ESCAPE '\\' LIMIT ?";
     }
 
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {

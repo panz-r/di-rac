@@ -5,6 +5,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
+#define MAX_REPO_FILE_SIZE 102400  /* 100 KB — max file size for repo map indexing */
+
 /* Dynamic BFS queue for directory traversal — grows as needed */
 typedef struct {
     char (*paths)[4096];
@@ -88,7 +90,24 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
         queue_free(&queue);
         return;
     }
-    queue_push(&queue, root);  /* root is already NUL-terminated from strncpy */
+    if (queue_push(&queue, root) < 0) {
+        jsonw_key(w, "files");
+        jsonw_array_open(w);
+        jsonw_array_close(w);
+        jsonw_key(w, "partial");
+        jsonw_bool(w, 1);
+        jsonw_key(w, "error");
+        jsonw_str(w, "failed to push root directory");
+        queue_free(&queue);
+        return;
+    }
+
+    /* Normalise root: strip trailing slash for clean relative path computation */
+    size_t root_len = strlen(root);
+    if (root_len > 0 && root[root_len - 1] == '/') root_len--;
+    /* root is already NUL-terminated from strncpy in the caller, but if we
+       truncated for the trailing slash, we can't modify the const input.
+       We use root_len for offset calculations instead. */
 
     jsonw_key(w, "files");
     jsonw_array_open(w);
@@ -122,7 +141,7 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
                         fseek(f, 0, SEEK_END);
                         long size = ftell(f);
                         fseek(f, 0, SEEK_SET);
-                        if (size < 0 || size >= 102400) {
+                        if (size < 0 || size > MAX_REPO_FILE_SIZE) {
                             fclose(f);
                             continue;
                         }
@@ -143,7 +162,7 @@ void analyzer_repo_map(const char *root, struct jsonw *w) {
                             SymbolResult *sr = analyzer_extract_symbols(ps, NULL);
                             if (sr && sr->count > 0) {
                                 jsonw_object_open(w);
-                                jsonw_kv_str(w, "file", full_path + strlen(root) + (full_path[strlen(root)] == '/' ? 1 : 0));
+                                jsonw_kv_str(w, "file", full_path + root_len + (full_path[root_len] == '/' ? 1 : 0));
                                 jsonw_key(w, "symbols");
                                 jsonw_array_open(w);
                                 for (size_t i = 0; i < sr->count; i++) {

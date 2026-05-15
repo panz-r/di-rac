@@ -12,7 +12,7 @@ static const char *CPP_SYMBOL =
 "(struct_specifier (type_identifier) @class.name) @class.def";
 static const char *CPP_IMPORT = "(preproc_include (string) @module) @import";
 
-static const char *C_SYMBOL = "(_) @func.def";
+static const char *C_SYMBOL = NULL;  /* C uses manual AST walk, not queries */
 static const char *C_IMPORT = "";
 
 static const char *CSHARP_SYMBOL = 
