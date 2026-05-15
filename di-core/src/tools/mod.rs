@@ -277,8 +277,18 @@ impl ToolCoordinator {
         }
 
         if retry_count > 0 {
-            if let serde_json::Value::String(s) = &value {
-                return Ok(serde_json::Value::String(format!("[Retry] {} attempts\n{}", retry_count, s)));
+            match &value {
+                serde_json::Value::String(s) => {
+                    return Ok(serde_json::Value::String(format!("[Retry] {} attempts\n{}", retry_count, s)));
+                }
+                serde_json::Value::Object(map) => {
+                    let mut obj = map.clone();
+                    obj.insert("_retry_count".to_string(), serde_json::json!(retry_count));
+                    return Ok(serde_json::Value::Object(obj));
+                }
+                _ => {
+                    return Ok(serde_json::Value::String(format!("[Retry] {} attempts\n{}", retry_count, value)));
+                }
             }
         }
 

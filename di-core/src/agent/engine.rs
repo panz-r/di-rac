@@ -2161,21 +2161,24 @@ impl AgentEngine {
                             result = self.format_read_result(&result);
                         }
 
-                        // Output budget enforcement: write large tool results to disk.
-                        // Now runs on formatted text (for reads) or raw output (for bash).
-                        if tool_name == "bash" || tool_name == "read" {
-                            let om = self.output_manager.lock().unwrap();
-                            result = om.enforce_budget(result, &tool_name);
-                        }
-
                         // Write-execute risk detection: warn when bash runs a script
                         // that was written/edited by the agent in this session.
+                        // Run BEFORE budget enforcement so we can extract structured
+                        // fields (_output_str, _cwd, _retry_count) from the object
+                        // before output_manager.enforce_budget replaces it with a string.
                         if tool_name == "bash" {
                             // Extract output and CWD from the structured bash result
-                            let bash_output_str = result.get("_output_str").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let mut bash_output_str = result.get("_output_str").and_then(|v| v.as_str()).unwrap_or("").to_string();
                             let bash_cwd_str = result.get("_cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
                             if !bash_cwd_str.is_empty() {
                                 self.agent_cwd = bash_cwd_str;
+                            }
+                            // Prepend retry header if tool was retried
+                            if let Some(rc) = result.get("_retry_count").and_then(|v| v.as_i64()) {
+                                if rc > 0 {
+                                    let header = format!("[Retry] {} attempts\n", rc);
+                                    bash_output_str = format!("{}{}", header, bash_output_str);
+                                }
                             }
 
                             if let Some(ref cmd) = bash_command {
@@ -2228,6 +2231,13 @@ impl AgentEngine {
                                     }
                                 }
                             }
+                        }
+
+                        // Output budget enforcement for bash: runs AFTER the handler
+                        // has extracted structured fields and converted result to a string.
+                        if tool_name == "bash" {
+                            let om = self.output_manager.lock().unwrap();
+                            result = om.enforce_budget(result, &tool_name);
                         }
 
                         // --verify: re-read the target file after write/edit to confirm changes
