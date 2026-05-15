@@ -1,15 +1,14 @@
 package providers
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
-
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
+	"strings"
 )
 
 // parseToolInput parses a JSON string into a value suitable for Anthropic tool input.
@@ -25,219 +24,197 @@ func parseToolInput(args string) interface{} {
 	return input
 }
 
-// AnthropicHandler handles Anthropic API requests
-type AnthropicHandler struct {
-	client       anthropic.Client
-	clientCache  sync.Map
-}
+// AnthropicHandler handles Anthropic API requests via direct HTTP.
+type AnthropicHandler struct{}
 
 func NewAnthropicHandler() *AnthropicHandler {
-	return &AnthropicHandler{
-		client: anthropic.NewClient(),
-	}
+	return &AnthropicHandler{}
 }
 
 func NewAnthropicHandlerWithKey(apiKey string) *AnthropicHandler {
-	return &AnthropicHandler{
-		client: anthropic.NewClient(option.WithAPIKey(apiKey)),
-	}
+	return &AnthropicHandler{}
 }
 
-func (h *AnthropicHandler) getClient(req *Request) anthropic.Client {
-	if req.Provider.APIKey == "" && req.Provider.BaseURL == "" {
-		return h.client
-	}
-	cacheKey := req.Provider.APIKey + "|" + req.Provider.BaseURL
-	if cached, ok := h.clientCache.Load(cacheKey); ok {
-		return cached.(anthropic.Client)
-	}
-	var opts []option.RequestOption
-	if req.Provider.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(req.Provider.APIKey))
-	}
+func (h *AnthropicHandler) resolveConfig(req *Request) (baseURL, apiKey string) {
+	baseURL = "https://api.anthropic.com"
 	if req.Provider.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(req.Provider.BaseURL))
+		baseURL = req.Provider.BaseURL
 	}
-	client := anthropic.NewClient(opts...)
-	h.clientCache.Store(cacheKey, client)
-	return client
+	apiKey = req.Provider.APIKey
+	return
 }
 
-func (h *AnthropicHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
-	anthropicReq, err := h.buildRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	client := h.getClient(req)
-	resp, err := client.Messages.New(ctx, anthropicReq)
-	if err != nil {
-		return nil, fmt.Errorf("anthropic request failed: %w", err)
-	}
-	return h.convertResponse(resp), nil
-}
-
-func (h *AnthropicHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
-	anthropicReq, err := h.buildRequest(req)
-	if err != nil {
-		return err
-	}
-	client := h.getClient(req)
-	stream := client.Messages.NewStreaming(ctx, anthropicReq)
-	for stream.Next() {
-		event := stream.Current()
-		chunk := h.convertStreamEvent(event)
-		if err := callback(chunk); err != nil {
-			return err
-		}
-	}
-	if err := stream.Err(); err != nil {
-		return fmt.Errorf("anthropic stream failed: %w", err)
-	}
-	return nil
-}
-
-func (h *AnthropicHandler) buildRequest(req *Request) (anthropic.MessageNewParams, error) {
-	var messages []anthropic.MessageParam
+func (h *AnthropicHandler) buildRequestBody(req *Request) map[string]interface{} {
+	var messages []map[string]interface{}
 
 	for _, msg := range req.Messages {
+		var content []map[string]interface{}
+
 		if len(msg.ContentBlocks) > 0 {
-			var contentBlocks []anthropic.ContentBlockParamUnion
 			for _, block := range msg.ContentBlocks {
 				switch block.Type {
 				case "text":
-					contentBlocks = append(contentBlocks, anthropic.NewTextBlock(block.Text))
+					content = append(content, map[string]interface{}{
+						"type": "text",
+						"text": block.Text,
+					})
 				case "thinking":
-					contentBlocks = append(contentBlocks, anthropic.NewThinkingBlock(block.Signature, block.Thinking))
+					content = append(content, map[string]interface{}{
+						"type":      "thinking",
+						"thinking":  block.Thinking,
+						"signature": block.Signature,
+					})
 				case "image":
 					if block.ImageSource != nil {
-						contentBlocks = append(contentBlocks, anthropic.NewImageBlockBase64(
-							block.ImageSource.MimeType,
-							block.ImageSource.Data,
-						))
+						content = append(content, map[string]interface{}{
+							"type": "image",
+							"source": map[string]interface{}{
+								"type":       "base64",
+								"media_type": block.ImageSource.MimeType,
+								"data":       block.ImageSource.Data,
+							},
+						})
 					}
 				case "tool_use":
 					if block.ToolUse != nil {
-						contentBlocks = append(contentBlocks, anthropic.NewToolUseBlock(
-							block.ToolUse.ID,
-							parseToolInput(block.ToolUse.Function.Arguments),
-							block.ToolUse.Function.Name,
-						))
+						content = append(content, map[string]interface{}{
+							"type":  "tool_use",
+							"id":    block.ToolUse.ID,
+							"name":  block.ToolUse.Function.Name,
+							"input": parseToolInput(block.ToolUse.Function.Arguments),
+						})
 					}
 				case "tool_result":
 					if block.ToolResult != nil {
-						contentBlocks = append(contentBlocks, anthropic.NewToolResultBlock(
-							block.ToolResult.ToolUseID,
-							block.ToolResult.Content,
-							block.ToolResult.IsError,
-						))
+						m := map[string]interface{}{
+							"type":        "tool_result",
+							"tool_use_id": block.ToolResult.ToolUseID,
+							"content":     block.ToolResult.Content,
+						}
+						if block.ToolResult.IsError {
+							m["is_error"] = true
+						}
+						content = append(content, m)
 					}
 				case "redacted_thinking":
-					contentBlocks = append(contentBlocks, anthropic.NewRedactedThinkingBlock(""))
+					content = append(content, map[string]interface{}{
+						"type": "redacted_thinking",
+					})
 				case "signature":
-					contentBlocks = append(contentBlocks, anthropic.NewThinkingBlock(block.Signature, ""))
+					content = append(content, map[string]interface{}{
+						"type":      "thinking",
+						"thinking":  "",
+						"signature": block.Signature,
+					})
 				}
 			}
-			var msgParam anthropic.MessageParam
-			if msg.Role == "user" {
-				msgParam = anthropic.NewUserMessage(contentBlocks...)
-			} else {
-				msgParam = anthropic.NewAssistantMessage(contentBlocks...)
+		} else {
+			// Legacy fallback — handle ToolCalls, ToolResult, Thinking, Content
+			if msg.Content != "" {
+				content = append(content, map[string]interface{}{
+					"type": "text",
+					"text": msg.Content,
+				})
 			}
-			messages = append(messages, msgParam)
-			continue
+			if msg.Thinking != "" {
+				content = append(content, map[string]interface{}{
+					"type":      "thinking",
+					"thinking":  msg.Thinking,
+					"signature": "",
+				})
+			}
+			for _, tc := range msg.ToolCalls {
+				content = append(content, map[string]interface{}{
+					"type":  "tool_use",
+					"id":    tc.ID,
+					"name":  tc.Function.Name,
+					"input": parseToolInput(tc.Function.Arguments),
+				})
+			}
+			if msg.ToolResult != nil {
+				m := map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": msg.ToolResult.ToolUseID,
+					"content":     msg.ToolResult.Content,
+				}
+				if msg.ToolResult.IsError {
+					m["is_error"] = true
+				}
+				content = append(content, m)
+			}
+			if len(content) == 0 {
+				content = append(content, map[string]interface{}{
+					"type": "text",
+					"text": "",
+				})
+			}
 		}
 
-		// Legacy fallback — handle ToolCalls, ToolResult, Thinking, Content
-		var contentBlocks []anthropic.ContentBlockParamUnion
-		if msg.Content != "" {
-			contentBlocks = append(contentBlocks, anthropic.NewTextBlock(msg.Content))
+		if len(content) > 0 {
+			messages = append(messages, map[string]interface{}{
+				"role":    msg.Role,
+				"content": content,
+			})
 		}
-		if msg.Thinking != "" {
-			contentBlocks = append(contentBlocks, anthropic.NewThinkingBlock("", msg.Thinking))
-		}
-		for _, tc := range msg.ToolCalls {
-			contentBlocks = append(contentBlocks, anthropic.NewToolUseBlock(
-				tc.ID,
-				parseToolInput(tc.Function.Arguments),
-				tc.Function.Name,
-			))
-		}
-		if msg.ToolResult != nil {
-			contentBlocks = append(contentBlocks, anthropic.NewToolResultBlock(
-				msg.ToolResult.ToolUseID,
-				msg.ToolResult.Content,
-				msg.ToolResult.IsError,
-			))
-		}
-		if len(contentBlocks) == 0 {
-			contentBlocks = append(contentBlocks, anthropic.NewTextBlock(""))
-		}
-		var msgParam anthropic.MessageParam
-		if msg.Role == "user" {
-			msgParam = anthropic.NewUserMessage(contentBlocks...)
-		} else {
-			msgParam = anthropic.NewAssistantMessage(contentBlocks...)
-		}
-		messages = append(messages, msgParam)
 	}
 
 	// Add cache_control to last two user messages
-	addCacheControlToUserMessages(messages)
+	anthropicAddCacheControl(messages)
 
 	model := req.Provider.Model
 	if model == "" {
 		model = "claude-sonnet-4-20250514"
 	}
 
-	maxTokens := int64(req.MaxTokens)
+	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 8192
 	}
 
-	anthropicReq := anthropic.MessageNewParams{
-		Model:     anthropic.Model(model),
-		Messages:  messages,
-		MaxTokens: maxTokens,
+	result := map[string]interface{}{
+		"model":      model,
+		"messages":   messages,
+		"max_tokens": maxTokens,
 	}
 
 	// System prompt with cache breakpoint
 	if req.System != "" {
-		anthropicReq.System = []anthropic.TextBlockParam{
+		result["system"] = []map[string]interface{}{
 			{
-				Text: req.System,
-				CacheControl: anthropic.CacheControlEphemeralParam{
-					Type: "ephemeral",
-				},
+				"type":          "text",
+				"text":          req.System,
+				"cache_control": map[string]string{"type": "ephemeral"},
 			},
 		}
 	}
 
-	// Temperature — must be nil when thinking is enabled
+	// Temperature — must be omitted when thinking is enabled
 	reasoningOn := req.Thinking != nil && req.Thinking.BudgetTokens > 0
 	if !reasoningOn && req.Temperature > 0 {
-		anthropicReq.Temperature = anthropic.Float(req.Temperature)
+		result["temperature"] = req.Temperature
 	}
 
 	// TopP
 	if req.TopP > 0 {
-		anthropicReq.TopP = anthropic.Float(req.TopP)
+		result["top_p"] = req.TopP
 	}
 
 	// Stop sequences
 	if len(req.Stop) > 0 {
-		stopSlice := make([]string, len(req.Stop))
-		copy(stopSlice, req.Stop)
-		anthropicReq.StopSequences = stopSlice
+		result["stop_sequences"] = req.Stop
 	}
 
 	// Thinking config
 	if reasoningOn {
-		anthropicReq.Thinking = anthropic.ThinkingConfigParamOfEnabled(int64(req.Thinking.BudgetTokens))
+		result["thinking"] = map[string]interface{}{
+			"type":          "enabled",
+			"budget_tokens": req.Thinking.BudgetTokens,
+		}
 	}
 
 	// Tools
 	if len(req.Tools) > 0 {
-		var tools []anthropic.ToolUnionParam
+		var tools []map[string]interface{}
 		for _, toolJSON := range req.Tools {
 			var tool struct {
 				Name        string          `json:"name"`
@@ -247,127 +224,134 @@ func (h *AnthropicHandler) buildRequest(req *Request) (anthropic.MessageNewParam
 			if err := json.Unmarshal(toolJSON, &tool); err != nil {
 				continue
 			}
-			inputSchema := anthropic.ToolInputSchemaParam{Type: "object"}
+			var schema interface{}
 			if len(tool.InputSchema) > 0 {
-				var schemaMap map[string]interface{}
-				if json.Unmarshal(tool.InputSchema, &schemaMap) == nil {
-					if props, ok := schemaMap["properties"]; ok {
-						inputSchema.Properties = props
-					}
-					if extraFields, ok := schemaMap["required"]; ok {
-						if inputSchema.ExtraFields == nil {
-							inputSchema.ExtraFields = map[string]any{}
-						}
-						inputSchema.ExtraFields["required"] = extraFields
-					}
-				}
+				json.Unmarshal(tool.InputSchema, &schema)
 			}
-			toolParam := anthropic.ToolParam{
-				Name:        tool.Name,
-				InputSchema: inputSchema,
+			if schema == nil {
+				schema = map[string]interface{}{"type": "object"}
+			}
+			t := map[string]interface{}{
+				"name":         tool.Name,
+				"input_schema": schema,
 			}
 			if tool.Description != "" {
-				toolParam.Description = anthropic.String(tool.Description)
+				t["description"] = tool.Description
 			}
-			tools = append(tools, anthropic.ToolUnionParam{OfTool: &toolParam})
+			tools = append(tools, t)
 		}
 		if len(tools) > 0 {
-			anthropicReq.Tools = tools
+			result["tools"] = tools
 			if !reasoningOn {
-				anthropicReq.ToolChoice = anthropic.ToolChoiceUnionParam{OfAuto: &anthropic.ToolChoiceAutoParam{}}
+				result["tool_choice"] = map[string]string{"type": "auto"}
 			}
 		}
 	}
 
-	return anthropicReq, nil
+	return result
 }
 
-// addCacheControlToUserMessages adds cache_control: {type: "ephemeral"} to the
-// last content block of the last two user messages, skipping thinking/redacted_thinking blocks.
-func addCacheControlToUserMessages(messages []anthropic.MessageParam) {
+// anthropicAddCacheControl adds cache_control: {type: "ephemeral"} to the last
+// content block of the last two user messages, skipping thinking/redacted_thinking blocks.
+func anthropicAddCacheControl(messages []map[string]interface{}) {
 	userIndices := []int{}
 	for i, msg := range messages {
-		if msg.Role == "user" {
+		if msg["role"] == "user" {
 			userIndices = append(userIndices, i)
 		}
 	}
 	if len(userIndices) >= 1 {
-		addCacheControlToMessage(&messages[userIndices[len(userIndices)-1]])
+		anthropicAddCacheControlToLastBlock(messages[userIndices[len(userIndices)-1]])
 	}
 	if len(userIndices) >= 2 {
-		addCacheControlToMessage(&messages[userIndices[len(userIndices)-2]])
+		anthropicAddCacheControlToLastBlock(messages[userIndices[len(userIndices)-2]])
 	}
 }
 
-func addCacheControlToMessage(msg *anthropic.MessageParam) {
-	// The content is in the union field — we need to access the underlying content blocks.
-	// Since anthropic.MessageParam uses a union type, we work with the JSON representation.
-	// The cache_control is added to the last block that isn't thinking/redacted_thinking.
-	//
-	// Note: The Anthropic Go SDK's MessageParam uses Content field which is []ContentBlockParamUnion.
-	// We can't easily mutate the union, so we reconstruct. However, since the SDK uses
-	// value types with embedded interfaces, this is done via JSON round-trip.
-	data, err := json.Marshal(msg)
-	if err != nil {
+func anthropicAddCacheControlToLastBlock(msg map[string]interface{}) {
+	content, ok := msg["content"].([]map[string]interface{})
+	if !ok || len(content) == 0 {
 		return
 	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return
-	}
-	contentRaw, ok := raw["content"]
-	if !ok {
-		return
-	}
-	var blocks []json.RawMessage
-	if err := json.Unmarshal(contentRaw, &blocks); err != nil {
-		return
-	}
-	if len(blocks) == 0 {
-		return
-	}
-	// Find last non-thinking block
 	lastIdx := -1
-	for i := len(blocks) - 1; i >= 0; i-- {
-		var typeCheck struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal(blocks[i], &typeCheck) == nil {
-			if typeCheck.Type != "thinking" && typeCheck.Type != "redacted_thinking" {
-				lastIdx = i
-				break
-			}
+	for i := len(content) - 1; i >= 0; i-- {
+		t, _ := content[i]["type"].(string)
+		if t != "thinking" && t != "redacted_thinking" {
+			lastIdx = i
+			break
 		}
 	}
 	if lastIdx < 0 {
 		return
 	}
-	// Add cache_control to that block
-	var block map[string]json.RawMessage
-	if json.Unmarshal(blocks[lastIdx], &block) != nil {
-		return
-	}
-	block["cache_control"] = json.RawMessage(`{"type":"ephemeral"}`)
-	updated, err := json.Marshal(block)
-	if err != nil {
-		return
-	}
-	blocks[lastIdx] = updated
-	updatedContent, err := json.Marshal(blocks)
-	if err != nil {
-		return
-	}
-	raw["content"] = updatedContent
-	updatedMsg, err := json.Marshal(raw)
-	if err != nil {
-		return
-	}
-	json.Unmarshal(updatedMsg, msg)
+	content[lastIdx]["cache_control"] = map[string]string{"type": "ephemeral"}
 }
 
-func (h *AnthropicHandler) convertResponse(resp *anthropic.Message) *SendResult {
-	var contentBlocks []ContentBlock
+func (h *AnthropicHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
+	baseURL, apiKey := h.resolveConfig(req)
+	payload := h.buildRequestBody(req)
 
+	reqBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1/messages", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		httpReq.Header.Set("x-api-key", apiKey)
+	}
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := SharedHTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, wrapTransientError(fmt.Errorf("request failed: %w", err))
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, newAPIErrorFromResp(resp, string(body))
+	}
+
+	return anthropicConvertResponse(body)
+}
+
+func anthropicConvertResponse(body []byte) (*SendResult, error) {
+	var resp struct {
+		Model      string `json:"model"`
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
+			Type      string          `json:"type"`
+			Text      string          `json:"text"`
+			Thinking  string          `json:"thinking"`
+			Signature string          `json:"signature"`
+			ID        string          `json:"id"`
+			Name      string          `json:"name"`
+			Input     json.RawMessage `json:"input"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   string          `json:"content"`
+			IsError   bool            `json:"is_error"`
+		} `json:"content"`
+		Usage struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	var contentBlocks []ContentBlock
 	for _, block := range resp.Content {
 		switch block.Type {
 		case "text":
@@ -397,27 +381,12 @@ func (h *AnthropicHandler) convertResponse(resp *anthropic.Message) *SendResult 
 				},
 			})
 		case "tool_result":
-			var toolUseID string
-			var content string
-			var isError bool
-			if jsonData, err := json.Marshal(block); err == nil {
-				var tmp struct {
-					ToolUseID string `json:"tool_use_id"`
-					Content   string `json:"content"`
-					IsError   bool   `json:"is_error"`
-				}
-				if json.Unmarshal(jsonData, &tmp) == nil {
-					toolUseID = tmp.ToolUseID
-					content = tmp.Content
-					isError = tmp.IsError
-				}
-			}
 			contentBlocks = append(contentBlocks, ContentBlock{
 				Type: "tool_result",
 				ToolResult: &ToolResultBlock{
-					ToolUseID: toolUseID,
-					Content:   content,
-					IsError:   isError,
+					ToolUseID: block.ToolUseID,
+					Content:   block.Content,
+					IsError:   block.IsError,
 				},
 			})
 		case "redacted_thinking":
@@ -429,72 +398,161 @@ func (h *AnthropicHandler) convertResponse(resp *anthropic.Message) *SendResult 
 	}
 
 	usage := &Usage{
-		InputTokens:              int(resp.Usage.InputTokens),
-		OutputTokens:             int(resp.Usage.OutputTokens),
-		CacheCreationInputTokens: int(resp.Usage.CacheCreationInputTokens),
-		CacheReadInputTokens:     int(resp.Usage.CacheReadInputTokens),
+		InputTokens:              resp.Usage.InputTokens,
+		OutputTokens:             resp.Usage.OutputTokens,
+		CacheCreationInputTokens: resp.Usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     resp.Usage.CacheReadInputTokens,
 	}
 
 	return &SendResult{
 		Content:    contentBlocks,
-		Model:      string(resp.Model),
+		Model:      resp.Model,
 		Usage:      usage,
-		StopReason: string(resp.StopReason),
-	}
+		StopReason: resp.StopReason,
+	}, nil
 }
 
-func (h *AnthropicHandler) convertStreamEvent(event anthropic.MessageStreamEventUnion) StreamChunk {
-	switch event.Type {
-	case "message_start":
-		return StreamChunk{Type: "start", Content: string(event.Message.Model)}
-	case "content_block_start":
-		cb := event.AsContentBlockStart()
-		contentType := "unknown"
-		var toolCallID, toolCallName string
-		switch cb.Type {
-		case "text":
-			contentType = "text"
-		case "thinking":
-			contentType = "thinking"
-		case "tool_use":
-			contentType = "tool_use"
-			tu := cb.ContentBlock.AsToolUse()
-			toolCallID = tu.ID
-			toolCallName = tu.Name
-		case "signature":
-			contentType = "signature"
-		}
-		return StreamChunk{
-			Type:         "content",
-			Index:        int(event.Index),
-			Content:      contentType,
-			ToolCallID:   toolCallID,
-			ToolCallName: toolCallName,
-		}
-	case "content_block_delta":
-		delta := event.AsContentBlockDelta()
-		switch delta.Delta.Type {
-		case "text_delta":
-			return StreamChunk{Type: "delta", Index: int(event.Index), TextDelta: delta.Delta.Text}
-		case "thinking_delta":
-			return StreamChunk{Type: "delta", Index: int(event.Index), Thinking: delta.Delta.Thinking}
-		case "input_json_delta":
-			return StreamChunk{Type: "delta", Index: int(event.Index), JSONDelta: delta.Delta.PartialJSON}
-		case "signature_delta":
-			return StreamChunk{Type: "delta", Index: int(event.Index), Thinking: delta.Delta.Signature}
-		}
-		return StreamChunk{Type: "delta", Index: int(event.Index)}
-	case "message_delta":
-		delta := event.AsMessageDelta()
-		usage := &Usage{
-			OutputTokens: int(delta.Usage.OutputTokens),
-		}
-		return StreamChunk{Type: "stop", FinishReason: string(delta.Delta.StopReason), Usage: usage}
-	case "message_stop":
-		return StreamChunk{Type: "complete"}
-	default:
-		return StreamChunk{Type: "unknown"}
+func (h *AnthropicHandler) Stream(ctx context.Context, req *Request, callback func(StreamChunk) error) error {
+	baseURL, apiKey := h.resolveConfig(req)
+	payload := h.buildRequestBody(req)
+	payload["stream"] = true
+
+	reqBody, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
 	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1/messages", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		httpReq.Header.Set("x-api-key", apiKey)
+	}
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	resp, err := SharedHTTPClient.Do(httpReq)
+	if err != nil {
+		return wrapTransientError(fmt.Errorf("request failed: %w", err))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
+		return newAPIErrorFromResp(resp, string(body))
+	}
+
+	return anthropicParseSSE(ctx, &contextReader{ctx: ctx, r: resp.Body}, callback)
+}
+
+// anthropicParseSSE reads an Anthropic SSE stream and emits StreamChunks.
+// Anthropic SSE uses event:<type> + data:<json> pairs.
+func anthropicParseSSE(ctx context.Context, body io.Reader, callback func(StreamChunk) error) error {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 32*1024), 256*1024)
+
+	var eventType string
+
+	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		line := scanner.Text()
+
+		if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := []byte(strings.TrimPrefix(line, "data: "))
+
+		switch eventType {
+		case "message_start":
+			var ev struct {
+			 Message struct {
+					Model string `json:"model"`
+				} `json:"message"`
+			}
+			if err := json.Unmarshal(data, &ev); err == nil {
+				if err := callback(StreamChunk{Type: "start", Content: ev.Message.Model}); err != nil {
+					return err
+				}
+			}
+
+		case "content_block_start":
+			var ev struct {
+				Index        int                    `json:"index"`
+				ContentBlock map[string]interface{} `json:"content_block"`
+			}
+			if err := json.Unmarshal(data, &ev); err == nil {
+				blockType, _ := ev.ContentBlock["type"].(string)
+				chunk := StreamChunk{
+					Type:    "content",
+					Index:   ev.Index,
+					Content: blockType,
+				}
+				if blockType == "tool_use" {
+					chunk.ToolCallID, _ = ev.ContentBlock["id"].(string)
+					chunk.ToolCallName, _ = ev.ContentBlock["name"].(string)
+				}
+				if err := callback(chunk); err != nil {
+					return err
+				}
+			}
+
+		case "content_block_delta":
+			var ev struct {
+				Index int                    `json:"index"`
+				Delta map[string]interface{} `json:"delta"`
+			}
+			if err := json.Unmarshal(data, &ev); err == nil {
+				deltaType, _ := ev.Delta["type"].(string)
+				chunk := StreamChunk{Type: "delta", Index: ev.Index}
+				switch deltaType {
+				case "text_delta":
+					chunk.TextDelta, _ = ev.Delta["text"].(string)
+				case "thinking_delta":
+					chunk.Thinking, _ = ev.Delta["thinking"].(string)
+				case "input_json_delta":
+					chunk.JSONDelta, _ = ev.Delta["partial_json"].(string)
+				case "signature_delta":
+					chunk.Thinking, _ = ev.Delta["signature"].(string)
+				}
+				if err := callback(chunk); err != nil {
+					return err
+				}
+			}
+
+		case "message_delta":
+			var ev struct {
+				Delta struct {
+					StopReason string `json:"stop_reason"`
+				} `json:"delta"`
+				Usage struct {
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal(data, &ev); err == nil {
+				if err := callback(StreamChunk{
+					Type:         "stop",
+					FinishReason: ev.Delta.StopReason,
+					Usage:        &Usage{OutputTokens: ev.Usage.OutputTokens},
+				}); err != nil {
+					return err
+				}
+			}
+
+		case "message_stop":
+			if err := callback(StreamChunk{Type: "complete"}); err != nil {
+				return err
+			}
+		}
+	}
+	return scanner.Err()
 }
 
 // ListModels fetches available models from the Anthropic API.
