@@ -25,7 +25,7 @@ func NewZAIHandler() *ZAIHandler {
 			DefaultModel:        "glm-5",
 			ContentArraySupport: true,
 			ExtraHeaders: map[string]string{
-				"HTTP-Referer": "https://dirac.run",
+				"HTTP-Referer": "https://github.com/panz-r/di-rac",
 				"X-Title":      "Dirac",
 			},
 

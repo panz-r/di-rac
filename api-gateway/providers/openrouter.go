@@ -28,7 +28,7 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 			BaseURL:      "https://openrouter.ai/api/v1",
 			DefaultModel: "anthropic/claude-sonnet-4.5",
 			ExtraHeaders: map[string]string{
-				"HTTP-Referer": "https://dirac.run",
+				"HTTP-Referer": "https://github.com/panz-r/di-rac",
 				"X-Title":      "Dirac",
 			},
 			Capabilities: &ProviderInfo{

@@ -20,7 +20,7 @@ func NewCerebrasHandler() *CerebrasHandler {
 			DefaultModel: defaultModel,
 			NoStreamOptions: true,
 			ExtraHeaders: map[string]string{
-				"X-Cerebras-3rd-Party-Integration": "dirac",
+				"X-Cerebras-3rd-Party-Integration": "di-vrr",
 			},
 			Capabilities: &ProviderInfo{
 				ID:           "cerebras",
