@@ -29,7 +29,7 @@ func NewOpenRouterHandler() *OpenRouterHandler {
 			DefaultModel: "anthropic/claude-sonnet-4.5",
 			ExtraHeaders: map[string]string{
 				"HTTP-Referer": "https://github.com/panz-r/di-rac",
-				"X-Title":      "Dirac",
+				"X-Title": "di-vrr",
 			},
 			Capabilities: &ProviderInfo{
 				ID:           "openrouter",

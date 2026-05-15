@@ -26,7 +26,7 @@ func NewZAIHandler() *ZAIHandler {
 			ContentArraySupport: true,
 			ExtraHeaders: map[string]string{
 				"HTTP-Referer": "https://github.com/panz-r/di-rac",
-				"X-Title":      "Dirac",
+				"X-Title": "di-vrr",
 			},
 
 			ModifyMessages: func(messages []map[string]interface{}, req *Request) []map[string]interface{} {

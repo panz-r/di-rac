@@ -5,7 +5,7 @@
 #include <sys/types.h>
 
 #define EXEC_MAX_OUTPUT 10240   /* 10KB */
-#define EXEC_CWD_MARKER "DIRAC_CWD:"
+#define EXEC_CWD_MARKER "DI_CWD:"
 #define EXEC_MAX_CHILDREN 8
 
 /* Long-running command patterns (regex-free, simple substring match) */

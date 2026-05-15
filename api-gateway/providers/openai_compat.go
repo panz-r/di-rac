@@ -298,7 +298,7 @@ func (h *openaiCompatHandler) buildRequest(req *Request, stream bool) map[string
 
 // --- Shared helpers ---
 
-// openaiConvertMessages converts DiracStorageMessage-format messages to OpenAI chat completion format.
+// openaiConvertMessages converts di-vrr storage message-format messages to OpenAI chat completion format.
 func openaiConvertMessages(req *Request) []map[string]interface{} {
 	var messages []map[string]interface{}
 
