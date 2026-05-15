@@ -104,7 +104,7 @@ pub fn build_all_lines(
     if let Some(pending) = &agent.pending_input {
         let hint = match pending {
             crate::agent::PendingInput::Approval { tool, description, .. } => {
-                format!("[Approve {}? {} — press i to type Y/n]", tool, description)
+                format!("[Approve {}? {} — press Y/n]", tool, description)
             }
             crate::agent::PendingInput::Followup { question, options } => {
                 let opts = options

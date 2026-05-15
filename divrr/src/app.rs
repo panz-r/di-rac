@@ -484,6 +484,36 @@ impl App {
     }
 
     fn handle_normal_mode(&mut self, key: KeyEvent) -> Option<FrontendMessage> {
+        // Check for Y/n approval keys before the general key dispatch
+        if let (Some(agent), KeyCode::Char(c)) = (self.active_agent(), key.code) {
+            if let Some(pending) = agent.pending_input.clone() {
+                if matches!(pending, PendingInput::Approval { .. }) {
+                    let agent_id = agent.id;
+                    match c {
+                        'y' | 'Y' => {
+                            if let Some(i) = self.input_queue.iter().position(|(id, p)| {
+                                id == &agent_id && *p == pending
+                            }) {
+                                self.input_queue.remove(i);
+                            }
+                            self.clear_pending_for_agent(&agent_id);
+                            return Some(FrontendMessage::ApprovalResponse { agent_id, approved: true });
+                        }
+                        'n' | 'N' => {
+                            if let Some(i) = self.input_queue.iter().position(|(id, p)| {
+                                id == &agent_id && *p == pending
+                            }) {
+                                self.input_queue.remove(i);
+                            }
+                            self.clear_pending_for_agent(&agent_id);
+                            return Some(FrontendMessage::ApprovalResponse { agent_id, approved: false });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         match key.code {
             KeyCode::Char('i') => {
                 self.mode = Mode::Insert;
@@ -567,13 +597,9 @@ impl App {
                 None
             }
             KeyCode::Enter => {
-                // Respond to approval/question pending input, or enter insert mode when queue is focused
-                if self.queue_focused && !self.input_queue.is_empty() {
-                    self.mode = Mode::Insert;
-                    None
-                } else {
-                    self.respond_to_pending()
-                }
+                // Enter insert mode (queue input or general reply)
+                self.mode = Mode::Insert;
+                None
             }
             KeyCode::Tab => {
                 let max = self.agents.len().max(1);
@@ -986,37 +1012,6 @@ impl App {
         }
     }
 
-    fn respond_to_pending(&mut self) -> Option<FrontendMessage> {
-        if let Some(agent) = self.active_agent() {
-            if let Some(pending) = agent.pending_input.clone() {
-                let agent_id = agent.id;
-                return match &pending {
-                    PendingInput::Approval { .. } => {
-                        // Remove the exact matching item from the queue
-                        if let Some(i) = self.input_queue.iter().position(|(id, p)| {
-                            id == &agent_id && *p == pending
-                        }) {
-                            self.input_queue.remove(i);
-                        }
-                        self.clear_pending_for_agent(&agent_id);
-                        Some(FrontendMessage::ApprovalResponse {
-                            agent_id,
-                            approved: true,
-                        })
-                    }
-                    PendingInput::Followup { .. } => {
-                        // Need user text — switch to insert mode
-                        self.mode = Mode::Insert;
-                        None
-                    }
-                };
-            }
-        }
-        // No pending input — switch to insert mode
-        self.mode = Mode::Insert;
-        None
-    }
-
     fn respond_to_queue_item(&mut self, text: &str) -> Option<FrontendMessage> {
         if let Some((agent_id, pending)) = self.input_queue.first().cloned() {
             let msg = match &pending {
@@ -1261,7 +1256,7 @@ mod tests {
     }
 
     #[test]
-    fn respond_to_pending_always_approves() {
+    fn y_approves_in_normal_mode() {
         let mut app = App::new();
         let id = Uuid::from_u128(5);
         app.agents.push(make_agent(id));
@@ -1272,7 +1267,8 @@ mod tests {
             description: "test".to_string(),
         });
 
-        let msg = app.respond_to_pending();
+        let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        let msg = app.handle_normal_mode(key);
         assert!(msg.is_some());
         if let Some(FrontendMessage::ApprovalResponse { agent_id, approved }) = msg {
             assert_eq!(agent_id, id);
@@ -1283,13 +1279,26 @@ mod tests {
     }
 
     #[test]
-    fn respond_to_pending_no_pending_returns_none() {
+    fn n_denies_in_normal_mode() {
         let mut app = App::new();
         let id = Uuid::from_u128(5);
         app.agents.push(make_agent(id));
 
-        let msg = app.respond_to_pending();
-        assert!(msg.is_none());
+        app.agents[0].pending_input = Some(PendingInput::Approval {
+            tool: "bash".to_string(),
+            args: serde_json::json!({"command": "ls"}),
+            description: "test".to_string(),
+        });
+
+        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        let msg = app.handle_normal_mode(key);
+        assert!(msg.is_some());
+        if let Some(FrontendMessage::ApprovalResponse { agent_id, approved }) = msg {
+            assert_eq!(agent_id, id);
+            assert!(!approved);
+        } else {
+            panic!("expected ApprovalResponse");
+        }
     }
 }
 
