@@ -11,7 +11,6 @@ pub struct ContextMetrics {
     pub distiller_schema_mismatch_count: AtomicU64,
     pub distiller_validation_failed_count: AtomicU64,
     pub distiller_provider_error_count: AtomicU64,
-    pub redaction_count: AtomicU64,
     pub distiller_admission_accepted_count: AtomicU64,
     pub distiller_admission_rejected_count: AtomicU64,
 }
@@ -25,7 +24,6 @@ impl ContextMetrics {
             distiller_schema_mismatch_count: AtomicU64::new(0),
             distiller_validation_failed_count: AtomicU64::new(0),
             distiller_provider_error_count: AtomicU64::new(0),
-            redaction_count: AtomicU64::new(0),
             distiller_admission_accepted_count: AtomicU64::new(0),
             distiller_admission_rejected_count: AtomicU64::new(0),
         })
@@ -37,7 +35,6 @@ impl ContextMetrics {
     pub fn inc_distiller_schema_mismatch(&self) { self.distiller_schema_mismatch_count.fetch_add(1, Ordering::Relaxed); self.inc_distiller_fallback(); }
     pub fn inc_distiller_validation_failed(&self) { self.distiller_validation_failed_count.fetch_add(1, Ordering::Relaxed); self.inc_distiller_fallback(); }
     pub fn inc_distiller_provider_error(&self) { self.distiller_provider_error_count.fetch_add(1, Ordering::Relaxed); self.inc_distiller_fallback(); }
-    pub fn inc_redaction(&self) { self.redaction_count.fetch_add(1, Ordering::Relaxed); }
     pub fn inc_distiller_admission_accepted(&self) { self.distiller_admission_accepted_count.fetch_add(1, Ordering::Relaxed); }
     pub fn inc_distiller_admission_rejected(&self) { self.distiller_admission_rejected_count.fetch_add(1, Ordering::Relaxed); }
 }

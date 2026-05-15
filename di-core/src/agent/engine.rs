@@ -1640,8 +1640,7 @@ impl AgentEngine {
             eprintln!("[di-core] stream interrupted for agent {} ({}b accumulated, no complete signal)", self.id, text_len);
             // Save whatever we got so it's visible in the UI, then fail the turn.
             if !full_text.is_empty() {
-                let redacted = crate::util::secrets::redact_secrets(&full_text);
-                self.trajectory.add_message(Role::Assistant, json!(redacted), self.estimator.count_text(&redacted));
+                self.trajectory.add_message(Role::Assistant, json!(full_text.clone()), self.estimator.count_text(&full_text));
                 let _ = self.emit_event(CoreEvent::ThoughtFinished { agent_id: self.id }).await;
             }
             return Err(anyhow!("STREAM_INTERRUPTED: provider stream ended without complete signal ({}b received)", text_len));
@@ -1659,11 +1658,9 @@ impl AgentEngine {
             }).await?;
         }
 
-        // Record assistant thought (redact secrets before storage)
-        let redacted_text = crate::util::secrets::redact_secrets(&full_text);
-        if redacted_text != full_text { self.metrics.inc_redaction(); }
-        let thinking_text = crate::util::secrets::redact_secrets(&thinking_text);
-        // Note: thinking_text comparison not tracked since it's a move, not a reference
+        // Record assistant thought
+        let full_text_str = full_text.clone();
+        let thinking_text_str = thinking_text.clone();
 
         // Finalize tool calls (native + XML fallback)
         let tools = tool_accumulator.finalize(&full_text);
@@ -1676,10 +1673,10 @@ impl AgentEngine {
             }
         }
 
-        let assistant_content = if redacted_text.is_empty() {
+        let assistant_content = if full_text_str.is_empty() {
             json!("")
         } else {
-            json!(redacted_text)
+            json!(full_text_str)
         };
         let assistant_thinking = if thinking_text.is_empty() { None } else { Some(thinking_text) };
         let tool_call_entries: Vec<ToolCallEntry> = tools.iter().map(|tc| {
@@ -1698,7 +1695,7 @@ impl AgentEngine {
             role: Role::Assistant,
             content: assistant_content,
             timestamp: chrono::Utc::now(),
-            tokens: self.estimator.count_text(&redacted_text),
+            tokens: self.estimator.count_text(&full_text_str),
             is_compressed: false,
             tool_meta: ToolMessageMeta::default(),
             tool_calls: tool_call_entries,
@@ -2068,18 +2065,16 @@ impl AgentEngine {
                         return Ok(TurnOutcome::Finished);
                     } else if result.get("compact").and_then(|v| v.as_bool()).unwrap_or(false) {
                         let summary = result.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let safe_summary = crate::util::secrets::redact_secrets(&summary);
-                        if safe_summary != summary { self.metrics.inc_redaction(); }
                         // Lifecycle-aware advisory: check pressure before accepting
                         let current_tokens = self.trajectory.get_total_tokens();
                         let token_limit = self.context_compiler.as_ref()
                             .map(|c| c.token_limit())
                             .unwrap_or(32_000);
                         let advisory = self.lifecycle.evaluate_compact_advisory(
-                            &safe_summary, current_tokens, token_limit,
+                            &summary, current_tokens, token_limit,
                         );
                         if advisory.allowed {
-                            self.pending_compact_summary = Some(safe_summary);
+                            self.pending_compact_summary = Some(summary);
                             // Store required files for re-reading after compaction
                             if let Some(files) = result.get("required_files").and_then(|v| v.as_array()) {
                                 self.pending_compact_required_files = files.iter()
@@ -2369,9 +2364,7 @@ impl AgentEngine {
                         }
                         let read_count = self.file_context.files_read.len();
                         let enveloped = wrap_in_envelope(&content_for_envelope, &tool_name, is_cached, self.cumulative_tokens, read_count, &extra_header);
-                        let safe_result_str = crate::util::secrets::redact_secrets(&enveloped);
-                        let safe_result: serde_json::Value = serde_json::from_str(&safe_result_str).unwrap_or_else(|_| json!(safe_result_str));
-                        if safe_result_str != result_str { self.metrics.inc_redaction(); }
+                        let safe_result: serde_json::Value = serde_json::from_str(&enveloped).unwrap_or_else(|_| json!(enveloped));
                         self.trajectory.add_tool_result(safe_result, estimated_tokens, ti, meta);
                         self.emit_event(CoreEvent::ToolCallFinished {
                             agent_id: self.id,
@@ -2381,9 +2374,7 @@ impl AgentEngine {
                     }
                 }
                 Err(e) => {
-                    let safe_error = crate::util::secrets::redact_secrets(&e.to_string());
-                    if safe_error != e.to_string() { self.metrics.inc_redaction(); }
-                    let error_msg = json!({ "error": safe_error });
+                    let error_msg = json!({ "error": e.to_string() });
                     self.trajectory.add_tool_result(error_msg.clone(), 50, ti, ToolMessageMeta::default());
                     self.emit_event(CoreEvent::ToolCallFinished {
                         agent_id: self.id,

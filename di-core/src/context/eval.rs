@@ -7,7 +7,6 @@ use crate::context::distiller::validate::{
     validate_exact_evidence_faithfulness,
 };
 use crate::context::task_state::TaskStateReducer;
-use crate::util::secrets;
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -524,28 +523,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Family 8: Safety — secrets redacted from outputs
+    // Family 8: Safety — (moved to api-gateway)
     // -----------------------------------------------------------------------
-
-    #[test]
-    fn eval_safety_secrets_redacted() {
-        let output_with_secret = "API call succeeded with key sk-abc123def456ghi789jkl012mno345pqr678stu901";
-
-        assert!(secrets::scan_for_secrets(output_with_secret), "should detect secret pattern");
-
-        let redacted = secrets::redact_secrets(output_with_secret);
-        assert!(!redacted.contains("sk-abc123"), "redacted output must not contain secret");
-        assert!(redacted.contains("[REDACTED]"), "redacted output should contain [REDACTED]");
-    }
-
-    #[test]
-    fn eval_safety_distiller_rejects_secrets() {
-        let with_secret = DistilledToolResult {
-            summary: "Used key sk-abc123def456ghi789jkl012mno345pqr678stu901".into(),
-            ..minimal_distilled_result()
-        };
-        assert!(validate_tool_result(&with_secret).is_err(), "results with secrets should be rejected");
-    }
 
     // -----------------------------------------------------------------------
     // Eval metrics aggregation test

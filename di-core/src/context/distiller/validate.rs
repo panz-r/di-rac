@@ -8,7 +8,6 @@ pub enum ValidationError {
     SchemaMismatch,
     EmptyOutput,
     AbsolutePath,
-    SecretDetected,
     StackTraceDetected,
 }
 
@@ -25,7 +24,6 @@ pub fn validate_tool_result(result: &DistilledToolResult) -> Result<(), Validati
     if result.estimated_tokens == 0 {
         return Err(ValidationError::SchemaMismatch);
     }
-    scan_for_secrets(&result.summary)?;
     check_no_absolute_paths(&result.files_referenced)?;
     if result.exchange_core.len() > 500 {
         return Err(ValidationError::SchemaMismatch);
@@ -50,7 +48,6 @@ pub fn validate_task_state_patch(patch: &TaskStatePatch) -> Result<(), Validatio
     if patch.enriched_summary.len() > MAX_SUMMARY_LEN * 2 {
         return Err(ValidationError::SchemaMismatch);
     }
-    scan_for_secrets(&patch.enriched_summary)?;
     scan_for_stack_traces(&patch.enriched_summary)?;
     check_no_absolute_paths(&patch.critical_files)?;
     Ok(())
@@ -66,18 +63,6 @@ fn check_no_absolute_paths(paths: &[String]) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Precompiled secret patterns — avoids recompilation on every call.
-static SECRET_RE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-    let patterns = vec![
-        r"sk-[a-zA-Z0-9]{20,}",           // OpenAI-style keys
-        r"AKIA[0-9A-Z]{16}",              // AWS access keys
-        r"ghp_[a-zA-Z0-9]{36}",           // GitHub PATs
-        r"xox[bpaors]-[a-zA-Z0-9\-]+",    // Slack tokens
-        r#"api[_\-]?key\s*[:=]\s*["']?[a-zA-Z0-9]{20,}"#, // generic api_key=
-    ];
-    patterns.into_iter().map(|p| Regex::new(p).expect("invalid secret regex")).collect()
-});
-
 /// Precompiled stack trace patterns.
 static STACKTRACE_RE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     let patterns = vec![
@@ -87,15 +72,6 @@ static STACKTRACE_RE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     ];
     patterns.into_iter().map(|p| Regex::new(p).expect("invalid stacktrace regex")).collect()
 });
-
-fn scan_for_secrets(text: &str) -> Result<(), ValidationError> {
-    for re in SECRET_RE.iter() {
-        if re.is_match(text) {
-            return Err(ValidationError::SecretDetected);
-        }
-    }
-    Ok(())
-}
 
 /// Detect stack trace patterns in text.
 fn scan_for_stack_traces(text: &str) -> Result<(), ValidationError> {

@@ -1,5 +1,3 @@
-pub mod secrets;
-
 use std::collections::HashMap;
 
 /// Stable content hash using blake3. Returns first 16 hex chars.
