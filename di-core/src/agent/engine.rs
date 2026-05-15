@@ -299,8 +299,10 @@ pub struct AgentEngine {
     /// How long (ms) to wait for frontend responses before timing out.
     /// Set to Some(0) to disable timeout (indefinite wait). None uses default.
     pub frontend_timeout_ms: Option<u64>,
-    /// Provider config passed from the frontend.
+    /// Provider config passed from the frontend (act role).
     pub provider_config: Option<crate::daemons::ProviderConfig>,
+    /// Provider config for plan mode (plan role).
+    pub plan_provider_config: Option<crate::daemons::ProviderConfig>,
     /// Calibrated token estimator — replaces inline len()/4 with model-aware estimation.
     pub estimator: ConservativeEstimator,
     /// Turn counter for lifecycle metrics.
@@ -325,6 +327,8 @@ pub struct AgentEngine {
     cumulative_tokens: usize,
     /// Shared provider config — orchestrator updates this, agent reads at turn start.
     shared_provider_config: Arc<tokio::sync::RwLock<Option<crate::daemons::ProviderConfig>>>,
+    /// Shared plan provider config — orchestrator updates this, agent reads at turn start.
+    shared_plan_config: Arc<tokio::sync::RwLock<Option<crate::daemons::ProviderConfig>>>,
     /// Shared distiller — orchestrator updates this, agent reads at turn start.
     shared_distiller: Arc<tokio::sync::RwLock<Option<std::sync::Arc<tokio::sync::RwLock<Box<dyn ContextDistiller>>>>>>,
     /// Shared timeout — orchestrator updates this, agent reads at turn start.
@@ -385,6 +389,7 @@ impl AgentEngine {
             task_reducer: TaskStateReducer::new(),
             frontend_timeout_ms: None,
             provider_config: None,
+            plan_provider_config: None,
             distiller: None,
             estimator: ConservativeEstimator::default_conservative(),
             turn_counter: 0,
@@ -398,6 +403,7 @@ impl AgentEngine {
             read_file_cache: std::sync::Mutex::new(crate::tools::read_file::ReadFileCache::new()),
             cumulative_tokens: 0,
             shared_provider_config: Arc::new(tokio::sync::RwLock::new(None)),
+            shared_plan_config: Arc::new(tokio::sync::RwLock::new(None)),
             shared_distiller: Arc::new(tokio::sync::RwLock::new(None)),
             shared_timeout_ms: Arc::new(std::sync::Mutex::new(None)),
             shared_observer_config: Arc::new(tokio::sync::RwLock::new(
@@ -816,6 +822,11 @@ impl AgentEngine {
         if let Ok(guard) = self.shared_provider_config.try_read() {
             if let Some(ref config) = *guard {
                 self.provider_config = Some(config.clone());
+            }
+        }
+        if let Ok(guard) = self.shared_plan_config.try_read() {
+            if let Some(ref config) = *guard {
+                self.plan_provider_config = Some(config.clone());
             }
         }
         if let Ok(guard) = self.shared_distiller.try_read() {
@@ -1484,10 +1495,14 @@ impl AgentEngine {
         debug_log!("[di-core] run_turn: sending gateway request ({} msgs, system {} chars, {} tools)",
             frame.messages.len(), frame.system.len(), frame.tools.len());
         self.request_id_counter += 1;
+        let active_provider = match self.mode {
+            AgentMode::Plan => self.plan_provider_config.as_ref().or(self.provider_config.as_ref()),
+            AgentMode::Act => self.provider_config.as_ref(),
+        };
         let request = GatewayRequest {
             id: self.request_id_counter,
             stream: true,
-            provider: self.provider_config.clone(),
+            provider: active_provider.cloned(),
             messages: frame.messages,
             system: Some(frame.system),
             tools: Some(frame.tools),
@@ -2960,6 +2975,8 @@ pub struct MultiAgentOrchestrator {
     pub gateway_client: Arc<GatewayStreamClient>,
     /// Default provider config for new agents (set by frontend via SetProviderConfig).
     pub default_provider_config: Option<crate::daemons::ProviderConfig>,
+    /// Plan mode provider config (separate model/params for plan mode).
+    pub default_plan_config: Option<crate::daemons::ProviderConfig>,
     /// Distiller-specific provider config (separate model/temperature).
     pub distiller_config: Option<crate::daemons::ProviderConfig>,
     /// Shared distiller instance (boxed trait object).
@@ -2973,6 +2990,7 @@ pub struct MultiAgentOrchestrator {
 /// Shared runtime config for a single agent. Orchestrator writes, agent reads.
 struct RuntimeConfig {
     provider_config: Arc<tokio::sync::RwLock<Option<crate::daemons::ProviderConfig>>>,
+    plan_config: Arc<tokio::sync::RwLock<Option<crate::daemons::ProviderConfig>>>,
     distiller: Arc<tokio::sync::RwLock<Option<std::sync::Arc<tokio::sync::RwLock<Box<dyn ContextDistiller>>>>>>,
     timeout_ms: Arc<std::sync::Mutex<Option<u64>>>,
     observer_config: Arc<tokio::sync::RwLock<crate::observer::ObserverConfig>>,
@@ -2988,6 +3006,7 @@ impl MultiAgentOrchestrator {
             command_daemon: Arc::new(tokio::sync::Mutex::new(command_daemon)),
             gateway_client: Arc::new(GatewayStreamClient::with_socket(gateway_socket)),
             default_provider_config: None,
+            default_plan_config: None,
             distiller_config: None,
             distiller: None,
             distiller_metrics: ContextMetrics::new(),
@@ -3004,11 +3023,13 @@ impl MultiAgentOrchestrator {
             self.gateway_client.clone(),
         );
         agent.provider_config = self.default_provider_config.clone();
+        agent.plan_provider_config = self.default_plan_config.clone();
         agent.distiller = self.distiller.clone();
 
         // Wire shared runtime config so orchestrator can push updates to running agents
         let rc = RuntimeConfig {
             provider_config: agent.shared_provider_config.clone(),
+            plan_config: agent.shared_plan_config.clone(),
             distiller: agent.shared_distiller.clone(),
             timeout_ms: agent.shared_timeout_ms.clone(),
             observer_config: agent.shared_observer_config.clone(),
@@ -3048,6 +3069,20 @@ impl MultiAgentOrchestrator {
         // Keep abort handle forever — the atomic bool is harmless to keep and ensures
         // abort_agent can still signal even after cleanup (fixes 2.3).
         self.runtime_configs.remove(agent_id);
+    }
+
+    /// Set the plan mode provider config. Stored as default for new agents
+    /// and applied to all running agents immediately.
+    pub fn set_plan_config(&mut self, config: crate::daemons::ProviderConfig) {
+        self.default_plan_config = Some(config.clone());
+        for agent in self.agents.values_mut() {
+            agent.plan_provider_config = Some(config.clone());
+        }
+        for rc in self.runtime_configs.values() {
+            if let Ok(mut guard) = rc.plan_config.try_write() {
+                *guard = Some(config.clone());
+            }
+        }
     }
 
     /// Update the frontend response timeout for all agents.

@@ -219,6 +219,10 @@ async fn main() -> Result<()> {
                                     "act" => {
                                         orchestrator.set_provider_config(config);
                                     }
+                                    "plan" => {
+                                        log.log("Setting plan config");
+                                        orchestrator.set_plan_config(config);
+                                    }
                                     "distiller" => {
                                         log.log("Setting distiller config");
                                         orchestrator.set_distiller_config(config);
