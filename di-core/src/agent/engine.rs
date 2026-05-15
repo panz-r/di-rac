@@ -24,6 +24,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::hooks;
+use crate::hooks::directive::AgentLoopEvent;
+use crate::hooks::evaluator::EvalResult;
+use crate::hooks::AgentHookManager;
+
 /// Debug log — only prints when DI_DEBUG is set.
 macro_rules! debug_log {
     ($($arg:tt)*) => {
@@ -340,6 +345,8 @@ pub struct AgentEngine {
     shared_timeout_ms: Arc<std::sync::Mutex<Option<u64>>>,
     /// Shared observer config — orchestrator updates this, agent reads at turn start.
     shared_observer_config: Arc<tokio::sync::RwLock<crate::observer::ObserverConfig>>,
+    /// Hook system: agent-loop control DSL evaluator and directive accumulator.
+    pub hooks: AgentHookManager,
 }
 
 // Precompiled regexes for AST churn fallback (content-based, when tool_calls are empty).
@@ -419,6 +426,7 @@ impl AgentEngine {
             shared_observer_config: Arc::new(tokio::sync::RwLock::new(
                 crate::observer::ObserverConfig::default(),
             )),
+            hooks: AgentHookManager::new(),
         }
     }
 
@@ -861,6 +869,13 @@ impl AgentEngine {
         self.task_reducer.process(&initial_task, true);
         self.trajectory.add_message(Role::User, json!(initial_task), self.estimator.count_text(&initial_task));
 
+        // Fire session_start hook — repo guidance, criteria, role definitions
+        self.hooks.reset();
+        self.fire_hook_event(AgentLoopEvent::SessionStart).await;
+
+        // Apply session_start directives: inject hints into the first system prompt
+        // (handled by the next context frame assembly in run_turn)
+
         // TaskInitialized is emitted by the orchestrator in main.rs
 
         let mut consecutive_gateway_errors: u32 = 0;
@@ -905,6 +920,13 @@ impl AgentEngine {
                         }
                     }
 
+                    // Fire error_occurred hook
+                    self.fire_hook_event(AgentLoopEvent::ErrorOccurred {
+                        message: err_msg.clone(),
+                        severity: crate::hooks::directive::Severity::High,
+                        tool_name: None,
+                    }).await;
+
                     // For provider or gateway errors, don't abort — add as user message
                     // so the agent sees the problem and waits for the user to fix settings.
                     // The user can update provider config and the agent retries on the next turn.
@@ -930,9 +952,32 @@ impl AgentEngine {
 
             match outcome {
                 TurnOutcome::Finished => {
-                    self.observer.final_compression();
-                    self.flush_observer_telemetry(None);
-                    return Ok(());
+                    // Pre-finish gate: check if hooks block completion
+                    match self.fire_pre_finish_gate().await {
+                        Ok(()) => {
+                            // Gate passed or overridden — finish
+                            self.hooks.reset();
+                            self.observer.final_compression();
+                            self.flush_observer_telemetry(None);
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            let err_msg = format!("{}", e);
+                            if err_msg.starts_with("FINISH_GATE_BLOCKED:") || err_msg.starts_with("FINISH_GATE_CONTINUE:") {
+                                eprintln!("[di-core] finish gate not satisfied: {}", err_msg);
+                                // Continue loop so agent can address requirements
+                                continue;
+                            }
+                            // Interrupted or other error — abort
+                            eprintln!("[di-core] finish gate error: {}", err_msg);
+                            self.emit_event(CoreEvent::TaskFinished {
+                                agent_id: self.id,
+                                success: false,
+                                message: err_msg,
+                            }).await?;
+                            return Ok(());
+                        }
+                    }
                 }
                 TurnOutcome::Continue { tools_used: 0 } => {
                     self.consecutive_mistake_count += 1;
@@ -1252,6 +1297,11 @@ impl AgentEngine {
         };
         let filter_just_fired = self.observer.metrics.filter_fired > prev_filter_fired;
 
+        // Hook-triggered observers: check if hooks requested observer runs
+        if self.observer.config.enabled {
+            self.check_pending_observer_triggers().await;
+        }
+
         // LLM-driven observations: build prompts and call gateway
         if self.observer.config.enabled && self.observer.config.use_llm_observations {
             self.run_llm_observations(&interrupt, filter_just_fired).await;
@@ -1276,6 +1326,11 @@ impl AgentEngine {
         // Index latest observations to the analyzer daemon for semantic search
         if self.observer.config.enabled {
             self.index_observations_to_daemon().await;
+        }
+
+        // Fire observer_result hook events based on observer signals this turn
+        if self.observer.config.enabled {
+            self.fire_observer_results().await;
         }
 
         // Compute pause weight and flush telemetry
@@ -1556,6 +1611,19 @@ impl AgentEngine {
                 let _ = writeln!(f, "\n=== Turn {} ===", self.request_id_counter);
             }
         }
+
+        // Fire user_prompt hook before sending to LLM
+        let prompt_snippet = request.messages.last()
+            .and_then(|m| m.content.as_ref())
+            .map(|c| c.to_string().chars().take(200).collect::<String>())
+            .unwrap_or_default();
+        let prompt_tokens = self.estimator.count_text(
+            request.system.as_ref().map(|s| s.as_str()).unwrap_or("")
+        );
+        self.fire_hook_event(AgentLoopEvent::UserPrompt {
+            prompt_snippet,
+            token_count: prompt_tokens,
+        }).await;
 
         let mut chunk_rx = self.gateway_client.stream_chat(request).await.map_err(|e| {
             eprintln!("gateway stream_chat failed for agent {}: {}", self.id, e);
@@ -1958,6 +2026,7 @@ impl AgentEngine {
             // - search/repo/symbols: metadata observation only (no stale detection)
             // - read: handled by format_read_result with correct content hash
             // - write/edit: invalidate caches
+            let mut written_paths: Vec<String> = Vec::new();
             if let Some(ref path) = path_arg {
                 match tool_name.as_str() {
                     "search" | "repo" | "symbols" => {
@@ -1965,6 +2034,7 @@ impl AgentEngine {
                     }
                     "write" | "edit" => {
                         self.file_context.mark_edited(path);
+                        written_paths.push(path.clone());
                         self.coordinator.invalidate_for_path(path);
                         self.coordinator.invalidate_search_and_repo();
                         // Invalidate read cache so subsequent reads don't report "unchanged"
@@ -1972,6 +2042,15 @@ impl AgentEngine {
                     }
                     _ => {}
                 }
+            }
+
+            // Fire post_tool_use hook for changed-file classification
+            let tool_success = exec_result.is_ok();
+            self.fire_post_tool_use(&tool_name, &written_paths, tool_success).await;
+
+            // Apply hook warnings to the trajectory
+            for (severity, message) in &self.hooks.merged_directives().warnings {
+                eprintln!("[di-core] hook warn [{:?}]: {}", severity, message);
             }
 
             match exec_result {
@@ -1991,6 +2070,12 @@ impl AgentEngine {
                                 call_id: call_id.clone(),
                                 result: plan_json,
                             }).await?;
+                            // Fire plan_created hook
+                            let files: Vec<String> = self.file_context.files_read.keys().cloned().collect();
+                            self.fire_hook_event(AgentLoopEvent::PlanCreated {
+                                plan_text: plan.clone(),
+                                files,
+                            }).await;
                         } else {
                         let message = result.get("result").and_then(|v| v.as_str()).unwrap_or("Task complete").to_string();
                         self.trajectory.add_tool_result(json!({ "status": "completed", "message": &message }), self.estimator.count_text(&message), ti, ToolMessageMeta::default());
@@ -1999,6 +2084,13 @@ impl AgentEngine {
                             call_id: call_id.clone(),
                             result: json!({ "status": "completed", "message": &message }),
                         }).await?;
+                        // Fire task_complete hook
+                        let summary = message.clone();
+                        self.fire_hook_event(AgentLoopEvent::TaskComplete {
+                            summary: summary.clone(),
+                            success: true,
+                        }).await;
+
                         // Emit TaskPresented instead of TaskFinished — agent signals done
                         // but the user should be able to send follow-up messages
                         self.emit_event(CoreEvent::TaskPresented {
@@ -2943,6 +3035,11 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
     /// Runtime-owned compaction — builds a deterministic summary and truncates
     /// without requiring the model to call the compact tool.
     async fn perform_runtime_compaction(&mut self) -> Result<()> {
+        self.fire_hook_event(AgentLoopEvent::PreCompact {
+            current_tokens: self.trajectory.get_total_tokens(),
+            token_limit: self.context_compiler.as_ref().map(|c| c.token_limit()).unwrap_or(32000),
+            reason: "context threshold exceeded".to_string(),
+        }).await;
         let task_summary = self.task_reducer.to_critical_summary();
         let file_summary = self.file_context.get_summary();
 
@@ -2977,6 +3074,11 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
     }
 
     async fn perform_compaction(&mut self, summary: &str) -> Result<()> {
+        self.fire_hook_event(AgentLoopEvent::PreCompact {
+            current_tokens: self.trajectory.get_total_tokens(),
+            token_limit: self.context_compiler.as_ref().map(|c| c.token_limit()).unwrap_or(32000),
+            reason: "model-requested compaction".to_string(),
+        }).await;
         let continuation_base = ContextManager::continuation_prompt(summary);
 
         let recent_summaries: Vec<String> = self.trajectory.messages.iter()
@@ -3113,6 +3215,247 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
     /// Check whether a bash command references a given file path.
     fn path_in_command(cmd: &str, path: &str) -> bool {
         cmd.contains(path) || cmd.split_whitespace().any(|tok| tok == path)
+    }
+
+    // ── Hook system integration ──
+
+    /// Hot-swap the active hook module and emit HookModuleActivated.
+    pub async fn swap_hook_module(&self, module: Arc<crate::hooks::ir::CompiledHookModule>) {
+        let rule_count = module.handlers.iter().map(|h| h.rules.len()).sum();
+        self.hooks.swap_active(module.clone());
+        let _ = self.emit_event(CoreEvent::HookModuleActivated {
+            agent_id: self.id,
+            id: module.id.clone(),
+            source_hash: module.source_hash.clone(),
+            rule_count,
+        }).await;
+    }
+
+    /// Fire an agent-loop event through the hook system.
+    /// Returns the directives emitted, already merged into accumulated state.
+    async fn fire_hook_event(&mut self, event: AgentLoopEvent) -> EvalResult {
+        let result = self.hooks.on_event(event);
+        // Emit hook directives as CoreEvents for TUI tracing
+        for d in &result.directives {
+            let directive_str = format!("{:?}", d).chars().take(200).collect::<String>();
+            let _ = self.emit_event(CoreEvent::HookDirectiveEmitted {
+                agent_id: self.id,
+                directive: directive_str,
+                hook_id: self.hooks.active_module().id.clone(),
+            }).await;
+        }
+        result
+    }
+
+    /// Check if the accumulated merged directives have unsatisfied finish gates.
+    /// Returns None if gates are satisfied, Some(error_message) if blocked.
+    fn check_finish_gates(&self) -> Option<String> {
+        let merged = self.hooks.merged_directives();
+        let mut unsatisfied = Vec::new();
+
+        for gate in &merged.finish_gates {
+            if !gate.satisfied {
+                let msg = match &gate.condition {
+                    hooks::directive::FinishCondition::EvidencePresent(name) => {
+                        format!("Required evidence missing: {}", name)
+                    }
+                    hooks::directive::FinishCondition::FinalNotePresent => {
+                        "Required final note missing".to_string()
+                    }
+                    hooks::directive::FinishCondition::ObserverCleared(name) => {
+                        format!("Observer clearance pending: {}", name)
+                    }
+                };
+                unsatisfied.push(msg);
+            }
+        }
+
+        if merged.evidence_required.iter().any(|e| {
+            !merged.finish_gates.iter().any(|g| {
+                matches!(&g.condition, hooks::directive::FinishCondition::EvidencePresent(n) if n == e) && g.satisfied
+            })
+        }) {
+            for ev in &merged.evidence_required {
+                unsatisfied.push(format!("Evidence not yet provided: {}", ev));
+            }
+        }
+
+        if unsatisfied.is_empty() {
+            None
+        } else {
+            Some(format!("Finish gates not satisfied:\n- {}", unsatisfied.join("\n- ")))
+        }
+    }
+
+    /// Apply hook directives to the dynamic context (hints, criteria, warnings).
+    /// Called during context frame assembly.
+    fn apply_hook_directives(&self, hint_block: &mut String) {
+        let merged = self.hooks.merged_directives();
+        if !merged.hints.is_empty() {
+            let hints = merged.hints.iter()
+                .map(|h| format!("- {}", h))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !hint_block.is_empty() {
+                hint_block.push_str("\n\n");
+            }
+            hint_block.push_str("# Hooks\n");
+            hint_block.push_str(&hints);
+        }
+        for (severity, message) in &merged.warnings {
+            eprintln!("[di-core] hook warn [{:?}]: {}", severity, message);
+        }
+    }
+
+    /// Fire post_tool_use after tool execution, collect changed files.
+    async fn fire_post_tool_use(&mut self, tool_name: &str, paths_written: &[String], success: bool) {
+        let changed_files: Vec<String> = paths_written.iter()
+            .chain(self.file_context.files_edited.iter())
+            .cloned()
+            .collect();
+        let event = AgentLoopEvent::PostToolUse {
+            tool_name: tool_name.to_string(),
+            changed_files,
+            success,
+        };
+        self.fire_hook_event(event).await;
+    }
+
+    /// Fire observer_result events based on recent observer signals.
+    async fn fire_observer_results(&mut self) {
+        // Check if the observer produced any signals this turn
+        if self.observer.config.enabled {
+            let watcher_fired = self.observer.watcher_just_fired();
+            let has_errors = !self.observer.recent_errors().is_empty();
+            let has_sqs = self.observer.last_sqs().is_some();
+
+            if watcher_fired {
+                let output = serde_json::json!({
+                    "type": "watcher",
+                    "sqs": self.observer.last_sqs(),
+                });
+                let event = AgentLoopEvent::ObserverResult {
+                    observer_id: "native_watcher".to_string(),
+                    output,
+                };
+                self.fire_hook_event(event).await;
+            }
+
+            if has_errors {
+                let errors: Vec<String> = self.observer.recent_errors().to_vec();
+                let output = serde_json::json!({
+                    "type": "error",
+                    "errors": errors,
+                });
+                let event = AgentLoopEvent::ObserverResult {
+                    observer_id: "native_error".to_string(),
+                    output,
+                };
+                self.fire_hook_event(event).await;
+            }
+
+            if has_sqs {
+                let output = serde_json::json!({
+                    "type": "sqs",
+                    "sqs": self.observer.last_sqs(),
+                });
+                let event = AgentLoopEvent::ObserverResult {
+                    observer_id: "native_sqs".to_string(),
+                    output,
+                };
+                self.fire_hook_event(event).await;
+            }
+        }
+    }
+
+    /// Check if hooks requested observer triggers and log them.
+    /// Full gateway integration (calling LLM with @role prompts) is deferred to a follow-up.
+    async fn check_pending_observer_triggers(&mut self) {
+        let triggers = self.hooks.take_observer_triggers();
+        if triggers.is_empty() {
+            return;
+        }
+        let roles = self.hooks.roles();
+        for trigger in &triggers {
+            eprintln!("[di-core] hook trigger_observer: {} (reason: {}, severity: {:?})",
+                trigger.observer_id, trigger.reason, trigger.severity);
+            if let Some(role) = roles.iter().find(|r| r.name == trigger.observer_id) {
+                eprintln!("[di-core]   matching role '{}' found with {} input types and budget {:?}",
+                    role.name, role.inputs.len(), role.budget);
+            }
+        }
+    }
+
+    /// Fire pre_finish and check if gates are satisfied.
+    /// Returns Ok(()) if finish is allowed, Err with message if blocked.
+    /// When blocked, waits for frontend response (override or address requirements).
+    async fn fire_pre_finish_gate(&mut self) -> Result<()> {
+        let result = self.fire_hook_event(AgentLoopEvent::PreFinish).await;
+        let _ = result;
+
+        loop {
+            match self.check_finish_gates() {
+                None => return Ok(()),
+                Some(block_msg) => {
+                    eprintln!("[di-core] pre_finish gate blocked: {}", block_msg);
+                    let _ = self.emit_event(CoreEvent::HookDirectiveEmitted {
+                        agent_id: self.id,
+                        directive: format!("pre_finish blocked: {}", block_msg),
+                        hook_id: self.hooks.active_module().id.clone(),
+                    }).await;
+
+                    // Present the gate block as a followup-like prompt to the frontend
+                    self.emit_event(CoreEvent::FollowupQuestion {
+                        agent_id: self.id,
+                        question: format!(
+                            "Finish gate requirements:\n{}\n\nType 'override' to finish anyway, or provide evidence to satisfy requirements.",
+                            block_msg
+                        ),
+                        options: Some(vec!["override".to_string(), "continue".to_string()]),
+                    }).await?;
+
+                    // Block waiting for user response
+                    let user_msg = loop {
+                        if self.is_aborted() { return Err(anyhow::anyhow!("Interrupted")); }
+                        let msg = self.recv_frontend().await;
+                        match msg {
+                            Some(FrontendMessage::FollowupAnswer { text, .. }) => break text,
+                            Some(FrontendMessage::UserResponse { text, .. }) => break text,
+                            Some(FrontendMessage::ApprovalResponse { approved, .. }) => {
+                                if approved { break "override".to_string(); }
+                            }
+                            Some(FrontendMessage::Timeout { .. }) | None => {
+                                return Err(anyhow::anyhow!("Frontend timeout during gate check"));
+                            }
+                            _ => continue,
+                        }
+                    };
+
+                    match user_msg.trim().to_lowercase().as_str() {
+                        "override" | "yes" | "y" => {
+                            // User explicitly overrides — clear all gates and allow finish
+                            self.hooks.reset();
+                            return Ok(());
+                        }
+                        "continue" | "no" | "n" => {
+                            // User chose to continue working
+                            return Err(anyhow::anyhow!("FINISH_GATE_CONTINUE: user chose to address requirements"));
+                        }
+                        other => {
+                            // User provided text — treat as evidence, add to trajectory
+                            self.trajectory.add_message(
+                                Role::User,
+                                json!(format!("[Evidence provided for finish gate] {}", other)),
+                                self.estimator.count_text(other),
+                            );
+                            // Don't mark gates satisfied — re-check on next finish attempt
+                            // But do let them try again by continuing
+                            return Err(anyhow::anyhow!("FINISH_GATE_CONTINUE: evidence noted"));
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

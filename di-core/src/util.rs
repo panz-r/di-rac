@@ -17,6 +17,13 @@ pub fn fast_hash(data: &[u8]) -> String {
     format!("{:.16}", hash.to_hex())
 }
 
+/// Full 8-byte u64 hash from blake3. Use for dedupe keys and scope hashing
+/// where hex-truncated fast_hash would cause false collisions.
+pub fn fast_hash_u64(data: &[u8]) -> u64 {
+    let hash = blake3::hash(data);
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().unwrap())
+}
+
 /// Base-32 alphabet matching the TS anchor system: digits + lowercase a-v.
 /// Using 3 chars gives 32^3 = 32,768 distinct values (8x better than hex's 4,096).
 const ANCHOR_ALPHABET: &[u8; 32] = b"0123456789abcdefghijklmnopqrstuv";

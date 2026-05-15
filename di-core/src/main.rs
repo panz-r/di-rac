@@ -6,6 +6,7 @@ mod daemons;
 mod tools;
 mod prompt;
 mod util;
+mod hooks;
 
 use agent::engine::MultiAgentOrchestrator;
 use protocol::{CoreEvent, FrontendMessage};

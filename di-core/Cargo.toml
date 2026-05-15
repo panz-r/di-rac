@@ -22,3 +22,5 @@ blake3 = "1.5" # Stable content hashing across process restarts
 regex = "1.10"
 async-trait = "0.1"
 pathdiff = "0.2"
+arc-swap = "1.7"
+glob = "0.3"

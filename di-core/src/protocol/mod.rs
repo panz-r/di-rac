@@ -85,6 +85,25 @@ pub enum CoreEvent {
         tool: Option<String>,
         question: Option<String>,
     },
+    /// Hook module was activated (loaded or swapped).
+    HookModuleActivated {
+        agent_id: Uuid,
+        id: String,
+        source_hash: String,
+        rule_count: usize,
+    },
+    /// Hook emitted a directive.
+    HookDirectiveEmitted {
+        agent_id: Uuid,
+        directive: String,
+        hook_id: String,
+    },
+    /// Hook evaluation failed.
+    HookEvaluationFailed {
+        agent_id: Uuid,
+        event: String,
+        error: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
