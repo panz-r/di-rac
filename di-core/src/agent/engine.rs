@@ -157,7 +157,7 @@ fn tool_description(tool_name: &str) -> &'static str {
         "plan" => "Plan",
         "task" => "Task",
         "tools" => "Tool search",
-        "get_outputs" => "Get outputs",
+        "memory" => "Get outputs",
         _ => "Tool",
     }
 }

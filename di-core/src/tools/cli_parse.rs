@@ -31,7 +31,7 @@ pub fn parse_command_args(tool_name: &str, args: &Value) -> Value {
         "plan" => parse_plan(cmd_str),
         "task" => parse_task(cmd_str),
         "tools" => parse_tools(cmd_str),
-        "get_outputs" => parse_get_outputs(cmd_str),
+        "memory" => parse_memory(cmd_str),
         _ => {
             // Unknown tool — pass through with command as-is
             let mut result = args.clone();
@@ -450,9 +450,9 @@ fn parse_tools(cmd: &str) -> Value {
 }
 
 /// get_outputs: [action] [filename]
-fn parse_get_outputs(cmd: &str) -> Value {
+fn parse_memory(cmd: &str) -> Value {
     let tokens = tokenize(cmd);
-    let positionals = strip_tool_name("get_outputs", &tokens);
+    let positionals = strip_tool_name("memory", &tokens);
     let mut result = json!({});
     if let Some(action) = positionals.get(0) {
         result["action"] = json!(action);
@@ -552,8 +552,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_get_outputs() {
-        let result = parse_command_args("get_outputs", &json!({ "command": "get_outputs read output.txt" }));
+    fn test_parse_memory() {
+        let result = parse_command_args("memory", &json!({ "command": "memory read output.txt" }));
         assert_eq!(result["action"], "read");
         assert_eq!(result["file"], "output.txt");
     }

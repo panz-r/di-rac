@@ -433,7 +433,7 @@ impl ToolExecutor {
                 let tool_names = [
                     "read", "write", "edit", "search", "repo", "bash",
                     "compact", "ask", "done", "symbols", "plan", "task", "tools",
-                    "get_outputs",
+                    "memory",
                 ];
                 let list: Vec<&str> = if let Some(filter) = parsed_call.args.get("filter").and_then(|v| v.as_str()) {
                     tool_names.iter().filter(|t| t.contains(&filter.to_lowercase())).copied().collect()
@@ -442,7 +442,7 @@ impl ToolExecutor {
                 };
                 ToolResponse::ok(json!({ "tools": list, "count": list.len() }))
             }
-            "get_outputs" => {
+            "memory" => {
                 let action = parsed_call.args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
                 match action {
                     "list" => {
@@ -453,7 +453,7 @@ impl ToolExecutor {
                     "read" => {
                         let filename = match parsed_call.args.get("file").and_then(|v| v.as_str()) {
                             Some(f) => f.to_string(),
-                            None => return ToolResponse::fail(ToolErrorCode::MissingArgument, "Missing file argument for get_outputs read".to_string(), "get_outputs"),
+                            None => return ToolResponse::fail(ToolErrorCode::MissingArgument, "Missing file argument for memory read".to_string(), "memory"),
                         };
                         let path = {
                             let om = self.output_manager.lock().unwrap();
@@ -465,7 +465,7 @@ impl ToolExecutor {
                             Err(_) => return ToolResponse::fail(
                                 ToolErrorCode::IoFileNotFound,
                                 format!("File not found: {}", filename),
-                                "get_outputs",
+                                "memory",
                             ),
                         };
                         let output_dir_canonical = {
@@ -476,7 +476,7 @@ impl ToolExecutor {
                             return ToolResponse::fail(
                                 ToolErrorCode::InvalidInput,
                                 "Access denied: path is outside the output directory".to_string(),
-                                "get_outputs",
+                                "memory",
                             );
                         }
                         match tokio::fs::read_to_string(&canonical).await {
@@ -488,7 +488,7 @@ impl ToolExecutor {
                             Err(e) => ToolResponse::fail(
                                 ToolErrorCode::IoFileNotFound,
                                 format!("Failed to read {}: {}", filename, e),
-                                "get_outputs",
+                                "memory",
                             ),
                         }
                     }
@@ -509,8 +509,8 @@ impl ToolExecutor {
                     }
                     _ => ToolResponse::fail(
                         ToolErrorCode::InvalidInput,
-                        format!("Unknown get_outputs action: {}. Use list, read, or clear.", action),
-                        "get_outputs",
+                        format!("Unknown memory action: {}. Use list, read, or clear.", action),
+                        "memory",
                     ),
                 }
             }
@@ -835,7 +835,7 @@ impl ToolExecutor {
 
         let timeout_ms: i64 = call.args.get("timeout")
             .and_then(|v| v.as_i64())
-            .unwrap_or(300_000);
+            .unwrap_or(30_000);
 
         let request = json!({
             "type": "execute",

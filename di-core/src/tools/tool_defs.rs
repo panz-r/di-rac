@@ -147,12 +147,12 @@ pub static TOOL_DEFINITIONS: LazyLock<Vec<Value>> = LazyLock::new(|| {
             }
         }),
         json!({
-            "name": "get_outputs",
-            "description": "Access saved tool outputs. Large outputs (>8KB) from bash, read, search, and other tools are automatically saved to .di/out/. Use this tool to list, read, or clear them.",
+            "name": "memory",
+            "description": "Manage saved tool outputs. No args or --list: list files. Filename: read file. --clear: delete all. Use to preserve outputs across compactions.\n\nExample: memory output.txt\n\nResponse: OK | items:N | <list> | tokens:N\nDon't use for: current code (use read/search), temporary data (use bash temp files).\nTypical: memory --list",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "CLI arguments for get_outputs. Actions: list (default), read <filename>, clear." }
+                    "command": { "type": "string", "description": "CLI arguments. Use --list (default), filename to read, or --clear to delete all." }
                 },
                 "required": []
             }
