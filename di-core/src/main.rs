@@ -216,13 +216,14 @@ async fn main() -> Result<()> {
                                 };
                                 log.log(&format!("SetProviderConfig: role={} provider={} model={} params={}", role, config.id, config.model, config.params.len()));
                                 match role.as_str() {
+                                    "act" => {
+                                        orchestrator.set_provider_config(config);
+                                    }
                                     "distiller" => {
                                         log.log("Setting distiller config");
                                         orchestrator.set_distiller_config(config);
                                     }
-                                    _ => {
-                                        orchestrator.set_provider_config(config);
-                                    }
+                                    _ => {}
                                 }
                             }
                             msg @ FrontendMessage::SetObserverConfig { .. } => {
