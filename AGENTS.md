@@ -98,7 +98,7 @@ Model metadata (IDs, pricing, capabilities) is in each handler's `Capabilities()
 - **Build all**: `make` or `make build`
 - **Build fast (gateway only)**: `make build-fast`
 - **Build individual**: `make build-api-gateway`, `make build-divrr`, etc.
-- **Install to ~/.dirac/dist/**: `make install`
+- **Build to `bin/`**: all targets copy their binary to `bin/` automatically
 - **Run TUI**: `./bin/divrr --core ./bin/di-core --task "<task>"` (starts api-gateway and di-core automatically)
 - **Run engine only**: `./bin/di-core` (reads FrontendMessage NDJSON from stdin)
 - **Run gateway alone**: `./bin/api-gateway`
@@ -115,7 +115,7 @@ Binaries are built to `bin/`. The TUI (`divrr`) launches `api-gateway` and `di-c
 3. `$HOME/bin/`
 4. PATH
 
-Runtime state is stored in `~/.dirac/`:
+Runtime state is stored in `~/.di/`:
 - `provider-settings.json` — Saved provider configs per role
 - `di-core.log` — Agent engine log
 - `divrr.log` — TUI log
