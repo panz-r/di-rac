@@ -820,8 +820,8 @@ func openaiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			if err := callback(StreamChunk{Type: "stop", FinishReason: fr, Usage: stopUsage}); err != nil {
 				return err
 			}
+			stopped = true
 		}
-		stopped = true
 	}
 
 	return scanner.Err()
