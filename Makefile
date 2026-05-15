@@ -24,8 +24,7 @@ build-command-daemon:
 	@echo "  BUILD   command-daemon"
 	@mkdir -p $(DIST)
 	cd command-daemon && cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -1
-	cd command-daemon && cmake --build build 2>&1 | tail -1
-	cp command-daemon/build/di-rvv-cmd $(DIST)/di-rvv-cmd
+	cd command-daemon && cmake --build build 2>&1 && cp build/di-rvv-cmd ../$(DIST)/di-rvv-cmd
 	@chmod 755 $(DIST)/di-rvv-cmd
 	@echo "  DONE    $(DIST)/di-rvv-cmd"
 
@@ -36,8 +35,7 @@ build-treesitter-daemon:
 	@echo "  BUILD   treesitter-daemon"
 	@mkdir -p $(DIST)
 	cd treesitter-daemon && cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -1
-	cd treesitter-daemon && cmake --build build 2>&1 | tail -1
-	cp treesitter-daemon/build/divrr-analyzer $(DIST)/divrr-analyzer
+	cd treesitter-daemon && cmake --build build 2>&1 && cp build/divrr-analyzer ../$(DIST)/divrr-analyzer
 	@chmod 755 $(DIST)/divrr-analyzer
 	@echo "  DONE    $(DIST)/divrr-analyzer"
 
@@ -47,8 +45,7 @@ build-treesitter-daemon:
 build-divrr:
 	@echo "  BUILD   divrr"
 	@mkdir -p $(DIST)
-	cargo build --release --manifest-path divrr/Cargo.toml 2>&1 | tail -1
-	cp divrr/target/release/divrr $(DIST)/divrr
+	cargo build --release --manifest-path divrr/Cargo.toml 2>&1 && cp divrr/target/release/divrr $(DIST)/divrr
 	@chmod 755 $(DIST)/divrr
 	@echo "  DONE    $(DIST)/divrr"
 
@@ -58,8 +55,7 @@ build-divrr:
 build-di-core:
 	@echo "  BUILD   di-core"
 	@mkdir -p $(DIST)
-	cargo build --release --manifest-path di-core/Cargo.toml 2>&1 | tail -1
-	cp di-core/target/release/di-core $(DIST)/di-core
+	cargo build --release --manifest-path di-core/Cargo.toml 2>&1 && cp di-core/target/release/di-core $(DIST)/di-core
 	@chmod 755 $(DIST)/di-core
 	@echo "  DONE    $(DIST)/di-core"
 

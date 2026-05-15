@@ -113,6 +113,7 @@ pub fn launch(gateway_bin: &str) -> io::Result<GatewayChild> {
 
 /// Find the gateway binary relative to the divrr binary or in common locations.
 pub fn find_gateway() -> Option<String> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let candidates = [
         // Same directory as the running binary
         std::env::current_exe().ok()
@@ -120,8 +121,10 @@ pub fn find_gateway() -> Option<String> {
         // Current working directory bin/
         Some(format!("{}/bin/api-gateway",
             std::env::current_dir().unwrap_or_default().to_string_lossy())),
-        // Home dist/
-        Some(format!("{}/bin/api-gateway", std::env::var("HOME").unwrap_or_else(|_| "/root".into()))),
+        // Home bin/
+        Some(format!("{}/bin/api-gateway", home)),
+        // Home .dirac/dist/ (installed by make install)
+        Some(format!("{}/.dirac/dist/api-gateway", home)),
         // In PATH
         which("api-gateway"),
     ];
