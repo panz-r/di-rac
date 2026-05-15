@@ -291,11 +291,14 @@ async fn main() -> color_eyre::Result<()> {
                     break;
                 }
 
-                // Drain pending messages before handling key (e.g. stale SetProviderConfig)
-                for msg in app.pending_messages.drain(..) {
+                // Drain pending messages before handling key (e.g. stale SetProviderConfig).
+                // On send failure, re-queue for retry on the next key event.
+                let pending: Vec<_> = app.pending_messages.drain(..).collect();
+                for msg in pending {
                     if let Err(e) = send_with_timeout(&mut di_core, &msg).await {
                         crate::logging::log_event(&format!("send error: {}", e));
-                        app.status_message = Some(format!("Send error: {}", e));
+                        app.pending_messages.insert(0, msg);
+                        app.status_message = Some(format!("Send error (queued for retry): {}", e));
                     }
                 }
 
