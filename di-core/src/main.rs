@@ -86,6 +86,12 @@ async fn main() -> Result<()> {
 
     log.log("engine started, reading stdin");
 
+    // Early validation: check that the gateway socket exists before entering the main loop.
+    // This prevents the agent from running several turns before discovering a misconfigured socket.
+    if let Err(e) = orchestrator.gateway_client.validate_socket() {
+        log.log(&format!("WARNING: gateway socket validation failed: {}", e));
+    }
+
     // Read stdin in a separate thread and forward lines to an async channel.
     // This allows the main async loop to process incoming messages concurrently
     // while agent tasks are running (critical for approval/followup responses).
