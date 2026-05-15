@@ -78,7 +78,8 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub project_id: Option<String>,
     /// Provider-specific parameters (temperature, top_p, max_tokens, etc.)
-    #[serde(default)]
+    /// Serde rename matches Go's api-gateway ProviderConfig.Extra field.
+    #[serde(default, rename = "extra")]
     pub params: std::collections::HashMap<String, serde_json::Value>,
 }
 
