@@ -62,6 +62,24 @@ except: sys.exit(1)
 "
 }
 
+# Extract a nested field from a JSON line (e.g. "meta.cwd").
+# Input: a single JSON line on stdin. Exits 1 if field not found.
+jnested() {
+	python3 -c "
+import sys, json
+line = sys.stdin.read().strip()
+if not line: sys.exit(1)
+parts = '$1'.split('.')
+obj = json.loads(line)
+for p in parts:
+    if isinstance(obj, dict):
+        obj = obj.get(p)
+        if obj is None: sys.exit(1)
+    else: sys.exit(1)
+print(obj, end='')
+" 2>/dev/null || true
+}
+
 # Extract a field from the first JSON line matching a type filter.
 # Usage: jtype_result stdout  ->  extracts stdout from the "result" line
 jtype() {
@@ -297,6 +315,29 @@ test_false_command() {
 	[ "$exit_code" = "1" ] || return 1
 }
 
+test_session_cwd() {
+	mkdir -p "$WORKSPACE/subdir"
+	# Both commands to the same daemon (sessions are in-memory).
+	# Send both with sleep to keep stdin open until children finish.
+	local both
+	both=$( (echo '{"type":"execute","id":"t23","command":"cd subdir && pwd","session_id":"sess1"}'; sleep 1; echo '{"type":"execute","id":"t24","command":"pwd","session_id":"sess1"}'; sleep 1) | timeout 8 "$DAEMON" --workspace-root "$WORKSPACE" 2>/dev/null )
+	local cwd1 stdout2
+	cwd1=$(echo "$both" | grep '"type":"result"' | head -1 | jnested meta.cwd)
+	[ "$cwd1" = "$WORKSPACE/subdir" ] || { echo "session cwd after cd: expected '$WORKSPACE/subdir' got '$cwd1'"; return 1; }
+	stdout2=$(echo "$both" | grep '"type":"result"' | tail -1 | jtype result stdout)
+	[ "$stdout2" = "$WORKSPACE/subdir" ] || { echo "session cwd persisted: expected '$WORKSPACE/subdir' got '$stdout2'"; return 1; }
+}
+
+test_explicit_cwd() {
+	mkdir -p "$WORKSPACE/other"
+	local out
+	out=$(send '{"type":"execute","id":"t25","command":"pwd","cwd":"'"$WORKSPACE/other"'"}')
+	local stdout cwd
+	stdout=$(echo "$out" | jtype result stdout)
+	cwd=$(echo "$out" | grep "\"type\":\"result\"" | jnested meta.cwd)
+	[ "$stdout" = "$WORKSPACE/other" ] || { echo "explicit cwd: expected stdout '$WORKSPACE/other' got '$stdout'"; return 1; }
+	[ "$cwd" = "$WORKSPACE/other" ] || { echo "explicit cwd meta: expected '$WORKSPACE/other' got '$cwd'"; return 1; }
+}
 
 test_timeout_kills() {
 	# Command sleeps for 10s but timeout is 2s — daemon should kill it
@@ -368,6 +409,8 @@ run_test "large output (100 lines)" test_large_output
 run_test "grep in file" test_grep_command
 run_test "explicit timeout param" test_timeout_param
 run_test "cwd tracking" test_cwd_tracking
+run_test "session cwd persists across commands" test_session_cwd
+run_test "explicit cwd field overrides workspace" test_explicit_cwd
 
 echo ""
 echo -e "${BOLD}[Protocol]${RESET}"
