@@ -34,6 +34,7 @@ typedef struct {
     char cwd[4096];        /* resolved cwd after command */
     char session_id[128];  /* session to update cwd on (empty = no session) */
     int active;            /* slot in use */
+    int pidfd;             /* pidfd for child exit notification (-1 if unavailable) */
 } ExecChild;
 
 /* Detect if a command is likely long-running (build/test/etc) */

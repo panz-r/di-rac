@@ -7,6 +7,7 @@
 #include <time.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/syscall.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libgen.h>
@@ -77,6 +78,7 @@ int executor_fork(const char *command, const char *cwd, ExecChild *out) {
     memset(out, 0, sizeof(*out));
     out->stdout_fd = -1;
     out->stderr_fd = -1;
+    out->pidfd = -1;
 
     char exe_dir[4096];
     get_exe_dir(exe_dir, sizeof(exe_dir));
@@ -163,6 +165,7 @@ int executor_fork(const char *command, const char *cwd, ExecChild *out) {
     fcntl(stderr_pipe[0], F_SETFL, O_NONBLOCK);
 
     out->pid = pid;
+    out->pidfd = syscall(SYS_pidfd_open, pid, 0);  /* may be -1 on old kernels */
     out->stdout_fd = stdout_pipe[0];
     out->stderr_fd = stderr_pipe[0];
     out->start_ms = now_ms();
@@ -195,6 +198,7 @@ void exec_child_cleanup(ExecChild *child) {
     if (child->id) { free(child->id); child->id = NULL; }
     if (child->stdout_fd >= 0) { close(child->stdout_fd); child->stdout_fd = -1; }
     if (child->stderr_fd >= 0) { close(child->stderr_fd); child->stderr_fd = -1; }
+    if (child->pidfd >= 0) { close(child->pidfd); child->pidfd = -1; }
     child->stdout_len = 0;
     child->stderr_len = 0;
     child->active = 0;

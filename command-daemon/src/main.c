@@ -5,6 +5,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/timerfd.h>
 #include <errno.h>
 #include <time.h>
 #include <fcntl.h>
@@ -191,6 +192,41 @@ static void send_child_result(ExecChild *child) {
     pthread_mutex_unlock(&stdout_lock);
 }
 
+/* Arm the timerfd for the next needed event, or disarm when idle.
+ * Returns the number of active (not-finished) children. */
+static int arm_heartbeat(int timer_fd) {
+    long now = now_ms();
+    long min_interval = 60000;
+    int has_active = 0;
+
+    for (int i = 0; i < MAX_CHILDREN; i++) {
+        ExecChild *c = &children[i];
+        if (!c->active) continue;
+        if (c->exited && c->stdout_done && c->stderr_done) continue;
+        has_active = 1;
+
+        if (!c->exited) {
+            long elapsed = now - c->start_ms;
+            long timeout_remaining = c->timeout_ms - elapsed;
+            if (timeout_remaining < 0) timeout_remaining = 0;
+            long progress_remaining = PROGRESS_INTERVAL_MS - (now - c->last_progress_ms);
+            if (progress_remaining < 0) progress_remaining = 0;
+            long smallest = timeout_remaining < progress_remaining ? timeout_remaining : progress_remaining;
+            if (smallest < min_interval) min_interval = smallest;
+        }
+    }
+
+    struct itimerspec ts = {0};
+    if (has_active) {
+        ts.it_value.tv_sec = min_interval / 1000;
+        ts.it_value.tv_nsec = (min_interval % 1000) * 1000000;
+        if (ts.it_value.tv_sec == 0 && ts.it_value.tv_nsec == 0)
+            ts.it_value.tv_nsec = 1;
+    }
+    timerfd_settime(timer_fd, 0, &ts, NULL);
+    return has_active;
+}
+
 __thread FILE *jsonw_output_fallback = NULL;
 
 int main(int argc, char *argv[]) {
@@ -224,6 +260,9 @@ int main(int argc, char *argv[]) {
     int inotify_fd = inotify_init1(IN_NONBLOCK);
     if (inotify_fd >= 0) inotify_add_watch(inotify_fd, workspace_root, IN_MODIFY | IN_CREATE | IN_MOVED_TO);
 
+    int timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    if (timer_fd < 0) { perror("timerfd_create"); return 1; }
+
     fprintf(stderr, "ready\n");
     fflush(stderr);
 
@@ -232,21 +271,25 @@ int main(int argc, char *argv[]) {
     size_t stdin_len = 0;
 
     while (1) {
-        struct pollfd pfds[2 + MAX_CHILDREN * 2];
+        struct pollfd pfds[3 + MAX_CHILDREN * 2];
         int nfds = 0;
-        ExecChild *fd_child_map[2 + MAX_CHILDREN * 2];
+        ExecChild *fd_child_map[3 + MAX_CHILDREN * 2];
 
         pfds[0].fd = STDIN_FILENO; pfds[0].events = POLLIN; nfds = 1; fd_child_map[0] = NULL;
         if (inotify_fd >= 0) { pfds[nfds].fd = inotify_fd; pfds[nfds].events = POLLIN; nfds++; fd_child_map[nfds-1] = NULL; }
+        pfds[nfds].fd = timer_fd; pfds[nfds].events = POLLIN; nfds++; fd_child_map[nfds-1] = NULL;
 
         for (int i = 0; i < MAX_CHILDREN; i++) {
             ExecChild *c = &children[i];
             if (!c->active) continue;
             if (!c->stdout_done && c->stdout_fd >= 0) { pfds[nfds].fd = c->stdout_fd; pfds[nfds].events = POLLIN; fd_child_map[nfds++] = c; }
             if (!c->stderr_done && c->stderr_fd >= 0) { pfds[nfds].fd = c->stderr_fd; pfds[nfds].events = POLLIN; fd_child_map[nfds++] = c; }
+            if (c->pidfd >= 0 && !c->exited) { pfds[nfds].fd = c->pidfd; pfds[nfds].events = POLLIN; fd_child_map[nfds++] = c; }
         }
 
-        int pret = poll(pfds, (nfds_t)nfds, 100);
+        arm_heartbeat(timer_fd);
+
+        int pret = poll(pfds, (nfds_t)nfds, -1);
         if (pret < 0 && errno != EINTR) break;
 
         if (pret > 0) {
@@ -271,6 +314,16 @@ int main(int argc, char *argv[]) {
                     break;
                 }
             }
+
+            /* Drain timerfd — must read the 8-byte counter to clear the fd */
+            for (int j = 0; j < nfds; j++) {
+                if (pfds[j].fd == timer_fd && (pfds[j].revents & POLLIN)) {
+                    uint64_t expirations;
+                    ssize_t rd = read(timer_fd, &expirations, sizeof(expirations));
+                    (void)rd;
+                }
+            }
+
             if (inotify_fd >= 0) {
                 for (int j = 0; j < nfds; j++) {
                     if (pfds[j].fd == inotify_fd && (pfds[j].revents & POLLIN)) {
@@ -292,7 +345,7 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-            for (int j = 1; j < nfds; j++) {
+            for (int j = 0; j < nfds; j++) {
                 ExecChild *c = fd_child_map[j];
                 if (!c || !c->active) continue;
                 if (pfds[j].revents & (POLLIN | POLLHUP | POLLERR)) {
@@ -313,9 +366,12 @@ int main(int argc, char *argv[]) {
             if (!c->active) continue;
             if (!c->exited) {
                 int status;
-                if (waitpid(c->pid, &status, WNOHANG) == c->pid) {
+                pid_t wp = waitpid(c->pid, &status, WNOHANG);
+                if (wp == c->pid || (wp == -1 && errno == ECHILD)) {
                     c->exited = 1;
-                    c->exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 1);
+                    if (wp == c->pid) {
+                        c->exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 1);
+                    }
                     drain_pipe(c->stdout_fd, c, 1); c->stdout_done = 1;
                     drain_pipe(c->stderr_fd, c, 0); c->stderr_done = 1;
                 } else if (now_ms() - c->start_ms >= c->timeout_ms) {
