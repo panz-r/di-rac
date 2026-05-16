@@ -286,8 +286,6 @@ pub struct AgentEngine {
     pub bash_history: Vec<(String, String, i32)>,
     /// Agent's current working directory — updated on `cd` via bash.
     pub agent_cwd: String,
-    /// Last CWD announced to the LLM. Empty means never announced.
-    pub last_announced_cwd: String,
     /// Whether the last LLM output was truncated (hit MAX_TOKENS).
     pub last_output_truncated: bool,
     pub request_id_counter: i64,
@@ -389,7 +387,6 @@ impl AgentEngine {
             agent_cwd: std::env::current_dir()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| ".".into()),
-            last_announced_cwd: String::new(),
             last_output_truncated: false,
             request_id_counter: 0,
             tool_call_counter: 0,
@@ -1499,16 +1496,14 @@ impl AgentEngine {
         let mut frame = self.context_compiler.as_mut().expect("context compiler initialized in run_turn prologue")
             .build_frame(&dynamic, gateway_msgs);
 
-        // Inject current CWD into system prompt if it has changed since last turn.
-        // Never stored in trajectory — only appears in the current request.
-        if self.agent_cwd != self.last_announced_cwd {
-            let cwd_notice = format!("- Current Working Directory: {}", self.agent_cwd);
-            if !frame.system.is_empty() {
-                frame.system.push_str(&format!("\n{}", cwd_notice));
-            } else {
-                frame.system = cwd_notice;
-            }
-            self.last_announced_cwd = self.agent_cwd.clone();
+        // Inject current CWD into system prompt every turn so the LLM always
+        // knows the correct working directory. Never stored in trajectory.
+        // The CWD may change between turns when bash commands use `cd`.
+        let cwd_notice = format!("- Current Working Directory: {}", self.agent_cwd);
+        if !frame.system.is_empty() {
+            frame.system.push_str(&format!("\n{}", cwd_notice));
+        } else {
+            frame.system = cwd_notice;
         }
 
         debug_log!("[di-core] run_turn: sending gateway request ({} msgs, system {} chars, {} tools)",
@@ -1728,6 +1723,11 @@ impl AgentEngine {
         // 7. Execute tools
         eprintln!("[di-core] run_turn: executing {} tools", tools.len());
         self.turn_edits.clear();
+        // Snapshot CWD at turn start: all tools in this turn use the SAME CWD.
+        // agent_cwd may be updated mid-turn by meta.cwd from a bash tool, but
+        // subsequent tools in the same turn must start from the turn's CWD.
+        // The updated value takes effect on the next turn via frame.system.
+        let turn_cwd = self.agent_cwd.clone();
         for (ti, tool) in tools.iter().enumerate() {
             if self.is_aborted() {
                 break;
@@ -1919,7 +1919,7 @@ impl AgentEngine {
                     }
                     args.as_object_mut()
                         .unwrap()
-                        .insert("_cwd".to_string(), serde_json::json!(self.agent_cwd));
+                        .insert("_cwd".to_string(), serde_json::json!(turn_cwd));
                     args
                 },
             };
@@ -2173,13 +2173,15 @@ impl AgentEngine {
                         // fields (_output_str, _cwd, _retry_count) from the object
                         // before output_manager.enforce_budget replaces it with a string.
                         if tool_name == "bash" {
-                            // Extract output from the structured bash result.
-                            // Note: _cwd is intentionally NOT used to update agent_cwd.
-                            // Updating from meta.cwd would propagate subdirectory changes
-                            // across turns, breaking relative paths in subsequent commands.
-                            // Each bash invocation starts from the agent_cwd set at init
-                            // or explicitly announced via the system prompt.
+                            // Extract output and CWD from the structured bash result.
+                            // agent_cwd is updated from the daemon's actual post-command
+                            // directory, then announced to the LLM on the next turn via
+                            // frame.system injection (never stored in trajectory).
                             let mut bash_output_str = result.get("_output_str").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let bash_cwd_str = result.get("_cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            if !bash_cwd_str.is_empty() {
+                                self.agent_cwd = bash_cwd_str;
+                            }
                             // Prepend retry header if tool was retried
                             if let Some(rc) = result.get("_retry_count").and_then(|v| v.as_i64()) {
                                 if rc > 0 {
