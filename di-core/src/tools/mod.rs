@@ -416,7 +416,24 @@ impl ToolExecutor {
         let name = call.name.as_str();
 
         // Parse CLI-style command string into structured args
-        let parsed_args = cli_parse::parse_command_args(name, &call.args);
+        let mut parsed_args = cli_parse::parse_command_args(name, &call.args);
+        // Preserve injected fields (_cwd) that CLI parsers may strip.
+        // If parsed result isn't an object, wrap it so _cwd is preserved.
+        if let Some(cwd) = call.args.get("_cwd").and_then(|v| v.as_str()) {
+            if !cwd.is_empty() {
+                match &mut parsed_args {
+                    serde_json::Value::Object(ref mut obj) => {
+                        obj.insert("_cwd".to_string(), serde_json::json!(cwd));
+                    }
+                    _ => {
+                        parsed_args = serde_json::json!({
+                            "_cwd": cwd,
+                            "value": parsed_args,
+                        });
+                    }
+                }
+            }
+        }
         let parsed_call = ToolCall { name: call.name.clone(), args: parsed_args };
 
         match name {
@@ -776,8 +793,15 @@ impl ToolExecutor {
     }
 
     async fn write_file(&self, call: &ToolCall) -> Result<serde_json::Value> {
-        let path = call.args.get("path").and_then(|v| v.as_str())
+        let path_str = call.args.get("path").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing path argument"))?;
+        // Resolve relative path against agent CWD
+        let cwd = call.args.get("_cwd").and_then(|v| v.as_str()).unwrap_or("");
+        let path = if !cwd.is_empty() && !path_str.starts_with('/') {
+            std::path::Path::new(cwd).join(path_str).to_string_lossy().to_string()
+        } else {
+            path_str.to_string()
+        };
         let raw_content = call.args.get("content").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing content argument"))?;
 
@@ -786,7 +810,7 @@ impl ToolExecutor {
         let content: &str = &content_stripped;
 
         // Security scanning: detect dangerous patterns and sensitive paths
-        let security_violations = scan_write_security(path, content);
+        let security_violations = scan_write_security(&path, content);
 
         let dry_run = call.args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
         let line_count = read_file::count_lines(&content);
@@ -805,14 +829,14 @@ impl ToolExecutor {
             .unwrap_or(true);
 
         if create_dirs {
-            if let Some(parent) = std::path::Path::new(path).parent() {
+            if let Some(parent) = std::path::Path::new(&path).parent() {
                 if !parent.as_os_str().is_empty() {
                     tokio::fs::create_dir_all(parent).await?;
                 }
             }
         }
 
-        tokio::fs::write(path, content).await?;
+        tokio::fs::write(&path, content).await?;
 
         let line_count = read_file::count_lines(content);
         let mut output = format!("Created: {} ({} lines)", path, line_count);

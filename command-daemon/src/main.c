@@ -338,6 +338,13 @@ int main(int argc, char *argv[]) {
             }
             if (c->exited && c->stdout_done && c->stderr_done) {
                 send_child_result(c);
+                /* Update session CWD from the resolved post-command directory */
+                if (c->session_id[0] && c->cwd[0]) {
+                    Session *s = session_get(ctx.sessions, c->session_id);
+                    if (s) {
+                        strncpy(s->cwd, c->cwd, SESSION_CWD_MAX - 1);
+                    }
+                }
                 exec_child_cleanup(c);
             }
         }

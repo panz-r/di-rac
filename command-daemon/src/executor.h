@@ -32,6 +32,7 @@ typedef struct {
     int timeout_ms;        /* command timeout */
     long last_progress_ms; /* monotonic time of last progress event */
     char cwd[4096];        /* resolved cwd after command */
+    char session_id[128];  /* session to update cwd on (empty = no session) */
     int active;            /* slot in use */
 } ExecChild;
 

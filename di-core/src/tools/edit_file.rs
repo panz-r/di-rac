@@ -980,10 +980,21 @@ pub async fn edit_file(
     _command_daemon: &Arc<tokio::sync::Mutex<ResilientDaemon>>,
     call: &ToolCall,
 ) -> ToolResponse {
-    let file_edits = match parse_edits(call) {
+    let cwd = call.args.get("_cwd").and_then(|v| v.as_str()).unwrap_or("");
+    let mut file_edits = match parse_edits(call) {
         Ok(fe) => fe,
         Err(e) => return ToolResponse::fail(ToolErrorCode::MissingArgument, e, "edit"),
     };
+    // Resolve relative paths against agent CWD
+    if !cwd.is_empty() {
+        let cwd_path = std::path::Path::new(cwd);
+        for fe in &mut file_edits {
+            let p = std::path::Path::new(&fe.path);
+            if !p.is_absolute() {
+                fe.path = cwd_path.join(p).to_string_lossy().to_string();
+            }
+        }
+    }
 
     let dry_run = call.args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
     let was_stringified = call.args.get("_was_stringified").and_then(|v| v.as_bool()).unwrap_or(false);

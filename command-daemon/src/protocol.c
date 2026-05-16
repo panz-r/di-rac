@@ -376,6 +376,9 @@ static void handle_execute(const char *line, int line_len,
 
     slot->id = strdup(id);
     slot->timeout_ms = timeout_ms;
+    if (session_id[0]) {
+        strncpy(slot->session_id, session_id, sizeof(slot->session_id) - 1);
+    }
     send_ack(ctx->stdout_lock, id, timeout_ms);
 }
 
