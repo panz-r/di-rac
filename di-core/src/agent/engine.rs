@@ -1,7 +1,6 @@
 use crate::agent::trajectory::{Trajectory, Role, ToolMessageMeta, ToolCallEntry, Message};
 use crate::agent::parser::StreamingToolAccumulator;
 use crate::agent::file_context::FileContextTracker;
-use crate::agent::environment::EnvironmentManager;
 use crate::observer::Observer;
 use crate::context::{ContextManager, ConservativeEstimator, TokenEstimator, TurnMetrics, ToolCallRecord};
 use crate::context::lifecycle::ContextLifecycleManager;
@@ -297,7 +296,6 @@ pub struct AgentEngine {
     pub frontend_tx: mpsc::Sender<FrontendMessage>,
     pub mode: AgentMode,
     pub file_context: FileContextTracker,
-    pub environment: EnvironmentManager,
     /// Shared metrics for the context compilation system.
     pub metrics: Arc<ContextMetrics>,
     /// Task state reducer — classifies user messages and tracks goal/constraint state.
@@ -399,7 +397,6 @@ impl AgentEngine {
             frontend_tx,
             mode: AgentMode::Act,
             file_context: FileContextTracker::new(),
-            environment: EnvironmentManager::new(),
             metrics: ContextMetrics::new(),
             task_reducer: TaskStateReducer::new(),
             frontend_timeout_ms: None,
@@ -1145,10 +1142,6 @@ impl AgentEngine {
 
         // 0. Init context compiler once (stable prefix + session info)
         if self.context_compiler.is_none() {
-            if self.environment.get_details().is_none() {
-                self.environment.gather();
-            }
-
             let _home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".into());
             let cores = std::thread::available_parallelism()
