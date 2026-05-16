@@ -159,6 +159,11 @@ impl AgentHookManager {
         self.active.load_full().roles.clone()
     }
 
+    /// Take pending approval notes (clears them after display so they don't repeat).
+    pub fn take_approval_notes(&mut self) -> Vec<(Severity, String)> {
+        std::mem::take(&mut self.merged.approval_notes)
+    }
+
     /// Take pending observer triggers (clears them from accumulated state).
     /// Also clears observer trigger dedupe keys so the same trigger can fire
     /// again on subsequent turns when the condition re-occurs.

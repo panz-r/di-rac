@@ -1422,16 +1422,64 @@ impl AgentEngine {
             None
         };
 
+        // Build hook guidance string from accumulated hints, criteria, and validation requests
+        let hook_guidance = {
+            let merged = self.hooks.merged_directives();
+            let mut parts: Vec<String> = Vec::new();
+            if !merged.hints.is_empty() {
+                let hints = merged.hints.iter()
+                    .map(|h| format!("- {}", h))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                parts.push(format!("# Guidance\n\n{}", hints));
+            }
+            if !merged.criteria.is_empty() {
+                let criteria = merged.criteria.iter()
+                    .map(|c| format!("- {}", c))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                parts.push(format!("# Requirements\n\n{}", criteria));
+            }
+            if !merged.validations.is_empty() {
+                let validations: Vec<String> = merged.validations.iter()
+                    .map(|v| format!("  $ {}", v.argv.join(" ")))
+                    .collect();
+                parts.push(format!("# Pending Validations\n\n{}", validations.join("\n")));
+            }
+            if !merged.planner_reviews.is_empty() {
+                let reasons: Vec<String> = merged.planner_reviews.iter()
+                    .map(|r| format!("  • {}", r.reason))
+                    .collect();
+                parts.push(format!("# Planner Review Requested\n\n{}", reasons.join("\n")));
+            }
+            if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
+        };
+
+        // Build remembered facts block — survives compaction via distilled context
+        let remembered_facts_block = {
+            let merged = self.hooks.merged_directives();
+            if !merged.remembered_facts.is_empty() {
+                let facts: String = merged.remembered_facts.iter()
+                    .map(|f| format!("  • {}", f))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Some(format!("# Session Facts\n\n{}", facts))
+            } else {
+                None
+            }
+        };
+
         let dynamic = DynamicContext {
             file_context: &self.file_context,
             observations: &self.context_manager.vault,
             current_apis: &current_apis,
             background_summary: &None,
-            distilled_context: &None,
+            distilled_context: &remembered_facts_block,
             task_state_summary: &task_summary,
             tail_reminder: &tail_reminder,
             observer_block: &observer_block,
             compaction_summary: &compaction_summary,
+            hook_guidance: &hook_guidance,
         };
 
         // Current-frame budget: measure system string first, then compute history budget
@@ -1869,7 +1917,18 @@ impl AgentEngine {
                 }).await?;
 
                 let approval_id = Uuid::new_v4();
-                let description = format!("Execute {} on behalf of agent", tool.name);
+                // Include hook-generated approval notes in the approval prompt,
+                // then clear them so they don't repeat on every subsequent approval.
+                let hook_notes: Vec<String> = self.hooks.take_approval_notes().into_iter()
+                    .map(|(_, msg)| msg)
+                    .collect();
+                let mut description = format!("Execute {} on behalf of agent", tool.name);
+                if !hook_notes.is_empty() {
+                    description.push_str("\n\n--- Hook notes ---\n");
+                    for note in &hook_notes {
+                        description.push_str(&format!("  • {}\n", note));
+                    }
+                }
                 self.emit_event(CoreEvent::ApprovalNeeded {
                     agent_id: self.id,
                     approval_id,

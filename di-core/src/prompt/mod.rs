@@ -82,6 +82,9 @@ pub struct DynamicContext<'a> {
     pub observer_block: &'a Option<String>,
     /// Progress summary from the last compaction checkpoint, if any.
     pub compaction_summary: &'a Option<String>,
+    /// Hook-generated guidance: hints and criteria from repo/session hooks.
+    /// Injected into the system prompt to shape agent behavior.
+    pub hook_guidance: &'a Option<String>,
 }
 
 impl<'a> DynamicContext<'a> {
@@ -130,6 +133,12 @@ impl<'a> DynamicContext<'a> {
         if let Some(block) = self.observer_block {
             if !block.is_empty() {
                 parts.push(block.clone());
+            }
+        }
+
+        if let Some(guidance) = self.hook_guidance {
+            if !guidance.is_empty() {
+                parts.push(guidance.clone());
             }
         }
 
