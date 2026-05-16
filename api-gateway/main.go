@@ -1278,6 +1278,9 @@ func isSafeBaseURL(ctx context.Context, rawURL string) error {
 // before forwarding to the client, preventing internal detail leaks.
 func sanitizeProviderError(err error) string {
 	if pae, ok := err.(*providers.ProviderAPIError); ok {
+		if pae.Message != "" {
+			return fmt.Sprintf("provider returned status %d: %s", pae.StatusCode, pae.Message)
+		}
 		return fmt.Sprintf("provider returned status %d", pae.StatusCode)
 	}
 	// For non-API errors (I/O timeouts, DNS, etc.), return only a generic
