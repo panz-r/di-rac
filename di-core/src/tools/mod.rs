@@ -439,7 +439,7 @@ impl ToolExecutor {
         match name {
             "read" => ToolResponse::from_result(self.read_file(&parsed_call).await, name),
             "write" => ToolResponse::from_result(self.write_file(&parsed_call).await, name),
-            "edit" => edit_file::edit_file(&self.command_daemon, &parsed_call).await,
+            "edit" => edit_file::edit_file(&parsed_call).await,
             "search" => search_files::search_files(&self.command_daemon, &parsed_call).await,
             "repo" => list_files::list_files(&self.analyzer_daemon, &parsed_call).await,
             "bash" => ToolResponse::from_result(self.bash(&parsed_call).await, name),
@@ -715,7 +715,7 @@ impl ToolExecutor {
                 let ranges = call.args.get("ranges").and_then(|v| read_file::parse_ranges(v));
                 let page = call.args.get("page").and_then(|v| v.as_str()).map(String::from);
 
-                let analyzer_data: Option<serde_json::Value> = match self.analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
+                let analyzer_data: Option<serde_json::Value> = match self.analyzer_daemon.lock().await.send_request_retry::<_, AnalyzerResponse>(AnalyzerRequest {
                     command: "outline".to_string(),
                     file: Some(path.to_string()),
                     content: None,
@@ -745,7 +745,7 @@ impl ToolExecutor {
                 let page = call.args.get("page").and_then(|v| v.as_str()).map(String::from);
 
                 // Fetch analyzer data for budget degradation cascade (full→skeleton/outline/hint)
-                let mut analyzer_data: Option<serde_json::Value> = match self.analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
+                let mut analyzer_data: Option<serde_json::Value> = match self.analyzer_daemon.lock().await.send_request_retry::<_, AnalyzerResponse>(AnalyzerRequest {
                     command: "outline".to_string(),
                     file: Some(path.to_string()),
                     content: None,
@@ -760,7 +760,7 @@ impl ToolExecutor {
                 // Also fetch skeleton data so budget degradation to "skeleton" level works correctly
                 if let Some(ref mut data) = analyzer_data {
                     if data.get("skeleton").is_none() {
-                        if let Ok(skel_resp) = self.analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
+                        if let Ok(skel_resp) = self.analyzer_daemon.lock().await.send_request_retry::<_, AnalyzerResponse>(AnalyzerRequest {
                             command: "skeleton".to_string(),
                             file: Some(path.to_string()),
                             content: None,
@@ -885,7 +885,7 @@ impl ToolExecutor {
             "type": "execute",
             "command": command,
             "cwd": agent_cwd,
-            "timeout_ms": timeout_ms,
+            "timeout": (timeout_ms / 1000).max(1),
         });
         let resp: crate::daemons::ExecuteResult = self.command_daemon.lock().await.send_request(request).await?;
 

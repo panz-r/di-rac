@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream as AsyncUnixStream;
 use tokio::sync::mpsc;
 
@@ -362,31 +364,35 @@ pub struct ExecuteMeta {
     pub detected_patterns: Vec<String>,
 }
 
-pub struct CommandDaemon {
-    stdin: tokio::process::ChildStdin,
-    stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
-    _child: tokio::process::Child,
-    request_id: u32,
+// ---------------------------------------------------------------------------
+// DaemonClient — single-task IPC with the daemon child process.
+// Owns stdin/stdout, runs a select! loop over three event sources:
+//   • stdout lines   → parse & dispatch to pending request by id
+//   • new submissions → register in pending map, write to stdin
+//   • timer tick      → expire timed-out requests
+// No shared mutexes, no separate reader task — everything lives in one task.
+// ---------------------------------------------------------------------------
+
+/// Internal message sent from `DaemonClient` to the daemon task.
+struct DaemonSubmit {
+    id: u32,
+    json: String,          // pre-serialized request with id injected
+    response_tx: tokio::sync::oneshot::Sender<Result<String, UntimedError>>,
+    deadline: tokio::time::Instant,
 }
 
-impl Drop for CommandDaemon {
-    fn drop(&mut self) {
-        let _ = self._child.start_kill();
-    }
+/// Handle to the daemon task. Drop kills the child.
+pub struct CommandDaemon {
+    submit_tx: tokio::sync::mpsc::UnboundedSender<DaemonSubmit>,
+    _child: tokio::process::Child,
+    next_id: std::sync::atomic::AtomicU32,
 }
 
 impl CommandDaemon {
-    /// Spawn the command daemon as a child process.
-    /// Waits for "ready" on stderr before returning.
     pub async fn spawn(binary_path: &str, workspace_root: &str) -> Result<Self> {
         if !std::path::Path::new(binary_path).exists() {
-            return Err(anyhow!("Command daemon binary not found: {}", binary_path));
+            return Err(anyhow!("Daemon binary not found: {}", binary_path));
         }
-
-        // tokio::process::Command creates pipes with O_NONBLOCK on both ends.
-        // The daemon uses poll + read on stdin and handles non-blocking I/O
-        // correctly, but still needs stderr drained so its fprintf(stderr)
-        // doesn't fill the pipe buffer.
         let mut child = tokio::process::Command::new(binary_path)
             .arg("--workspace-root")
             .arg(workspace_root)
@@ -395,146 +401,187 @@ impl CommandDaemon {
             .stderr(std::process::Stdio::piped())
             .spawn()?;
 
-        let stdin = child.stdin.take().ok_or_else(|| anyhow!("Failed to get command daemon stdin"))?;
-        let stdout = child.stdout.take().ok_or_else(|| anyhow!("Failed to get command daemon stdout"))?;
-        let stderr = child.stderr.take().ok_or_else(|| anyhow!("Failed to get command daemon stderr"))?;
+        let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("No stdin"))?;
+        let stdout = child.stdout.take().ok_or_else(|| anyhow!("No stdout"))?;
+        let stderr = child.stderr.take().ok_or_else(|| anyhow!("No stderr"))?;
 
         // Wait for "ready" on stderr
         let mut stderr_reader = tokio::io::BufReader::new(stderr);
-        let mut ready_line = String::new();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            stderr_reader.read_line(&mut ready_line),
-        ).await??;
+        let mut ready = String::new();
+        tokio::time::timeout(Duration::from_secs(5), stderr_reader.read_line(&mut ready)).await??;
 
-        // Drain daemon stderr in background. If we close the pipe, the
-        // daemon's fprintf(stderr) triggers SIGPIPE (killing it) or
-        // the pipe buffer fills up (blocking the daemon).
-        let drain = tokio::io::BufReader::new(stderr_reader.into_inner());
+        // Drain stderr in background (unused but must be read to avoid SIGPIPE).
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
-            let mut drain = drain;
+            let mut r = stderr_reader.into_inner();
             let mut buf = [0u8; 4096];
-            while let Ok(n) = drain.read(&mut buf).await {
-                if n == 0 { break; }
+            while let Ok(n) = r.read(&mut buf).await { if n == 0 { break; } }
+        });
+
+        let (submit_tx, submit_rx): (tokio::sync::mpsc::UnboundedSender<DaemonSubmit>, tokio::sync::mpsc::UnboundedReceiver<DaemonSubmit>) = tokio::sync::mpsc::unbounded_channel();
+        let reader = tokio::io::BufReader::new(stdout);
+        let mut buf_stdin = tokio::io::BufWriter::new(stdin);
+
+        // Single task: owns the pipes, pending map, and timeout loop.
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = reader.lines();
+            let mut pending: std::collections::HashMap<u32, DaemonSubmit> = std::collections::HashMap::new();
+            let mut submit_rx = submit_rx;
+
+            loop {
+                // Timeout for the next timer tick.
+                let tick = tokio::time::sleep(Duration::from_millis(200));
+                tokio::pin!(tick);
+
+                tokio::select! {
+                    biased; // check submissions first, then responses, then timeouts
+
+                    req = submit_rx.recv() => {
+                        let req = req;
+                        if let Some(r) = req {
+                            let id = r.id;
+                            let json = r.json.clone();
+                            pending.insert(r.id, r);
+                            // Write request to stdin. If the pipe breaks, fail all pending.
+                            let write_ok = buf_stdin.write_all(json.as_bytes()).await.is_ok()
+                                && buf_stdin.write_all(b"\n").await.is_ok()
+                                && buf_stdin.flush().await.is_ok();
+                            if !write_ok {
+                                for (_, p) in pending.drain() {
+                                    let _ = p.response_tx.send(Err(UntimedError::Dead(
+                                        "Write failed: pipe broken".to_string()
+                                    )));
+                                }
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    line = lines.next_line() => {
+                        match line {
+                            Ok(Some(raw)) => {
+                                let trimmed = raw.trim();
+                                if trimmed.is_empty() { continue; }
+                                let val: serde_json::Value = match serde_json::from_str(trimmed) {
+                                    Ok(v) => v,
+                                    Err(_) => continue,
+                                };
+                                let msg_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                                if msg_type == "ack" || msg_type == "progress" { continue; }
+                                let resp_id = val.get("id")
+                                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+                                    .unwrap_or(0) as u32;
+                                if let Some(p) = pending.remove(&resp_id) {
+                                    let result = if msg_type == "error" || val.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+                                        Err(UntimedError::App(anyhow!("{}", trimmed)))
+                                    } else {
+                                        Ok(trimmed.to_string())
+                                    };
+                                    let _ = p.response_tx.send(result);
+                                }
+                            }
+                            Ok(None) | Err(_) => {
+                                // Daemon died
+                                for (_, p) in pending.drain() {
+                                    let _ = p.response_tx.send(Err(UntimedError::Dead(
+                                        "Daemon stdout closed".to_string()
+                                    )));
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    // Timer tick — expire timed-out requests
+                    _ = tick => {
+                        let now = tokio::time::Instant::now();
+                        let expired: Vec<u32> = pending.iter()
+                            .filter(|(_, p)| p.deadline <= now)
+                            .map(|(id, _)| *id)
+                            .collect();
+                        for id in &expired {
+                            if let Some(p) = pending.remove(id) {
+                                let _ = p.response_tx.send(Err(UntimedError::Dead(
+                                    format!("Daemon timed out (request_id={})", p.id)
+                                )));
+                            }
+                        }
+                    }
+                }
             }
         });
 
-        let stdout_reader = tokio::io::BufReader::new(stdout);
-
         Ok(Self {
-            stdin,
-            stdout: stdout_reader,
+            submit_tx,
             _child: child,
-            request_id: 0,
+            next_id: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
-    /// No-timeout variant of send_request for the analyzer daemon.
-    /// Returns `UntimedError::Dead` when the process has exited (EOF/broken pipe)
-    /// or `UntimedError::App` for application-level errors. Has a 60s internal timeout
-    /// to prevent indefinite blocking on unresponsive daemons.
+    /// Submit a request and wait for the response. Multiple callers can have
+    /// in-flight requests simultaneously — the daemon task dispatches by id.
     pub async fn send_request_untimed<T: Serialize, R: for<'de> Deserialize<'de>>(
-        &mut self,
+        &self,
         request: &T,
     ) -> Result<R, UntimedError> {
-        self.request_id = self.request_id.wrapping_add(1);
-        if self.request_id == 0 { self.request_id = 1; }
-        let id = self.request_id;
+        let raw = self.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let id = raw.wrapping_add(1);
+        let id = if id == 0 { 1 } else { id };
 
         let mut payload: serde_json::Map<String, serde_json::Value> = serde_json::to_value(request)
-            .map_err(|e| UntimedError::App(anyhow!("Failed to serialize request: {}", e)))?
+            .map_err(|e| UntimedError::App(anyhow!("Serialize: {}", e)))?
             .as_object()
-            .ok_or_else(|| UntimedError::App(anyhow!("Request must be a JSON object")))?
+            .ok_or_else(|| UntimedError::App(anyhow!("Not an object")))?
             .clone();
-
         payload.insert("id".to_string(), serde_json::Value::Number(id.into()));
 
         let json = serde_json::to_string(&serde_json::Value::Object(payload))
-            .map_err(|e| UntimedError::App(anyhow!("Failed to serialize payload: {}", e)))?;
+            .map_err(|e| UntimedError::App(anyhow!("Serialize: {}", e)))?;
 
-        use tokio::io::AsyncWriteExt;
-        let t0 = std::time::Instant::now();
-        if let Err(e) = self.stdin.write_all(json.as_bytes()).await {
-            return Err(UntimedError::Dead(format!("Write failed (daemon dead?): {}", e)));
-        }
-        if let Err(e) = self.stdin.write_all(b"\n").await {
-            return Err(UntimedError::Dead(format!("Write failed (daemon dead?): {}", e)));
-        }
-        if let Err(e) = self.stdin.flush().await {
-            return Err(UntimedError::Dead(format!("Flush failed (daemon dead?): {}", e)));
-        }
-        eprintln!("[di-core] daemon write+flush took {:?}", t0.elapsed());
+        let (response_tx, rx) = tokio::sync::oneshot::channel();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
 
-        let id_str = id.to_string();
-        let mut line = String::new();
-        let mut bad_lines = 0u32;
-        loop {
-            line.clear();
-            let t0 = std::time::Instant::now();
-            let n = tokio::time::timeout(
-                std::time::Duration::from_secs(60),
-                self.stdout.read_line(&mut line),
-            ).await.map_err(|_| UntimedError::Dead(
-                format!("Daemon timed out after 60s (request_id={})", id)
-            ))?.map_err(|e| UntimedError::Dead(format!("Read error: {}", e)))?;
-            eprintln!("[di-core] daemon read_line took {:?} ({} bytes)", t0.elapsed(), n);
-            if n == 0 {
-                return Err(UntimedError::Dead("Daemon stdout EOF — process exited".to_string()));
-            }
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
+        self.submit_tx.send(DaemonSubmit { id, json, response_tx, deadline })
+            .map_err(|_| UntimedError::Dead("Daemon task died".to_string()))?;
 
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                bad_lines = 0;
-                let resp_id = match val.get("id") {
-                    Some(v) => v.as_str().map(String::from)
-                        .or_else(|| v.as_u64().map(|n| n.to_string())),
-                    None => None,
-                };
-                let resp_id_str = resp_id.as_deref().unwrap_or("");
-
+        match rx.await {
+            Ok(Ok(raw)) => {
+                let val: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|e| UntimedError::App(anyhow!("Parse: {}", e)))?;
                 let msg_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 let ok = val.get("ok").and_then(|v| v.as_bool());
 
-                // Application error — not a dead daemon, return to caller
                 if msg_type == "error" || ok == Some(false) {
                     let code = val.get("code").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
                     let error_type = val.get("error_type").and_then(|v| v.as_str()).unwrap_or("ToolInternalError");
                     let msg = val.get("message").and_then(|v| v.as_str())
                         .or_else(|| val.get("error").and_then(|e| e.get("message")).and_then(|v| v.as_str()))
-                        .unwrap_or("unknown daemon error");
+                        .unwrap_or("unknown error");
                     return Err(UntimedError::App(anyhow!("[{}][{}] {}", code, error_type, msg)));
                 }
 
-                if msg_type == "ack" || msg_type == "progress" {
-                    continue;
-                }
-
-                if !resp_id_str.is_empty() && resp_id_str != id_str {
-                    eprintln!("[di-core] send_request_untimed: skipping response for id={} (expecting {})", resp_id_str, id);
-                    continue;
-                }
-
-                return serde_json::from_str::<R>(trimmed)
-                    .map_err(|e| UntimedError::App(anyhow!(
-                        "Failed to parse daemon response: {} — input: {}", e, &trimmed[..trimmed.len().min(200)]
-                    )));
-            } else {
-                bad_lines += 1;
-                if bad_lines >= 10 {
-                    return Err(UntimedError::App(anyhow!(
-                        "Daemon: 10 consecutive unparseable lines (request_id={})", id
-                    )));
-                }
-                continue;
+                serde_json::from_str::<R>(&raw)
+                    .map_err(|e| UntimedError::App(anyhow!("Parse response: {} — input: {}", e, &raw[..raw.len().min(200)])))
             }
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(UntimedError::Dead("Daemon task died".to_string())),
         }
     }
 }
 
+impl Drop for CommandDaemon {
+    fn drop(&mut self) {
+        let _ = self._child.start_kill();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resilient Daemon Wrapper (auto-restart on death, no timeout, panic on failure)
+// Wraps CommandDaemon for analyzer daemon use. If the daemon dies (crash, hang),
+// it is automatically restarted. If restart also fails, panics with a clear message.
 // ---------------------------------------------------------------------------
 // Resilient Daemon Wrapper (auto-restart on death, no timeout, panic on failure)
 // Wraps CommandDaemon for analyzer daemon use. If the daemon dies (crash, hang),
@@ -608,7 +655,8 @@ impl ResilientDaemon {
                 }
             }
 
-            let timeout = tokio::time::Duration::from_secs(120);
+            // Timeout covers both analyzer (fast) and command (slow, up to 10min) daemons.
+            let timeout = tokio::time::Duration::from_secs(600);
             let result = tokio::time::timeout(
                 timeout,
                 self.inner.as_mut().unwrap().send_request_untimed(&request),
@@ -633,7 +681,7 @@ impl ResilientDaemon {
                 }
                 Ok(Err(UntimedError::App(e))) => return Err(e),
                 Err(_) => {
-                    let msg = "Daemon timed out after 120s";
+                    let msg = "Daemon timed out after 600s";
                     attempts += 1;
                     if attempts >= max_attempts {
                         return Err(anyhow::anyhow!(

@@ -34,7 +34,7 @@ pub async fn list_files(
     let mut output_parts: Vec<String> = Vec::new();
 
     for path in &paths {
-        match analyzer_daemon.lock().await.send_request::<_, AnalyzerResponse>(AnalyzerRequest {
+        match analyzer_daemon.lock().await.send_request_retry::<_, AnalyzerResponse>(AnalyzerRequest {
             command: "repo-map".to_string(),
             file: Some(path.clone()),
             content: None,

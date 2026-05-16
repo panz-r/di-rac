@@ -2777,7 +2777,7 @@ impl AgentEngine {
                 query: Some(text),
                 subcommand: Some(tokens.to_string()),
             };
-            let _ = daemon.send_request::<_, crate::daemons::AnalyzerResponse>(req).await;
+            let _ = daemon.send_request_retry::<_, crate::daemons::AnalyzerResponse>(req).await;
         }
     }
 
@@ -2796,7 +2796,7 @@ impl AgentEngine {
             query: Some(query.to_string()),
             subcommand: None,
         };
-        match daemon.send_request::<_, crate::daemons::AnalyzerResponse>(req).await {
+        match daemon.send_request_retry::<_, crate::daemons::AnalyzerResponse>(req).await {
             Ok(resp) => {
                 resp.data.get("data")
                     .and_then(|d| d.get("results"))
@@ -2852,7 +2852,7 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
             query: None,
             subcommand: None,
         };
-        match self.tool_executor.analyzer_daemon().lock().await.send_request::<_, crate::daemons::AnalyzerResponse>(analyzer_req).await {
+        match self.tool_executor.analyzer_daemon().lock().await.send_request_retry::<_, crate::daemons::AnalyzerResponse>(analyzer_req).await {
             Ok(resp) if resp.ok => {
                 let added = resp.data.get("added").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let removed = resp.data.get("removed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -3063,7 +3063,7 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
                 };
                 
                 let mut daemon = self.analyzer_daemon.lock().await;
-                match daemon.send_request::<_, crate::daemons::ApiResponse>(req).await {
+                match daemon.send_request_retry::<_, crate::daemons::ApiResponse>(req).await {
                     Ok(resp) => {
                         for call in resp.calls { message_calls.insert(call); }
                         for def in resp.definitions { message_defs.insert(def); }

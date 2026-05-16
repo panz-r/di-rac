@@ -1,4 +1,3 @@
-use crate::daemons::ResilientDaemon;
 use crate::tools::ToolCall;
 use crate::tools::response::{ToolResponse, ToolErrorCode, ToolError};
 use crate::util::FileAnchorIndex;
@@ -977,7 +976,6 @@ fn auto_parse_array(val: &serde_json::Value) -> Result<Vec<serde_json::Value>, S
 // ---------------------------------------------------------------------------
 
 pub async fn edit_file(
-    _command_daemon: &Arc<tokio::sync::Mutex<ResilientDaemon>>,
     call: &ToolCall,
 ) -> ToolResponse {
     let cwd = call.args.get("_cwd").and_then(|v| v.as_str()).unwrap_or("");
