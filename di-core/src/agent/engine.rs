@@ -1473,7 +1473,9 @@ impl AgentEngine {
                             })
                         }).collect())
                     },
-                    tool_use_id: m.tool_call_id.clone(),
+                    tool_use_id: m.tool_call_id.clone().or({
+                        if m.role == Role::Tool { Some("call_unknown".to_string()) } else { None }
+                    }),
                     thinking: m.thinking.clone(),
                     name: None,
                 }

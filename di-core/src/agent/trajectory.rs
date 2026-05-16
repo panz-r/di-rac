@@ -85,7 +85,11 @@ impl Trajectory {
     pub fn add_tool_result(&mut self, content: serde_json::Value, tokens: usize, tool_index: usize, meta: ToolMessageMeta) -> Uuid {
         let tool_call_id = self.messages.iter().rev()
             .find(|m| matches!(m.role, Role::Assistant) && !m.tool_calls.is_empty())
-            .and_then(|m| m.tool_calls.get(tool_index).map(|tc| tc.id.clone()));
+            .and_then(|m| m.tool_calls.get(tool_index).map(|tc| tc.id.clone()))
+            // Fallback: if tool_index is out of bounds (e.g. preflight block without
+            // a corresponding assistant tool call), generate a minimal valid ID.
+            // MiniMax and other providers reject tool messages without tool_call_id.
+            .or_else(|| Some(format!("call_fallback_{}", tool_index)));
         let msg = Message {
             id: Uuid::new_v4(),
             role: Role::Tool,
