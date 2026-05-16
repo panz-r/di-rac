@@ -626,6 +626,7 @@ static void* request_worker(void *arg) {
         handled = true;
     } else if (strcmp(command, "skeleton") == 0) {
         if (content[0] == '\0' && file[0] != '\0') {
+            if (!is_path_safe(file, task->gctx->base.workspace_root)) { goto send_err; }
             FILE *f = fopen(file, "r");
             if (f) {
                 fseek(f, 0, SEEK_END);
