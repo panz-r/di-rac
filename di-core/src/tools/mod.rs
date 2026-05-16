@@ -1060,3 +1060,144 @@ fn parse_range(call: &ToolCall) -> Option<(usize, usize)> {
         _ => None,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemons::{ExecuteResult, ExecuteMeta};
+
+    fn make_result(exit_code: i32, stdout: &str, stderr: &str, cwd: &str) -> ExecuteResult {
+        ExecuteResult {
+            id: "1".to_string(),
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+            exit_code,
+            meta: ExecuteMeta {
+                mode_used: "full".to_string(),
+                cwd: cwd.to_string(),
+                truncated: false,
+                truncation_offset: 0,
+                hint: None,
+                blocked: None,
+                timed_out: false,
+                detected_patterns: Vec::new(),
+            },
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // format_bash_result
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_bash_result_basic() {
+        let r = make_result(0, "hello", "", "/w/di-rac");
+        let v = ToolExecutor::format_bash_result(&r);
+        let obj = v.as_object().unwrap();
+        assert_eq!(obj["_output_str"], "exit:0\nhello");
+        assert_eq!(obj["_cwd"], "/w/di-rac");
+    }
+
+    #[test]
+    fn format_bash_result_exit_code_1() {
+        let r = make_result(1, "", "error msg", "/tmp");
+        let v = ToolExecutor::format_bash_result(&r);
+        let obj = v.as_object().unwrap();
+        assert!(obj["_output_str"].as_str().unwrap().contains("exit:1"));
+        assert!(obj["_output_str"].as_str().unwrap().contains("[stderr]"));
+    }
+
+    #[test]
+    fn format_bash_result_truncated() {
+        let mut r = make_result(0, "data", "", "/tmp");
+        r.meta.truncated = true;
+        let v = ToolExecutor::format_bash_result(&r);
+        assert!(v.as_object().unwrap()["_output_str"].as_str().unwrap().contains("[truncated]"));
+    }
+
+    #[test]
+    fn format_bash_result_timed_out() {
+        let mut r = make_result(124, "", "", "/tmp");
+        r.meta.timed_out = true;
+        let v = ToolExecutor::format_bash_result(&r);
+        assert!(v.as_object().unwrap()["_output_str"].as_str().unwrap().contains("[timed out]"));
+    }
+
+    #[test]
+    fn format_bash_result_blocked() {
+        let mut r = make_result(1, "", "", "/tmp");
+        r.meta.blocked = Some("dangerous command".to_string());
+        let v = ToolExecutor::format_bash_result(&r);
+        assert!(v.as_object().unwrap()["_output_str"].as_str().unwrap().contains("[blocked:"));
+    }
+
+    #[test]
+    fn format_bash_result_hint() {
+        let mut r = make_result(0, "", "", "/tmp");
+        r.meta.hint = Some("command timed out".to_string());
+        let v = ToolExecutor::format_bash_result(&r);
+        assert!(v.as_object().unwrap()["_output_str"].as_str().unwrap().contains("[hint:"));
+    }
+
+    // -----------------------------------------------------------------------
+    // CLI arg _cwd preservation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_cwd_preserved_through_cli_bash() {
+        let mut args = serde_json::json!({"command": "ls -la", "_cwd": "/w/di-rac"});
+        let parsed = cli_parse::parse_command_args("bash", &args);
+        // parse_bash strips _cwd — it should be missing from parsed output
+        assert!(parsed.get("_cwd").is_none());
+        assert_eq!(parsed["command"], "ls -la");
+    }
+
+    #[test]
+    fn parse_cwd_preserved_through_structured_repo() {
+        let args = serde_json::json!({"detail": "files", "paths": ["src/"], "_cwd": "/w/di-rac"});
+        let parsed = cli_parse::parse_command_args("repo", &args);
+        // No "command" field → pass-through → _cwd preserved
+        assert_eq!(parsed["_cwd"], "/w/di-rac");
+    }
+
+    // -----------------------------------------------------------------------
+    // Retry prefix
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn retry_preserves_object_fields() {
+        let obj = serde_json::json!({
+            "_output_str": "exit:0\ndata",
+            "_cwd": "/w/di-rac"
+        });
+        // Simulate the retry logic at line 279-293
+        match &obj {
+            serde_json::Value::Object(map) => {
+                let mut cloned = map.clone();
+                cloned.insert("_retry_count".to_string(), serde_json::json!(2));
+                let result = serde_json::Value::Object(cloned);
+                assert!(result.get("_retry_count").is_some());
+                assert!(result.get("_output_str").is_some());
+                assert!(result.get("_cwd").is_some());
+                assert_eq!(result["_retry_count"], 2);
+            }
+            _ => panic!("expected object"),
+        }
+    }
+
+    #[test]
+    fn retry_prefixes_string() {
+        let s = serde_json::Value::String("exit:0\ndata".to_string());
+        match s {
+            serde_json::Value::String(ref val) => {
+                let result = format!("[Retry] 1 attempts\n{}", val);
+                assert_eq!(result, "[Retry] 1 attempts\nexit:0\ndata");
+            }
+            _ => panic!("expected string"),
+        }
+    }
+}

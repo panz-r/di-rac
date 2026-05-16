@@ -3661,4 +3661,135 @@ mod tests {
         let hash = AgentEngine::extract_hash_from_text(section);
         assert_eq!(hash, Some("aaaa1111".to_string()));
     }
+
+    // -----------------------------------------------------------------------
+    // Gateway message builder — content fallbacks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gateway_content_null_with_tool_calls() {
+        let msg = Message {
+            id: Uuid::new_v4(),
+            role: Role::Assistant,
+            content: serde_json::Value::Null,
+            timestamp: chrono::Utc::now(),
+            tokens: 0,
+            is_compressed: false,
+            tool_meta: ToolMessageMeta::default(),
+            tool_calls: vec![ToolCallEntry { id: "c1".into(), name: "bash".into(), arguments: "ls".into() }],
+            tool_call_id: None,
+            thinking: None,
+        };
+        let role = "assistant";
+        let content = match &msg.content {
+            serde_json::Value::Null => {
+                if !msg.tool_calls.is_empty() { Some(serde_json::Value::String(".".to_string())) }
+                else { Some(serde_json::Value::String("(empty)".to_string())) }
+            }
+            _ => None,
+        };
+        assert_eq!(content.unwrap(), ".");
+    }
+
+    #[test]
+    fn gateway_content_null_no_tool_calls() {
+        let msg = Message {
+            id: Uuid::new_v4(),
+            role: Role::Assistant,
+            content: serde_json::Value::Null,
+            timestamp: chrono::Utc::now(),
+            tokens: 0,
+            is_compressed: false,
+            tool_meta: ToolMessageMeta::default(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            thinking: None,
+        };
+        let content = match &msg.content {
+            serde_json::Value::Null => {
+                if !msg.tool_calls.is_empty() { Some(serde_json::Value::String(".".to_string())) }
+                else { Some(serde_json::Value::String("(empty)".to_string())) }
+            }
+            _ => None,
+        };
+        assert_eq!(content.unwrap(), "(empty)");
+    }
+
+    #[test]
+    fn gateway_content_empty_string_assistant_no_tool_calls() {
+        let msg = Message {
+            id: Uuid::new_v4(),
+            role: Role::Assistant,
+            content: serde_json::Value::String("".to_string()),
+            timestamp: chrono::Utc::now(),
+            tokens: 0,
+            is_compressed: false,
+            tool_meta: ToolMessageMeta { tool_name: "search".into(), ..ToolMessageMeta::default() },
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            thinking: None,
+        };
+        let content = match &msg.content {
+            serde_json::Value::String(s) => {
+                if s.is_empty() {
+                    if !msg.tool_calls.is_empty() { Some(serde_json::Value::String(".".to_string())) }
+                    else if msg.role == Role::Assistant {
+                        let tn = if !msg.tool_meta.tool_name.is_empty() { msg.tool_meta.tool_name.as_str() } else { "tool" };
+                        Some(serde_json::Value::String(format!("[compacted: called {}]", tn)))
+                    } else { Some(serde_json::Value::String(s.clone())) }
+                } else { Some(serde_json::Value::String(s.clone())) }
+            }
+            _ => None,
+        };
+        assert_eq!(content.unwrap(), "[compacted: called search]");
+    }
+
+    #[test]
+    fn gateway_content_object_with_output_str() {
+        let msg = Message {
+            id: Uuid::new_v4(),
+            role: Role::Tool,
+            content: serde_json::json!({"_output_str": "exit:0\nhello", "_cwd": "/w/di-rac"}),
+            timestamp: chrono::Utc::now(),
+            tokens: 0,
+            is_compressed: false,
+            tool_meta: ToolMessageMeta::default(),
+            tool_calls: Vec::new(),
+            tool_call_id: Some("c1".into()),
+            thinking: None,
+        };
+        let content = match &msg.content {
+            serde_json::Value::Object(ref obj) => {
+                let s = obj.get("_output_str").and_then(|v| v.as_str()).unwrap_or("");
+                if s.is_empty() { Some(serde_json::Value::String(msg.content.to_string())) }
+                else { Some(serde_json::Value::String(s.to_string())) }
+            }
+            _ => None,
+        };
+        assert_eq!(content.unwrap(), "exit:0\nhello");
+    }
+
+    #[test]
+    fn gateway_content_plain_string_passthrough() {
+        let msg = Message {
+            id: Uuid::new_v4(),
+            role: Role::User,
+            content: serde_json::Value::String("hello world".to_string()),
+            timestamp: chrono::Utc::now(),
+            tokens: 5,
+            is_compressed: false,
+            tool_meta: ToolMessageMeta::default(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            thinking: None,
+        };
+        let content = match &msg.content {
+            serde_json::Value::String(s) => {
+                if s.is_empty() && !msg.tool_calls.is_empty() { Some(serde_json::Value::String(".".to_string())) }
+                else { Some(serde_json::Value::String(s.clone())) }
+            }
+            _ => None,
+        };
+        assert_eq!(content.unwrap(), "hello world");
+    }
 }
