@@ -14,24 +14,6 @@ pub enum UntimedError {
 }
 
 // ---------------------------------------------------------------------------
-// Unix Daemon Client (synchronous UDS for C daemons)
-// ---------------------------------------------------------------------------
-
-#[allow(dead_code)]
-pub struct UnixDaemonClient {
-    socket_path: String,
-}
-
-impl UnixDaemonClient {
-    #[allow(dead_code)]
-    pub fn new(socket_path: &str) -> Self {
-        Self {
-            socket_path: socket_path.to_string(),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Analyzer daemon types
 // ---------------------------------------------------------------------------
 
@@ -53,11 +35,7 @@ pub struct AnalyzerResponse {
     pub data: serde_json::Value,
 }
 
-// ---------------------------------------------------------------------------
-// API Gateway types (NDJSON over UDS)
-// Matches api-gateway/providers/provider.go and api-gateway/main.go
-// ---------------------------------------------------------------------------
-
+// API extraction response (used in engine.rs for Python sandbox)
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct ApiResponse {
@@ -450,71 +428,6 @@ impl CommandDaemon {
             _child: child,
             request_id: 0,
         })
-    }
-
-    /// Execute a shell command via the command daemon.
-    /// Sends {"id":"N","type":"execute","command":"..."} and waits for result.
-    /// Timeout: 300s for long-running commands.
-    #[allow(dead_code)]
-    pub async fn execute(&mut self, command: &str) -> Result<ExecuteResult> {
-        self.request_id += 1;
-        let id = self.request_id.to_string();
-
-        let request = serde_json::json!({
-            "id": id,
-            "type": "execute",
-            "command": command,
-        });
-
-        let json_str = serde_json::to_string(&request)?;
-        use tokio::io::AsyncWriteExt;
-        self.stdin.write_all(json_str.as_bytes()).await?;
-        self.stdin.write_all(b"\n").await?;
-        self.stdin.flush().await?;
-
-        let timeout = std::time::Duration::from_secs(300);
-        let mut line = String::new();
-        let mut bad_lines = 0u32;
-        loop {
-            line.clear();
-            let read_future = self.stdout.read_line(&mut line);
-            let n = tokio::time::timeout(timeout, read_future).await
-                .map_err(|_| anyhow!("Command daemon execute timed out after 300s (id={}, cmd={})", id, &command[..command.len().min(80)]))??;
-            if n == 0 {
-                return Err(anyhow!("Command daemon closed stdout"));
-            }
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                bad_lines = 0;
-                let msg_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-                match msg_type {
-                    "error" => {
-                        let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
-                        return Err(anyhow!("Command daemon error: {}", msg));
-                    }
-                    "ack" | "progress" => continue,
-                    "result" => {
-                        return serde_json::from_str::<ExecuteResult>(trimmed)
-                            .map_err(|e| anyhow!("Failed to parse execute result: {} — input: {}", e, &trimmed[..trimmed.len().min(200)]));
-                    }
-                    _ => continue,
-                }
-            } else {
-                bad_lines += 1;
-                if bad_lines >= 10 {
-                    return Err(anyhow!(
-                        "Command daemon: 10 consecutive unparseable lines (id={}, cmd={})",
-                        id, &command[..command.len().min(80)]
-                    ));
-                }
-                continue;
-            }
-        }
     }
 
     /// No-timeout variant of send_request for the analyzer daemon.
