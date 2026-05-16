@@ -2173,12 +2173,13 @@ impl AgentEngine {
                         // fields (_output_str, _cwd, _retry_count) from the object
                         // before output_manager.enforce_budget replaces it with a string.
                         if tool_name == "bash" {
-                            // Extract output and CWD from the structured bash result
+                            // Extract output from the structured bash result.
+                            // Note: _cwd is intentionally NOT used to update agent_cwd.
+                            // Updating from meta.cwd would propagate subdirectory changes
+                            // across turns, breaking relative paths in subsequent commands.
+                            // Each bash invocation starts from the agent_cwd set at init
+                            // or explicitly announced via the system prompt.
                             let mut bash_output_str = result.get("_output_str").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            let bash_cwd_str = result.get("_cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            if !bash_cwd_str.is_empty() {
-                                self.agent_cwd = bash_cwd_str;
-                            }
                             // Prepend retry header if tool was retried
                             if let Some(rc) = result.get("_retry_count").and_then(|v| v.as_i64()) {
                                 if rc > 0 {
