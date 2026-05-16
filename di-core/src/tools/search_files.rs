@@ -83,9 +83,11 @@ pub async fn search_files(
             SearchBackend::Grep => build_grep_command(&pattern, &file_pattern, context_lines, search_path),
         };
 
+        let agent_cwd = call.args.get("_cwd").and_then(|v| v.as_str()).unwrap_or("");
         let request = json!({
             "type": "execute",
             "command": command,
+            "cwd": agent_cwd,
         });
         let result: crate::daemons::ExecuteResult = match command_daemon.lock().await.send_request::<serde_json::Value, crate::daemons::ExecuteResult>(request).await {
             Ok(r) => r,

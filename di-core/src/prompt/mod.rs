@@ -167,7 +167,6 @@ impl ContextCompiler {
             cached_session: SessionContext {
                 os: session.os.clone(),
                 shell: session.shell.clone(),
-                cwd: session.cwd.clone(),
                 available_cores: session.available_cores,
                 mode: session.mode,
                 skills: session.skills.clone(),

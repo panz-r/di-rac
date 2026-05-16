@@ -287,6 +287,8 @@ pub struct AgentEngine {
     pub bash_history: Vec<(String, String, i32)>,
     /// Agent's current working directory — updated on `cd` via bash.
     pub agent_cwd: String,
+    /// Last CWD announced to the LLM. Empty means never announced.
+    pub last_announced_cwd: String,
     /// Whether the last LLM output was truncated (hit MAX_TOKENS).
     pub last_output_truncated: bool,
     pub request_id_counter: i64,
@@ -389,6 +391,7 @@ impl AgentEngine {
             agent_cwd: std::env::current_dir()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| ".".into()),
+            last_announced_cwd: String::new(),
             last_output_truncated: false,
             request_id_counter: 0,
             tool_call_counter: 0,
@@ -1146,9 +1149,6 @@ impl AgentEngine {
                 self.environment.gather();
             }
 
-            let cwd = std::env::current_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| ".".into());
             let _home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".into());
             let cores = std::thread::available_parallelism()
@@ -1158,7 +1158,6 @@ impl AgentEngine {
             let session = SessionContext {
                 os: "linux".to_string(),
                 shell,
-                cwd,
                 available_cores: cores,
                 mode: self.mode,
                 skills: None,
@@ -1502,8 +1501,20 @@ impl AgentEngine {
         }
 
         // 6. Compile context frame
-        let frame = self.context_compiler.as_mut().expect("context compiler initialized in run_turn prologue")
+        let mut frame = self.context_compiler.as_mut().expect("context compiler initialized in run_turn prologue")
             .build_frame(&dynamic, gateway_msgs);
+
+        // Inject current CWD into system prompt if it has changed since last turn.
+        // Never stored in trajectory — only appears in the current request.
+        if self.agent_cwd != self.last_announced_cwd {
+            let cwd_notice = format!("- Current Working Directory: {}", self.agent_cwd);
+            if !frame.system.is_empty() {
+                frame.system.push_str(&format!("\n{}", cwd_notice));
+            } else {
+                frame.system = cwd_notice;
+            }
+            self.last_announced_cwd = self.agent_cwd.clone();
+        }
 
         debug_log!("[di-core] run_turn: sending gateway request ({} msgs, system {} chars, {} tools)",
             frame.messages.len(), frame.system.len(), frame.tools.len());
