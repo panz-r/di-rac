@@ -340,6 +340,9 @@ func openaiConvertMessages(req *Request) []map[string]interface{} {
 			m["role"] = "tool"
 			m["tool_call_id"] = msg.ToolResult.ToolUseID
 			m["content"] = msg.ToolResult.Content
+		} else if msg.ToolUseID != "" {
+			m["role"] = "tool"
+			m["tool_call_id"] = msg.ToolUseID
 		}
 		messages = append(messages, m)
 	}
