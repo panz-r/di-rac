@@ -296,6 +296,10 @@ async fn main() -> Result<()> {
                                         log.log("Setting distiller config");
                                         orchestrator.set_distiller_config(config);
                                     }
+                                    "observer" => {
+                                        log.log("Setting observer provider config");
+                                        orchestrator.set_observer_provider_config(config);
+                                    }
                                     _ => {}
                                 }
                             }

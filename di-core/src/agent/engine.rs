@@ -310,6 +310,8 @@ pub struct AgentEngine {
     pub provider_config: Option<crate::daemons::ProviderConfig>,
     /// Provider config for plan mode (plan role).
     pub plan_provider_config: Option<crate::daemons::ProviderConfig>,
+    /// Observer provider config for hook-defined observer roles (set by orchestrator).
+    pub observer_provider: Option<crate::daemons::ProviderConfig>,
     /// Calibrated token estimator — replaces inline len()/4 with model-aware estimation.
     pub estimator: ConservativeEstimator,
     /// turn_counter for lifecycle metrics.
@@ -345,6 +347,8 @@ pub struct AgentEngine {
     shared_timeout_ms: Arc<std::sync::Mutex<Option<u64>>>,
     /// Shared observer config — orchestrator updates this, agent reads at turn start.
     shared_observer_config: Arc<tokio::sync::RwLock<crate::observer::ObserverConfig>>,
+    /// Shared observer provider config for hook-defined observer roles.
+    shared_observer_provider: Arc<tokio::sync::RwLock<Option<crate::daemons::ProviderConfig>>>,
     /// Hook system: agent-loop control DSL evaluator and directive accumulator.
     pub hooks: AgentHookManager,
 }
@@ -406,6 +410,7 @@ impl AgentEngine {
             frontend_timeout_ms: None,
             provider_config: None,
             plan_provider_config: None,
+            observer_provider: None,
             distiller: None,
             estimator: ConservativeEstimator::default_conservative(),
             turn_counter: 0,
@@ -426,6 +431,7 @@ impl AgentEngine {
             shared_observer_config: Arc::new(tokio::sync::RwLock::new(
                 crate::observer::ObserverConfig::default(),
             )),
+            shared_observer_provider: Arc::new(tokio::sync::RwLock::new(None)),
             hooks: AgentHookManager::with_agent_id(Some(id.to_string())),
         }
     }
@@ -892,6 +898,11 @@ impl AgentEngine {
         }
         if let Ok(guard) = self.shared_observer_config.try_read() {
             self.observer.config = guard.clone();
+        }
+        if let Ok(guard) = self.shared_observer_provider.try_read() {
+            if let Some(ref config) = *guard {
+                self.observer_provider = Some(config.clone());
+            }
         }
     }
 
@@ -2144,6 +2155,9 @@ impl AgentEngine {
             for (severity, message) in &self.hooks.merged_directives().warnings {
                 eprintln!("[di-core] hook warn [{:?}]: {}", severity, message);
             }
+
+            // Execute pending observer triggers (calls LLM with @role prompts)
+            self.check_pending_observer_triggers().await;
 
             match exec_result {
                 Ok(result) => {
@@ -3462,21 +3476,130 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
         }
     }
 
-    /// Check if hooks requested observer triggers and log them.
-    /// Full gateway integration (calling LLM with @role prompts) is deferred to a follow-up.
+    /// Check if hooks requested observer triggers and execute them.
+    /// Calls the LLM with the @role's system prompt and requested inputs,
+    /// then fires observer_result events back through the hook system.
     async fn check_pending_observer_triggers(&mut self) {
         let triggers = self.hooks.take_observer_triggers();
         if triggers.is_empty() {
             return;
         }
         let roles = self.hooks.roles();
+        let provider = self.observer_provider.as_ref()
+            .or(self.provider_config.as_ref())
+            .cloned();
+
         for trigger in &triggers {
             eprintln!("[di-core] hook trigger_observer: {} (reason: {}, severity: {:?})",
                 trigger.observer_id, trigger.reason, trigger.severity);
-            if let Some(role) = roles.iter().find(|r| r.name == trigger.observer_id) {
-                eprintln!("[di-core]   matching role '{}' found with {} input types and budget {:?}",
-                    role.name, role.inputs.len(), role.budget);
+            let Some(role) = roles.iter().find(|r| r.name == trigger.observer_id) else {
+                eprintln!("[di-core]   no matching @role definition for '{}'", trigger.observer_id);
+                continue;
+            };
+            let Some(ref system_prompt) = role.system_prompt else {
+                eprintln!("[di-core]   @role '{}' has no system prompt, skipping", role.name);
+                continue;
+            };
+            let Some(ref prov) = provider else {
+                eprintln!("[di-core]   no observer provider configured, skipping '{}'", role.name);
+                continue;
+            };
+
+            eprintln!("[di-core]   executing observer '{}' with {} inputs, budget {:?}",
+                role.name, role.inputs.len(), role.budget);
+
+            // Gather requested inputs
+            let mut input_parts: Vec<String> = Vec::new();
+            for input in &role.inputs {
+                match input.as_str() {
+                    "diff" => {
+                        let files: Vec<String> = self.file_context.files_read.keys().cloned().collect();
+                        if !files.is_empty() {
+                            input_parts.push(format!("## Files in Context\n\n{}", files.join("\n")));
+                        }
+                    }
+                    "changed_files" => {
+                        let files: Vec<String> = self.file_context.files_read.keys().cloned().collect();
+                        if !files.is_empty() {
+                            input_parts.push(format!("## Changed Files\n\n{}", files.join("\n")));
+                        }
+                    }
+                    other => {
+                        input_parts.push(format!("## {}(...)\n  (input type not implemented)", other));
+                    }
+                }
             }
+
+            let inputs_text = if input_parts.is_empty() {
+                String::new()
+            } else {
+                format!("\n\n{}", input_parts.join("\n\n"))
+            };
+
+            let user_message = format!(
+                "Reason for review: {}\n\nReview the following and produce output{}",
+                trigger.reason, inputs_text,
+            );
+
+            // Build the request
+            let request = crate::daemons::GatewayRequest {
+                id: chrono::Utc::now().timestamp_millis(),
+                stream: false,
+                timeout: Some(60),
+                provider: Some(prov.clone()),
+                messages: vec![
+                    crate::daemons::GatewayMessage::simple("user", serde_json::Value::String(user_message)),
+                ],
+                system: Some(system_prompt.clone()),
+                tools: None,
+                max_tokens: role.budget.as_ref().map(|b| b.max_tokens as i64).or(Some(500)),
+                temperature: Some(0.3),
+                thinking: None,
+            };
+
+            let mut rx = match self.gateway_client.stream_chat(request).await {
+                Ok(rx) => rx,
+                Err(e) => {
+                    eprintln!("[di-core]   observer gateway error: {}", e);
+                    continue;
+                }
+            };
+
+            let mut full_text = String::new();
+            let stream_timeout = std::time::Duration::from_secs(120);
+            loop {
+                match tokio::time::timeout(stream_timeout, rx.recv()).await {
+                    Ok(Some(Ok(chunk))) => {
+                        match chunk.chunk_type.as_str() {
+                            "delta" => {
+                                if let Some(ref text) = chunk.text_delta {
+                                    full_text.push_str(text);
+                                }
+                            }
+                            "stop" => break,
+                            _ => continue,
+                        }
+                    }
+                    Ok(Some(Err(_))) | Ok(None) => break,
+                    Err(_) => {
+                        eprintln!("[di-core]   observer stream timeout");
+                        break;
+                    }
+                }
+            }
+
+            eprintln!("[di-core]   observer '{}' produced {} chars", role.name, full_text.len());
+
+            // Try to parse as JSON (expected for structured output schemas)
+            let output: serde_json::Value = serde_json::from_str(&full_text)
+                .unwrap_or_else(|_| serde_json::Value::String(full_text.trim().to_string()));
+
+            // Fire observer_result so hooks can react
+            let event = AgentLoopEvent::ObserverResult {
+                observer_id: trigger.observer_id.clone(),
+                output,
+            };
+            self.fire_hook_event(event).await;
         }
     }
 
@@ -3571,6 +3694,8 @@ pub struct MultiAgentOrchestrator {
     pub default_plan_config: Option<crate::daemons::ProviderConfig>,
     /// Distiller-specific provider config (separate model/temperature).
     pub distiller_config: Option<crate::daemons::ProviderConfig>,
+    /// Observer-specific provider config for hook-defined observer roles.
+    pub default_observer_provider: Option<crate::daemons::ProviderConfig>,
     /// Shared distiller instance (boxed trait object).
     pub distiller: Option<std::sync::Arc<tokio::sync::RwLock<Box<dyn ContextDistiller>>>>,
     /// Global distiller metrics — not borrowed from any agent.
@@ -3586,6 +3711,7 @@ struct RuntimeConfig {
     distiller: Arc<tokio::sync::RwLock<Option<std::sync::Arc<tokio::sync::RwLock<Box<dyn ContextDistiller>>>>>>,
     timeout_ms: Arc<std::sync::Mutex<Option<u64>>>,
     observer_config: Arc<tokio::sync::RwLock<crate::observer::ObserverConfig>>,
+    observer_provider: Arc<tokio::sync::RwLock<Option<crate::daemons::ProviderConfig>>>,
 }
 
 impl MultiAgentOrchestrator {
@@ -3599,6 +3725,7 @@ impl MultiAgentOrchestrator {
             gateway_client: Arc::new(GatewayStreamClient::with_socket(gateway_socket)),
             default_provider_config: None,
             default_plan_config: None,
+            default_observer_provider: None,
             distiller_config: None,
             distiller: None,
             distiller_metrics: ContextMetrics::new(),
@@ -3616,6 +3743,7 @@ impl MultiAgentOrchestrator {
         );
         agent.provider_config = self.default_provider_config.clone();
         agent.plan_provider_config = self.default_plan_config.clone();
+        agent.observer_provider = self.default_observer_provider.clone();
         agent.distiller = self.distiller.clone();
 
         // Wire shared runtime config so orchestrator can push updates to running agents
@@ -3625,6 +3753,7 @@ impl MultiAgentOrchestrator {
             distiller: agent.shared_distiller.clone(),
             timeout_ms: agent.shared_timeout_ms.clone(),
             observer_config: agent.shared_observer_config.clone(),
+            observer_provider: agent.shared_observer_provider.clone(),
         };
         self.runtime_configs.insert(id, rc);
 
@@ -3786,6 +3915,21 @@ impl MultiAgentOrchestrator {
                 if let Ok(mut guard) = rc.observer_config.try_write() {
                     apply(&mut guard);
                 }
+            }
+        }
+    }
+
+    /// Set the LLM provider config for hook-defined observer roles.
+    /// Unlike set_observer_config (which configures the internal observer system),
+    /// this sets the provider for executing @role("...", kind="observer") definitions.
+    pub fn set_observer_provider_config(&mut self, config: crate::daemons::ProviderConfig) {
+        self.default_observer_provider = Some(config.clone());
+        for agent in self.agents.values_mut() {
+            agent.observer_provider = Some(config.clone());
+        }
+        for rc in self.runtime_configs.values() {
+            if let Ok(mut guard) = rc.observer_provider.try_write() {
+                *guard = Some(config.clone());
             }
         }
     }
