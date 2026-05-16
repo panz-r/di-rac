@@ -177,12 +177,16 @@ impl HooksEditorState {
     /// - `):    hint` → `):\n    hint` (after colon in def/if/for)
     /// - `)    audit` → `)\n    audit` (new statement after a function call)
     /// Known limitation: nested calls like `fn(inner())` may get split incorrectly.
+    /// Uses a running indent counter (O(n)) instead of backward-scanning (O(n²)).
+    /// Skips content inside string literals to avoid splitting on colons in strings.
     pub fn normalize_source(source: &str) -> String {
         let mut result = String::with_capacity(source.len() + 16);
         let chars: Vec<char> = source.chars().collect();
         let mut i = 0;
+        let mut current_indent: usize = 0;
+        let mut in_string: Option<char> = None;
+        let mut escape = false;
 
-        // Known keywords that start new statements (not identifiers in expressions)
         let stmt_keywords = ["hint", "criterion", "warn", "approval_note",
             "require_validation", "trigger_observer", "trigger_planner_review",
             "require_evidence", "require_final_note", "remember", "audit",
@@ -191,51 +195,70 @@ impl HooksEditorState {
 
         while i < chars.len() {
             let c = chars[i];
+
+            // Track string literal boundaries — don't modify content inside strings
+            if let Some(quote) = in_string {
+                result.push(c);
+                i += 1;
+                if escape {
+                    escape = false;
+                } else if c == '\\' {
+                    escape = true;
+                } else if c == quote {
+                    in_string = None;
+                }
+                continue;
+            }
+            if c == '"' || c == '\'' {
+                in_string = Some(c);
+                result.push(c);
+                i += 1;
+                continue;
+            }
+
+            // Track leading whitespace for current line
+            if c == ' ' || c == '\t' {
+                if result.is_empty() || result.ends_with('\n') {
+                    current_indent += 1;
+                }
+            } else if c == '\n' {
+                current_indent = 0;
+            }
+
             if c == ')' {
                 result.push(')');
                 let mut j = i + 1;
-                while j < chars.len() && (chars[j] == ' ' || chars[j] == '\t') { j += 1; }
+                let mut spaces = 0usize;
+                while j < chars.len() && (chars[j] == ' ' || chars[j] == '\t') { j += 1; spaces += 1; }
                 let after = if j < chars.len() { chars[j] } else { '\0' };
                 if after == 'd' && j + 2 < chars.len() && chars[j+1] == 'e' && chars[j+2] == 'f' {
                     result.push('\n');
                 } else if after == '@' {
                     result.push('\n');
                 } else if after.is_alphabetic() {
-                    // Check if this starts a known statement keyword
                     let word_len = chars[j..].iter().take_while(|c| c.is_alphabetic()).count();
                     let word_end = j + word_len;
                     let word: String = chars[j..word_end].iter().collect();
                     if stmt_keywords.contains(&word.as_str()) {
                         result.push('\n');
-                        // Preserve indentation: copy the leading whitespace from context
-                        let indent = if !result.is_empty() {
-                            let last_line = result.rsplit('\n').next().unwrap_or("");
-                            let leading_spaces: usize = last_line.chars().take_while(|c| *c == ' ').count();
-                            leading_spaces
-                        } else { 0 };
-                        for _ in 0..indent { result.push(' '); }
                     } else {
-                        // Not a known keyword — copy everything including spaces and the word
                         for k in i+1..word_end { result.push(chars[k]); }
-                        i = word_end - 1; // will be incremented by loop
+                        i = word_end - 1;
                     }
                 } else {
-                    for k in i+1..j { result.push(chars[k]); }
+                    for _ in 0..spaces { result.push(' '); }
                 }
                 i = j;
             } else if c == ':' {
+                // Only insert newline+indent for colons NOT inside string literals
                 result.push(':');
                 let mut j = i + 1;
                 while j < chars.len() && (chars[j] == ' ' || chars[j] == '\t') { j += 1; }
                 if j < chars.len() && chars[j] != '\n' && j > i + 1 {
                     result.push('\n');
-                    // Indent 4 more than current context
-                    let indent = if !result.is_empty() {
-                        let last_line = result.rsplit('\n').next().unwrap_or("");
-                        let leading = last_line.chars().take_while(|c| *c == ' ').count();
-                        leading + 4
-                    } else { 4 };
+                    let indent = current_indent + 4;
                     for _ in 0..indent { result.push(' '); }
+                    current_indent = indent;
                 } else {
                     for k in i+1..j { result.push(chars[k]); }
                 }
@@ -251,26 +274,43 @@ impl HooksEditorState {
     /// Validate .dhook source syntax.
     /// Returns a list of error messages (empty = valid).
     pub fn validate(source: &str) -> Vec<String> {
-        // Simple syntax check: count balanced parens and brackets
+        if source.trim().is_empty() {
+            return vec!["Source is empty".to_string()];
+        }
+
+        // Check balanced brackets as a basic sanity check
         let mut parens = 0i32;
         let mut brackets = 0i32;
         let mut braces = 0i32;
         let mut errors = Vec::new();
+        let mut in_string = false;
+        let mut string_char = '"';
 
-        for (i, line) in source.lines().enumerate() {
-            for c in line.chars() {
-                match c {
-                    '(' => parens += 1,
-                    ')' => parens -= 1,
-                    '[' => brackets += 1,
-                    ']' => brackets -= 1,
-                    '{' => braces += 1,
-                    '}' => braces -= 1,
-                    _ => {}
+        for c in source.chars() {
+            if in_string {
+                if c == '\\' {
+                    continue; // skip next char
                 }
+                if c == string_char {
+                    in_string = false;
+                }
+                continue;
+            }
+            match c {
+                '"' | '\'' => { in_string = true; string_char = c; }
+                '(' => parens += 1,
+                ')' => parens -= 1,
+                '[' => brackets += 1,
+                ']' => brackets -= 1,
+                '{' => braces += 1,
+                '}' => braces -= 1,
+                _ => {}
             }
         }
 
+        if in_string {
+            errors.push("Unterminated string literal".to_string());
+        }
         if parens > 0 {
             errors.push(format!("{} unmatched opening parenthesis", parens));
         } else if parens < 0 {
@@ -285,10 +325,6 @@ impl HooksEditorState {
             errors.push(format!("{} unmatched opening brace", braces));
         } else if braces < 0 {
             errors.push(format!("{} unmatched closing brace", -braces));
-        }
-
-        if source.is_empty() {
-            errors.push("Source is empty".to_string());
         }
 
         errors

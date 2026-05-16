@@ -21,8 +21,15 @@ pub struct Lexer<'a> {
     line: usize,
     col: usize,
     indent_stack: Vec<usize>,
-    pending: Vec<Token>,
+    pub(crate) pending: Vec<Token>,
     bol: bool,
+    /// Set when an unterminated string literal is detected. The string
+    /// content up to EOF is still returned as a token, but this flag
+    /// allows the parser to report an error.
+    pub unterminated_string: bool,
+    /// First non-zero indent width detected. Used to validate consistent
+    /// indentation (e.g., don't mix 2-space and 4-space indents).
+    indent_width: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -35,6 +42,8 @@ impl<'a> Lexer<'a> {
             indent_stack: vec![0],
             pending: Vec::new(),
             bol: true,
+            unterminated_string: false,
+            indent_width: 0,
         }
     }
 
@@ -87,6 +96,7 @@ impl<'a> Lexer<'a> {
 
     fn read_string(&mut self, quote: char) -> String {
         let mut s = String::new();
+        let mut closed = false;
         while let Some(c) = self.advance() {
             if c == '\\' {
                 if let Some(next) = self.advance() {
@@ -100,10 +110,14 @@ impl<'a> Lexer<'a> {
                     }
                 }
             } else if c == quote {
+                closed = true;
                 break;
             } else {
                 s.push(c);
             }
+        }
+        if !closed {
+            self.unterminated_string = true;
         }
         s
     }
@@ -118,9 +132,16 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        s.parse().unwrap_or_else(|_| {
-            if s.starts_with('-') { i64::MIN } else { i64::MAX }
-        })
+        match s.parse::<i64>() {
+            Ok(n) => n,
+            Err(_) => {
+                if s.starts_with('-') {
+                    i64::MIN
+                } else {
+                    i64::MAX
+                }
+            }
+        }
     }
 
     fn ident_or_keyword(&self, word: &str) -> TokenKind {
@@ -142,14 +163,35 @@ impl<'a> Lexer<'a> {
     }
 
     fn handle_indent(&mut self, indent: usize) {
+        // Record base indent width on first non-zero indent
+        if self.indent_width == 0 && indent > 0 {
+            self.indent_width = indent;
+        }
+
         let current = *self.indent_stack.last().unwrap();
-        if indent > current {
-            self.indent_stack.push(indent);
+
+        // Validate consistent indent width: if we have a base width,
+        // the new indent must be a multiple of it. If not, adjust to
+        // the nearest valid level to prevent silent parse corruption.
+        let effective = if self.indent_width > 0 && indent > 0 && indent % self.indent_width != 0 {
+            // Round to nearest multiple
+            let rounded = (indent / self.indent_width) * self.indent_width;
+            if rounded > current {
+                rounded
+            } else {
+                indent // use actual value for dedent
+            }
+        } else {
+            indent
+        };
+
+        if effective > current {
+            self.indent_stack.push(effective);
             let start = self.pos;
             self.emit(TokenKind::Indent, start, self.line, self.col);
-        } else if indent < current {
+        } else if effective < current {
             while let Some(&top) = self.indent_stack.last() {
-                if top == indent { break; }
+                if top == effective { break; }
                 self.indent_stack.pop();
                 let start = self.pos;
                 self.emit(TokenKind::Dedent, start, self.line, self.col);

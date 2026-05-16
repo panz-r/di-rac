@@ -75,6 +75,7 @@ impl HookLoader {
         }
 
         let combined = source_parts.join("\n\n");
+        self.loaded_source = Some(combined.clone());
         let hash = crate::util::stable_hash(combined.as_bytes());
         let source_hash = format!("{:.16}", hash);
 
@@ -108,27 +109,9 @@ impl HookLoader {
     }
 
     /// Full source text for the combined hook module.
+    /// Uses cached source from last load() call instead of re-reading from disk.
     pub fn full_source(&self) -> Option<String> {
-        let mut parts = Vec::new();
-        if let Some(ref path) = self.repo_path {
-            if let Ok(text) = std::fs::read_to_string(path) {
-                parts.push(format!("# Repo hook: {}", path.display()));
-                parts.push(text);
-            }
-        }
-        if let Some(ref path) = self.session_overlay_path {
-            if path.exists() {
-                if let Ok(text) = std::fs::read_to_string(path) {
-                    parts.push(format!("# Session overlay: {}", path.display()));
-                    parts.push(text);
-                }
-            }
-        }
-        if parts.is_empty() {
-            None
-        } else {
-            Some(parts.join("\n\n"))
-        }
+        self.loaded_source.clone()
     }
 
     /// Get the repo-level hooks directory (.di/hooks/ in cwd).

@@ -297,12 +297,12 @@ impl HookCompiler {
         match expr {
             parser::ast::Expr::MemberAccess { object, member, .. } => {
                 match object.as_ref() {
-                    parser::ast::Expr::Ident(name, _) if name == "observer" => {
+                    parser::ast::Expr::Ident(name, _) if name == ir::OBSERVER_BASE => {
                         Some((name.clone(), vec![member.clone()]))
                     }
                     parser::ast::Expr::MemberAccess { .. } => {
                         if let Some((base, mut fields)) = Self::extract_observer_path(object) {
-                            if base == "observer" {
+                            if base == ir::OBSERVER_BASE {
                                 fields.push(member.clone());
                                 Some((base, fields))
                             } else {
@@ -387,12 +387,13 @@ impl HookCompiler {
                     let (observer_id, field_path) = fields;
                     ir::Expr::ObserverField { observer_id, field_path }
                 } else {
-                    let obj_str = Self::expr_to_debug(object);
-                    ir::Expr::Ident(format!("{}.{}", obj_str, member))
+                    // Non-observer member access cannot be resolved at compile time.
+                    // Return false instead of a truthy debug string.
+                    ir::Expr::Bool(false)
                 }
             }
 
-            parser::ast::Expr::Dict(_, _) => ir::Expr::Bool(true),
+            parser::ast::Expr::Dict(_, _) => ir::Expr::Bool(false),
         }
     }
 

@@ -1939,6 +1939,10 @@ impl AgentEngine {
                             self.request_abort();
                             break false;
                         }
+                        Some(FrontendMessage::FollowupAnswer { .. }) => {
+                            // Followup answer while waiting for approval — discard and keep waiting
+                            continue;
+                        }
                         _ => {
                             self.emit_event(CoreEvent::FrontendTimeout {
                                 agent_id: self.id,
@@ -3264,17 +3268,6 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
     // ── Hook system integration ──
 
     /// Hot-swap the active hook module and emit HookModuleActivated.
-    pub async fn swap_hook_module(&self, module: Arc<crate::hooks::ir::CompiledHookModule>) {
-        let rule_count = module.handlers.iter().map(|h| h.rules.len()).sum();
-        self.hooks.swap_active(module.clone());
-        let _ = self.emit_event(CoreEvent::HookModuleActivated {
-            agent_id: self.id,
-            id: module.id.clone(),
-            source_hash: module.source_hash.clone(),
-            rule_count,
-        }).await;
-    }
-
     /// Fire an agent-loop event through the hook system.
     /// Returns the directives emitted, already merged into accumulated state.
     async fn fire_hook_event(&mut self, event: AgentLoopEvent) -> EvalResult {
@@ -3332,26 +3325,6 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
         }
     }
 
-    /// Apply hook directives to the dynamic context (hints, criteria, warnings).
-    /// Called during context frame assembly.
-    fn apply_hook_directives(&self, hint_block: &mut String) {
-        let merged = self.hooks.merged_directives();
-        if !merged.hints.is_empty() {
-            let hints = merged.hints.iter()
-                .map(|h| format!("- {}", h))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if !hint_block.is_empty() {
-                hint_block.push_str("\n\n");
-            }
-            hint_block.push_str("# Hooks\n");
-            hint_block.push_str(&hints);
-        }
-        for (severity, message) in &merged.warnings {
-            eprintln!("[di-core] hook warn [{:?}]: {}", severity, message);
-        }
-    }
-
     /// Handle ReloadSessionHooks — reload hooks from disk and emit CoreEvent.
     async fn handle_reload_session_hooks(&mut self) {
         match self.hooks.reload_session() {
@@ -3377,11 +3350,11 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
     }
 
     /// Fire post_tool_use after tool execution, collect changed files.
+    /// Note: paths_written are the files modified by THIS tool call.
+    /// files_edited already includes them via mark_edited(), so we don't
+    /// chain them here to avoid double-counting.
     async fn fire_post_tool_use(&mut self, tool_name: &str, paths_written: &[String], success: bool) {
-        let changed_files: Vec<String> = paths_written.iter()
-            .chain(self.file_context.files_edited.iter())
-            .cloned()
-            .collect();
+        let changed_files: Vec<String> = paths_written.to_vec();
         let event = AgentLoopEvent::PostToolUse {
             tool_name: tool_name.to_string(),
             changed_files,

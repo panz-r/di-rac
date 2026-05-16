@@ -1,3 +1,6 @@
+/// Base name for observer field access (observer.name, observer.output).
+pub const OBSERVER_BASE: &str = "observer";
+
 /// Compiled hook module — ready for evaluation.
 #[derive(Debug, Clone)]
 pub struct CompiledHookModule {

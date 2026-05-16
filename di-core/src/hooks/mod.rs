@@ -123,12 +123,15 @@ impl AgentHookManager {
     /// Fire an event through the hook system.
     pub fn on_event(&mut self, event: AgentLoopEvent) -> EvalResult {
         let module = self.active.load_full();
-        let ctx = Self::build_context(&event);
+        let ctx = Self::build_context(event);
 
         let result = HookEvaluator::evaluate(&module, &ctx, &self.limits);
 
         // Merge directives into accumulated state
         DirectiveMerger::merge(&mut self.merged, result.directives.clone());
+
+        // Enforce limits on accumulated directives
+        Self::cap_merged_directives(&mut self.merged, &self.limits);
 
         result
     }
@@ -157,7 +160,13 @@ impl AgentHookManager {
     }
 
     /// Take pending observer triggers (clears them from accumulated state).
+    /// Also clears observer trigger dedupe keys so the same trigger can fire
+    /// again on subsequent turns when the condition re-occurs.
     pub fn take_observer_triggers(&mut self) -> Vec<ObserverTrigger> {
+        // Remove observer trigger dedupe keys so the same trigger can fire again
+        // on the next turn. We do this by filtering seen_keys: remove any key
+        // whose kind starts with "trigger_observer".
+        self.merged.seen_keys.retain(|k| !k.kind.starts_with("trigger_observer"));
         std::mem::take(&mut self.merged.observer_triggers)
     }
 
@@ -166,22 +175,32 @@ impl AgentHookManager {
         self.loader.full_source()
     }
 
-    fn build_context(event: &AgentLoopEvent) -> EvalContext {
-        let (event_name, changed_files, tool_name, tool_success, observer_id, observer_output) = match &event {
-            AgentLoopEvent::SessionStart => ("session_start", vec![], None, None, None, None),
-            AgentLoopEvent::PostToolUse { tool_name: tn, changed_files: cf, success } => {
-                ("post_tool_use", cf.clone(), Some(tn.clone()), Some(*success), None, None)
+    /// Cap accumulated directives to their limits. Ensures no single event or
+    /// task can accumulate unbounded state.
+    pub fn cap_merged_directives(merged: &mut MergedDirectives, limits: &AgentHookLimits) {
+        merged.observer_triggers.truncate(limits.max_observer_triggers_per_event);
+        merged.validations.truncate(limits.max_validation_requests_per_task);
+        merged.planner_reviews.truncate(limits.max_planner_reviews_per_task);
+        merged.finish_gates.truncate(limits.max_finish_gates);
+        merged.remembered_facts.truncate(limits.max_remembered_facts);
+    }
+
+    fn build_context(event: AgentLoopEvent) -> EvalContext {
+        let (event_name, changed_files, tool_name, tool_success, observer_id, observer_output) = match event {
+            AgentLoopEvent::SessionStart => ("session_start".to_string(), vec![], None, None, None, None),
+            AgentLoopEvent::PostToolUse { tool_name, changed_files, success } => {
+                ("post_tool_use".to_string(), changed_files, Some(tool_name), Some(success), None, None)
             }
-            AgentLoopEvent::ObserverResult { observer_id: oid, output } => {
-                ("observer_result", vec![], None, None, Some(oid.clone()), Some(output.clone()))
+            AgentLoopEvent::ObserverResult { observer_id, output } => {
+                ("observer_result".to_string(), vec![], None, None, Some(observer_id), Some(output))
             }
-            AgentLoopEvent::PreFinish => ("pre_finish", vec![], None, None, None, None),
-            AgentLoopEvent::UserPrompt { .. } => ("user_prompt", vec![], None, None, None, None),
-            AgentLoopEvent::PlanCreated { files, .. } => ("plan_created", files.clone(), None, None, None, None),
-            AgentLoopEvent::ValidationResult { .. } => ("validation_result", vec![], None, None, None, None),
-            AgentLoopEvent::PreCompact { .. } => ("pre_compact", vec![], None, None, None, None),
-            AgentLoopEvent::TaskComplete { .. } => ("task_complete", vec![], None, None, None, None),
-            AgentLoopEvent::ErrorOccurred { tool_name: tn, .. } => ("error_occurred", vec![], tn.clone(), None, None, None),
+            AgentLoopEvent::PreFinish => ("pre_finish".to_string(), vec![], None, None, None, None),
+            AgentLoopEvent::UserPrompt { .. } => ("user_prompt".to_string(), vec![], None, None, None, None),
+            AgentLoopEvent::PlanCreated { files, .. } => ("plan_created".to_string(), files, None, None, None, None),
+            AgentLoopEvent::ValidationResult { .. } => ("validation_result".to_string(), vec![], None, None, None, None),
+            AgentLoopEvent::PreCompact { .. } => ("pre_compact".to_string(), vec![], None, None, None, None),
+            AgentLoopEvent::TaskComplete { .. } => ("task_complete".to_string(), vec![], None, None, None, None),
+            AgentLoopEvent::ErrorOccurred { tool_name, .. } => ("error_occurred".to_string(), Vec::new(), tool_name, None, None, None),
         };
 
         EvalContext {

@@ -20,6 +20,11 @@ impl<'a> Parser<'a> {
         Self { lexer, current, eof: false }
     }
 
+    /// Returns true if the lexer detected an unterminated string literal.
+    pub fn unterminated_string(&self) -> bool {
+        self.lexer.unterminated_string
+    }
+
     pub fn parse_module(&mut self) -> Result<Module, Vec<ParseError>> {
         let mut errors = Vec::new();
         let mut groups = Vec::new();
@@ -59,6 +64,13 @@ impl<'a> Parser<'a> {
                     self.advance();
                 }
             }
+        }
+
+        if self.lexer.unterminated_string {
+            errors.push(ParseError {
+                message: "Unterminated string literal".to_string(),
+                span: self.current.span.clone(),
+            });
         }
 
         if errors.is_empty() {
@@ -196,7 +208,7 @@ impl<'a> Parser<'a> {
 
         loop {
             match &self.current.kind {
-                TokenKind::Dedent => { self.advance(); break; }
+                TokenKind::Dedent => { break; }
                 TokenKind::Ident(n) if n == "system" => {
                     self.advance();
                     self.expect(&TokenKind::LParen)?;
@@ -215,7 +227,13 @@ impl<'a> Parser<'a> {
                         self.advance();
                     }
                     self.expect(&TokenKind::LParen)?;
-                    self.expect(&TokenKind::RParen)?;
+                    // Skip any keyword arguments until RParen
+                    loop {
+                        match &self.current.kind {
+                            TokenKind::RParen => { self.advance(); break; }
+                            _ => { self.advance(); }
+                        }
+                    }
                     self.expect_newline_or_eof();
                 }
                 TokenKind::Ident(n) if n == "output" => {
@@ -265,11 +283,15 @@ impl<'a> Parser<'a> {
                     self.expect_newline_or_eof();
                 }
                 _ => {
-                    self.advance();
-                    self.expect_newline_or_eof();
+                    let msg = format!("Unexpected statement in role '{}'. Expected system(), input.method(), output.schema(), or budget().", name);
+                    return Err(ParseError { message: msg, span: self.current.span.clone() });
                 }
             }
         }
+        // Consume the Dedent closing the role function body
+        self.expect(&TokenKind::Dedent)?;
+        // Skip any trailing newlines after the function
+        self.expect_newline_or_eof();
 
         Ok(RoleDef { name, kind, system_prompt, inputs, output_schema, budget, span: start })
     }
@@ -421,9 +443,16 @@ impl<'a> Parser<'a> {
     }
 
     fn peek_next_is_eq(&mut self) -> bool {
-        // Approximate: if current token is an ident, the next might be =
-        // In practice this works because keyword args always follow ident = expr
-        matches!(&self.current.kind, TokenKind::Ident(_))
+        // Peek at the next token to check if it's Eq (distinguishes
+        // keyword args "key=value" from positional args "value").
+        if !matches!(&self.current.kind, TokenKind::Ident(_)) {
+            return false;
+        }
+        let next = self.lexer.next_token();
+        let is_eq = matches!(next.kind, TokenKind::Eq);
+        // Push the peeked token onto pending stack so next_token returns it
+        self.lexer.pending.push(next);
+        is_eq
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
@@ -689,13 +718,17 @@ impl<'a> Parser<'a> {
     }
 
     fn read_dict_as_json(&mut self) -> String {
-        // Read tokens until matching RBrace and reconstruct JSON
-        let mut depth = 1;
+        // Read tokens until matching RBrace and reconstruct JSON.
+        // Caller has verified self.current.kind == LBrace.
+        let mut depth: i32 = 1;
         let mut json = String::new();
+        // Push the initial LBrace (already at self.current)
+        json.push('{');
+        self.advance();
         while depth > 0 {
             match &self.current.kind {
                 TokenKind::LBrace => { depth += 1; json.push('{'); self.advance(); }
-                TokenKind::RBrace => { depth -= 1; if depth > 0 { json.push('}'); } self.advance(); }
+                TokenKind::RBrace => { depth -= 1; json.push('}'); self.advance(); }
                 TokenKind::String(s) => {
                     json.push_str(&format!("\"{}\"", s));
                     self.advance();
@@ -710,6 +743,7 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::Colon => { json.push(':'); self.advance(); }
                 TokenKind::Comma => { json.push(','); self.advance(); }
+                TokenKind::Eof => { break; }
                 _ => { self.advance(); }
             }
         }
@@ -732,6 +766,35 @@ mod tests {
         assert!(m.handlers.is_empty());
         assert!(m.groups.is_empty());
         assert!(m.roles.is_empty());
+    }
+
+    #[test]
+    fn test_parse_minimal_role() {
+        let m = parse("@role(\"x\", kind=\"observer\")\ndef x():\n    system(\"hello\")\n    budget(max_tokens=100, max_runs=1)\n").unwrap();
+        assert_eq!(m.roles.len(), 1);
+        assert_eq!(m.roles[0].name, "x");
+    }
+
+    #[test]
+    fn test_parse_role_with_input() {
+        let m = parse("@role(\"x\", kind=\"observer\")\ndef x():\n    system(\"hello\")\n    input.diff()\n    input.changed_files()\n    budget(max_tokens=100, max_runs=1)\n").unwrap();
+        assert_eq!(m.roles.len(), 1);
+        assert_eq!(m.roles[0].inputs.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_role_with_schema() {
+        let s = "@role(\"x\", kind=\"observer\")\ndef x():\n    system(\"hello\")\n    output.schema({\"risk\": \"low|high\"})\n    budget(max_tokens=100, max_runs=1)\n";
+        let m = parse(s).unwrap();
+        assert_eq!(m.roles.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_role_then_handler() {
+        let s = "@role(\"x\", kind=\"observer\")\ndef x():\n    system(\"hello\")\n    budget(max_tokens=100, max_runs=1)\n@on(\"post_tool_use\")\ndef h():\n    hint(\"ok\")\n";
+        let m = parse(s).unwrap();
+        assert_eq!(m.roles.len(), 1);
+        assert_eq!(m.handlers.len(), 1);
     }
 
     #[test]

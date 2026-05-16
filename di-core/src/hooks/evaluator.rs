@@ -73,6 +73,9 @@ impl HookEvaluator {
         let mut directives = Vec::new();
         let mut matched_rules = Vec::new();
         let mut action_count = 0usize;
+        let mut rule_count = 0usize;
+        let mut step_count = 0usize;
+        let max_steps = limits.max_eval_steps;
 
         for handler in &module.handlers {
             if handler.event != ctx.event {
@@ -80,13 +83,20 @@ impl HookEvaluator {
             }
 
             for rule in &handler.rules {
+                if rule_count >= limits.max_rules {
+                    break;
+                }
+                rule_count += 1;
+
                 if action_count >= limits.max_actions_per_event {
                     break;
                 }
 
                 let matched = match &rule.condition {
                     None => true,
-                    Some(cond) => Self::eval_condition(cond, ctx, module),
+                    Some(cond) => {
+                        Self::eval_condition(cond, ctx, module, &mut step_count, max_steps)
+                    }
                 };
 
                 if !matched {
@@ -105,10 +115,11 @@ impl HookEvaluator {
                     }
                     action_count += 1;
 
-                    // Compute scope_hash from action content to differentiate same-type directives
-                    let scope_hash = crate::util::fast_hash_u64(
-                        Self::action_name_full(action).as_bytes()
-                    );
+                    // Compute scope_hash from full action content using blake3 directly.
+                    // Uses the same string as action_name but WITHOUT truncation, so different
+                    // actions with the same first-40-chars produce different hashes.
+                    let scope_bytes = Self::action_name_full(action);
+                    let scope_hash = crate::util::fast_hash_u64(scope_bytes.as_bytes());
                     let dedupe_key = DedupeKey {
                         hook_id: ctx.hook_id.clone(),
                         event: ctx.event.clone(),
@@ -187,7 +198,7 @@ impl HookEvaluator {
             _ => return None,
         };
         if let ir::Expr::ObserverField { observer_id, field_path } = obs_expr {
-            if observer_id != "observer" {
+            if observer_id != ir::OBSERVER_BASE {
                 return None;
             }
             // observer.name == "some_name"
@@ -227,7 +238,12 @@ impl HookEvaluator {
         }
     }
 
-    fn eval_expr(expr: &ir::Expr, ctx: &EvalContext, module: &ir::CompiledHookModule) -> EvalValue {
+    fn eval_expr(expr: &ir::Expr, ctx: &EvalContext, module: &ir::CompiledHookModule,
+        steps: &mut usize, max_steps: usize) -> EvalValue {
+        *steps += 1;
+        if *steps > max_steps {
+            return EvalValue::Bool(false);
+        }
         match expr {
             ir::Expr::Bool(b) => EvalValue::Bool(*b),
             ir::Expr::String(s) => EvalValue::String(s.clone()),
@@ -236,7 +252,7 @@ impl HookEvaluator {
             ir::Expr::Ident(name) => {
                 if name == "changed_files" {
                     EvalValue::Bool(!ctx.changed_files.is_empty())
-                } else if name == "observer" {
+                } else if name == ir::OBSERVER_BASE {
                     EvalValue::Bool(ctx.observer_id.is_some())
                 } else {
                     EvalValue::String(name.clone())
@@ -252,8 +268,10 @@ impl HookEvaluator {
                     || Self::match_literal_glob(name, &ctx.changed_files, true);
                 EvalValue::Bool(matched)
             }
-            ir::Expr::ObserverField { observer_id: obs, field_path } => {
-                _ = obs;
+            ir::Expr::ObserverField { observer_id, field_path } => {
+                if observer_id != ir::OBSERVER_BASE {
+                    return EvalValue::Bool(false);
+                }
                 if field_path == &["name"] {
                     return EvalValue::Bool(ctx.observer_id.is_some());
                 }
@@ -278,8 +296,8 @@ impl HookEvaluator {
                         return EvalValue::Bool(result);
                     }
                 }
-                let lv = Self::eval_expr(left, ctx, module);
-                let rv = Self::eval_expr(right, ctx, module);
+                let lv = Self::eval_expr(left, ctx, module, steps, max_steps);
+                let rv = Self::eval_expr(right, ctx, module, steps, max_steps);
                 match op {
                     ir::BinOp::And => EvalValue::Bool(lv.is_truthy() && rv.is_truthy()),
                     ir::BinOp::Or => EvalValue::Bool(lv.is_truthy() || rv.is_truthy()),
@@ -299,42 +317,45 @@ impl HookEvaluator {
                 }
             }
             ir::Expr::Not(inner) => {
-                let val = Self::eval_expr(inner, ctx, module);
+                let val = Self::eval_expr(inner, ctx, module, steps, max_steps);
                 EvalValue::Bool(!val.is_truthy())
             }
         }
     }
 
     /// Evaluate an expression to a boolean for condition checking.
-    fn eval_condition(expr: &ir::Expr, ctx: &EvalContext, module: &ir::CompiledHookModule) -> bool {
-        Self::eval_expr(expr, ctx, module).is_truthy()
+    fn eval_condition(expr: &ir::Expr, ctx: &EvalContext, module: &ir::CompiledHookModule,
+        steps: &mut usize, max_steps: usize) -> bool {
+        Self::eval_expr(expr, ctx, module, steps, max_steps).is_truthy()
     }
 
     fn lower_action(action: &ir::ActionIR, dedupe_key: &DedupeKey) -> LoopDirective {
-        match action.clone() {
-            ir::ActionIR::Hint(text) => LoopDirective::AddHint { text },
-            ir::ActionIR::Criterion(text) => LoopDirective::AddCriterion { text },
-            ir::ActionIR::Warn { severity, message } => LoopDirective::Warn { severity, message },
-            ir::ActionIR::ApprovalNote { severity, message } => LoopDirective::ApprovalNote { severity, message },
+        // Match on reference to avoid deep-cloning the entire ActionIR enum.
+        // Individual fields are cloned as needed.
+        match action {
+            ir::ActionIR::Hint(text) => LoopDirective::AddHint { text: text.clone() },
+            ir::ActionIR::Criterion(text) => LoopDirective::AddCriterion { text: text.clone() },
+            ir::ActionIR::Warn { severity, message } => LoopDirective::Warn { severity: *severity, message: message.clone() },
+            ir::ActionIR::ApprovalNote { severity, message } => LoopDirective::ApprovalNote { severity: *severity, message: message.clone() },
             ir::ActionIR::RequireValidation { argv, reason } => LoopDirective::RequireValidation {
-                argv, reason, dedupe_key: dedupe_key.clone(),
+                argv: argv.clone(), reason: reason.clone(), dedupe_key: dedupe_key.clone(),
             },
             ir::ActionIR::TriggerObserver { observer_id, reason, severity } => {
                 LoopDirective::TriggerObserver {
-                    observer_id, reason, severity,
+                    observer_id: observer_id.clone(), reason: reason.clone(), severity: *severity,
                     scope: ObservationScope::Diff,
                     dedupe_key: dedupe_key.clone(),
                 }
             }
             ir::ActionIR::TriggerPlannerReview { reason } => LoopDirective::TriggerPlannerReview {
-                reason, dedupe_key: dedupe_key.clone(),
+                reason: reason.clone(), dedupe_key: dedupe_key.clone(),
             },
-            ir::ActionIR::RequireEvidence(name) => LoopDirective::RequireEvidence { name },
-            ir::ActionIR::RequireFinalNote(text) => LoopDirective::RequireFinalNote { text },
-            ir::ActionIR::Remember(fact) => LoopDirective::Remember { fact },
-            ir::ActionIR::Audit { kind, severity } => LoopDirective::Audit { kind, severity },
+            ir::ActionIR::RequireEvidence(name) => LoopDirective::RequireEvidence { name: name.clone() },
+            ir::ActionIR::RequireFinalNote(text) => LoopDirective::RequireFinalNote { text: text.clone() },
+            ir::ActionIR::Remember(fact) => LoopDirective::Remember { fact: fact.clone() },
+            ir::ActionIR::Audit { kind, severity } => LoopDirective::Audit { kind: kind.clone(), severity: *severity },
             ir::ActionIR::BlockFinishUntil { condition, waiver_allowed } => {
-                LoopDirective::BlockFinishUntil { condition, waiver_allowed }
+                LoopDirective::BlockFinishUntil { condition: condition.clone(), waiver_allowed: *waiver_allowed }
             }
         }
     }
@@ -356,6 +377,24 @@ impl HookEvaluator {
         }.to_string()
     }
 
+    /// Full action representation for dedupe key hashing (no truncation).
+    fn action_name_full(action: &ir::ActionIR) -> String {
+        match action {
+            ir::ActionIR::Hint(t) => format!("hint({})", t),
+            ir::ActionIR::Criterion(t) => format!("criterion({})", t),
+            ir::ActionIR::Warn { severity, message } => format!("warn({:?},{})", severity, message),
+            ir::ActionIR::ApprovalNote { severity, message } => format!("approval_note({:?},{})", severity, message),
+            ir::ActionIR::RequireValidation { argv, reason } => format!("require_validation({:?},{})", argv, reason),
+            ir::ActionIR::TriggerObserver { observer_id, reason, severity } => format!("trigger_observer({},{},{:?})", observer_id, reason, severity),
+            ir::ActionIR::TriggerPlannerReview { reason } => format!("trigger_planner_review({})", reason),
+            ir::ActionIR::RequireEvidence(n) => format!("require_evidence({})", n),
+            ir::ActionIR::RequireFinalNote(t) => format!("require_final_note({})", t),
+            ir::ActionIR::Remember(f) => format!("remember({})", f),
+            ir::ActionIR::Audit { kind, severity } => format!("audit({},{:?})", kind, severity),
+            ir::ActionIR::BlockFinishUntil { condition, waiver_allowed } => format!("block_finish({:?},{})", condition, waiver_allowed),
+        }
+    }
+
     fn action_name(action: &ir::ActionIR) -> String {
         match action {
             ir::ActionIR::Hint(t) => format!("hint(\"{}\")", &t[..t.len().min(40)]),
@@ -368,25 +407,6 @@ impl HookEvaluator {
             ir::ActionIR::RequireEvidence(n) => format!("require_evidence(\"{}\")", n),
             ir::ActionIR::RequireFinalNote(t) => format!("require_final_note(\"{}\")", &t[..t.len().min(40)]),
             ir::ActionIR::Remember(f) => format!("remember(\"{}\")", &f[..f.len().min(40)]),
-            ir::ActionIR::Audit { kind, .. } => format!("audit(\"{}\")", kind),
-            ir::ActionIR::BlockFinishUntil { condition, .. } => format!("block_finish_until({:?})", condition),
-        }
-    }
-
-    /// Like action_name but without length truncation — used for hash computation
-    /// where truncated input would cause false dedupe collisions.
-    fn action_name_full(action: &ir::ActionIR) -> String {
-        match action {
-            ir::ActionIR::Hint(t) => format!("hint(\"{}\")", t),
-            ir::ActionIR::Criterion(t) => format!("criterion(\"{}\")", t),
-            ir::ActionIR::Warn { message, .. } => format!("warn(\"{}\")", message),
-            ir::ActionIR::ApprovalNote { message, .. } => format!("approval_note(\"{}\")", message),
-            ir::ActionIR::RequireValidation { argv, .. } => format!("require_validation({:?})", argv),
-            ir::ActionIR::TriggerObserver { observer_id, .. } => format!("trigger_observer(\"{}\")", observer_id),
-            ir::ActionIR::TriggerPlannerReview { .. } => "trigger_planner_review".to_string(),
-            ir::ActionIR::RequireEvidence(n) => format!("require_evidence(\"{}\")", n),
-            ir::ActionIR::RequireFinalNote(t) => format!("require_final_note(\"{}\")", t),
-            ir::ActionIR::Remember(f) => format!("remember(\"{}\")", f),
             ir::ActionIR::Audit { kind, .. } => format!("audit(\"{}\")", kind),
             ir::ActionIR::BlockFinishUntil { condition, .. } => format!("block_finish_until({:?})", condition),
         }
@@ -837,13 +857,14 @@ def on_complete():
         }
     }
 
-    // demo_03 (observer-trigger), demo_04 (observer-escalation), and demo_05 (migration-workflow)
-    // use @role definitions which have a known parser limitation — @role parsing hangs
-    // due to an infinite loop in the role body parser. Will be fixed in a follow-up.
-    // These tests are disabled until then.
     #[test]
-    fn demo_03_observer_trigger_disabled() {
-        // @role parser will be fixed separately
+    fn demo_03_observer_trigger_compiles() {
+        let source = load_demo("03-observer-trigger");
+        let module = assert_parse_ok(&source);
+        assert!(!module.handlers.is_empty(), "Expected at least one handler");
+        assert!(!module.roles.is_empty(), "Expected @role definition");
+        assert_eq!(module.roles[0].name, "security_review");
+        assert!(module.roles[0].system_prompt.is_some(), "Expected system prompt in role");
     }
 
     #[test]
@@ -1028,6 +1049,9 @@ def on_complete():
         let hooks = [
             "01-hello-loop",
             "02-rust-validation",
+            "03-observer-trigger",
+            "04-observer-escalation",
+            "05-migration-workflow",
             "06-generated-file-guidance",
             "07-dependency-audit",
             "08-prompt-shaping",
@@ -1201,7 +1225,7 @@ def on_complete():
         };
         let r2 = HookEvaluator::evaluate(&module, &ctx2, &limits);
         DirectiveMerger::merge(&mut merged, r2.directives);
-        // Still only 1 (same text, accumulate but don't duplicate identical text)
+        // Accumulate: 2 identical final-notes (RequireEvidence/FinalNote don't have DedupeKey)
         assert_eq!(merged.final_notes.len(), 2, "2 identical final-notes accumulate");
     }
 
@@ -1592,12 +1616,21 @@ def on_complete():
             "Expected duplicate group error, got: {:?}", errors);
     }
 
-    // demo_45 (duplicate role) and demo_46 (missing budget) require @role parsing
-    // which has a known parser limitation (hangs). Will be enabled when @role parser is fixed.
     #[test]
-    fn demo_45_duplicate_role_deferred() {}
+    fn demo_45_duplicate_role_rejected() {
+        let source = load_demo("45-duplicate-role");
+        let errors = assert_compile_fails(&source);
+        assert!(errors.iter().any(|e| e.contains("already defined")),
+            "Expected duplicate role error, got: {:?}", errors);
+    }
+
     #[test]
-    fn demo_46_role_missing_budget_deferred() {}
+    fn demo_46_role_missing_budget_rejected() {
+        let source = load_demo("46-role-missing-budget");
+        let errors = assert_compile_fails(&source);
+        assert!(errors.iter().any(|e| e.contains("missing budget")),
+            "Expected 'missing budget' error, got: {:?}", errors);
+    }
 
     #[test]
     fn demo_47_trigger_unknown_observer_compiles() {
@@ -1696,11 +1729,6 @@ def on_complete():
     fn test_hook_manager_reset_clears_state() {
         let mut mgr = crate::hooks::AgentHookManager::new();
         mgr.on_event(AgentLoopEvent::SessionStart);
-        // SessionStart should add hints if repo hook is loaded
-        // With empty module, no hints expected
-        let hints_were_empty = mgr.merged_directives().hints.is_empty();
-        mgr.reset();
-        assert!(mgr.merged_directives().hints.is_empty());
         mgr.reset();
         assert!(mgr.merged_directives().hints.is_empty());
         assert!(mgr.merged_directives().criteria.is_empty());
@@ -2592,16 +2620,59 @@ def on_complete():
     }
 
     #[test]
+    fn test_hook_limits_observer_triggers_capped() {
+        // Create a source that emits 5 observer triggers
+        let source = "@on(\"post_tool_use\")\ndef h():\n    trigger_observer(observer_id=\"a\", reason=\"x\")\n    trigger_observer(observer_id=\"b\", reason=\"x\")\n    trigger_observer(observer_id=\"c\", reason=\"x\")\n    trigger_observer(observer_id=\"d\", reason=\"x\")\n    trigger_observer(observer_id=\"e\", reason=\"x\")\n";
+        let mut p = Parser::new(source);
+        let module = p.parse_module().expect("parse");
+        let compiled = HookCompiler::compile(&module).expect("compile");
+        let ctx = EvalContext {
+            hook_id: "t".to_string(), event: "post_tool_use".to_string(), changed_files: vec![],
+            tool_name: None, tool_success: None, observer_id: None, observer_output: None,
+        };
+        let mut limits = AgentHookLimits::default();
+        limits.max_observer_triggers_per_event = 2;
+        let r = HookEvaluator::evaluate(&compiled, &ctx, &limits);
+        assert_eq!(r.directives.len(), 5, "Raw: 5 directives");
+        let mut merged = MergedDirectives::default();
+        DirectiveMerger::merge(&mut merged, r.directives);
+        // Before capping: 5 observer triggers
+        assert_eq!(merged.observer_triggers.len(), 5);
+        // After capping: limited to 2
+        crate::hooks::AgentHookManager::cap_merged_directives(&mut merged, &limits);
+        assert_eq!(merged.observer_triggers.len(), 2, "Capped to max_observer_triggers_per_event=2");
+    }
+
+    #[test]
+    fn test_hook_limits_max_rules_enforced() {
+        let source = "@on(\"post_tool_use\")\ndef h():\n    if changed_files.any_match(\"*\"):\n        hint(\"1\")\n    if changed_files.any_match(\"*\"):\n        hint(\"2\")\n    if changed_files.any_match(\"*\"):\n        hint(\"3\")\n";
+        let mut p = Parser::new(source);
+        let module = p.parse_module().expect("parse");
+        let compiled = HookCompiler::compile(&module).expect("compile");
+        let ctx = EvalContext {
+            hook_id: "t".to_string(), event: "post_tool_use".to_string(), changed_files: vec!["f".into()],
+            tool_name: None, tool_success: None, observer_id: None, observer_output: None,
+        };
+        let mut limits = AgentHookLimits::default();
+        limits.max_rules = 2;
+        let r = HookEvaluator::evaluate(&compiled, &ctx, &limits);
+        // Only 2 rules evaluated → 2 directives (not 3)
+        assert_eq!(r.directives.len(), 2, "max_rules=2 should cap at 2");
+    }
+
+    #[test]
     fn test_hook_limits_default_values() {
         let limits = AgentHookLimits::default();
         assert_eq!(limits.max_actions_per_event, 20);
         assert_eq!(limits.max_rules, 50);
+        assert_eq!(limits.max_ast_nodes, 5000);
         assert_eq!(limits.max_observer_triggers_per_task, 10);
         assert_eq!(limits.max_observer_triggers_per_event, 3);
         assert_eq!(limits.max_planner_reviews_per_task, 5);
         assert_eq!(limits.max_validation_requests_per_task, 20);
         assert_eq!(limits.max_finish_gates, 10);
         assert_eq!(limits.max_remembered_facts, 50);
+        assert_eq!(limits.max_eval_steps, 1000);
     }
 
     // ── DirectiveMerger edge cases ──
