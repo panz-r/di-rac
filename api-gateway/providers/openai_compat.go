@@ -217,13 +217,15 @@ func (h *openaiCompatHandler) setHeaders(httpReq *http.Request, apiKey string, r
 func (h *openaiCompatHandler) buildRequest(req *Request, stream bool) map[string]interface{} {
 	messages := openaiConvertMessages(req)
 
-	// Ensure assistant messages with tool_calls have non-nil content.
-	// Some providers (Groq, Together, etc.) reject nil content.
+	// Ensure assistant messages with tool_calls have valid content.
+	// Some providers (Groq, Together, etc.) reject nil content, while
+	// others (MiniMax) reject empty content.  A single space satisfies
+	// both — it's neither nil nor empty, and doesn't affect behavior.
 	for _, m := range messages {
 		if m["role"] == "assistant" {
 			if _, hasToolCalls := m["tool_calls"]; hasToolCalls {
-				if m["content"] == nil {
-					m["content"] = ""
+				if m["content"] == nil || m["content"] == "" {
+					m["content"] = " "
 				}
 			}
 		}
