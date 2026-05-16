@@ -1,11 +1,24 @@
+# ── Duplicate Final Note Accumulation ────────────────────────────
+# Intent: Verify that require() for final notes is NOT deduplicated
+#          across different event handlers (unlike validation).
+#          Identical final notes from different events accumulate.
+# Events: post_tool_use, pre_finish
+# Groups: rust (src/**/*.rs)
+# Roles: none
+# Actions: require
+# Variants: N/A — adversarial/correctness test
+# Note: This is a system-verification hook, not a production pattern.
+# ───────────────────────────────────────────────────────────────────
 group("rust", ["src/**/*.rs"])
+
+let test_status = final_note("Mention test status.")
 
 @on("post_tool_use")
 def post_tool_note():
     if changed_files.any_match("rust"):
-        require_final_note("Mention test status.")
+        require(test_status)
 
 @on("pre_finish")
 def pre_finish_note():
     if changed_files.any_match("rust"):
-        require_final_note("Mention test status.")
+        require(test_status)

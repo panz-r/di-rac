@@ -6,6 +6,7 @@ use crate::hooks::ir::CompiledHookModule;
 /// Discovers and loads .dhook files from standard paths.
 pub struct HookLoader {
     repo_path: Option<PathBuf>,
+    base_dir: Option<PathBuf>,
     session_overlay_path: Option<PathBuf>,
     loaded_source: Option<String>,
 }
@@ -13,8 +14,10 @@ pub struct HookLoader {
 impl HookLoader {
     pub fn new() -> Self {
         let repo_path = Self::find_repo_hook();
+        let base_dir = repo_path.as_ref().and_then(|p| p.parent().map(|p| p.to_path_buf()));
         Self {
             repo_path,
+            base_dir,
             session_overlay_path: None,
             loaded_source: None,
         }
@@ -84,7 +87,7 @@ impl HookLoader {
             Err(errors) => return Err(errors),
         };
 
-        let compiled = HookCompiler::compile(&parsed)?;
+        let compiled = HookCompiler::compile_with_base(&parsed, self.base_dir.as_deref())?;
 
         Ok(CompiledHookModule {
             id: self.repo_path.as_ref()
@@ -101,7 +104,7 @@ impl HookLoader {
         let source_hash = format!("{:.16}", hash);
 
         let parsed = self.parse(source)?;
-        let mut compiled = HookCompiler::compile(&parsed)?;
+        let mut compiled = HookCompiler::compile_with_base(&parsed, self.base_dir.as_deref())?;
         compiled.id = "session".to_string();
         compiled.source_hash = source_hash;
 

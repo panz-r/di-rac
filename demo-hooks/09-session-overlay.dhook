@@ -1,7 +1,22 @@
+# ── Session Overlay Hook ──────────────────────────────────────────
+# Intent: Temporarily augment agent behavior for a single session.
+#          Saved to ~/.di/hooks/<agent_id>.dhook; merged on top of
+#          the repo hook. The final note is a typed fact.
+# Events: post_tool_use, pre_finish
+# Groups: none
+# Roles: none
+# Actions: trigger_observer, require
+# Variants:
+#   - Override any repo hook behavior (duplicate event handlers merge)
+#   - Add temporary validation requirements for a specific task
+#   - Remove after session by deleting the overlay file
+# ───────────────────────────────────────────────────────────────────
+let session_note = final_note("Mention that an extra observer pass was requested during the session.")
+
 @on("post_tool_use")
 def temporary_extra_review():
     trigger_observer(observer_id="observer", reason="User requested one extra observer pass from session hook")
 
 @on("pre_finish")
 def temporary_finish_requirement():
-    require_final_note("Mention that an extra observer pass was requested during the session.")
+    require(session_note)

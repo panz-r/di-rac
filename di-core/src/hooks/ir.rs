@@ -1,6 +1,63 @@
 /// Base name for observer field access (observer.name, observer.output).
 pub const OBSERVER_BASE: &str = "observer";
 
+// ── Micro-DSL: FileMatch ────────────────────────────────────────
+/// Predicate on the set of changed files. Used via FilesMatch(FileMatch).
+#[derive(Debug, Clone)]
+pub enum FileMatch {
+    AnyMatch(String),
+    AllMatch(String),
+}
+
+// ── Micro-DSL: ObserverField ────────────────────────────────────
+/// Describes a field access path into the observer result.
+#[derive(Debug, Clone)]
+pub enum ObserverField {
+    /// The observer's name/id.
+    Name,
+    /// A nested JSON path inside observer.output.
+    Output(Vec<String>),
+}
+
+// ── Composed micro-DSL: Condition (was Expr) ────────────────────
+/// The expression language for hook conditions. Composes FileMatch
+/// and ObserverField as independent sub-languages.
+#[derive(Debug, Clone)]
+pub enum Expr {
+    // Literals
+    Bool(bool),
+    String(String),
+    Int(i64),
+    StringList(Vec<String>),
+
+    // Context queries
+    /// General identifier (used for bare `observer` truthy-check).
+    Ident(String),
+    /// Bare `changed_files` — true when files have changed.
+    ChangedFiles,
+    /// `changed_files.any_match("x")` / changed_files.all_match("x")
+    FilesMatch(FileMatch),
+    /// `observer.name`, `observer.output.path`
+    Observer(ObserverField),
+
+    // Logical composition
+    BinaryOp {
+        left: Box<Expr>,
+        op: BinOp,
+        right: Box<Expr>,
+    },
+    Not(Box<Expr>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinOp {
+    And,
+    Or,
+    Eq,
+    Neq,
+    In,
+}
+
 /// Compiled hook module — ready for evaluation.
 #[derive(Debug, Clone)]
 pub struct CompiledHookModule {
@@ -41,36 +98,6 @@ pub struct Rule {
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr {
-    Bool(bool),
-    String(String),
-    Int(i64),
-    StringList(Vec<String>),
-    Ident(String),
-    ChangedFilesAnyMatch(String),
-    ChangedFilesAllMatch(String),
-    ObserverField {
-        observer_id: String,
-        field_path: Vec<String>,
-    },
-    BinaryOp {
-        left: Box<Expr>,
-        op: BinOp,
-        right: Box<Expr>,
-    },
-    Not(Box<Expr>),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BinOp {
-    And,
-    Or,
-    Eq,
-    Neq,
-    In,
-}
-
-#[derive(Debug, Clone)]
 pub enum ActionIR {
     Hint(String),
     Criterion(String),
@@ -83,5 +110,10 @@ pub enum ActionIR {
     RequireFinalNote(String),
     Remember(String),
     Audit { kind: String, severity: super::directive::Severity },
-    BlockFinishUntil { condition: super::directive::FinishCondition, waiver_allowed: bool },
+    BlockFinishUntil {
+        condition: super::directive::FinishCondition,
+        waiver_allowed: bool,
+        with_evidence: Option<String>,
+        with_final_note: Option<String>,
+    },
 }

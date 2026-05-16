@@ -1,3 +1,15 @@
+# ── Prompt Shaping ────────────────────────────────────────────────
+# Intent: Inject hints and evaluation criteria into the prompt before
+#          it is sent to the LLM, shaping response style and behavior.
+# Events: user_prompt
+# Groups: none
+# Roles: none
+# Actions: hint, criterion
+# Variants:
+#   - Add domain-specific hints for your project conventions
+#   - Add criteria for code style, testing requirements, etc.
+#   - Use conditional logic to apply different hints per context
+# ───────────────────────────────────────────────────────────────────
 @on("user_prompt")
 def refactor_guidance():
     hint("For refactors, preserve public behavior unless explicitly asked otherwise.")

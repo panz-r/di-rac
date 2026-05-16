@@ -1,12 +1,28 @@
+# ── Waiver Path ───────────────────────────────────────────────────
+# Intent: Block completion until tests pass OR the user explicitly
+#          waives the gate. Constructs evidence and validation as
+#          typed objects, then binds them to the gate via require().
+# Events: post_tool_use, pre_finish
+# Groups: rust (src/**/*.rs)
+# Roles: none
+# Actions: require, block_finish_until
+# Variants:
+#   - Change condition text to match project's waiver language
+#   - Combine with trigger_observer for additional review
+#   - Reuse the same evidence across multiple consumers
+# ───────────────────────────────────────────────────────────────────
 group("rust", ["src/**/*.rs"])
+
+let ev = evidence("cargo test result")
+let run_tests = validation(["cargo", "test", "-q"])
+let needed = require(ev)
 
 @on("post_tool_use")
 def require_validation():
     if changed_files.any_match("rust"):
-        require_validation(argv=["cargo", "test", "-q"], reason="Rust files changed")
+        require(run_tests)
 
 @on("pre_finish")
 def finish_gate():
     if changed_files.any_match("rust"):
-        require_evidence("cargo test result")
-        block_finish_until(condition="Cargo tests pass or user explicitly waives validation.")
+        block_finish_until(condition=needed)

@@ -1,12 +1,28 @@
+# ── Rust Validation Gate ──────────────────────────────────────────
+# Intent: Require formatting and test validation when Rust source
+#          changes. Block completion until test evidence is provided.
+# Events: post_tool_use, pre_finish
+# Groups: rust (src/**/*.rs, crates/**/*.rs)
+# Roles: none
+# Actions: require, block_finish_until
+# Variants:
+#   - Change group patterns to match project layout
+#   - Add more validation facts for clippy, miri, etc.
+#   - Reuse evidence across multiple gates
+# ───────────────────────────────────────────────────────────────────
 group("rust", ["src/**/*.rs", "crates/**/*.rs"])
+
+let fmt_check = validation(["cargo", "fmt", "--check"])
+let test_check = validation(["cargo", "test", "-q"])
+let test_evidence = evidence("cargo test result")
 
 @on("post_tool_use")
 def require_rust_validation():
     if changed_files.any_match("rust"):
-        require_validation(argv=["cargo", "fmt", "--check"], reason="Rust files changed")
-        require_validation(argv=["cargo", "test", "-q"], reason="Rust source changed")
+        require(fmt_check)
+        require(test_check)
 
 @on("pre_finish")
 def finish_gate():
     if changed_files.any_match("rust"):
-        require_evidence("cargo test result")
+        block_finish_until(condition=require(test_evidence))

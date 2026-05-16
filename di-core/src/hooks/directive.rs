@@ -136,6 +136,49 @@ pub enum LoopDirective {
     },
 }
 
+impl LoopDirective {
+    /// Human-readable description of this directive for TUI display.
+    pub fn describe(&self) -> String {
+        match self {
+            LoopDirective::AddHint { text } => text.clone(),
+            LoopDirective::AddCriterion { text } => format!("Criterion: {}", text),
+            LoopDirective::Warn { severity, message } => format!("[{}] {}", match severity {
+                Severity::Low => "info",
+                Severity::Medium => "warn",
+                Severity::High => "high",
+                Severity::Critical => "critical",
+            }, message),
+            LoopDirective::ApprovalNote { severity, message } => format!("[approval: {}] {}", match severity {
+                Severity::Low => "info",
+                Severity::Medium => "note",
+                Severity::High => "high",
+                Severity::Critical => "critical",
+            }, message),
+            LoopDirective::RequireValidation { argv, .. } =>
+                format!("Require: $ {}", argv.join(" ")),
+            LoopDirective::TriggerObserver { observer_id, reason, .. } =>
+                format!("Trigger observer '{}': {}", observer_id, reason),
+            LoopDirective::TriggerPlannerReview { reason, .. } =>
+                format!("Planner review: {}", reason),
+            LoopDirective::RequireEvidence { name } =>
+                format!("Evidence required: {}", name),
+            LoopDirective::RequireFinalNote { text } =>
+                format!("Final note required: {}", text),
+            LoopDirective::Remember { fact } =>
+                format!("Remember: {}", fact),
+            LoopDirective::Audit { kind, severity, .. } =>
+                format!("[audit: {}] {}", match severity {
+                    Severity::Low => "info",
+                    Severity::Medium => "note",
+                    Severity::High => "high",
+                    Severity::Critical => "critical",
+                }, kind),
+            LoopDirective::BlockFinishUntil { condition, .. } =>
+                format!("Gate: {:?}", condition),
+        }
+    }
+}
+
 /// Merge rules for accumulated directives.
 #[derive(Debug, Clone, Default)]
 pub struct MergedDirectives {

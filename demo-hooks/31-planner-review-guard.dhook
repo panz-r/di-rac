@@ -1,3 +1,15 @@
+# ── Planner Review Guard ─────────────────────────────────────────
+# Intent: Trigger a planner review when a plan contains language
+#          suggesting a quick/hotfix that may hide complexity.
+# Events: plan_created
+# Groups: none
+# Roles: none
+# Actions: trigger_planner_review
+# Variants:
+#   - Change condition keyword to match project's risk patterns
+#   - Add additional conditions (and/or) for compound triggers
+#   - Combine with approval_note for planning-phase oversight
+# ───────────────────────────────────────────────────────────────────
 @on("plan_created")
 def initial_plan_review():
     if plan_contains("quick fix"):

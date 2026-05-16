@@ -1,3 +1,15 @@
+# ── Loop Guard ────────────────────────────────────────────────────
+# Intent: Verify that the observer-result loop guard prevents
+#          infinite trigger_observer → observer_result cycles.
+#          This hook would re-trigger the same observer on its own
+#          result — the loop guard should cap this.
+# Events: observer_result
+# Groups: none
+# Roles: none
+# Actions: trigger_observer
+# Variants: N/A — adversarial/correctness test
+# Note: This is a system-verification hook, not a production pattern.
+# ───────────────────────────────────────────────────────────────────
 @on("observer_result")
 def try_to_loop():
     if observer.name == "loop_test":

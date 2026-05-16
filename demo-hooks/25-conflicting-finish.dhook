@@ -1,11 +1,29 @@
+# ── Conflicting Finish Gates ──────────────────────────────────────
+# Intent: Require evidence and final notes for multiple independent
+#          change categories (rust + migrations). Each category's
+#          requirements are typed facts constructed at file scope.
+# Events: pre_finish
+# Groups: rust (src/**/*.rs, crates/**/*.rs), migrations (migrations/**)
+# Roles: none
+# Actions: require
+# Variants:
+#   - Add more groups with their own evidence/final_note facts
+#   - Combine with validation for same groups
+#   - Gate completion per category with block_finish_until
+# ───────────────────────────────────────────────────────────────────
 group("rust", ["src/**/*.rs", "crates/**/*.rs"])
 group("migrations", ["migrations/**"])
+
+let test_result = evidence("cargo test result")
+let migration_review = evidence("migration review result")
+let rust_note = final_note("Mention Rust validation status.")
+let migration_note = final_note("Mention migration rollback/testing plan.")
 
 @on("pre_finish")
 def finish_requirements():
     if changed_files.any_match("rust"):
-        require_evidence("cargo test result")
-        require_final_note("Mention Rust validation status.")
+        require(test_result)
+        require(rust_note)
     if changed_files.any_match("migrations"):
-        require_evidence("migration review result")
-        require_final_note("Mention migration rollback/testing plan.")
+        require(migration_review)
+        require(migration_note)

@@ -1,9 +1,22 @@
+# ── Deduplication Stress Test ─────────────────────────────────────
+# Intent: Verify that identical require() calls in the same handler
+#          are deduplicated by the directive merger (same dedupe_key
+#          → collapsed to 1). Uses typed validation facts.
+# Events: post_tool_use
+# Groups: rust (src/**/*.rs)
+# Roles: none
+# Actions: require, trigger_observer
+# Variants: N/A — adversarial/correctness test
+# Note: This is a system-verification hook, not a production pattern.
+# ───────────────────────────────────────────────────────────────────
 group("rust", ["src/**/*.rs"])
+
+let test_check = validation(["cargo", "test", "-q"])
 
 @on("post_tool_use")
 def repeated_requests():
     if changed_files.any_match("rust"):
-        require_validation(argv=["cargo", "test", "-q"], reason="Rust changed")
-        require_validation(argv=["cargo", "test", "-q"], reason="Rust changed")
+        require(test_check)
+        require(test_check)
         trigger_observer(observer_id="observer", reason="Rust changed")
         trigger_observer(observer_id="observer", reason="Rust changed")

@@ -1,6 +1,21 @@
+# ── Validation + Evidence Gate ───────────────────────────────────
+# Intent: Require a specific validation command when Rust files
+#          change. The validation is constructed at file scope and
+#          activated in the handler via require().
+# Events: post_tool_use
+# Groups: rust (src/**/*.rs)
+# Roles: none
+# Actions: require
+# Variants:
+#   - Change argv for project-specific test commands
+#   - Add multiple validation facts and activate them together
+#   - Combine with pre_finish block_finish_until for completion gating
+# ───────────────────────────────────────────────────────────────────
 group("rust", ["src/**/*.rs"])
+
+let run_tests = validation(["cargo", "test", "-q"])
 
 @on("post_tool_use")
 def require_rust_tests():
     if changed_files.any_match("rust"):
-        require_validation(argv=["cargo", "test", "-q"], reason="Rust files changed")
+        require(run_tests)

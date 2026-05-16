@@ -1,6 +1,20 @@
+# ── Severity Ordering ─────────────────────────────────────────────
+# Intent: Demonstrate that approval_notes from multiple conditions
+#          are sorted by severity (low → medium → high → critical)
+#          in the merged output for consistent display ordering.
+# Events: post_tool_use
+# Groups: low (docs/**), medium (src/api/**), critical (src/auth/**)
+# Roles: none
+# Actions: approval_note
+# Variants:
+#   - Replace groups with project's own documentation/API/auth paths
+#   - Use warn() or other action types with severity
+#   - Add high severity tier between medium and critical
+# ───────────────────────────────────────────────────────────────────
 group("low", ["docs/**"])
 group("medium", ["src/api/**"])
 group("critical", ["src/auth/**"])
+
 @on("post_tool_use")
 def severity_ordering():
     if changed_files.any_match("low"):

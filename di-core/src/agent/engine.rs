@@ -1422,8 +1422,8 @@ impl AgentEngine {
             None
         };
 
-        // Build hook guidance string from accumulated hints, criteria, and validation requests
-        let hook_guidance = {
+        // Build hook content: hints, criteria, validations, planner reviews, facts
+        let hook_content = {
             let merged = self.hooks.merged_directives();
             let mut parts: Vec<String> = Vec::new();
             if !merged.hints.is_empty() {
@@ -1452,21 +1452,14 @@ impl AgentEngine {
                     .collect();
                 parts.push(format!("# Planner Review Requested\n\n{}", reasons.join("\n")));
             }
-            if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
-        };
-
-        // Build remembered facts block — survives compaction via distilled context
-        let remembered_facts_block = {
-            let merged = self.hooks.merged_directives();
             if !merged.remembered_facts.is_empty() {
                 let facts: String = merged.remembered_facts.iter()
                     .map(|f| format!("  • {}", f))
                     .collect::<Vec<_>>()
                     .join("\n");
-                Some(format!("# Session Facts\n\n{}", facts))
-            } else {
-                None
+                parts.push(format!("# Session Facts\n\n{}", facts));
             }
+            if parts.is_empty() { None } else { Some(parts.join("\n\n")) }
         };
 
         let dynamic = DynamicContext {
@@ -1474,12 +1467,12 @@ impl AgentEngine {
             observations: &self.context_manager.vault,
             current_apis: &current_apis,
             background_summary: &None,
-            distilled_context: &remembered_facts_block,
+            distilled_context: &None,
             task_state_summary: &task_summary,
             tail_reminder: &tail_reminder,
             observer_block: &observer_block,
             compaction_summary: &compaction_summary,
-            hook_guidance: &hook_guidance,
+            hook_guidance: &hook_content,
         };
 
         // Current-frame budget: measure system string first, then compute history budget
@@ -3333,7 +3326,7 @@ async fn compute_ast_churn(&mut self) -> Option<(usize, usize, usize)> {
         let result = self.hooks.on_event(event);
         // Emit hook directives as CoreEvents for TUI tracing
         for d in &result.directives {
-            let directive_str = format!("{:?}", d).chars().take(200).collect::<String>();
+            let directive_str = d.describe().chars().take(200).collect::<String>();
             let _ = self.emit_event(CoreEvent::HookDirectiveEmitted {
                 agent_id: self.id,
                 directive: directive_str,

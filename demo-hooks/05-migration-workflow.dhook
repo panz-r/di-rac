@@ -1,4 +1,19 @@
+# ── Migration Workflow ────────────────────────────────────────────
+# Intent: Trigger a database migration review observer, require a
+#          final note about rollback planning, and audit the change.
+#          The final note is constructed at file scope.
+# Events: post_tool_use
+# Groups: migrations (migrations/**, db/migrations/**)
+# Roles: migration_review (kind=observer)
+# Actions: trigger_observer, require, audit
+# Variants:
+#   - Change group patterns for project's migration directory layout
+#   - Customize observer system prompt for specific DB technology
+#   - Add block_finish_until for migrations that need manual approval
+# ───────────────────────────────────────────────────────────────────
 group("migrations", ["migrations/**", "db/migrations/**"])
+
+let rollback_note = final_note("Mention migration testing and rollback considerations.")
 
 @role("migration_review", kind="observer")
 def migration_review():
@@ -11,5 +26,5 @@ def migration_review():
 def migration_policy():
     if changed_files.any_match("migrations"):
         trigger_observer(observer_id="migration_review", reason="Migration changed")
-        require_final_note("Mention migration testing and rollback considerations.")
+        require(rollback_note)
         audit(kind="migration-change", severity="high")

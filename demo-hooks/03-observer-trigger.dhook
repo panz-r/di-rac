@@ -1,3 +1,17 @@
+# ── Security Observer Review ─────────────────────────────────────
+# Intent: Trigger a security-focused observer agent whenever
+#          auth/security code changes. Defines the observer role
+#          with its system prompt, inputs, and output schema.
+# Events: post_tool_use
+# Groups: auth (src/auth/**, crates/auth/**, src/security/**)
+# Roles: security_review (kind=observer)
+# Actions: trigger_observer, approval_note
+# Variants:
+#   - Adjust group patterns for project's auth code layout
+#   - Tune observer budget (max_tokens, max_runs)
+#   - Customize system prompt for specific security concerns
+#   - Add require or block_finish_until for high-severity
+# ───────────────────────────────────────────────────────────────────
 group("auth", ["src/auth/**", "crates/auth/**", "src/security/**"])
 
 @role("security_review", kind="observer")

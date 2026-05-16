@@ -1,0 +1,32 @@
+# ── Typed-Fact Smoke Test ─────────────────────────────────────────
+# Intent: CI-validated version of the agent test hook. Must match
+#          .di/hooks/agent.dhook in structure. Exercises passive
+#          hook features without blocking or external processes.
+# Events: session_start, post_tool_use, task_complete
+# Groups: none
+# Roles: none
+# Actions: hint, criterion, audit, approval_note, warn, remember,
+#          require (evidence + final_note only)
+# ───────────────────────────────────────────────────────────────────
+
+let test_evidence = evidence("hook system verified")
+let test_note = final_note("Test hook ran during this session.")
+
+@on("session_start")
+def smoke_test():
+    hint("Smoke test: hook system active.")
+    audit(kind="hook-smoke", severity="low")
+    require(test_evidence)
+    require(test_note)
+    remember(fact="Test hook was active")
+
+@on("task_complete")
+def on_complete():
+    audit(kind="task-complete", severity="info")
+    warn(severity="low", message="Task completed. Verify results meet requirements.")
+
+@on("post_tool_use")
+def after_tool():
+    if changed_files:
+        audit(kind="file-change", severity="low")
+        approval_note(severity="low", message="Source files were modified.")

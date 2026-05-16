@@ -1,3 +1,16 @@
+# ── Observer Fanout ───────────────────────────────────────────────
+# Intent: Trigger multiple observer agents simultaneously when
+#          sensitive code changes. Tests per-event observer trigger
+#          limits (max_observer_triggers_per_event = 3 by default).
+# Events: post_tool_use
+# Groups: sensitive (src/auth/**, src/payments/**, src/crypto/**)
+# Roles: none (consumes observer roles defined elsewhere)
+# Actions: trigger_observer
+# Variants:
+#   - Change group patterns for project's sensitive code areas
+#   - Add/remove observer IDs to match available observer roles
+#   - Combine with approval_note for high-severity areas
+# ───────────────────────────────────────────────────────────────────
 group("sensitive", ["src/auth/**", "src/payments/**", "src/crypto/**"])
 
 @on("post_tool_use")

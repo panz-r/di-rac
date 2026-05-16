@@ -4,6 +4,7 @@ pub mod compiler;
 pub mod ir;
 pub mod evaluator;
 pub mod loader;
+pub mod validator;
 
 use std::path::PathBuf;
 use std::sync::Arc;

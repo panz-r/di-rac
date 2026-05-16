@@ -1,6 +1,22 @@
+# ── Observer Escalation ───────────────────────────────────────────
+# Intent: React to high-risk observer results by escalating to a
+#          planner review and blocking completion until resolved.
+#          The final note and gate condition are constructed as
+#          typed facts and bound to the gate via require().
+# Events: observer_result
+# Groups: none
+# Roles: none (consumes output from an observer role)
+# Actions: trigger_planner_review, require, block_finish_until
+# Variants:
+#   - Change which observer name to react to
+#   - Adjust risk threshold (high, critical, or medium)
+#   - Change the final note and condition facts
+# ───────────────────────────────────────────────────────────────────
+let disclosure_note = final_note("Mention unresolved security findings or how they were addressed.")
+
 @on("observer_result")
 def react_to_security_review():
     if observer.name == "security_review" and observer.output.risk in ["high", "critical"]:
         trigger_planner_review(reason="Security observer found high-risk issues")
-        require_final_note("Mention unresolved security findings or how they were addressed.")
+        require(disclosure_note)
         block_finish_until(condition="Security findings addressed, waived, or disclosed.")

@@ -1,0 +1,33 @@
+# ── Shared Base Definitions ───────────────────────────────────────
+# Intent: Provide reusable groups and observer roles that project
+#          hooks can import via `from "50-base" import group("rust"),
+#          role("security_review")`. Centralizes common patterns
+#          so individual hooks don't duplicate group patterns.
+# Events: none (definitions only)
+# Groups: rust, auth, migrations, deps
+# Roles: security_review, migration_review
+# Actions: none (definitions only)
+# Variants:
+#   - Edit group patterns to match project source layout
+#   - Customize observer system prompts for domain-specific concerns
+#   - Add more groups and roles as project grows
+# ───────────────────────────────────────────────────────────────────
+group("rust", ["src/**/*.rs", "crates/**/*.rs"])
+group("auth", ["src/auth/**", "crates/auth/**", "src/security/**"])
+group("migrations", ["migrations/**", "db/migrations/**"])
+group("deps", ["Cargo.lock", "package-lock.json", "go.sum"])
+
+@role("security_review", kind="observer")
+def security_review():
+    system("Review changed auth/security code for authorization bugs, secret handling, and privilege bypasses.")
+    input.diff()
+    input.changed_files()
+    output.schema({"risk": "low|medium|high|critical", "findings": "list<string>"})
+    budget(max_tokens=1200, max_runs=1)
+
+@role("migration_review", kind="observer")
+def migration_review():
+    system("Review database migration changes for data-loss risk, rollback concerns, and ordering issues.")
+    input.diff(paths="migrations/**")
+    output.schema({"risk": "low|medium|high|critical", "rollback_required": "bool"})
+    budget(max_tokens=1000, max_runs=1)

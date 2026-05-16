@@ -12,7 +12,16 @@ use agent::engine::MultiAgentOrchestrator;
 use protocol::{CoreEvent, FrontendMessage};
 use std::io::{self, BufRead, Write};
 use anyhow::Result;
+use clap::Parser;
 use uuid::Uuid;
+
+#[derive(Parser)]
+#[command(name = "di-core", about = "Dirac agent engine")]
+struct Cli {
+    /// Validate a .dhook file and exit
+    #[arg(long, value_name = "FILE")]
+    validate_hook: Option<std::path::PathBuf>,
+}
 
 /// Simple file logger that appends to ~/.di/di-core.log
 struct FileLogger {
@@ -49,6 +58,36 @@ impl FileLogger {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // --validate-hook: validate a .dhook file and exit
+    if let Some(path) = cli.validate_hook {
+        let source = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: cannot read {}: {}", path.display(), e);
+                std::process::exit(1);
+            }
+        };
+        let diags = crate::hooks::validator::validate_hook(&source);
+        if diags.is_empty() {
+            println!("{}: OK — no issues found", path.display());
+            return Ok(());
+        }
+        for d in &diags {
+            let loc = match d.line {
+                Some(line) => format!("{}:{}", path.display(), line),
+                None => path.display().to_string(),
+            };
+            println!("{}: {}: {}", loc, d.severity, d.message);
+        }
+        // Exit with non-zero if there were errors
+        if diags.iter().any(|d| d.severity == crate::hooks::validator::Severity::Error) {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     let mut log = FileLogger::new();
     log.log("di-core starting");
 
@@ -179,31 +218,13 @@ async fn main() -> Result<()> {
                                         };
 
                                         let agent_id = agent.id;
-                                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                                            || {
-                                                let rt = tokio::runtime::Handle::current();
-                                                rt.block_on(async { agent.run_task(task_clone).await })
-                                            }
-                                        ));
-
-                                        match result {
-                                            Ok(Ok(())) => {
+                                        match agent.run_task(task_clone).await {
+                                            Ok(()) => {
                                                 // Normal completion — TaskFinished already emitted by engine
                                             }
-                                            Ok(Err(e)) => {
+                                            Err(e) => {
                                                 eprintln!("[di-core] agent {} FAILED: {}", agent_id, e);
                                                 finish_event(agent_id, false, format!("Agent error: {}", e));
-                                            }
-                                            Err(panic) => {
-                                                let msg = if let Some(s) = panic.downcast_ref::<&str>() {
-                                                    s.to_string()
-                                                } else if let Some(s) = panic.downcast_ref::<String>() {
-                                                    s.clone()
-                                                } else {
-                                                    "Agent panicked".to_string()
-                                                };
-                                                eprintln!("[di-core] agent {} PANICKED: {}", agent_id, msg);
-                                                finish_event(agent_id, false, format!("Agent panic: {}", msg));
                                             }
                                         }
 

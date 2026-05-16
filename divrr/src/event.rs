@@ -258,7 +258,7 @@ pub fn handle_core_event(app: &mut App, event: CoreEvent) {
                 } else {
                     directive.clone()
                 };
-                agent.log.push_system(format!("Hook [{}]: {}", hook_id, short));
+                agent.log.push_system(format!(".{}: {}", hook_id, short));
             }
         }
         CoreEvent::HookEvaluationFailed { event, error, .. } => {

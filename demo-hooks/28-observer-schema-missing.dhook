@@ -1,6 +1,21 @@
+# ── Observer Schema — Missing Field ──────────────────────────────
+# Intent: Verify that observer.output.<nonexistent> comparisons
+#          evaluate to false without error, and that observer
+#          conditions compose correctly with and / ==.
+# Events: observer_result
+# Groups: none
+# Roles: none
+# Actions: require, warn
+# Variants:
+#   - Adapt observer name and field path to match custom schemas
+#   - Combine with observer.output.<path> == "value" for nested fields
+# Note: Accessing nonexistent JSON paths returns false, not an error.
+# ───────────────────────────────────────────────────────────────────
+let risk_note = final_note("Security risk was high.")
+
 @on("observer_result")
 def observer_schema_missing_field():
     if observer.name == "security_review" and observer.output.risk == "high":
-        require_final_note("Security risk was high.")
+        require(risk_note)
     if observer.name == "security_review" and observer.output.nonexistent == "x":
         warn(severity="low", message="This should not trigger.")

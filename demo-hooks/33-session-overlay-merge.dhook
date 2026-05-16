@@ -1,7 +1,22 @@
+# ── Session Overlay Merge ─────────────────────────────────────────
+# Intent: Demonstrate that a session overlay hook overrides repo
+#          hook behavior by providing an alternate handler for the
+#          same event with a different validation command.
+# Events: post_tool_use
+# Groups: rust (src/**/*.rs)
+# Roles: none
+# Actions: require, warn
+# Variants:
+#   - Override any repo hook handler with session-specific logic
+#   - Use warn() to log that overlay is active
+#   - Use different validation facts for faster/debug builds
+# ───────────────────────────────────────────────────────────────────
 group("rust", ["src/**/*.rs"])
+
+let session_check = validation(["cargo", "test", "--lib"])
 
 @on("post_tool_use")
 def session_policy():
     if changed_files.any_match("rust"):
-        require_validation(argv=["cargo", "test", "--lib"], reason="Session override for faster check")
+        require(session_check)
         warn(severity="medium", message="Session hook requested faster library-only test.")

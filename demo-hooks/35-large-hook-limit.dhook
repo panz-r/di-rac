@@ -1,3 +1,15 @@
+# ── Large Hook Limit ─────────────────────────────────────────────
+# Intent: Verify that the evaluator caps the number of actions
+#          per event (max_actions_per_event = 20 by default).
+#          This handler emits 16 warn() calls; the cap ensures
+#          no single event handler can produce unbounded output.
+# Events: post_tool_use
+# Groups: none
+# Roles: none
+# Actions: warn
+# Variants: N/A — adversarial/correctness test
+# Note: This is a system-verification hook, not a production pattern.
+# ───────────────────────────────────────────────────────────────────
 @on("post_tool_use")
 def too_many_actions():
     warn(severity="info", message="1")

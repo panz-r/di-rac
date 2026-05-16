@@ -1,5 +1,20 @@
+# ── Scope Narrowing ───────────────────────────────────────────────
+# Intent: Apply different actions based on which file group changed.
+#          API changes trigger an observer review; UI changes only
+#          produce a low-severity audit. Demonstrates per-group
+#          policy differentiation.
+# Events: post_tool_use
+# Groups: api (src/api/**, openapi/**), ui (web/src/**)
+# Roles: none
+# Actions: trigger_observer, audit
+# Variants:
+#   - Add more groups with their own action policies
+#   - Replace audit with warn, approval_note, or require
+#   - Route different groups to different observer roles
+# ───────────────────────────────────────────────────────────────────
 group("api", ["src/api/**", "openapi/**"])
 group("ui", ["web/src/**"])
+
 @on("post_tool_use")
 def trigger_api_review():
     if changed_files.any_match("api"):

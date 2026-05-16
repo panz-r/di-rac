@@ -1,6 +1,6 @@
-group("rust", ["src/**/*.rs"])
+let test_check = validation(["cargo", "test"])
 
 @on("post_tool_use")
 def broken_field():
-    if unknown_field.any_match("rust"):
-        require_validation(argv=["cargo", "test"], reason="bad")
+    if unknown_field.any_match("nope"):
+        require(test_check)

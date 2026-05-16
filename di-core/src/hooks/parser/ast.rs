@@ -22,6 +22,48 @@ pub struct Module {
     pub groups: Vec<PathGroup>,
     pub roles: Vec<RoleDef>,
     pub handlers: Vec<EventHandler>,
+    pub imports: Vec<ImportStmt>,
+    pub let_bindings: Vec<LetBinding>,
+}
+
+// ── File-scope let bindings ──
+
+/// A `let name = evidence("x")` binding at module scope.
+/// These are pure constructors — no side effects until consumed.
+#[derive(Debug, Clone)]
+pub struct LetBinding {
+    pub name: String,
+    pub constructor: LetConstructor,
+    pub span: Span,
+}
+
+/// What a let binding constructs.
+#[derive(Debug, Clone)]
+pub enum LetConstructor {
+    Evidence(String),
+    Validation(Vec<String>),
+    FinalNote(String),
+    /// `require(fact_name)` — wraps a single fact into a requirement.
+    /// The fact_name must reference another LetBinding.
+    Require(String),
+}
+
+// ── Imports ──
+
+/// A `from "path" import group("x"), role("y")` statement.
+#[derive(Debug, Clone)]
+pub struct ImportStmt {
+    /// Path without extension, e.g. "base" or "observers/security"
+    pub path: String,
+    /// What to pull from that file.
+    pub symbols: Vec<ImportSymbol>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportSymbol {
+    Group(String),
+    Role(String),
 }
 
 #[derive(Debug, Clone)]

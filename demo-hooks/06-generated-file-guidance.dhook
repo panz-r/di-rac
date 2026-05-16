@@ -1,3 +1,15 @@
+# ── Generated File Warning ───────────────────────────────────────
+# Intent: Warn when generated or build-artifact files are modified,
+#          suggesting the source schema should be edited instead.
+# Events: post_tool_use
+# Groups: generated (generated/**, **/*.pb.rs, **/*.generated.ts, dist/**)
+# Roles: none
+# Actions: warn
+# Variants:
+#   - Adjust group patterns for project's generated file locations
+#   - Change severity (medium → high for checked-in generated files)
+#   - Add approval_note to block if generated files require review
+# ───────────────────────────────────────────────────────────────────
 group("generated", ["generated/**", "**/*.pb.rs", "**/*.generated.ts", "dist/**"])
 
 @on("post_tool_use")

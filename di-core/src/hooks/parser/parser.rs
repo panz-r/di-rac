@@ -30,6 +30,9 @@ impl<'a> Parser<'a> {
         let mut groups = Vec::new();
         let mut roles = Vec::new();
         let mut handlers = Vec::new();
+        let mut imports = Vec::new();
+        let mut let_bindings = Vec::new();
+        let mut scope_open = true;
 
         loop {
             if self.eof || self.current.kind == TokenKind::Eof {
@@ -37,6 +40,26 @@ impl<'a> Parser<'a> {
             }
 
             match &self.current.kind {
+                TokenKind::Ident(name) if name == "from" => {
+                    match self.parse_import_stmt() {
+                        Ok(i) => imports.push(i),
+                        Err(e) => errors.push(e),
+                    }
+                }
+                TokenKind::Ident(name) if name == "let" => {
+                    if !scope_open {
+                        errors.push(ParseError {
+                            message: "let bindings must precede all handler definitions".to_string(),
+                            span: self.current.span.clone(),
+                        });
+                        self.advance();
+                        continue;
+                    }
+                    match self.parse_let_binding() {
+                        Ok(b) => let_bindings.push(b),
+                        Err(e) => errors.push(e),
+                    }
+                }
                 TokenKind::Ident(name) if name == "group" => {
                     match self.parse_group() {
                         Ok(g) => groups.push(g),
@@ -44,12 +67,14 @@ impl<'a> Parser<'a> {
                     }
                 }
                 TokenKind::AtRole => {
+                    scope_open = false;
                     match self.parse_role_def() {
                         Ok(r) => roles.push(r),
                         Err(e) => errors.push(e),
                     }
                 }
                 TokenKind::AtOn => {
+                    scope_open = false;
                     match self.parse_event_handler() {
                         Ok(h) => handlers.push(h),
                         Err(e) => errors.push(e),
@@ -74,10 +99,149 @@ impl<'a> Parser<'a> {
         }
 
         if errors.is_empty() {
-            Ok(Module { groups, roles, handlers })
+            Ok(Module { groups, roles, handlers, imports, let_bindings })
         } else {
             Err(errors)
         }
+    }
+
+    /// Parse: let name = evidence("text") | validation(argv=["cmd",...]) | final_note("text") | require(name)
+    fn parse_let_binding(&mut self) -> Result<LetBinding, ParseError> {
+        let start = self.current.span.clone();
+        self.advance(); // let
+
+        let name = match &self.current.kind {
+            TokenKind::Ident(n) => { let name = n.clone(); self.advance(); name }
+            _ => return Err(ParseError {
+                message: "Expected binding name after 'let'".to_string(),
+                span: self.current.span.clone(),
+            }),
+        };
+
+        self.expect(&TokenKind::Eq)?;
+        let constructor = self.parse_constructor()?;
+        self.expect_newline_or_eof();
+        Ok(LetBinding { name, constructor, span: start })
+    }
+
+    fn parse_constructor(&mut self) -> Result<LetConstructor, ParseError> {
+        let ctor_name = match &self.current.kind {
+            TokenKind::Ident(n) => { let name = n.clone(); self.advance(); name }
+            _ => return Err(ParseError {
+                message: "Expected constructor name (evidence, validation, final_note, require)".to_string(),
+                span: self.current.span.clone(),
+            }),
+        };
+        self.expect(&TokenKind::LParen)?;
+        let result = match ctor_name.as_str() {
+            "evidence" | "final_note" => {
+                let text = match &self.current.kind {
+                    TokenKind::String(s) => { let t = s.clone(); self.advance(); t }
+                    _ => return Err(ParseError {
+                        message: format!("Expected string argument for {}()", ctor_name),
+                        span: self.current.span.clone(),
+                    }),
+                };
+                if ctor_name == "evidence" { LetConstructor::Evidence(text) }
+                else { LetConstructor::FinalNote(text) }
+            }
+            "validation" => {
+                self.expect(&TokenKind::LBracket)?;
+                let mut argv = Vec::new();
+                loop {
+                    match &self.current.kind {
+                        TokenKind::RBracket => { self.advance(); break; }
+                        TokenKind::Comma => { self.advance(); }
+                        TokenKind::String(s) => { argv.push(s.clone()); self.advance(); }
+                        _ => break,
+                    }
+                }
+                LetConstructor::Validation(argv)
+            }
+            "require" => {
+                let fact_name = match &self.current.kind {
+                    TokenKind::Ident(n) => { let name = n.clone(); self.advance(); name }
+                    _ => return Err(ParseError {
+                        message: "Expected fact name for require()".to_string(),
+                        span: self.current.span.clone(),
+                    }),
+                };
+                LetConstructor::Require(fact_name)
+            }
+            _ => return Err(ParseError {
+                message: format!("Unknown constructor '{}'. Expected evidence, validation, final_note, or require.", ctor_name),
+                span: self.current.span.clone(),
+            }),
+        };
+        self.expect(&TokenKind::RParen)?;
+        Ok(result)
+    }
+
+    /// Parse: from "path" import group("x"), role("y"), ...
+    fn parse_import_stmt(&mut self) -> Result<ImportStmt, ParseError> {
+        let start = self.current.span.clone();
+        self.advance(); // from
+
+        let path = match &self.current.kind {
+            TokenKind::String(s) => { let p = s.clone(); self.advance(); p }
+            _ => return Err(ParseError {
+                message: "Expected import path string after 'from'".to_string(),
+                span: self.current.span.clone(),
+            }),
+        };
+
+        match &self.current.kind {
+            TokenKind::Ident(s) if s == "import" => { self.advance(); }
+            _ => return Err(ParseError {
+                message: "Expected 'import' after path string".to_string(),
+                span: self.current.span.clone(),
+            }),
+        }
+
+        let mut symbols = Vec::new();
+        loop {
+            match &self.current.kind {
+                TokenKind::Ident(s) if s == "group" => {
+                    self.advance();
+                    self.expect(&TokenKind::LParen)?;
+                    let name = match &self.current.kind {
+                        TokenKind::String(n) => { let n = n.clone(); self.advance(); n }
+                        _ => return Err(ParseError {
+                            message: "Expected group name string".to_string(),
+                            span: self.current.span.clone(),
+                        }),
+                    };
+                    self.expect(&TokenKind::RParen)?;
+                    symbols.push(ImportSymbol::Group(name));
+                }
+                TokenKind::Ident(s) if s == "role" => {
+                    self.advance();
+                    self.expect(&TokenKind::LParen)?;
+                    let name = match &self.current.kind {
+                        TokenKind::String(n) => { let n = n.clone(); self.advance(); n }
+                        _ => return Err(ParseError {
+                            message: "Expected role name string".to_string(),
+                            span: self.current.span.clone(),
+                        }),
+                    };
+                    self.expect(&TokenKind::RParen)?;
+                    symbols.push(ImportSymbol::Role(name));
+                }
+                TokenKind::Comma => { self.advance(); }
+                TokenKind::Newline | TokenKind::Eof => break,
+                _ => break,
+            }
+        }
+
+        if symbols.is_empty() {
+            return Err(ParseError {
+                message: "Expected at least one import symbol".to_string(),
+                span: self.current.span.clone(),
+            });
+        }
+
+        self.expect_newline_or_eof();
+        Ok(ImportStmt { path, symbols, span: start })
     }
 
     fn advance(&mut self) {
@@ -535,7 +699,7 @@ impl<'a> Parser<'a> {
         if matches!(&self.current.kind, TokenKind::Not) {
             let span = self.current.span.clone();
             self.advance();
-            let inner = self.parse_primary()?;
+            let inner = self.parse_not_expr()?;
             Ok(Expr::BinaryOp {
                 left: Box::new(Expr::Bool(false, span.clone())),
                 op: BinOp::Eq,

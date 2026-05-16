@@ -1,3 +1,12 @@
+# ── Smoke Test ─────────────────────────────────────────────────────
+# Intent: Verify the hook system is active. The simplest possible hook.
+# Events: session_start
+# Groups: none
+# Roles: none
+# Actions: hint, audit
+# Variants:
+#   - Replace message and audit kind with project-specific values
+# ───────────────────────────────────────────────────────────────────
 @on("session_start")
 def hello():
     hint("Dirac hook system is active.")

@@ -1,3 +1,16 @@
+# ── Dependency Lockfile Audit ────────────────────────────────────
+# Intent: Audit dependency lockfile changes (Cargo.lock, package-lock,
+#          go.sum, etc.) for supply-chain review awareness. The final
+#          note is constructed as a typed fact at file scope.
+# Events: post_tool_use
+# Groups: deps (Cargo.lock, package-lock.json, pnpm-lock.yaml, etc.)
+# Roles: none
+# Actions: audit, approval_note, require
+# Variants:
+#   - Add/remove lockfile patterns for project's ecosystem
+#   - Adjust severity based on supply-chain risk tolerance
+#   - Add trigger_observer for dependency-review observer role
+# ───────────────────────────────────────────────────────────────────
 group("deps", [
     "Cargo.lock",
     "package-lock.json",
@@ -6,9 +19,11 @@ group("deps", [
     "go.sum"
 ])
 
+let deps_note = final_note("Mention dependency changes in the final summary.")
+
 @on("post_tool_use")
 def dependency_change_policy():
     if changed_files.any_match("deps"):
         audit(kind="dependency-change", severity="high")
         approval_note(severity="high", message="Dependency lockfile changed; supply-chain impact should be reviewed.")
-        require_final_note("Mention dependency changes in the final summary.")
+        require(deps_note)
