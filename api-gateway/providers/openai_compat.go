@@ -174,7 +174,10 @@ func newAPIError(statusCode int, body string) *ProviderAPIError {
 			strings.Contains(lower, "context_length_exceeded") ||
 			strings.Contains(lower, "maximum context length") ||
 			strings.Contains(lower, "token limit") ||
-			strings.Contains(lower, "input is too long")
+			strings.Contains(lower, "input is too long") ||
+			strings.Contains(lower, "prompt is too long") ||
+			strings.Contains(lower, "exceeds the maximum number of tokens") ||
+			strings.Contains(lower, "request too large")
 	}
 	return &ProviderAPIError{
 		StatusCode:      statusCode,

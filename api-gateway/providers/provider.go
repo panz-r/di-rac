@@ -270,6 +270,7 @@ type StreamChunk struct {
 	ToolCallID    string          `json:"tool_call_id,omitempty"`
 	ToolCallName  string          `json:"tool_call_name,omitempty"`
 	Thinking      string          `json:"thinking,omitempty"`
+	Signature     string          `json:"signature,omitempty"`
 	Usage         *Usage          `json:"usage,omitempty"`
 	FinishReason  string          `json:"finish_reason,omitempty"`
 	ContentBlocks []ContentBlock  `json:"content_blocks,omitempty"`
@@ -299,6 +300,7 @@ type ContentBlock struct {
 	ToolUse     *ToolUseBlock    `json:"tool_use,omitempty"`
 	Thinking    string           `json:"thinking,omitempty"`
 	Signature   string           `json:"signature,omitempty"`
+	Data        string           `json:"data,omitempty"`
 	ToolResult  *ToolResultBlock `json:"tool_result,omitempty"`
 	ImageSource *ImageSourceBlock `json:"image_source,omitempty"`
 }

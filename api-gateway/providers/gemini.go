@@ -81,10 +81,7 @@ func (h *GeminiHandler) buildRequestPayload(req *Request) (map[string]interface{
 					name = n
 				}
 				parts = append(parts, map[string]interface{}{
-					"functionResponse": map[string]interface{}{
-						"name":     name,
-						"response": map[string]interface{}{"result": msg.ToolResult.Content},
-					},
+					"functionResponse": geminiFunctionResponse(name, msg.ToolResult.Content),
 				})
 			}
 		}
@@ -222,15 +219,28 @@ func geminiConvertContentBlocks(blocks []ContentBlock, toolUseIDToName map[strin
 					name = n
 				}
 				parts = append(parts, map[string]interface{}{
-					"functionResponse": map[string]interface{}{
-						"name":     name,
-						"response": map[string]interface{}{"result": block.ToolResult.Content},
-					},
+					"functionResponse": geminiFunctionResponse(name, block.ToolResult.Content),
 				})
 			}
 		}
 	}
 	return parts
+}
+
+// geminiFunctionResponse builds a Gemini functionResponse part from a tool result.
+// If the content is valid JSON, it's passed as a structured object; otherwise wrapped as {result: string}.
+func geminiFunctionResponse(name, content string) map[string]interface{} {
+	var parsed interface{}
+	if json.Unmarshal([]byte(content), &parsed) == nil {
+		return map[string]interface{}{
+			"name":     name,
+			"response": parsed,
+		}
+	}
+	return map[string]interface{}{
+		"name":     name,
+		"response": map[string]interface{}{"result": content},
+	}
 }
 
 // jsonSchemaToGeminiSchema converts a JSON Schema object to a Gemini-format schema map.
@@ -271,6 +281,24 @@ func jsonSchemaToGeminiSchema(schemaJSON json.RawMessage) map[string]interface{}
 		var required []string
 		if json.Unmarshal(req, &required) == nil {
 			schema["required"] = required
+		}
+	}
+
+	if items, ok := raw["items"]; ok {
+		schema["items"] = jsonSchemaToGeminiSchema(items)
+	}
+
+	if enum, ok := raw["enum"]; ok {
+		var enumVals []interface{}
+		if json.Unmarshal(enum, &enumVals) == nil {
+			schema["enum"] = enumVals
+		}
+	}
+
+	if nullable, ok := raw["nullable"]; ok {
+		var n bool
+		if err := json.Unmarshal(nullable, &n); err == nil && n {
+			schema["nullable"] = true
 		}
 	}
 
@@ -349,6 +377,9 @@ func (h *GeminiHandler) Send(ctx context.Context, req *Request) (*SendResult, er
 
 func geminiConvertResponse(body []byte, model string) (*SendResult, error) {
 	var resp struct {
+		PromptFeedback *struct {
+			BlockReason string `json:"blockReason"`
+		} `json:"promptFeedback"`
 		Candidates []struct {
 			Content *struct {
 				Parts []json.RawMessage `json:"parts"`
@@ -365,8 +396,13 @@ func geminiConvertResponse(body []byte, model string) (*SendResult, error) {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
+	if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" && len(resp.Candidates) == 0 {
+		return nil, fmt.Errorf("gemini: prompt blocked (%s)", resp.PromptFeedback.BlockReason)
+	}
+
 	var contentBlocks []ContentBlock
 	var stopReason string
+	toolCallIdx := 0
 
 	for _, candidate := range resp.Candidates {
 		if candidate.FinishReason != "" && candidate.FinishReason != "FINISH_REASON_UNSPECIFIED" {
@@ -391,10 +427,12 @@ func geminiConvertResponse(body []byte, model string) (*SendResult, error) {
 					Args json.RawMessage `json:"args"`
 				}
 				if json.Unmarshal(fcRaw, &fc) == nil {
+					callID := fmt.Sprintf("gemini_%d_%s", toolCallIdx, fc.Name)
+					toolCallIdx++
 					contentBlocks = append(contentBlocks, ContentBlock{
 						Type: "tool_use",
 						ToolUse: &ToolUseBlock{
-							ID:   fc.Name,
+							ID:   callID,
 							Type: "tool_use",
 							Function: struct {
 								Name      string `json:"name"`
@@ -466,6 +504,7 @@ func geminiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 	scanner.Buffer(make([]byte, 0, 32*1024), 256*1024)
 
 	toolCallIdx := 0
+	stopped := false
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {
@@ -547,7 +586,7 @@ func geminiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			}
 		}
 
-		if candidate.FinishReason != "" && candidate.FinishReason != "FINISH_REASON_UNSPECIFIED" {
+		if !stopped && candidate.FinishReason != "" && candidate.FinishReason != "FINISH_REASON_UNSPECIFIED" {
 			usage := &Usage{}
 			if chunk.UsageMetadata != nil {
 				usage.InputTokens = chunk.UsageMetadata.PromptTokenCount
@@ -561,6 +600,7 @@ func geminiParseSSE(ctx context.Context, body io.Reader, callback func(StreamChu
 			}); err != nil {
 				return err
 			}
+			stopped = true
 		}
 	}
 

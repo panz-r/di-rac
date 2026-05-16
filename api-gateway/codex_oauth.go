@@ -148,25 +148,30 @@ func (s *codexTokenStore) GetValidToken() (string, error) {
 
 	// Acquire write lock to serialize refresh (prevents thundering herd).
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	// Double-check: another goroutine may have refreshed while we waited.
 	tokens, err = s.loadFromFile()
 	if err != nil {
+		s.mu.Unlock()
 		return "", fmt.Errorf("no stored codex tokens: %w", err)
 	}
 	if time.Until(time.Unix(tokens.Expiry, 0)) > 5*time.Minute {
+		s.mu.Unlock()
 		return tokens.AccessToken, nil
 	}
+	refreshToken := tokens.RefreshToken
+	s.mu.Unlock()
 
-	newTokens, err := codexRefreshToken(tokens.RefreshToken)
+	// Do HTTP refresh outside the lock so readers aren't blocked.
+	newTokens, err := codexRefreshToken(refreshToken)
 	if err != nil {
 		return "", fmt.Errorf("token refresh failed: %w", err)
 	}
 
+	s.mu.Lock()
 	if err := s.saveToFile(newTokens); err != nil {
 		log.Printf("Warning: failed to save refreshed codex token: %v", err)
 	}
+	s.mu.Unlock()
 
 	return newTokens.AccessToken, nil
 }
@@ -507,6 +512,9 @@ func codexStartDeviceCode(ctx context.Context) (*CodexDeviceCode, error) {
 // codexPollDeviceCode polls for device code completion.
 func codexPollDeviceCode(ctx context.Context, dc *CodexDeviceCode) (*CodexAuthTokens, error) {
 	interval := time.Duration(dc.Interval) * time.Second
+	if interval < 5*time.Second {
+		interval = 5 * time.Second
+	}
 	backoff := time.Duration(0)
 	// Add jitter to avoid thundering herd when multiple pollers share the same interval.
 	jitterMax := time.Second

@@ -99,6 +99,10 @@ func NewQwenHandler() *QwenHandler {
 				isReasoningFamily := strings.Contains(model, "qwen3") || model == "qwen-plus-latest" || model == "qwen-turbo-latest"
 				thinkingOn := req.Thinking != nil && req.Thinking.BudgetTokens > 0
 
+				// Apply temperature and top_p from provider settings
+				req.ApplySettingFloat(result, "temperature")
+				req.ApplySettingFloat(result, "top_p")
+
 				// Temperature: omit when reasoning
 				if isDeepseekReasoner || (thinkingOn && isReasoningFamily) {
 					delete(result, "temperature")

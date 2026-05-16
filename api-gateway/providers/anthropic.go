@@ -66,14 +66,25 @@ func (h *AnthropicHandler) buildRequestBody(req *Request) map[string]interface{}
 					})
 				case "image":
 					if block.ImageSource != nil {
-						content = append(content, map[string]interface{}{
-							"type": "image",
-							"source": map[string]interface{}{
-								"type":       "base64",
-								"media_type": block.ImageSource.MimeType,
-								"data":       block.ImageSource.Data,
-							},
-						})
+						src := block.ImageSource
+						if src.Data != "" {
+							content = append(content, map[string]interface{}{
+								"type": "image",
+								"source": map[string]interface{}{
+									"type":       "base64",
+									"media_type": src.MimeType,
+									"data":       src.Data,
+								},
+							})
+						} else if src.URL != "" {
+							content = append(content, map[string]interface{}{
+								"type": "image",
+								"source": map[string]interface{}{
+									"type": "url",
+									"url":  src.URL,
+								},
+							})
+						}
 					}
 				case "tool_use":
 					if block.ToolUse != nil {
@@ -97,9 +108,13 @@ func (h *AnthropicHandler) buildRequestBody(req *Request) map[string]interface{}
 						content = append(content, m)
 					}
 				case "redacted_thinking":
-					content = append(content, map[string]interface{}{
+					m := map[string]interface{}{
 						"type": "redacted_thinking",
-					})
+					}
+					if block.Data != "" {
+						m["data"] = block.Data
+					}
+					content = append(content, m)
 				case "signature":
 					content = append(content, map[string]interface{}{
 						"type":      "thinking",
@@ -202,6 +217,13 @@ func (h *AnthropicHandler) buildRequestBody(req *Request) map[string]interface{}
 	// Stop sequences
 	if len(req.Stop) > 0 {
 		result["stop_sequences"] = req.Stop
+	}
+
+	// TopK — only when not thinking
+	if !reasoningOn {
+		if topK := int(req.SettingFloat("top_k")); topK > 0 {
+			result["top_k"] = topK
+		}
 	}
 
 	// Thinking config
@@ -333,6 +355,7 @@ func anthropicConvertResponse(body []byte) (*SendResult, error) {
 			Text      string          `json:"text"`
 			Thinking  string          `json:"thinking"`
 			Signature string          `json:"signature"`
+			Data      string          `json:"data"`
 			ID        string          `json:"id"`
 			Name      string          `json:"name"`
 			Input     json.RawMessage `json:"input"`
@@ -391,8 +414,8 @@ func anthropicConvertResponse(body []byte) (*SendResult, error) {
 			})
 		case "redacted_thinking":
 			contentBlocks = append(contentBlocks, ContentBlock{
-				Type:     "thinking",
-				Thinking: "[REDACTED]",
+				Type: "redacted_thinking",
+				Data: block.Data,
 			})
 		}
 	}
@@ -473,12 +496,26 @@ func anthropicParseSSE(ctx context.Context, body io.Reader, callback func(Stream
 		switch eventType {
 		case "message_start":
 			var ev struct {
-			 Message struct {
+				Message struct {
 					Model string `json:"model"`
+					Usage struct {
+						InputTokens              int `json:"input_tokens"`
+						CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+						CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+					} `json:"usage"`
 				} `json:"message"`
 			}
 			if err := json.Unmarshal(data, &ev); err == nil {
-				if err := callback(StreamChunk{Type: "start", Content: ev.Message.Model}); err != nil {
+				usage := &Usage{
+					InputTokens:              ev.Message.Usage.InputTokens,
+					CacheCreationInputTokens: ev.Message.Usage.CacheCreationInputTokens,
+					CacheReadInputTokens:     ev.Message.Usage.CacheReadInputTokens,
+				}
+				if err := callback(StreamChunk{
+					Type:    "start",
+					Content: ev.Message.Model,
+					Usage:   usage,
+				}); err != nil {
 					return err
 				}
 			}
@@ -520,7 +557,7 @@ func anthropicParseSSE(ctx context.Context, body io.Reader, callback func(Stream
 				case "input_json_delta":
 					chunk.JSONDelta, _ = ev.Delta["partial_json"].(string)
 				case "signature_delta":
-					chunk.Thinking, _ = ev.Delta["signature"].(string)
+					chunk.Signature, _ = ev.Delta["signature"].(string)
 				}
 				if err := callback(chunk); err != nil {
 					return err
@@ -551,6 +588,7 @@ func anthropicParseSSE(ctx context.Context, body io.Reader, callback func(Stream
 				return err
 			}
 		}
+		eventType = ""
 	}
 	return scanner.Err()
 }

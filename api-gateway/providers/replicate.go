@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -149,17 +150,20 @@ func (h *ReplicateHandler) buildInput(req *Request) map[string]interface{} {
 // predictionURL returns the correct endpoint and body for a prediction request.
 // When model_version is set, uses POST /v1/predictions with version hash.
 // Otherwise, uses POST /v1/models/{owner}/{model}/predictions (latest version).
-func (h *ReplicateHandler) predictionURL(baseURL, model string, req *Request) (url string, body map[string]interface{}) {
+func (h *ReplicateHandler) predictionURL(baseURL, model string, req *Request) (string, map[string]interface{}, error) {
 	input := h.buildInput(req)
 	if v := req.SettingString("model_version"); v != "" {
 		return baseURL + "/predictions", map[string]interface{}{
 			"version": v,
 			"input":   input,
-		}
+		}, nil
 	}
-	return baseURL + "/models/" + model + "/predictions", map[string]interface{}{
+	if model == "" || !strings.Contains(model, "/") {
+		return "", nil, fmt.Errorf("replicate: invalid model format %q, expected owner/name", model)
+	}
+	return baseURL + "/models/" + url.PathEscape(model) + "/predictions", map[string]interface{}{
 		"input": input,
-	}
+	}, nil
 }
 
 func (h *ReplicateHandler) Send(ctx context.Context, req *Request) (*SendResult, error) {
@@ -176,14 +180,17 @@ func (h *ReplicateHandler) Send(ctx context.Context, req *Request) (*SendResult,
 	baseURL, apiKey := h.resolveAuth(req)
 	model := h.resolveModel(req)
 
-	url, body := h.predictionURL(baseURL, model, req)
+	endpoint, body, err := h.predictionURL(baseURL, model, req)
+	if err != nil {
+		return nil, err
+	}
 
 	jsonData, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("replicate: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("replicate: create request: %w", err)
 	}
@@ -262,7 +269,10 @@ func (h *ReplicateHandler) Stream(ctx context.Context, req *Request, callback fu
 	baseURL, apiKey := h.resolveAuth(req)
 	model := h.resolveModel(req)
 
-	url, body := h.predictionURL(baseURL, model, req)
+	endpoint, body, err := h.predictionURL(baseURL, model, req)
+	if err != nil {
+		return err
+	}
 	body["stream"] = true
 
 	jsonData, err := json.Marshal(body)
@@ -270,7 +280,7 @@ func (h *ReplicateHandler) Stream(ctx context.Context, req *Request, callback fu
 		return fmt.Errorf("replicate: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(jsonData))
 	if err != nil {
 		return fmt.Errorf("replicate: create request: %w", err)
 	}

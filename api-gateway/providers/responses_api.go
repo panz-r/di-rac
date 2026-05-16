@@ -60,7 +60,7 @@ func (h *responsesAPIHandler) Send(ctx context.Context, req *Request) (*SendResu
 
 	resp, err := h.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, &ProviderAPIError{StatusCode: 0, Message: err.Error(), Retriable: false}
+		return nil, wrapTransientError(fmt.Errorf("responses_api: send request failed: %w", err))
 	}
 	defer resp.Body.Close()
 
@@ -99,7 +99,7 @@ func (h *responsesAPIHandler) Stream(ctx context.Context, req *Request, callback
 
 	resp, err := h.httpClient.Do(httpReq)
 	if err != nil {
-		return &ProviderAPIError{StatusCode: 0, Message: err.Error(), Retriable: false}
+		return wrapTransientError(fmt.Errorf("responses_api: stream request failed: %w", err))
 	}
 	defer resp.Body.Close()
 
